@@ -10,7 +10,7 @@ const setupShopify = (app) => {
     apiSecretKey: process.env.SHOPIFY_API_SECRET,
     scopes: process.env.SHOPIFY_SCOPES.split(','),
     hostName: process.env.HOST.replace(/https?:\/\//, ''),
-    apiVersion: ApiVersion.January25,
+    apiVersion: '2026-01',
     isEmbeddedApp: true,
     ...nodeAdapterPackage,
   });
