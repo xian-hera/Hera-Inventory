@@ -16,6 +16,8 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 // Setup Shopify auth routes
 setupShopify(app);
 
+app.use('/api/reports', require('./routes/reports'));
+
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
