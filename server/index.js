@@ -20,7 +20,9 @@ setupShopify(app);
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
+
 app.use('/api/tasks', require('./routes/tasks'));
+app.use('/api/shopify', require('./routes/shopify').router);
 
 // Serve static files in production
 if (process.env.NODE_ENV === 'production') {

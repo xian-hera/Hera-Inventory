@@ -88,4 +88,76 @@ router.patch('/archive', async (req, res) => {
   }
 });
 
+// Generate next task number
+async function generateTaskNo(client) {
+  const result = await client.query('SELECT last_number, last_letter FROM task_counter WHERE id = 1 FOR UPDATE');
+  let { last_number, last_letter } = result.rows[0];
+  
+  last_number += 1;
+  if (last_number > 9999) {
+    last_number = 0;
+    last_letter = String.fromCharCode(last_letter.charCodeAt(0) + 1);
+  }
+  
+  await client.query(
+    'UPDATE task_counter SET last_number = $1, last_letter = $2 WHERE id = 1',
+    [last_number, last_letter]
+  );
+  
+  return `${last_letter}${String(last_number).padStart(4, '0')}`;
+}
+
+// POST /api/tasks - create new task(s)
+router.post('/', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { department, locations, filterSummary, items, notes, publish } = req.body;
+    if (!department || !locations || locations.length === 0) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    // Fetch location map
+    const locMap = await pool.query('SELECT location_name, shopify_location_id FROM location_map');
+    const locationIdMap = {};
+    locMap.rows.forEach(r => { locationIdMap[r.location_name] = r.shopify_location_id; });
+
+    const status = publish ? 'counting' : 'draft';
+    const createdTasks = [];
+
+    await client.query('BEGIN');
+
+    for (const location of locations) {
+      const shopifyLocationId = locationIdMap[location] || '';
+      const taskNo = await generateTaskNo(client);
+
+      const taskResult = await client.query(
+        `INSERT INTO tasks (task_no, department, location, shopify_location_id, status, filter_summary, notes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+        [taskNo, department, location, shopifyLocationId, status, filterSummary, JSON.stringify(notes || [])]
+      );
+
+      const task = taskResult.rows[0];
+
+      // Insert items
+      for (const item of items) {
+        await client.query(
+          `INSERT INTO task_items (task_id, barcode, name) VALUES ($1, $2, $3)`,
+          [task.id, item.barcode, item.name]
+        );
+      }
+
+      createdTasks.push(task);
+    }
+
+    await client.query('COMMIT');
+    res.json({ success: true, tasks: createdTasks });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    console.error('POST /api/tasks error:', e);
+    res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
+  }
+});
+
 module.exports = router;
