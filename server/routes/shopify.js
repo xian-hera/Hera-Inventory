@@ -18,11 +18,12 @@ function getDepartment(productType) {
   return DEPARTMENT_MAP[productType.toUpperCase().trim()] || null;
 }
 
-// GET /api/shopify/product-types - fetch all product types from Shopify
+// GET /api/shopify/product-types
 router.get('/product-types', async (req, res) => {
   try {
-    const session = getSession();
+    const session = await getSession();
     if (!session) return res.status(401).json({ error: 'No session' });
+    console.log('Session accessToken:', session?.accessToken ? 'present' : 'MISSING');
 
     const shopify = getShopify();
     const client = new shopify.clients.Graphql({ session });
@@ -44,19 +45,18 @@ router.get('/product-types', async (req, res) => {
   }
 });
 
-// POST /api/shopify/products - fetch products by filters
+// POST /api/shopify/products
 router.post('/products', async (req, res) => {
   try {
-    const session = getSession();
+    const session = await getSession();
     if (!session) return res.status(401).json({ error: 'No session' });
+    console.log('Session accessToken:', session?.accessToken ? 'present' : 'MISSING');
 
     const { department, types, typeCondition, metafieldKey, metafieldCondition, metafieldValue } = req.body;
     const shopify = getShopify();
     const client = new shopify.clients.Graphql({ session });
 
-    // Build query filters
     let queryParts = [];
-
     if (types && types.length > 0) {
       if (typeCondition === 'is') {
         queryParts.push(`(${types.map(t => `product_type:${t}`).join(' OR ')})`);
@@ -94,14 +94,10 @@ router.post('/products', async (req, res) => {
     const response = await client.query({ data: gqlQuery });
     const products = response.body.data.products.edges;
 
-    // Flatten to variants
     let variants = [];
     for (const { node: product } of products) {
       const dept = getDepartment(product.productType);
-
-      // Filter by department if specified
       if (department && department !== 'ALL' && dept !== department) continue;
-
       for (const { node: variant } of product.variants.edges) {
         const name = variant.metafield?.value || product.title;
         variants.push({
@@ -115,12 +111,6 @@ router.post('/products', async (req, res) => {
       }
     }
 
-    // Filter by metafield if specified
-    if (metafieldKey && metafieldCondition && metafieldCondition !== 'exists with' && metafieldCondition !== "doesn't exist with") {
-      // For metafield filtering, we'd need additional queries per product
-      // For now return all and note this needs enhancement
-    }
-
     res.json(variants);
   } catch (e) {
     console.error('POST /api/shopify/products error:', e);
@@ -128,11 +118,12 @@ router.post('/products', async (req, res) => {
   }
 });
 
-// GET /api/shopify/locations - fetch all locations from Shopify
+// GET /api/shopify/locations
 router.get('/locations', async (req, res) => {
   try {
-    const session = getSession();
+    const session = await getSession();
     if (!session) return res.status(401).json({ error: 'No session' });
+    console.log('Session accessToken:', session?.accessToken ? 'present' : 'MISSING');
 
     const shopify = getShopify();
     const client = new shopify.clients.Graphql({ session });
@@ -160,17 +151,17 @@ router.get('/locations', async (req, res) => {
   }
 });
 
-// GET /api/shopify/inventory/:barcode/:locationId - get SOH for a barcode at a location
+// GET /api/shopify/inventory/:barcode/:locationId
 router.get('/inventory/:barcode/:locationId', async (req, res) => {
   try {
-    const session = getSession();
+    const session = await getSession();
     if (!session) return res.status(401).json({ error: 'No session' });
+    console.log('Session accessToken:', session?.accessToken ? 'present' : 'MISSING');
 
     const { barcode, locationId } = req.params;
     const shopify = getShopify();
     const client = new shopify.clients.Graphql({ session });
 
-    // Find variant by barcode
     const variantQuery = `{
       productVariants(first: 5, query: "barcode:${barcode}") {
         edges {
@@ -216,7 +207,6 @@ router.get('/inventory/:barcode/:locationId', async (req, res) => {
     const variant = variants[0].node;
     const decodedLocationId = decodeURIComponent(locationId);
 
-    // Find inventory level for this location
     const levels = variant.inventoryItem.inventoryLevels.edges;
     const level = levels.find(e => e.node.location.id === decodedLocationId);
     const soh = level?.node.quantities.find(q => q.name === 'available')?.quantity ?? 0;
@@ -239,11 +229,12 @@ router.get('/inventory/:barcode/:locationId', async (req, res) => {
   }
 });
 
-// POST /api/shopify/sync-locations - sync Shopify locations to DB
+// POST /api/shopify/sync-locations
 router.post('/sync-locations', async (req, res) => {
   try {
-    const session = getSession();
+    const session = await getSession();
     if (!session) return res.status(401).json({ error: 'No session' });
+    console.log('Session accessToken:', session?.accessToken ? 'present' : 'MISSING');
 
     const shopify = getShopify();
     const client = new shopify.clients.Graphql({ session });
