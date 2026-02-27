@@ -217,7 +217,7 @@ router.patch('/:id/commit', async (req, res) => {
     );
 
     const { getShopify, getSession } = require('../shopify');
-    const session = getSession();
+    const session = await getSession();
     const shopify = getShopify();
     const client = new shopify.clients.Graphql({ session });
 

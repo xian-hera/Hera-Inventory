@@ -1,5 +1,6 @@
 const { shopifyApi, ApiVersion, Session } = require('@shopify/shopify-api');
 const { nodeAdapterPackage } = require('@shopify/shopify-api/adapters/node');
+const { pool } = require('./database/init');
 
 let shopify;
 
@@ -14,9 +15,7 @@ const setupShopify = (app) => {
     ...nodeAdapterPackage,
   });
 
-  // --- Auth routes ---
-
-  // Step 1: Begin OAuth
+  // Begin OAuth
   app.get('/auth', async (req, res) => {
     const shop = req.query.shop || process.env.SHOP;
     if (!shop) return res.status(400).send('Missing shop parameter');
@@ -30,7 +29,7 @@ const setupShopify = (app) => {
     });
   });
 
-  // Step 2: OAuth callback
+  // OAuth callback
   app.get('/auth/callback', async (req, res) => {
     try {
       const callbackResponse = await shopify.auth.callback({
@@ -40,13 +39,10 @@ const setupShopify = (app) => {
 
       const session = callbackResponse.session;
       console.log(`✓ Auth complete for shop: ${session.shop}`);
-      console.log(`  Access token: ${session.accessToken}`);
 
-      // Save session to .env hint (in production, save to DB)
-      // For now, store in memory
-      currentSession = session;
+      // Save session to DB
+      await saveSession(session);
 
-      // Redirect to app
       const host = req.query.host;
       res.redirect(`/?shop=${session.shop}&host=${host}`);
     } catch (e) {
@@ -55,35 +51,67 @@ const setupShopify = (app) => {
     }
   });
 
-  // Middleware to verify Shopify session for API routes
+  // Middleware for API routes
   app.use('/api', async (req, res, next) => {
-    // Skip health check
     if (req.path === '/health') return next();
-
     try {
-      const sessionId = await shopify.session.getCurrentId({
-        isOnline: false,
-        rawRequest: req,
-        rawResponse: res,
-      });
-
-      if (!sessionId && !currentSession) {
-        return res.status(401).json({ error: 'Unauthorized' });
-      }
-
-      req.shopifySession = currentSession;
+      const session = await loadSession(process.env.SHOP);
+      if (!session) return res.status(401).json({ error: 'Unauthorized' });
+      req.shopifySession = session;
       next();
     } catch (e) {
-      console.error('Session verification error:', e);
-      next(); // Allow through during development
+      console.error('Session load error:', e);
+      next();
     }
   });
 };
 
-// In-memory session store (will move to DB later)
-let currentSession = null;
+// Save session to DB
+const saveSession = async (session) => {
+  await pool.query(
+    `INSERT INTO sessions (id, shop, state, is_online, scope, expires, access_token, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+     ON CONFLICT (id) DO UPDATE SET
+       access_token = $7,
+       scope = $5,
+       expires = $6,
+       updated_at = NOW()`,
+    [
+      session.id,
+      session.shop,
+      session.state || null,
+      session.isOnline || false,
+      session.scope || null,
+      session.expires || null,
+      session.accessToken,
+    ]
+  );
+};
 
-const getSession = () => currentSession;
+// Load session from DB by shop
+const loadSession = async (shop) => {
+  const result = await pool.query(
+    'SELECT * FROM sessions WHERE shop = $1 ORDER BY updated_at DESC LIMIT 1',
+    [shop]
+  );
+  if (result.rows.length === 0) return null;
+
+  const row = result.rows[0];
+  const session = new Session({
+    id: row.id,
+    shop: row.shop,
+    state: row.state,
+    isOnline: row.is_online,
+  });
+  session.scope = row.scope;
+  session.accessToken = row.access_token;
+  session.expires = row.expires ? new Date(row.expires) : undefined;
+  return session;
+};
+
+const getSession = async () => {
+  return await loadSession(process.env.SHOP);
+};
 
 const getShopify = () => shopify;
 

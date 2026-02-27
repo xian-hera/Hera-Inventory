@@ -75,7 +75,18 @@ const initDatabase = async () => {
         last_letter TEXT NOT NULL DEFAULT 'A'
       )
     `);
-
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS sessions (
+        id TEXT PRIMARY KEY,
+        shop TEXT NOT NULL,
+        state TEXT,
+        is_online BOOLEAN DEFAULT FALSE,
+        scope TEXT,
+        expires TIMESTAMPTZ,
+        access_token TEXT,
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
     // Insert initial counter if not exists
     await client.query(`
       INSERT INTO task_counter (id, last_number, last_letter)
