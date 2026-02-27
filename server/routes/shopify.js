@@ -239,4 +239,47 @@ router.get('/inventory/:barcode/:locationId', async (req, res) => {
   }
 });
 
+// POST /api/shopify/sync-locations - sync Shopify locations to DB
+router.post('/sync-locations', async (req, res) => {
+  try {
+    const session = getSession();
+    if (!session) return res.status(401).json({ error: 'No session' });
+
+    const shopify = getShopify();
+    const client = new shopify.clients.Graphql({ session });
+    const { pool } = require('../database/init');
+
+    const query = `{
+      locations(first: 50) {
+        edges {
+          node {
+            id
+            name
+          }
+        }
+      }
+    }`;
+
+    const response = await client.query({ data: query });
+    const locations = response.body.data.locations.edges.map(e => ({
+      id: e.node.id,
+      name: e.node.name,
+    }));
+
+    for (const loc of locations) {
+      await pool.query(
+        `INSERT INTO location_map (location_name, shopify_location_id, updated_at)
+         VALUES ($1, $2, NOW())
+         ON CONFLICT (location_name) DO UPDATE SET shopify_location_id = $2, updated_at = NOW()`,
+        [loc.name, loc.id]
+      );
+    }
+
+    res.json({ success: true, synced: locations });
+  } catch (e) {
+    console.error('POST /api/shopify/sync-locations error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = { router, getDepartment };
