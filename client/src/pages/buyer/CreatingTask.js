@@ -8,7 +8,7 @@ import { useNavigate } from 'react-router-dom';
 const LOCATIONS = [
   'MTL01','MTL02','MTL03','MTL04','MTL05','MTL06',
   'MTL07','MTL08','MTL09','MTL10','MTL11',
-  'EDM01','EDM02','CAL01','OTT01','OTT02','OTT03','QUE01'
+  'EDM01','EDM02','CAL01','OTT01','OTT02','OTT03','QC01'
 ];
 
 function CreatingTask() {

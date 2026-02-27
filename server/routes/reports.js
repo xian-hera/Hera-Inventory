@@ -57,7 +57,7 @@ router.patch('/:id/commit', async (req, res) => {
 
     const delta = r.poh - r.soh;
     if (delta !== 0) {
-      const session = getSession();
+      const session = await getSession();
       const shopify = getShopify();
       const client = new shopify.clients.Graphql({ session });
 
