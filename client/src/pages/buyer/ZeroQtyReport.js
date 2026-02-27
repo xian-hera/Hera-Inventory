@@ -4,6 +4,7 @@ import {
   Select, Text, DataTable, Checkbox, Banner, Badge, Spinner
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
+import MultiSelectDropdown from '../../components/MultiSelectDropdown';
 
 const LOCATIONS = [
   'MTL01','MTL02','MTL03','MTL04','MTL05','MTL06',
@@ -14,7 +15,8 @@ const LOCATIONS = [
 function formatDate(dateStr) {
   if (!dateStr) return '';
   const d = new Date(dateStr);
-  return `${d.getFullYear()}.${['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][d.getMonth()]}.${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+  const months = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+  return `${d.getFullYear()}.${months[d.getMonth()]}.${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
 }
 
 function ZeroQtyReport() {
@@ -23,14 +25,10 @@ function ZeroQtyReport() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [committing, setCommitting] = useState(false);
-
-  // Filters
   const [department, setDepartment] = useState('ALL');
   const [selectedLocations, setSelectedLocations] = useState([]);
   const [selectedStatuses, setSelectedStatuses] = useState([]);
   const [date, setDate] = useState('ALL');
-
-  // Selection
   const [selectedIds, setSelectedIds] = useState([]);
 
   const fetchReports = useCallback(async () => {
@@ -42,7 +40,6 @@ function ZeroQtyReport() {
       if (selectedLocations.length > 0) params.append('location', selectedLocations.join(','));
       if (selectedStatuses.length > 0) params.append('status', selectedStatuses.join(','));
       if (date !== 'ALL') params.append('date', date);
-
       const res = await fetch(`/api/reports?${params.toString()}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
@@ -54,9 +51,7 @@ function ZeroQtyReport() {
     }
   }, [department, selectedLocations, selectedStatuses, date]);
 
-  useEffect(() => {
-    fetchReports();
-  }, [fetchReports]);
+  useEffect(() => { fetchReports(); }, [fetchReports]);
 
   const handleCommitOne = async (id) => {
     try {
@@ -75,11 +70,12 @@ function ZeroQtyReport() {
     if (selectedIds.length === 0) return;
     setCommitting(true);
     try {
-      await fetch('/api/reports/commit', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids: selectedIds }),
-      });
+      for (const id of selectedIds) {
+        await fetch(`/api/reports/${id}/commit`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
       setSelectedIds([]);
       fetchReports();
     } catch (e) {
@@ -93,11 +89,12 @@ function ZeroQtyReport() {
     setCommitting(true);
     try {
       const ids = reports.filter(r => r.status === 'reviewing').map(r => r.id);
-      await fetch('/api/reports/commit', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids }),
-      });
+      for (const id of ids) {
+        await fetch(`/api/reports/${id}/commit`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
       setSelectedIds([]);
       fetchReports();
     } catch (e) {
@@ -110,53 +107,36 @@ function ZeroQtyReport() {
   const handleDelete = async () => {
     if (selectedIds.length === 0) return;
     if (!window.confirm(`Delete ${selectedIds.length} report(s)?`)) return;
-    try {
-      await fetch('/api/reports', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids: selectedIds }),
-      });
-      setSelectedIds([]);
-      fetchReports();
-    } catch (e) {
-      setError('Failed to delete');
-    }
+    await fetch('/api/reports', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: selectedIds }),
+    });
+    setSelectedIds([]);
+    fetchReports();
   };
 
   const handleArchive = async () => {
     if (selectedIds.length === 0) return;
-    try {
-      await fetch('/api/reports/archive', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids: selectedIds }),
-      });
-      setSelectedIds([]);
-      fetchReports();
-    } catch (e) {
-      setError('Failed to archive');
-    }
+    await fetch('/api/reports/archive', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: selectedIds }),
+    });
+    setSelectedIds([]);
+    fetchReports();
   };
 
   const toggleSelectOne = (id) => {
-    setSelectedIds(prev =>
-      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
-    );
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   };
 
   const toggleSelectAll = () => {
-    if (selectedIds.length === reports.length) {
-      setSelectedIds([]);
-    } else {
-      setSelectedIds(reports.map(r => r.id));
-    }
+    setSelectedIds(selectedIds.length === reports.length ? [] : reports.map(r => r.id));
   };
 
   const rows = reports.map(report => [
-    <Checkbox
-      checked={selectedIds.includes(report.id)}
-      onChange={() => toggleSelectOne(report.id)}
-    />,
+    <Checkbox checked={selectedIds.includes(report.id)} onChange={() => toggleSelectOne(report.id)} />,
     report.name || '-',
     report.barcode || '-',
     report.department || '-',
@@ -170,16 +150,12 @@ function ZeroQtyReport() {
   ]);
 
   return (
-    <Page
-      title="0 quantity report"
-      backAction={{ onAction: () => navigate('/buyer') }}
-    >
+    <Page title="0 quantity report" backAction={{ onAction: () => navigate('/buyer') }}>
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">
             {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
 
-            {/* Filters */}
             <Card>
               <InlineStack gap="400" wrap>
                 <BlockStack gap="100">
@@ -196,37 +172,18 @@ function ZeroQtyReport() {
                     onChange={setDepartment}
                   />
                 </BlockStack>
-
-                <BlockStack gap="100">
-                  <Text variant="bodySm" tone="subdued">Location</Text>
-                  <select
-                    multiple size={5}
-                    style={{ minWidth: '120px', padding: '4px' }}
-                    onChange={(e) => {
-                      const vals = Array.from(e.target.selectedOptions).map(o => o.value);
-                      setSelectedLocations(vals);
-                    }}
-                  >
-                    {LOCATIONS.map(l => <option key={l} value={l}>{l}</option>)}
-                  </select>
-                </BlockStack>
-
-                <BlockStack gap="100">
-                  <Text variant="bodySm" tone="subdued">Status</Text>
-                  <select
-                    multiple size={4}
-                    style={{ minWidth: '140px', padding: '4px' }}
-                    onChange={(e) => {
-                      const vals = Array.from(e.target.selectedOptions).map(o => o.value);
-                      setSelectedStatuses(vals);
-                    }}
-                  >
-                    {['reviewing','committed','archived'].map(s => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
-                  </select>
-                </BlockStack>
-
+                <MultiSelectDropdown
+                  label="Location"
+                  options={LOCATIONS}
+                  selected={selectedLocations}
+                  onChange={setSelectedLocations}
+                />
+                <MultiSelectDropdown
+                  label="Status"
+                  options={['reviewing', 'committed', 'archived']}
+                  selected={selectedStatuses}
+                  onChange={setSelectedStatuses}
+                />
                 <BlockStack gap="100">
                   <Text variant="bodySm" tone="subdued">Date</Text>
                   <Select
@@ -244,35 +201,16 @@ function ZeroQtyReport() {
               </InlineStack>
             </Card>
 
-            {/* Bulk actions + table */}
             <Card>
               <BlockStack gap="300">
                 <InlineStack align="end" gap="200">
-                  <Button
-                    disabled={selectedIds.length === 0 || committing}
-                    onClick={handleCommitSelected}
-                    loading={committing}
-                  >
+                  <Button disabled={selectedIds.length === 0 || committing} onClick={handleCommitSelected} loading={committing}>
                     Commit selected
                   </Button>
-                  <Button onClick={handleCommitAll} loading={committing}>
-                    Commit all
-                  </Button>
-                  <Button
-                    tone="critical"
-                    disabled={selectedIds.length === 0}
-                    onClick={handleDelete}
-                  >
-                    Delete
-                  </Button>
-                  <Button
-                    disabled={selectedIds.length === 0}
-                    onClick={handleArchive}
-                  >
-                    Archive
-                  </Button>
+                  <Button onClick={handleCommitAll} loading={committing}>Commit all</Button>
+                  <Button tone="critical" disabled={selectedIds.length === 0} onClick={handleDelete}>Delete</Button>
+                  <Button disabled={selectedIds.length === 0} onClick={handleArchive}>Archive</Button>
                 </InlineStack>
-
                 {loading ? <Spinner /> : (
                   <DataTable
                     columnContentTypes={['text','text','text','text','text','numeric','numeric','text','text']}

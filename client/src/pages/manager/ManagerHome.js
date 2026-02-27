@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Page, Layout, Button, BlockStack, Select, Banner } from '@shopify/polaris';
+import {
+  Page, Layout, Card, Button, BlockStack, InlineStack,
+  Select, Text, Banner
+} from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 
 const LOCATIONS = [
@@ -11,38 +14,44 @@ const LOCATIONS = [
 function ManagerHome() {
   const navigate = useNavigate();
   const [location, setLocation] = useState('');
+  const [confirmed, setConfirmed] = useState(false);
   const [showWarning, setShowWarning] = useState(false);
 
   useEffect(() => {
     const saved = localStorage.getItem('managerLocation');
-    if (saved) setLocation(saved);
+    if (saved) {
+      setLocation(saved);
+      setConfirmed(true);
+    }
   }, []);
 
-  const handleLocationChange = (value) => {
-    setLocation(value);
-    localStorage.setItem('managerLocation', value);
+  const handleConfirmLocation = () => {
+    if (!location) {
+      setShowWarning(true);
+      return;
+    }
+    localStorage.setItem('managerLocation', location);
+    setConfirmed(true);
     setShowWarning(false);
   };
 
-  const handleCountingTasks = () => {
-    if (!location) {
-      setShowWarning(true);
-      return;
-    }
-    navigate('/manager/counting-tasks');
+  const handleChangeLocation = () => {
+    setConfirmed(false);
+    setLocation('');
+    localStorage.removeItem('managerLocation');
   };
 
-  const handleZeroQty = () => {
-    if (!location) {
+  const handleNavigate = (path) => {
+    if (!confirmed) {
       setShowWarning(true);
       return;
     }
-    navigate('/manager/zero-qty-report');
+    navigate(path);
   };
 
   const locationOptions = [
     { label: 'Select location', value: '' },
-    ...LOCATIONS.map(l => ({ label: l, value: l }))
+    ...LOCATIONS.map(l => ({ label: l, value: l })),
   ];
 
   return (
@@ -50,21 +59,52 @@ function ManagerHome() {
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">
-            <Select
-              label="Location"
-              options={locationOptions}
-              value={location}
-              onChange={handleLocationChange}
-            />
             {showWarning && (
-              <Banner tone="critical">
+              <Banner tone="critical" onDismiss={() => setShowWarning(false)}>
                 Please select a location first.
               </Banner>
             )}
-            <Button size="large" fullWidth onClick={handleCountingTasks}>
+
+            <Card>
+              <BlockStack gap="300">
+                <Text variant="headingSm">Location</Text>
+
+                {!confirmed ? (
+                  <BlockStack gap="200">
+                    <Select
+                      label="" labelHidden
+                      options={locationOptions}
+                      value={location}
+                      onChange={(val) => {
+                        setLocation(val);
+                        setShowWarning(false);
+                      }}
+                    />
+                    <Button variant="primary" onClick={handleConfirmLocation}>
+                      Confirm
+                    </Button>
+                  </BlockStack>
+                ) : (
+                  <InlineStack align="space-between">
+                    <Text variant="bodyLg" fontWeight="bold">{location}</Text>
+                    <Button onClick={handleChangeLocation}>Change</Button>
+                  </InlineStack>
+                )}
+              </BlockStack>
+            </Card>
+
+            <Button
+              size="large"
+              fullWidth
+              onClick={() => handleNavigate('/manager/counting-tasks')}
+            >
               Counting tasks
             </Button>
-            <Button size="large" fullWidth onClick={handleZeroQty}>
+            <Button
+              size="large"
+              fullWidth
+              onClick={() => handleNavigate('/manager/zero-qty-report')}
+            >
               0 quantity report
             </Button>
           </BlockStack>
