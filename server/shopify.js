@@ -100,12 +100,12 @@ const loadSession = async (shop) => {
   const session = new Session({
     id: row.id,
     shop: row.shop,
-    state: row.state,
+    state: row.state || '',
     isOnline: row.is_online,
+    scope: row.scope || '',
+    accessToken: row.access_token,
+    expires: row.expires ? new Date(row.expires) : undefined,
   });
-  session.scope = row.scope;
-  session.accessToken = row.access_token;
-  session.expires = row.expires ? new Date(row.expires) : undefined;
   return session;
 };
 
