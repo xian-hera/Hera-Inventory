@@ -1,47 +1,65 @@
 import React, { useState, useRef, useEffect } from 'react';
+import ReactDOM from 'react-dom';
 
 function MultiSelectDropdown({ label, options, selected, onChange, placeholder = 'ALL' }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef(null);
+  const [dropStyle, setDropStyle] = useState({});
+  const btnRef = useRef(null);
 
   useEffect(() => {
+    if (!open) return;
     const handleClick = (e) => {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+      const btn = btnRef.current;
+      const drop = document.querySelector('[data-msd-drop="' + label + '"]');
+      if (btn && !btn.contains(e.target) && drop && !drop.contains(e.target)) {
+        setOpen(false);
+      }
     };
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
-  }, []);
+  }, [open, label]);
+
+  const handleToggle = () => {
+    if (!open && btnRef.current) {
+      const rect = btnRef.current.getBoundingClientRect();
+      setDropStyle({
+        position: 'fixed',
+        top: rect.bottom + 4,
+        left: rect.left,
+        minWidth: Math.max(rect.width, 160),
+        zIndex: 99999,
+        background: 'white',
+        border: '1px solid #c9cccf',
+        borderRadius: '8px',
+        maxHeight: '320px',
+        minHeight: '120px',
+        overflowY: 'auto',
+        boxShadow: '0 4px 16px rgba(0,0,0,0.18)',
+      });
+    }
+    setOpen(!open);
+  };
 
   const toggle = (value) => {
-    if (selected.includes(value)) {
-      onChange(selected.filter(v => v !== value));
-    } else {
-      onChange([...selected, value]);
-    }
+    onChange(selected.includes(value) ? selected.filter(v => v !== value) : [...selected, value]);
   };
 
   const displayText = selected.length === 0 ? placeholder : selected.join(', ');
 
   return (
-    <div ref={ref} style={{ position: 'relative', minWidth: '140px' }}>
+    <div style={{ position: 'relative', minWidth: '140px' }}>
       {label && (
         <div style={{ fontSize: '12px', color: '#6d7175', marginBottom: '4px' }}>{label}</div>
       )}
       <button
-        onClick={() => setOpen(!open)}
+        ref={btnRef}
+        onClick={handleToggle}
         style={{
-          width: '100%',
-          padding: '6px 28px 6px 10px',
-          border: '1px solid #c9cccf',
-          borderRadius: '8px',
-          background: 'white',
-          cursor: 'pointer',
-          textAlign: 'left',
-          fontSize: '14px',
-          position: 'relative',
-          whiteSpace: 'nowrap',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
+          width: '100%', padding: '6px 28px 6px 10px',
+          border: '1px solid #c9cccf', borderRadius: '8px',
+          background: 'white', cursor: 'pointer', textAlign: 'left',
+          fontSize: '14px', position: 'relative',
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
           minHeight: '36px',
         }}
       >
@@ -51,60 +69,31 @@ function MultiSelectDropdown({ label, options, selected, onChange, placeholder =
           transform: 'translateY(-50%)', pointerEvents: 'none',
         }}>▾</span>
       </button>
-      {open && (
-        <div style={{
-          position: 'fixed',
-          background: 'white',
-          border: '1px solid #c9cccf',
-          borderRadius: '8px',
-          zIndex: 9999,
-          minWidth: '160px',
-          minHeight: '120px',
-          maxHeight: '320px',
-          overflowY: 'auto',
-          boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-          marginTop: '4px',
-        }}
-          ref={el => {
-            if (el && ref.current) {
-              const btn = ref.current.querySelector('button');
-              if (btn) {
-                const rect = btn.getBoundingClientRect();
-                el.style.top = `${rect.bottom + 4}px`;
-                el.style.left = `${rect.left}px`;
-              }
-            }
-          }}
-        >
+
+      {open && ReactDOM.createPortal(
+        <div data-msd-drop={label} style={dropStyle}>
           {options.map(opt => {
             const value = typeof opt === 'string' ? opt : opt.value;
-            const label = typeof opt === 'string' ? opt : opt.label;
+            const optLabel = typeof opt === 'string' ? opt : opt.label;
             const checked = selected.includes(value);
             return (
               <div
                 key={value}
                 onClick={() => toggle(value)}
                 style={{
-                  padding: '10px 12px',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
+                  padding: '10px 12px', cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', gap: '8px',
                   background: checked ? '#f1f8f5' : 'white',
                   borderBottom: '1px solid #f6f6f7',
                 }}
               >
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={() => {}}
-                  style={{ cursor: 'pointer' }}
-                />
-                <span style={{ fontSize: '14px' }}>{label}</span>
+                <input type="checkbox" checked={checked} onChange={() => {}} style={{ cursor: 'pointer' }} />
+                <span style={{ fontSize: '14px' }}>{optLabel}</span>
               </div>
             );
           })}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
