@@ -18,10 +18,12 @@ function getDepartment(productType) {
   return DEPARTMENT_MAP[productType.toUpperCase().trim()] || null;
 }
 
-async function shopifyRequest(client, query, retries = 3) {
+async function shopifyRequest(client, query, variables = null, retries = 3) {
   for (let i = 0; i < retries; i++) {
     try {
-      const response = await client.request(query);
+      const response = variables
+        ? await client.request(query, { variables })
+        : await client.request(query);
       if (response?.errors?.graphQLErrors?.length > 0) {
         console.error('GraphQL errors:', JSON.stringify(response.errors.graphQLErrors));
       }
@@ -92,21 +94,23 @@ router.post('/products', async (req, res) => {
 
     const queryString = queryParts.join(' AND ') || 'status:active';
 
-    const gqlQuery = `{
-      products(first: 250, query: "${queryString}") {
-        edges {
-          node {
-            id
-            title
-            productType
-            variants(first: 100) {
-              edges {
-                node {
-                  id
-                  sku
-                  barcode
-                  metafield(namespace: "custom", key: "name") {
-                    value
+    const gqlQuery = `
+      query getProducts($queryString: String!) {
+        products(first: 250, query: $queryString) {
+          edges {
+            node {
+              id
+              title
+              productType
+              variants(first: 100) {
+                edges {
+                  node {
+                    id
+                    sku
+                    barcode
+                    metafield(namespace: "custom", key: "name") {
+                      value
+                    }
                   }
                 }
               }
@@ -114,9 +118,9 @@ router.post('/products', async (req, res) => {
           }
         }
       }
-    }`;
+    `;
 
-    const response = await shopifyRequest(client, gqlQuery);
+    const response = await shopifyRequest(client, gqlQuery, { queryString });
     const products = response.data.products.edges;
 
     let variants = [];
@@ -185,42 +189,44 @@ router.get('/inventory/:barcode/:locationId', async (req, res) => {
     const shopify = getShopify();
     const client = new shopify.clients.Graphql({ session });
 
-    const variantQuery = `{
-      productVariants(first: 5, query: "barcode:${barcode}") {
-        edges {
-          node {
-            id
-            sku
-            barcode
-            inventoryItem {
+    const variantQuery = `
+      query getInventory($barcode: String!) {
+        productVariants(first: 5, query: $barcode) {
+          edges {
+            node {
               id
-              inventoryLevels(first: 20) {
-                edges {
-                  node {
-                    location {
-                      id
-                    }
-                    quantities(names: ["available"]) {
-                      name
-                      quantity
+              sku
+              barcode
+              inventoryItem {
+                id
+                inventoryLevels(first: 20) {
+                  edges {
+                    node {
+                      location {
+                        id
+                      }
+                      quantities(names: ["available"]) {
+                        name
+                        quantity
+                      }
                     }
                   }
                 }
               }
-            }
-            metafield(namespace: "custom", key: "name") {
-              value
-            }
-            product {
-              title
-              productType
+              metafield(namespace: "custom", key: "name") {
+                value
+              }
+              product {
+                title
+                productType
+              }
             }
           }
         }
       }
-    }`;
+    `;
 
-    const response = await shopifyRequest(client, variantQuery);
+    const response = await shopifyRequest(client, variantQuery, { barcode: `barcode:${barcode}` });
     const variants = response.data.productVariants.edges;
 
     if (variants.length === 0) {
@@ -307,10 +313,10 @@ router.get('/search', async (req, res) => {
     if (q && q.trim().length >= 2) queryParts.push(`(title:*${q}* OR sku:*${q}*)`);
     if (vendors) {
       const vendorList = vendors.split(',');
-      const escapedVendors = vendorList.map(v => `vendor:"${v.replace(/"/g, '\\"')}"`);
+      const escapedVendors = vendorList.map(v => `vendor:"${v.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`);
       queryParts.push(`(${escapedVendors.join(' OR ')})`);
     }
-    if (tag) queryParts.push(`tag:"${tag}"`);
+    if (tag) queryParts.push(`tag:"${tag.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`);
 
     if (queryParts.length === 0) return res.json([]);
 
@@ -318,21 +324,23 @@ router.get('/search', async (req, res) => {
     const shopify = getShopify();
     const client = new shopify.clients.Graphql({ session });
 
-    const gqlQuery = `{
-      products(first: 20, query: "${queryString}") {
-        edges {
-          node {
-            id
-            title
-            productType
-            variants(first: 10) {
-              edges {
-                node {
-                  id
-                  sku
-                  barcode
-                  metafield(namespace: "custom", key: "name") {
-                    value
+    const gqlQuery = `
+      query searchProducts($queryString: String!) {
+        products(first: 20, query: $queryString) {
+          edges {
+            node {
+              id
+              title
+              productType
+              variants(first: 10) {
+                edges {
+                  node {
+                    id
+                    sku
+                    barcode
+                    metafield(namespace: "custom", key: "name") {
+                      value
+                    }
                   }
                 }
               }
@@ -340,9 +348,9 @@ router.get('/search', async (req, res) => {
           }
         }
       }
-    }`;
+    `;
 
-    const response = await shopifyRequest(client, gqlQuery);
+    const response = await shopifyRequest(client, gqlQuery, { queryString });
     const products = response.data.products.edges;
 
     let variants = [];
