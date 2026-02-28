@@ -102,25 +102,38 @@ function CreatingTask() {
     }
   };
 
-  const handleCSVUpload = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      const lines = evt.target.result.split('\n').filter(l => l.trim());
-      const barcodes = [];
-      for (const line of lines) {
-        const cols = line.split(',');
-        if (cols.length >= 2) {
-          const barcode = cols[1].trim().replace(/"/g, '');
-          if (barcode && barcode.toLowerCase() !== 'barcode') barcodes.push(barcode);
+const handleCSVUpload = (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (evt) => {
+    const lines = evt.target.result.split('\n').filter(l => l.trim());
+    const newProducts = [];
+    for (const line of lines) {
+      const cols = line.split(',');
+      if (cols.length >= 2) {
+        const name = cols[0].trim().replace(/"/g, '');
+        const barcode = cols[1].trim().replace(/"/g, '');
+        if (barcode && barcode.toLowerCase() !== 'barcode' && name.toLowerCase() !== 'name') {
+          newProducts.push({ name, barcode });
         }
       }
-      setTaskItems(prev => [...new Set([...prev, ...barcodes])]);
-    };
-    reader.readAsText(file);
-    e.target.value = '';
+    }
+    if (newProducts.length === 0) return;
+
+    // Add to products list
+    setProducts(prev => {
+      const existing = prev.map(p => p.barcode);
+      const toAdd = newProducts.filter(p => !existing.includes(p.barcode));
+      return [...prev, ...toAdd];
+    });
+
+    // Add to taskItems
+    setTaskItems(prev => [...new Set([...prev, ...newProducts.map(p => p.barcode)])]);
   };
+  reader.readAsText(file);
+  e.target.value = '';
+};
 
   const handlePreview = () => {
     if (taskItems.length === 0) {
