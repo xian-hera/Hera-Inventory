@@ -49,7 +49,7 @@ function MultiSelectDropdown({ label, options, selected, onChange, placeholder =
   return (
     <div style={{ position: 'relative', minWidth: '140px' }}>
       {label && (
-        <div style={{ fontSize: '12px', color: '#6d7175', marginBottom: '4px' }}>{label}</div>
+        <div style={{ fontSize: '12px', color: '#6d7175', marginBottom: '2px', marginTop: '2px' }}>{label}</div>
       )}
       <button
         ref={btnRef}
