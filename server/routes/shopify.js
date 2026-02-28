@@ -272,5 +272,104 @@ router.post('/sync-locations', async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+// GET /api/shopify/search
+router.get('/search', async (req, res) => {
+  try {
+    const session = await getSession();
+    if (!session) return res.status(401).json({ error: 'No session' });
 
+    const { q, vendors, tag } = req.query;
+
+    let queryParts = [];
+    if (q && q.trim().length >= 2) queryParts.push(`(title:*${q}* OR sku:*${q}*)`);
+    if (vendors) {
+      const vendorList = vendors.split(',');
+      queryParts.push(`(${vendorList.map(v => `vendor:"${v}"`).join(' OR ')})`);
+    }
+    if (tag) queryParts.push(`tag:"${tag}"`);
+
+    if (queryParts.length === 0) return res.json([]);
+
+    const queryString = queryParts.join(' AND ');
+    const shopify = getShopify();
+    const client = new shopify.clients.Graphql({ session });
+
+    const gqlQuery = `{
+      products(first: 20, query: "${queryString}") {
+        edges {
+          node {
+            id
+            title
+            productType
+            variants(first: 10) {
+              edges {
+                node {
+                  id
+                  sku
+                  barcode
+                  metafield(namespace: "custom", key: "name") {
+                    value
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }`;
+
+    const response = await client.query({ data: gqlQuery });
+    const products = response.body.data.products.edges;
+
+    let variants = [];
+    for (const { node: product } of products) {
+      for (const { node: variant } of product.variants.edges) {
+        const name = variant.metafield?.value || product.title;
+        variants.push({
+          productId: product.id,
+          variantId: variant.id,
+          name,
+          barcode: variant.barcode || variant.sku,
+          department: getDepartment(product.productType),
+          productType: product.productType,
+        });
+      }
+    }
+
+    res.json(variants.slice(0, 50));
+  } catch (e) {
+    console.error('GET /api/shopify/search error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+// GET /api/shopify/vendors-tags
+router.get('/vendors-tags', async (req, res) => {
+  try {
+    const session = await getSession();
+    if (!session) return res.status(401).json({ error: 'No session' });
+
+    const shopify = getShopify();
+    const client = new shopify.clients.Graphql({ session });
+
+    const query = `{
+      shop {
+        productVendors(first: 250) {
+          edges { node }
+        }
+        productTags(first: 250) {
+          edges { node }
+        }
+      }
+    }`;
+
+    const response = await client.query({ data: query });
+    const vendors = response.body.data.shop.productVendors.edges.map(e => e.node).filter(Boolean).sort();
+    const tags = response.body.data.shop.productTags.edges.map(e => e.node).filter(Boolean).sort();
+
+    res.json({ vendors, tags });
+  } catch (e) {
+    console.error('GET /api/shopify/vendors-tags error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
 module.exports = { router, getDepartment };

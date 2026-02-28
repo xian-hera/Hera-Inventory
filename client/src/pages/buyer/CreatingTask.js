@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Page, Layout, Card, Button, BlockStack, InlineStack,
   Select, Text, DataTable, Checkbox, Badge, Banner, Spinner
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import MultiSelectDropdown from '../../components/MultiSelectDropdown';
+import SearchWithFilters from '../../components/SearchWithFilters';
 
 const LOCATIONS = [
   'MTL01','MTL02','MTL03','MTL04','MTL05','MTL06',
@@ -28,15 +29,8 @@ function CreatingTask() {
   const [loadingProducts, setLoadingProducts] = useState(false);
   const [loadingTypes, setLoadingTypes] = useState(false);
   const [error, setError] = useState('');
+  const [resultFilter, setResultFilter] = useState('');
 
-  // Search
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState([]);
-  const [searchSelected, setSearchSelected] = useState([]);
-  const [searchOpen, setSearchOpen] = useState(false);
-  const searchRef = useRef(null);
-
-  // CSV
   const csvInputRef = useRef(null);
 
   useEffect(() => {
@@ -54,33 +48,6 @@ function CreatingTask() {
     };
     fetchTypes();
   }, []);
-
-  // Close search dropdown on outside click
-  useEffect(() => {
-    const handleClick = (e) => {
-      if (searchRef.current && !searchRef.current.contains(e.target)) {
-        setSearchOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, []);
-
-  // Search filter
-  useEffect(() => {
-    if (!searchQuery.trim()) {
-      setSearchResults([]);
-      setSearchOpen(false);
-      return;
-    }
-    const q = searchQuery.toLowerCase();
-    const results = products.filter(p =>
-      (p.name && p.name.toLowerCase().includes(q)) ||
-      (p.barcode && p.barcode.toLowerCase().includes(q))
-    );
-    setSearchResults(results);
-    setSearchOpen(results.length > 0);
-  }, [searchQuery, products]);
 
   const handleShowResult = async () => {
     setLoadingProducts(true);
@@ -101,7 +68,7 @@ function CreatingTask() {
       const data = await res.json();
       setProducts(data);
       setSelectedProductBarcodes([]);
-      setSearchQuery('');
+      setResultFilter('');
     } catch (e) {
       setError('Failed to fetch products');
     } finally {
@@ -121,16 +88,6 @@ function CreatingTask() {
     setTaskItems(prev => [...new Set([...prev, ...products.map(p => p.barcode)])]);
   };
 
-  const handleAddSearchSelected = () => {
-    const toAdd = searchResults
-      .filter(p => searchSelected.includes(p.barcode))
-      .map(p => p.barcode);
-    setTaskItems(prev => [...new Set([...prev, ...toAdd])]);
-    setSearchSelected([]);
-    setSearchQuery('');
-    setSearchOpen(false);
-  };
-
   const toggleSelectProduct = (barcode) => {
     setSelectedProductBarcodes(prev =>
       prev.includes(barcode) ? prev.filter(x => x !== barcode) : [...prev, barcode]
@@ -138,17 +95,11 @@ function CreatingTask() {
   };
 
   const toggleSelectAll = () => {
-    if (selectedProductBarcodes.length === products.length) {
+    if (selectedProductBarcodes.length === filteredProducts.length) {
       setSelectedProductBarcodes([]);
     } else {
-      setSelectedProductBarcodes(products.map(p => p.barcode));
+      setSelectedProductBarcodes(filteredProducts.map(p => p.barcode));
     }
-  };
-
-  const toggleSearchSelect = (barcode) => {
-    setSearchSelected(prev =>
-      prev.includes(barcode) ? prev.filter(x => x !== barcode) : [...prev, barcode]
-    );
   };
 
   const handleCSVUpload = (e) => {
@@ -200,7 +151,14 @@ function CreatingTask() {
     navigate('/buyer/counting-tasks/new/preview');
   };
 
-  const rows = products.map(p => [
+  const filteredProducts = resultFilter.trim()
+    ? products.filter(p =>
+        (p.name && p.name.toLowerCase().includes(resultFilter.toLowerCase())) ||
+        (p.barcode && p.barcode.toLowerCase().includes(resultFilter.toLowerCase()))
+      )
+    : products;
+
+  const rows = filteredProducts.map(p => [
     <Checkbox
       checked={selectedProductBarcodes.includes(p.barcode)}
       onChange={() => toggleSelectProduct(p.barcode)}
@@ -220,6 +178,25 @@ function CreatingTask() {
         <Layout.Section>
           <BlockStack gap="400">
             {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
+
+            {/* Global search */}
+            <Card>
+              <BlockStack gap="300">
+                <Text variant="headingSm">Search and add products</Text>
+                <SearchWithFilters
+                  onAddItems={(items) => {
+                    const barcodes = items.map(i => i.barcode);
+                    setTaskItems(prev => [...new Set([...prev, ...barcodes])]);
+                    setProducts(prev => {
+                      const existing = prev.map(p => p.barcode);
+                      const newItems = items.filter(i => !existing.includes(i.barcode));
+                      return [...prev, ...newItems];
+                    });
+                  }}
+                  taskItems={taskItems}
+                />
+              </BlockStack>
+            </Card>
 
             {/* Filters */}
             <Card>
@@ -307,7 +284,6 @@ function CreatingTask() {
 
                 <InlineStack align="space-between">
                   <InlineStack gap="200">
-                    {/* CSV Upload */}
                     <input
                       type="file"
                       accept=".csv"
@@ -315,102 +291,51 @@ function CreatingTask() {
                       style={{ display: 'none' }}
                       onChange={handleCSVUpload}
                     />
-                    <Button onClick={() => csvInputRef.current.click()}>
-                      Upload CSV
-                    </Button>
+                    <Button onClick={() => csvInputRef.current.click()}>Upload CSV</Button>
                     {taskItems.length > 0 && (
                       <Text variant="bodySm" tone="subdued">{taskItems.length} items added</Text>
                     )}
                   </InlineStack>
-                  <Button onClick={handleShowResult} loading={loadingProducts}>
-                    Show result
-                  </Button>
+                  <Button onClick={handleShowResult} loading={loadingProducts}>Show result</Button>
                 </InlineStack>
               </BlockStack>
             </Card>
 
-            {/* Search box */}
+            {/* Product list */}
             {products.length > 0 && (
               <Card>
                 <BlockStack gap="300">
-                  <Text variant="headingSm">Search products</Text>
-                  <div ref={searchRef} style={{ position: 'relative' }}>
+                  <InlineStack align="space-between">
+                    <Text variant="bodySm" tone="subdued">{products.length} products</Text>
+                    <InlineStack gap="200">
+                      <Button disabled={selectedProductBarcodes.length === 0} onClick={handleAddSelected}>
+                        Add selected
+                      </Button>
+                      <Button onClick={handleAddAll}>Add all</Button>
+                    </InlineStack>
+                  </InlineStack>
+
+                  {/* Result filter — only show when >= 2 products */}
+                  {products.length >= 2 && (
                     <input
                       type="text"
-                      placeholder="Search by name or SKU..."
-                      value={searchQuery}
-                      onChange={e => setSearchQuery(e.target.value)}
+                      placeholder="Filter results by name or SKU..."
+                      value={resultFilter}
+                      onChange={e => setResultFilter(e.target.value)}
                       style={{
                         width: '100%', padding: '8px 12px',
                         border: '1px solid #c9cccf', borderRadius: '8px',
                         fontSize: '14px', boxSizing: 'border-box',
                       }}
                     />
-                    {searchOpen && searchResults.length > 0 && (
-                      <div style={{
-                        position: 'absolute', top: '100%', left: 0, right: 0,
-                        background: 'white', border: '1px solid #c9cccf',
-                        borderRadius: '8px', zIndex: 100,
-                        maxHeight: '240px', overflowY: 'auto',
-                        boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-                        marginTop: '4px',
-                      }}>
-                        {searchResults.map(p => (
-                          <div
-                            key={p.barcode}
-                            style={{
-                              padding: '8px 12px', cursor: 'pointer',
-                              display: 'flex', alignItems: 'center', gap: '8px',
-                              background: searchSelected.includes(p.barcode) ? '#f1f8f5' : 'white',
-                              borderBottom: '1px solid #f1f3f5',
-                            }}
-                            onClick={() => toggleSearchSelect(p.barcode)}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={searchSelected.includes(p.barcode)}
-                              onChange={() => {}}
-                              style={{ cursor: 'pointer' }}
-                            />
-                            <div>
-                              <div style={{ fontSize: '14px', fontWeight: '500' }}>{p.name}</div>
-                              <div style={{ fontSize: '12px', color: '#6d7175' }}>{p.barcode}</div>
-                            </div>
-                            {taskItems.includes(p.barcode) && (
-                              <span style={{ marginLeft: 'auto', color: 'green', fontSize: '12px' }}>✓ Added</span>
-                            )}
-                          </div>
-                        ))}
-                        {searchSelected.length > 0 && (
-                          <div style={{ padding: '8px 12px', borderTop: '1px solid #f1f3f5' }}>
-                            <Button size="slim" onClick={handleAddSearchSelected}>
-                              Add {searchSelected.length} selected
-                            </Button>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </BlockStack>
-              </Card>
-            )}
+                  )}
 
-            {/* Product list */}
-            {products.length > 0 && (
-              <Card>
-                <BlockStack gap="300">
-                  <InlineStack align="end" gap="200">
-                    <Button disabled={selectedProductBarcodes.length === 0} onClick={handleAddSelected}>
-                      Add selected
-                    </Button>
-                    <Button onClick={handleAddAll}>Add all</Button>
-                  </InlineStack>
                   <DataTable
                     columnContentTypes={['text','text','text','text']}
                     headings={[
                       <Checkbox
-                        checked={selectedProductBarcodes.length === products.length && products.length > 0}
-                        indeterminate={selectedProductBarcodes.length > 0 && selectedProductBarcodes.length < products.length}
+                        checked={selectedProductBarcodes.length === filteredProducts.length && filteredProducts.length > 0}
+                        indeterminate={selectedProductBarcodes.length > 0 && selectedProductBarcodes.length < filteredProducts.length}
                         onChange={toggleSelectAll}
                       />,
                       'Name', 'SKU', 'Task',

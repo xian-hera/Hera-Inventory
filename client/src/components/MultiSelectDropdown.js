@@ -42,6 +42,7 @@ function MultiSelectDropdown({ label, options, selected, onChange, placeholder =
           whiteSpace: 'nowrap',
           overflow: 'hidden',
           textOverflow: 'ellipsis',
+          minHeight: '36px',
         }}
       >
         {displayText}
@@ -52,13 +53,29 @@ function MultiSelectDropdown({ label, options, selected, onChange, placeholder =
       </button>
       {open && (
         <div style={{
-          position: 'absolute', top: '100%', left: 0,
-          background: 'white', border: '1px solid #c9cccf',
-          borderRadius: '8px', zIndex: 100, minWidth: '100%',
-          maxHeight: '240px', overflowY: 'auto',
+          position: 'fixed',
+          background: 'white',
+          border: '1px solid #c9cccf',
+          borderRadius: '8px',
+          zIndex: 9999,
+          minWidth: '160px',
+          minHeight: '120px',
+          maxHeight: '320px',
+          overflowY: 'auto',
           boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
           marginTop: '4px',
-        }}>
+        }}
+          ref={el => {
+            if (el && ref.current) {
+              const btn = ref.current.querySelector('button');
+              if (btn) {
+                const rect = btn.getBoundingClientRect();
+                el.style.top = `${rect.bottom + 4}px`;
+                el.style.left = `${rect.left}px`;
+              }
+            }
+          }}
+        >
           {options.map(opt => {
             const value = typeof opt === 'string' ? opt : opt.value;
             const label = typeof opt === 'string' ? opt : opt.label;
@@ -68,12 +85,13 @@ function MultiSelectDropdown({ label, options, selected, onChange, placeholder =
                 key={value}
                 onClick={() => toggle(value)}
                 style={{
-                  padding: '8px 12px',
+                  padding: '10px 12px',
                   cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
                   gap: '8px',
                   background: checked ? '#f1f8f5' : 'white',
+                  borderBottom: '1px solid #f6f6f7',
                 }}
               >
                 <input
