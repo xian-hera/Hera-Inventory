@@ -23,7 +23,6 @@ router.get('/product-types', async (req, res) => {
   try {
     const session = await getSession();
     if (!session) return res.status(401).json({ error: 'No session' });
-    console.log('Session accessToken:', session?.accessToken ? 'present' : 'MISSING');
 
     const shopify = getShopify();
     const client = new shopify.clients.Graphql({ session });
@@ -36,8 +35,8 @@ router.get('/product-types', async (req, res) => {
       }
     }`;
 
-    const response = await client.query({ data: query });
-    const types = response.body.data.productTypes.edges.map(e => e.node).filter(Boolean);
+    const response = await client.request(query);
+    const types = response.data.productTypes.edges.map(e => e.node).filter(Boolean);
     res.json(types);
   } catch (e) {
     console.error('GET /api/shopify/product-types error:', e);
@@ -50,7 +49,6 @@ router.post('/products', async (req, res) => {
   try {
     const session = await getSession();
     if (!session) return res.status(401).json({ error: 'No session' });
-    console.log('Session accessToken:', session?.accessToken ? 'present' : 'MISSING');
 
     const { department, types, typeCondition, metafieldKey, metafieldCondition, metafieldValue } = req.body;
     const shopify = getShopify();
@@ -91,8 +89,8 @@ router.post('/products', async (req, res) => {
       }
     }`;
 
-    const response = await client.query({ data: gqlQuery });
-    const products = response.body.data.products.edges;
+    const response = await client.request(gqlQuery);
+    const products = response.data.products.edges;
 
     let variants = [];
     for (const { node: product } of products) {
@@ -123,7 +121,6 @@ router.get('/locations', async (req, res) => {
   try {
     const session = await getSession();
     if (!session) return res.status(401).json({ error: 'No session' });
-    console.log('Session accessToken:', session?.accessToken ? 'present' : 'MISSING');
 
     const shopify = getShopify();
     const client = new shopify.clients.Graphql({ session });
@@ -139,8 +136,8 @@ router.get('/locations', async (req, res) => {
       }
     }`;
 
-    const response = await client.query({ data: query });
-    const locations = response.body.data.locations.edges.map(e => ({
+    const response = await client.request(query);
+    const locations = response.data.locations.edges.map(e => ({
       id: e.node.id,
       name: e.node.name,
     }));
@@ -156,7 +153,6 @@ router.get('/inventory/:barcode/:locationId', async (req, res) => {
   try {
     const session = await getSession();
     if (!session) return res.status(401).json({ error: 'No session' });
-    console.log('Session accessToken:', session?.accessToken ? 'present' : 'MISSING');
 
     const { barcode, locationId } = req.params;
     const shopify = getShopify();
@@ -197,8 +193,8 @@ router.get('/inventory/:barcode/:locationId', async (req, res) => {
       }
     }`;
 
-    const response = await client.query({ data: variantQuery });
-    const variants = response.body.data.productVariants.edges;
+    const response = await client.request(variantQuery);
+    const variants = response.data.productVariants.edges;
 
     if (variants.length === 0) {
       return res.status(404).json({ error: 'Product not found' });
@@ -234,7 +230,6 @@ router.post('/sync-locations', async (req, res) => {
   try {
     const session = await getSession();
     if (!session) return res.status(401).json({ error: 'No session' });
-    console.log('Session accessToken:', session?.accessToken ? 'present' : 'MISSING');
 
     const shopify = getShopify();
     const client = new shopify.clients.Graphql({ session });
@@ -251,8 +246,8 @@ router.post('/sync-locations', async (req, res) => {
       }
     }`;
 
-    const response = await client.query({ data: query });
-    const locations = response.body.data.locations.edges.map(e => ({
+    const response = await client.request(query);
+    const locations = response.data.locations.edges.map(e => ({
       id: e.node.id,
       name: e.node.name,
     }));
@@ -272,6 +267,7 @@ router.post('/sync-locations', async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
 // GET /api/shopify/search
 router.get('/search', async (req, res) => {
   try {
@@ -318,8 +314,8 @@ router.get('/search', async (req, res) => {
       }
     }`;
 
-    const response = await client.query({ data: gqlQuery });
-    const products = response.body.data.products.edges;
+    const response = await client.request(gqlQuery);
+    const products = response.data.products.edges;
 
     let variants = [];
     for (const { node: product } of products) {
@@ -342,6 +338,7 @@ router.get('/search', async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
 // GET /api/shopify/vendors-tags
 router.get('/vendors-tags', async (req, res) => {
   try {
@@ -362,9 +359,9 @@ router.get('/vendors-tags', async (req, res) => {
       }
     }`;
 
-    const response = await client.query({ data: query });
-    const vendors = response.body.data.shop.productVendors.edges.map(e => e.node).filter(Boolean).sort();
-    const tags = response.body.data.shop.productTags.edges.map(e => e.node).filter(Boolean).sort();
+    const response = await client.request(query);
+    const vendors = response.data.shop.productVendors.edges.map(e => e.node).filter(Boolean).sort();
+    const tags = response.data.shop.productTags.edges.map(e => e.node).filter(Boolean).sort();
 
     res.json({ vendors, tags });
   } catch (e) {
@@ -372,4 +369,5 @@ router.get('/vendors-tags', async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
 module.exports = { router, getDepartment };

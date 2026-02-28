@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
-import { Button, Spinner, Text } from '@shopify/polaris';
+import { Button, Spinner } from '@shopify/polaris';
 
-function FixedDropdown({ anchorRef, open, children, minWidth = 200 }) {
+function FixedDropdown({ anchorRef, open, onClose, children, minWidth = 200 }) {
+  const dropRef = useRef(null);
   const [style, setStyle] = useState({});
 
   useEffect(() => {
@@ -25,9 +26,24 @@ function FixedDropdown({ anchorRef, open, children, minWidth = 200 }) {
     }
   }, [open, anchorRef, minWidth]);
 
+  useEffect(() => {
+    if (!open) return;
+    const handleClick = (e) => {
+      if (
+        anchorRef.current && !anchorRef.current.contains(e.target) &&
+        dropRef.current && !dropRef.current.contains(e.target)
+      ) {
+        onClose();
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [open, anchorRef, onClose]);
+
   if (!open) return null;
+
   return ReactDOM.createPortal(
-    <div style={style}>{children}</div>,
+    <div ref={dropRef} style={style}>{children}</div>,
     document.body
   );
 }
@@ -36,32 +52,25 @@ function FilterDropdown({ label, options, selected, onChange, multiSelect, searc
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const btnRef = useRef(null);
-  const dropRef = useRef(null);
 
-  useEffect(() => {
-    if (!open) return;
-    const handleClick = (e) => {
-      const btn = btnRef.current;
-      const drop = document.querySelector('[data-filter-drop="' + label + '"]');
-      if (btn && !btn.contains(e.target) && drop && !drop.contains(e.target)) {
-        setOpen(false);
-        setSearch('');
-      }
-    };
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [open, label]);
+  const handleClose = () => {
+    setOpen(false);
+    setSearch('');
+  };
 
   const handleSelect = (value) => {
     if (multiSelect) {
       onChange(selected.includes(value) ? selected.filter(v => v !== value) : [...selected, value]);
     } else {
       onChange(selected === value ? '' : value);
-      setOpen(false);
+      handleClose();
     }
   };
 
-  const filteredOptions = options.filter(o => o.toLowerCase().includes(search.toLowerCase()));
+  const filteredOptions = options.filter(o =>
+    o.toLowerCase().includes(search.toLowerCase())
+  );
+
   const isActive = multiSelect ? selected.length > 0 : !!selected;
   const displayText = multiSelect
     ? selected.length > 0 ? `${label} (${selected.length})` : label
@@ -71,7 +80,7 @@ function FilterDropdown({ label, options, selected, onChange, multiSelect, searc
     <div style={{ position: 'relative' }}>
       <button
         ref={btnRef}
-        onClick={() => setOpen(!open)}
+        onClick={() => setOpen(v => !v)}
         style={{
           padding: '6px 12px',
           border: `1px solid ${isActive ? '#008060' : '#c9cccf'}`,
@@ -88,58 +97,56 @@ function FilterDropdown({ label, options, selected, onChange, multiSelect, searc
         {displayText} <span style={{ fontSize: '10px' }}>▾</span>
       </button>
 
-      <FixedDropdown anchorRef={btnRef} open={open} minWidth={220}>
-        <div data-filter-drop={label}>
-          {searchable && (
-            <div style={{
-              padding: '8px', borderBottom: '1px solid #f1f3f5',
-              position: 'sticky', top: 0, background: 'white',
-            }}>
-              <input
-                type="text"
-                placeholder={`Search ${label.toLowerCase()}...`}
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                autoFocus
-                style={{
-                  width: '100%', padding: '6px 10px',
-                  border: '1px solid #c9cccf', borderRadius: '6px',
-                  fontSize: '13px', boxSizing: 'border-box',
-                }}
-              />
+      <FixedDropdown anchorRef={btnRef} open={open} onClose={handleClose} minWidth={220}>
+        {searchable && (
+          <div style={{
+            padding: '8px', borderBottom: '1px solid #f1f3f5',
+            position: 'sticky', top: 0, background: 'white',
+          }}>
+            <input
+              type="text"
+              placeholder={`Search ${label.toLowerCase()}...`}
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              autoFocus
+              style={{
+                width: '100%', padding: '6px 10px',
+                border: '1px solid #c9cccf', borderRadius: '6px',
+                fontSize: '13px', boxSizing: 'border-box',
+              }}
+            />
+          </div>
+        )}
+        {filteredOptions.length === 0 && (
+          <div style={{ padding: '12px', color: '#6d7175', fontSize: '13px' }}>No results</div>
+        )}
+        {filteredOptions.map(opt => {
+          const checked = multiSelect ? selected.includes(opt) : selected === opt;
+          return (
+            <div
+              key={opt}
+              onClick={() => handleSelect(opt)}
+              style={{
+                padding: '10px 12px', cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: '8px',
+                background: checked ? '#f1f8f5' : 'white',
+                borderBottom: '1px solid #f6f6f7', fontSize: '13px',
+              }}
+            >
+              {multiSelect ? (
+                <input type="checkbox" checked={checked} onChange={() => {}} style={{ cursor: 'pointer' }} />
+              ) : (
+                <span style={{
+                  width: '14px', height: '14px', borderRadius: '50%',
+                  border: `2px solid ${checked ? '#008060' : '#c9cccf'}`,
+                  background: checked ? '#008060' : 'white',
+                  display: 'inline-block', flexShrink: 0,
+                }} />
+              )}
+              {opt}
             </div>
-          )}
-          {filteredOptions.length === 0 && (
-            <div style={{ padding: '12px', color: '#6d7175', fontSize: '13px' }}>No results</div>
-          )}
-          {filteredOptions.map(opt => {
-            const checked = multiSelect ? selected.includes(opt) : selected === opt;
-            return (
-              <div
-                key={opt}
-                onClick={() => handleSelect(opt)}
-                style={{
-                  padding: '10px 12px', cursor: 'pointer',
-                  display: 'flex', alignItems: 'center', gap: '8px',
-                  background: checked ? '#f1f8f5' : 'white',
-                  borderBottom: '1px solid #f6f6f7', fontSize: '13px',
-                }}
-              >
-                {multiSelect ? (
-                  <input type="checkbox" checked={checked} onChange={() => {}} style={{ cursor: 'pointer' }} />
-                ) : (
-                  <span style={{
-                    width: '14px', height: '14px', borderRadius: '50%',
-                    border: `2px solid ${checked ? '#008060' : '#c9cccf'}`,
-                    background: checked ? '#008060' : 'white',
-                    display: 'inline-block', flexShrink: 0,
-                  }} />
-                )}
-                {opt}
-              </div>
-            );
-          })}
-        </div>
+          );
+        })}
       </FixedDropdown>
     </div>
   );
@@ -157,8 +164,6 @@ function SearchWithFilters({ onAddItems, taskItems }) {
   const [selectedTag, setSelectedTag] = useState('');
 
   const inputRef = useRef(null);
-  const dropRef = useRef(null);
-  const wrapperRef = useRef(null);
 
   useEffect(() => {
     const loadFilters = async () => {
@@ -173,19 +178,6 @@ function SearchWithFilters({ onAddItems, taskItems }) {
     };
     loadFilters();
   }, []);
-
-  useEffect(() => {
-    if (!dropOpen) return;
-    const handleClick = (e) => {
-      const input = inputRef.current;
-      const drop = document.querySelector('[data-search-drop]');
-      if (input && !input.contains(e.target) && drop && !drop.contains(e.target)) {
-        setDropOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [dropOpen]);
 
   useEffect(() => {
     const hasFilter = selectedVendors.length > 0 || !!selectedTag;
@@ -215,7 +207,9 @@ function SearchWithFilters({ onAddItems, taskItems }) {
   }, [query, selectedVendors, selectedTag]);
 
   const toggleSelect = (barcode) => {
-    setSelected(prev => prev.includes(barcode) ? prev.filter(x => x !== barcode) : [...prev, barcode]);
+    setSelected(prev =>
+      prev.includes(barcode) ? prev.filter(x => x !== barcode) : [...prev, barcode]
+    );
   };
 
   const handleAdd = () => {
@@ -227,7 +221,7 @@ function SearchWithFilters({ onAddItems, taskItems }) {
   };
 
   return (
-    <div ref={wrapperRef}>
+    <div>
       {/* Filter chips */}
       <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '10px' }}>
         <FilterDropdown
@@ -280,36 +274,39 @@ function SearchWithFilters({ onAddItems, taskItems }) {
         )}
       </div>
 
-      {/* Search results via portal */}
-      <FixedDropdown anchorRef={inputRef} open={dropOpen} minWidth={300}>
-        <div data-search-drop>
-          {results.length === 0 && !loading && (
-            <div style={{ padding: '16px', color: '#6d7175', fontSize: '13px', textAlign: 'center' }}>
-              No products found
+      {/* Search results */}
+      <FixedDropdown
+        anchorRef={inputRef}
+        open={dropOpen}
+        onClose={() => setDropOpen(false)}
+        minWidth={300}
+      >
+        {results.length === 0 && !loading && (
+          <div style={{ padding: '16px', color: '#6d7175', fontSize: '13px', textAlign: 'center' }}>
+            No products found
+          </div>
+        )}
+        {results.map(p => (
+          <div
+            key={p.barcode}
+            onClick={() => toggleSelect(p.barcode)}
+            style={{
+              padding: '10px 12px', cursor: 'pointer',
+              display: 'flex', alignItems: 'center', gap: '8px',
+              background: selected.includes(p.barcode) ? '#f1f8f5' : 'white',
+              borderBottom: '1px solid #f1f3f5',
+            }}
+          >
+            <input type="checkbox" checked={selected.includes(p.barcode)} onChange={() => {}} style={{ cursor: 'pointer' }} />
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: '14px', fontWeight: '500' }}>{p.name}</div>
+              <div style={{ fontSize: '12px', color: '#6d7175' }}>{p.barcode}</div>
             </div>
-          )}
-          {results.map(p => (
-            <div
-              key={p.barcode}
-              onClick={() => toggleSelect(p.barcode)}
-              style={{
-                padding: '10px 12px', cursor: 'pointer',
-                display: 'flex', alignItems: 'center', gap: '8px',
-                background: selected.includes(p.barcode) ? '#f1f8f5' : 'white',
-                borderBottom: '1px solid #f1f3f5',
-              }}
-            >
-              <input type="checkbox" checked={selected.includes(p.barcode)} onChange={() => {}} style={{ cursor: 'pointer' }} />
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: '14px', fontWeight: '500' }}>{p.name}</div>
-                <div style={{ fontSize: '12px', color: '#6d7175' }}>{p.barcode}</div>
-              </div>
-              {taskItems.includes(p.barcode) && (
-                <span style={{ color: '#008060', fontSize: '12px', fontWeight: '600' }}>✓ Added</span>
-              )}
-            </div>
-          ))}
-        </div>
+            {taskItems.includes(p.barcode) && (
+              <span style={{ color: '#008060', fontSize: '12px', fontWeight: '600' }}>✓ Added</span>
+            )}
+          </div>
+        ))}
       </FixedDropdown>
     </div>
   );
