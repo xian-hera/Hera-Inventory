@@ -18,6 +18,33 @@ function getDepartment(productType) {
   return DEPARTMENT_MAP[productType.toUpperCase().trim()] || null;
 }
 
+async function shopifyRequest(client, query, retries = 3) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const response = await client.request(query);
+      if (response?.errors?.graphQLErrors?.length > 0) {
+        console.error('GraphQL errors:', JSON.stringify(response.errors.graphQLErrors));
+      }
+      return response;
+    } catch (e) {
+      if (e?.response?.errors) {
+        console.error('GraphQL errors detail:', JSON.stringify(e.response.errors));
+      }
+      const is429 =
+        e?.response?.status === 429 ||
+        e?.message?.includes('throttled') ||
+        e?.message?.includes('Throttled');
+      if (is429 && i < retries - 1) {
+        const wait = (i + 1) * 1000;
+        console.log(`Rate limited, retrying in ${wait}ms...`);
+        await new Promise(r => setTimeout(r, wait));
+        continue;
+      }
+      throw e;
+    }
+  }
+}
+
 // GET /api/shopify/product-types
 router.get('/product-types', async (req, res) => {
   try {
@@ -35,7 +62,7 @@ router.get('/product-types', async (req, res) => {
       }
     }`;
 
-    const response = await client.request(query);
+    const response = await shopifyRequest(client, query);
     const types = response.data.productTypes.edges.map(e => e.node).filter(Boolean);
     res.json(types);
   } catch (e) {
@@ -89,7 +116,7 @@ router.post('/products', async (req, res) => {
       }
     }`;
 
-    const response = await client.request(gqlQuery);
+    const response = await shopifyRequest(client, gqlQuery);
     const products = response.data.products.edges;
 
     let variants = [];
@@ -136,7 +163,7 @@ router.get('/locations', async (req, res) => {
       }
     }`;
 
-    const response = await client.request(query);
+    const response = await shopifyRequest(client, query);
     const locations = response.data.locations.edges.map(e => ({
       id: e.node.id,
       name: e.node.name,
@@ -193,7 +220,7 @@ router.get('/inventory/:barcode/:locationId', async (req, res) => {
       }
     }`;
 
-    const response = await client.request(variantQuery);
+    const response = await shopifyRequest(client, variantQuery);
     const variants = response.data.productVariants.edges;
 
     if (variants.length === 0) {
@@ -246,7 +273,7 @@ router.post('/sync-locations', async (req, res) => {
       }
     }`;
 
-    const response = await client.request(query);
+    const response = await shopifyRequest(client, query);
     const locations = response.data.locations.edges.map(e => ({
       id: e.node.id,
       name: e.node.name,
@@ -280,7 +307,8 @@ router.get('/search', async (req, res) => {
     if (q && q.trim().length >= 2) queryParts.push(`(title:*${q}* OR sku:*${q}*)`);
     if (vendors) {
       const vendorList = vendors.split(',');
-      queryParts.push(`(${vendorList.map(v => `vendor:"${v}"`).join(' OR ')})`);
+      const escapedVendors = vendorList.map(v => `vendor:"${v.replace(/"/g, '\\"')}"`);
+      queryParts.push(`(${escapedVendors.join(' OR ')})`);
     }
     if (tag) queryParts.push(`tag:"${tag}"`);
 
@@ -314,7 +342,7 @@ router.get('/search', async (req, res) => {
       }
     }`;
 
-    const response = await client.request(gqlQuery);
+    const response = await shopifyRequest(client, gqlQuery);
     const products = response.data.products.edges;
 
     let variants = [];
@@ -348,22 +376,47 @@ router.get('/vendors-tags', async (req, res) => {
     const shopify = getShopify();
     const client = new shopify.clients.Graphql({ session });
 
-    const query = `{
+    // Fetch vendors
+    const vendorQuery = `{
       shop {
         productVendors(first: 250) {
           edges { node }
         }
-        productTags(first: 250) {
-          edges { node }
-        }
       }
     }`;
+    const vendorResponse = await shopifyRequest(client, vendorQuery);
+    const vendors = vendorResponse.data.shop.productVendors.edges
+      .map(e => e.node).filter(Boolean).sort();
 
-    const response = await client.request(query);
-    const vendors = response.data.shop.productVendors.edges.map(e => e.node).filter(Boolean).sort();
-    const tags = response.data.shop.productTags.edges.map(e => e.node).filter(Boolean).sort();
+    // Fetch all tags with pagination
+    let allTags = [];
+    let tagCursor = null;
+    let hasMoreTags = true;
 
-    res.json({ vendors, tags });
+    while (hasMoreTags) {
+      const afterClause = tagCursor ? `, after: "${tagCursor}"` : '';
+      const tagQuery = `{
+        productTags(first: 250${afterClause}) {
+          edges {
+            node
+            cursor
+          }
+          pageInfo {
+            hasNextPage
+          }
+        }
+      }`;
+
+      const tagResponse = await shopifyRequest(client, tagQuery);
+      const edges = tagResponse.data.productTags.edges;
+      allTags = [...allTags, ...edges.map(e => e.node).filter(Boolean)];
+      hasMoreTags = tagResponse.data.productTags.pageInfo.hasNextPage;
+      if (hasMoreTags && edges.length > 0) {
+        tagCursor = edges[edges.length - 1].cursor;
+      }
+    }
+
+    res.json({ vendors, tags: allTags.sort() });
   } catch (e) {
     console.error('GET /api/shopify/vendors-tags error:', e);
     res.status(500).json({ error: e.message });
