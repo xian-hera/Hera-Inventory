@@ -34,6 +34,8 @@ function TaskDetail() {
   const [noteInput, setNoteInput] = useState('');
   const [showNoteInput, setShowNoteInput] = useState(false);
   const [committing, setCommitting] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [publishing, setPublishing] = useState(false);
 
   const fetchTask = useCallback(async () => {
     setLoading(true);
@@ -113,6 +115,36 @@ function TaskDetail() {
     }
   };
 
+  const handleDelete = async () => {
+    if (!window.confirm('Delete this draft? This cannot be undone.')) return;
+    setDeleting(true);
+    try {
+      const res = await fetch('/api/tasks', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: [task.id] }),
+      });
+      if (!res.ok) throw new Error('Delete failed');
+      navigate('/buyer/counting-tasks');
+    } catch (e) {
+      setError(e.message);
+      setDeleting(false);
+    }
+  };
+
+  const handlePublish = async () => {
+    setPublishing(true);
+    try {
+      const res = await fetch(`/api/tasks/${taskId}/publish`, { method: 'PATCH' });
+      if (!res.ok) throw new Error('Publish failed');
+      fetchTask();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setPublishing(false);
+    }
+  };
+
   const toggleSelectOne = (id) => {
     setSelectedItemIds(prev =>
       prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
@@ -180,7 +212,6 @@ function TaskDetail() {
         <Layout.Section>
           <BlockStack gap="400">
 
-            {/* Header info */}
             <InlineStack align="space-between">
               <InlineStack gap="200">
                 {getStatusBadge(task.status)}
@@ -188,18 +219,34 @@ function TaskDetail() {
               <Text variant="bodySm" tone="subdued">{formatDate(task.created_at)}</Text>
             </InlineStack>
 
-            {/* Filter summary */}
             {task.filter_summary && (
               <Text variant="bodySm" tone="subdued">{task.filter_summary}</Text>
             )}
 
             {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
 
-            {/* Actions + Notes */}
             <Card>
               <BlockStack gap="300">
                 <InlineStack gap="200" wrap>
                   <Button onClick={() => setShowNoteInput(true)}>Add note</Button>
+                  {task.status === 'draft' && (
+                    <>
+                      <Button
+                        variant="primary"
+                        onClick={handlePublish}
+                        loading={publishing}
+                      >
+                        Publish
+                      </Button>
+                      <Button
+                        tone="critical"
+                        onClick={handleDelete}
+                        loading={deleting}
+                      >
+                        Delete
+                      </Button>
+                    </>
+                  )}
                   <Button
                     disabled={selectedItemIds.length === 0 || committing}
                     onClick={() => handleCommit(false)}
@@ -216,7 +263,6 @@ function TaskDetail() {
                   </Button>
                 </InlineStack>
 
-                {/* Note input */}
                 {showNoteInput && (
                   <InlineStack gap="200" align="start">
                     <div style={{ flex: 1 }}>
@@ -236,7 +282,6 @@ function TaskDetail() {
                   </InlineStack>
                 )}
 
-                {/* Notes list */}
                 {notes.length > 0 && (
                   <BlockStack gap="200">
                     <Text variant="headingSm">Note</Text>
@@ -262,7 +307,6 @@ function TaskDetail() {
               </BlockStack>
             </Card>
 
-            {/* Items table */}
             <Card>
               <DataTable
                 columnContentTypes={['text','text','text','text','text']}

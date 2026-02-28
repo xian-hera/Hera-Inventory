@@ -319,5 +319,19 @@ router.patch('/:taskId/items/:itemId/scan', async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+// PATCH /api/tasks/:id/publish - publish draft to counting
+router.patch('/:id/publish', async (req, res) => {
+  try {
+    const { id } = req.params;
+    await pool.query(
+      "UPDATE tasks SET status = 'counting', updated_at = NOW() WHERE id = $1 AND status = 'draft'",
+      [id]
+    );
+    res.json({ success: true });
+  } catch (e) {
+    console.error('PATCH /api/tasks/:id/publish error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
 
 module.exports = router;

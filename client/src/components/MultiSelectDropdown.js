@@ -49,18 +49,19 @@ function MultiSelectDropdown({ label, options, selected, onChange, placeholder =
   return (
     <div style={{ position: 'relative', minWidth: '140px' }}>
       {label && (
-        <div style={{ fontSize: '12px', color: '#6d7175', marginBottom: '2px', marginTop: '2px' }}>{label}</div>
+        <div style={{ fontSize: '13px', color: '#6d7175', marginBottom: '4px', lineHeight: '1.4', fontWeight: '400' }}>{label}</div>
       )}
       <button
         ref={btnRef}
         onClick={handleToggle}
         style={{
-          width: '100%', padding: '6px 28px 6px 10px',
+          width: '100%', padding: '0 28px 0 10px',
           border: '1px solid #c9cccf', borderRadius: '8px',
           background: 'white', cursor: 'pointer', textAlign: 'left',
           fontSize: '14px', position: 'relative',
           whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-          minHeight: '36px',
+          height: '36px', lineHeight: '36px',
+          boxSizing: 'border-box',
         }}
       >
         {displayText}
