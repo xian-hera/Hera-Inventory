@@ -52,18 +52,25 @@ const setupShopify = (app) => {
   });
 
   // Middleware for API routes
+  
   app.use('/api', async (req, res, next) => {
     if (req.path === '/health') return next();
     try {
       const session = await loadSession(process.env.SHOP);
-      if (!session) return res.status(401).json({ error: 'Unauthorized' });
-      req.shopifySession = session;
-      next();
-    } catch (e) {
-      console.error('Session load error:', e);
-      next();
+      if (!session || !session.accessToken) {
+        return res.status(401).json({
+          error: 'Unauthorized',
+          reauth: true,
+          authUrl: `/auth?shop=${process.env.SHOP}`
+        });
     }
-  });
+    req.shopifySession = session;
+    next();
+  } catch (e) {
+    console.error('Session load error:', e);
+    res.status(500).json({ error: 'Session error' });
+  }
+});
 };
 
 // Save session to DB
