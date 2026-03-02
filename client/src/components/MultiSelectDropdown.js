@@ -1,10 +1,13 @@
 import React, { useState, useRef, useEffect } from 'react';
 import ReactDOM from 'react-dom';
 
-function MultiSelectDropdown({ label, options, selected, onChange, placeholder = 'ALL' }) {
+function MultiSelectDropdown({ label, options, selected, onChange, placeholder = 'ALL', showSelectAll = false }) {
   const [open, setOpen] = useState(false);
   const [dropStyle, setDropStyle] = useState({});
   const btnRef = useRef(null);
+
+  const allValues = options.map(opt => typeof opt === 'string' ? opt : opt.value);
+  const allSelected = allValues.length > 0 && allValues.every(v => selected.includes(v));
 
   useEffect(() => {
     if (!open) return;
@@ -44,6 +47,14 @@ function MultiSelectDropdown({ label, options, selected, onChange, placeholder =
     onChange(selected.includes(value) ? selected.filter(v => v !== value) : [...selected, value]);
   };
 
+  const toggleAll = () => {
+    if (allSelected) {
+      onChange([]);
+    } else {
+      onChange([...allValues]);
+    }
+  };
+
   const displayText = selected.length === 0 ? placeholder : selected.join(', ');
 
   return (
@@ -73,6 +84,21 @@ function MultiSelectDropdown({ label, options, selected, onChange, placeholder =
 
       {open && ReactDOM.createPortal(
         <div data-msd-drop={label} style={dropStyle}>
+          {showSelectAll && (
+            <div
+              onClick={toggleAll}
+              style={{
+                padding: '10px 12px', cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: '8px',
+                background: allSelected ? '#f1f8f5' : 'white',
+                borderBottom: '2px solid #e1e3e5',
+                fontWeight: '600',
+              }}
+            >
+              <input type="checkbox" checked={allSelected} onChange={() => {}} style={{ cursor: 'pointer' }} />
+              <span style={{ fontSize: '14px' }}>ALL</span>
+            </div>
+          )}
           {options.map(opt => {
             const value = typeof opt === 'string' ? opt : opt.value;
             const optLabel = typeof opt === 'string' ? opt : opt.label;

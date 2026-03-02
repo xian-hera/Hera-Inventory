@@ -118,7 +118,7 @@ async function generateTaskNo(client) {
 router.post('/', async (req, res) => {
   const client = await pool.connect();
   try {
-    const { department, locations, filterSummary, items, notes, publish } = req.body;
+    const { department, locations, filterSummary, items, notes, publish, negativeItems } = req.body;
     if (!department || !locations || locations.length === 0) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
@@ -145,12 +145,26 @@ router.post('/', async (req, res) => {
 
       const task = taskResult.rows[0];
 
-      // Insert items
+
+      // Insert regular items
       for (const item of items) {
         await client.query(
           `INSERT INTO task_items (task_id, barcode, name) VALUES ($1, $2, $3)`,
           [task.id, item.barcode, item.name]
         );
+      }
+
+      // Insert negative items for this location (appended at end, not visible in preview)
+      const locationNegativeItems = (negativeItems && negativeItems[location]) || [];
+      for (const item of locationNegativeItems) {
+        // Skip if already in regular items
+        const alreadyExists = items.some(i => i.barcode === item.barcode);
+        if (!alreadyExists) {
+          await client.query(
+            `INSERT INTO task_items (task_id, barcode, name) VALUES ($1, $2, $3)`,
+            [task.id, item.barcode, item.name]
+          );
+        }
       }
 
       createdTasks.push(task);
@@ -333,5 +347,86 @@ router.patch('/:id/publish', async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+// POST /api/tasks/negative-inventory
+router.post('/negative-inventory', async (req, res) => {
+  try {
+    const { locations, department } = req.body;
+    if (!locations || locations.length === 0) {
+      return res.status(400).json({ error: 'No locations provided' });
+    }
 
+    const { getShopify, getSession } = require('../shopify');
+    const session = await getSession();
+    const shopify = getShopify();
+    const client = new shopify.clients.Graphql({ session });
+
+   
+
+    // Get location IDs from DB
+    const locMap = await require('../database/init').pool.query(
+      'SELECT location_name, shopify_location_id FROM location_map WHERE location_name = ANY($1)',
+      [locations]
+    );
+    const locationIdMap = {};
+    locMap.rows.forEach(r => { locationIdMap[r.location_name] = r.shopify_location_id; });
+
+    const result = {};
+
+    for (const location of locations) {
+      const shopifyLocationId = locationIdMap[location];
+      if (!shopifyLocationId) { result[location] = []; continue; }
+
+      // Query products with negative inventory at this location
+      const gqlQuery = `
+        query getNegativeInventory($locationId: ID!) {
+          location(id: $locationId) {
+            inventoryLevels(first: 250, query: "available:<0") {
+              edges {
+                node {
+                  quantities(names: ["available"]) {
+                    name
+                    quantity
+                  }
+                  item {
+                    id
+                    sku
+                    variant {
+                      barcode
+                      metafield(namespace: "custom", key: "name") { value }
+                      product { title productType }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      `;
+
+      const response = await client.request(gqlQuery, { variables: { locationId: shopifyLocationId } });
+      const levels = response.data?.location?.inventoryLevels?.edges || [];
+
+      const { getDepartment } = require('./shopify');
+      const items = levels
+        .filter(e => {
+          const qty = e.node.quantities.find(q => q.name === 'available')?.quantity ?? 0;
+          return qty < 0;
+        })
+        .map(e => {
+          const variant = e.node.item?.variant;
+          const name = variant?.metafield?.value || variant?.product?.title || '';
+          const barcode = variant?.barcode || e.node.item?.sku || '';
+          return { barcode, name };
+        })
+        .filter(i => i.barcode);
+
+      result[location] = items;
+    }
+
+    res.json(result);
+  } catch (e) {
+    console.error('POST /api/tasks/negative-inventory error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
 module.exports = router;

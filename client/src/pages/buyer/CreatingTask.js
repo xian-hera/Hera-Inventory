@@ -10,7 +10,7 @@ import SearchWithFilters from '../../components/SearchWithFilters';
 const LOCATIONS = [
   'MTL01','MTL02','MTL03','MTL04','MTL05','MTL06',
   'MTL07','MTL08','MTL09','MTL10','MTL11',
-  'EDM01','EDM02','CAL01','OTT01','OTT02','OTT03','QC01'
+  'EDM01','EDM02','CAL01','OTT01','OTT02','OTT03','QC01','HQ'
 ];
 
 function CreatingTask() {
@@ -25,9 +25,12 @@ function CreatingTask() {
   const [metafieldValue, setMetafieldValue] = useState('');
   const [products, setProducts] = useState([]);
   const [taskItems, setTaskItems] = useState([]);
+  const [negativeItems, setNegativeItems] = useState({}); // { locationName: [barcodes] }
   const [selectedProductBarcodes, setSelectedProductBarcodes] = useState([]);
   const [loadingProducts, setLoadingProducts] = useState(false);
   const [loadingTypes, setLoadingTypes] = useState(false);
+  const [loadingNegative, setLoadingNegative] = useState(false);
+  const [negativeSuccess, setNegativeSuccess] = useState(false);
   const [error, setError] = useState('');
   const [resultFilter, setResultFilter] = useState('');
 
@@ -73,6 +76,32 @@ function CreatingTask() {
       setError('Failed to fetch products');
     } finally {
       setLoadingProducts(false);
+    }
+  };
+
+  const handleAddNegative = async () => {
+    if (selectedLocations.length === 0) {
+      setError('Please select at least one location first.');
+      return;
+    }
+    setLoadingNegative(true);
+    setNegativeSuccess(false);
+    setError('');
+    try {
+      const res = await fetch('/api/tasks/negative-inventory', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ locations: selectedLocations, department }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      // data = { MTL01: [{barcode, name}, ...], MTL02: [...] }
+      setNegativeItems(data);
+      setNegativeSuccess(true);
+    } catch (e) {
+      setError(e.message || 'Failed to fetch negative inventory');
+    } finally {
+      setLoadingNegative(false);
     }
   };
 
@@ -132,7 +161,7 @@ function CreatingTask() {
   };
 
   const handlePreview = () => {
-    if (taskItems.length === 0) {
+    if (taskItems.length === 0 && Object.keys(negativeItems).length === 0) {
       setError('Please add at least one product to the task.');
       return;
     }
@@ -155,6 +184,7 @@ function CreatingTask() {
       locations: selectedLocations,
       filterSummary,
       items: products.filter(p => taskItems.includes(p.barcode)),
+      negativeItems, // per-location negative items
     };
     sessionStorage.setItem('pendingTask', JSON.stringify(taskData));
     navigate('/buyer/counting-tasks/new/preview');
@@ -190,28 +220,45 @@ function CreatingTask() {
 
             {/* Department + Location */}
             <Card>
-              <InlineStack gap="400" wrap align="start">
-                <BlockStack gap="100">
-                  <Text variant="bodySm" tone="subdued">Department</Text>
-                  <Select
-                    label="" labelHidden
-                    options={[
-                      { label: 'CARE', value: 'CARE' },
-                      { label: 'HAIR', value: 'HAIR' },
-                      { label: 'GENM', value: 'GENM' },
-                    ]}
-                    value={department}
-                    onChange={setDepartment}
+              <BlockStack gap="300">
+                <InlineStack gap="400" wrap align="start">
+                  <BlockStack gap="100">
+                    <Text variant="bodySm" tone="subdued">Department</Text>
+                    <Select
+                      label="" labelHidden
+                      options={[
+                        { label: 'CARE', value: 'CARE' },
+                        { label: 'HAIR', value: 'HAIR' },
+                        { label: 'GENM', value: 'GENM' },
+                      ]}
+                      value={department}
+                      onChange={setDepartment}
+                    />
+                  </BlockStack>
+                  <MultiSelectDropdown
+                    label="Location"
+                    options={LOCATIONS}
+                    selected={selectedLocations}
+                    onChange={setSelectedLocations}
+                    placeholder="Select locations"
+                    showSelectAll={true}
                   />
-                </BlockStack>
-                <MultiSelectDropdown
-                  label="Location"
-                  options={LOCATIONS}
-                  selected={selectedLocations}
-                  onChange={setSelectedLocations}
-                  placeholder="Select locations"
-                />
-              </InlineStack>
+                </InlineStack>
+
+                {/* Add negative button */}
+                <InlineStack gap="200" align="start">
+                  <Button
+                    onClick={handleAddNegative}
+                    loading={loadingNegative}
+                    disabled={selectedLocations.length === 0}
+                  >
+                    Add negative
+                  </Button>
+                  {negativeSuccess && (
+                    <Text variant="bodySm" tone="success">Added successfully</Text>
+                  )}
+                </InlineStack>
+              </BlockStack>
             </Card>
 
             {/* Search and add products */}
@@ -236,7 +283,6 @@ function CreatingTask() {
             {/* Filters */}
             <Card>
               <BlockStack gap="400">
-                {/* Type filter */}
                 <InlineStack gap="200" align="start" wrap>
                   <BlockStack gap="100">
                     <Text variant="bodySm" tone="subdued">Type condition</Text>
@@ -261,7 +307,6 @@ function CreatingTask() {
                   )}
                 </InlineStack>
 
-                {/* Metafield filter */}
                 <InlineStack gap="200" align="start" wrap>
                   <Text variant="bodySm" tone="subdued">Product metafield</Text>
                   <Select
