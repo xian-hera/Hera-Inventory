@@ -189,8 +189,34 @@ function ManagerZeroQtyReport() {
             <Text variant="bodySm" tone="subdued">Scan to add items</Text>
 
             <Card>
-              <BlockStack gap="300">
-                <InlineStack align="end" gap="200">
+              <BlockStack gap="300">                
+                <InlineStack align="end" gap="200" wrap>
+                  <button
+                    disabled={selectedIds.length === 0 || submitting}
+                    onClick={() => setItems(prev => prev.filter(i => !selectedIds.includes(i.id))) || setSelectedIds([])}
+                    style={{
+                      padding: '8px 16px', borderRadius: '8px', border: '1px solid #d72c0d',
+                      background: selectedIds.length === 0 ? '#f6f6f7' : 'white',
+                      color: selectedIds.length === 0 ? '#8c9196' : '#d72c0d',
+                      cursor: selectedIds.length === 0 ? 'not-allowed' : 'pointer',
+                      fontSize: '14px', fontWeight: '500',
+                    }}
+                  >
+                    Delete selected
+                  </button>
+                  <button
+                    disabled={items.length === 0 || submitting}
+                    onClick={() => { setItems([]); setSelectedIds([]); }}
+                    style={{
+                      padding: '8px 16px', borderRadius: '8px', border: 'none',
+                      background: items.length === 0 ? '#f6f6f7' : '#d72c0d',
+                      color: items.length === 0 ? '#8c9196' : 'white',
+                      cursor: items.length === 0 ? 'not-allowed' : 'pointer',
+                      fontSize: '14px', fontWeight: '500',
+                    }}
+                  >
+                    Delete all
+                  </button>
                   <Button
                     disabled={selectedIds.length === 0 || submitting}
                     onClick={() => handleSubmitItems(selectedIds)}
@@ -198,13 +224,19 @@ function ManagerZeroQtyReport() {
                   >
                     Submit selected
                   </Button>
-                  <Button
+                  <button
                     disabled={items.length === 0 || submitting}
                     onClick={() => handleSubmitItems(items.map(i => i.id))}
-                    loading={submitting}
+                    style={{
+                      padding: '8px 16px', borderRadius: '8px', border: 'none',
+                      background: items.length === 0 ? '#f6f6f7' : '#008060',
+                      color: items.length === 0 ? '#8c9196' : 'white',
+                      cursor: items.length === 0 ? 'not-allowed' : 'pointer',
+                      fontSize: '14px', fontWeight: '500',
+                    }}
                   >
                     Submit all
-                  </Button>
+                  </button>
                 </InlineStack>
 
                 {items.length === 0 ? (

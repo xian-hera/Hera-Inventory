@@ -257,12 +257,12 @@ function ManagerTaskDetail() {
         <div style={{ fontSize: '12px', color: '#6d7175' }}>{item.barcode || '-'}</div>
       </div>
     );
-
+    
     return [
-      nameSku,
-      item.soh !== null ? String(item.soh) : '',
-      <InlineStack gap="050">{scanBars}</InlineStack>,
-      pohDisplay,
+      <div onClick={() => openPopup(item)} style={{ cursor: 'pointer' }}>{nameSku}</div>,
+      <div onClick={() => openPopup(item)} style={{ cursor: 'pointer' }}>{item.soh !== null ? String(item.soh) : ''}</div>,
+      <div onClick={() => openPopup(item)} style={{ cursor: 'pointer' }}><InlineStack gap="050">{scanBars}</InlineStack></div>,
+      <div onClick={() => openPopup(item)} style={{ cursor: 'pointer' }}>{pohDisplay}</div>,
     ];
   });
 
