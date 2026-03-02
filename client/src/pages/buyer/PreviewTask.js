@@ -72,12 +72,13 @@ function PreviewTask() {
     try {
       const res = await fetch('/api/tasks', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },       
         body: JSON.stringify({
           department: taskData.department,
           locations: taskData.locations,
           filterSummary: taskData.filterSummary,
           items: taskData.items,
+          negativeItems: taskData.negativeItems || {},
           notes,
           publish,
         }),
