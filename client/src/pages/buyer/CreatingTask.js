@@ -102,38 +102,34 @@ function CreatingTask() {
     }
   };
 
-const handleCSVUpload = (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = (evt) => {
-    const lines = evt.target.result.split('\n').filter(l => l.trim());
-    const newProducts = [];
-    for (const line of lines) {
-      const cols = line.split(',');
-      if (cols.length >= 2) {
-        const name = cols[0].trim().replace(/"/g, '');
-        const barcode = cols[1].trim().replace(/"/g, '');
-        if (barcode && barcode.toLowerCase() !== 'barcode' && name.toLowerCase() !== 'name') {
-          newProducts.push({ name, barcode });
+  const handleCSVUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const lines = evt.target.result.split('\n').filter(l => l.trim());
+      const newProducts = [];
+      for (const line of lines) {
+        const cols = line.split(',');
+        if (cols.length >= 2) {
+          const name = String(cols[0].trim().replace(/"/g, ''));
+          const barcode = String(cols[1].trim().replace(/"/g, ''));
+          if (barcode && barcode.toLowerCase() !== 'barcode' && name.toLowerCase() !== 'name') {
+            newProducts.push({ name, barcode });
+          }
         }
       }
-    }
-    if (newProducts.length === 0) return;
-
-    // Add to products list
-    setProducts(prev => {
-      const existing = prev.map(p => p.barcode);
-      const toAdd = newProducts.filter(p => !existing.includes(p.barcode));
-      return [...prev, ...toAdd];
-    });
-
-    // Add to taskItems
-    setTaskItems(prev => [...new Set([...prev, ...newProducts.map(p => p.barcode)])]);
+      if (newProducts.length === 0) return;
+      setProducts(prev => {
+        const existing = prev.map(p => p.barcode);
+        const toAdd = newProducts.filter(p => !existing.includes(p.barcode));
+        return [...prev, ...toAdd];
+      });
+      setTaskItems(prev => [...new Set([...prev, ...newProducts.map(p => p.barcode)])]);
+    };
+    reader.readAsText(file);
+    e.target.value = '';
   };
-  reader.readAsText(file);
-  e.target.value = '';
-};
 
   const handlePreview = () => {
     if (taskItems.length === 0) {
@@ -192,7 +188,33 @@ const handleCSVUpload = (e) => {
           <BlockStack gap="400">
             {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
 
-            {/* Global search */}
+            {/* Department + Location */}
+            <Card>
+              <InlineStack gap="400" wrap align="start">
+                <BlockStack gap="100">
+                  <Text variant="bodySm" tone="subdued">Department</Text>
+                  <Select
+                    label="" labelHidden
+                    options={[
+                      { label: 'CARE', value: 'CARE' },
+                      { label: 'HAIR', value: 'HAIR' },
+                      { label: 'GENM', value: 'GENM' },
+                    ]}
+                    value={department}
+                    onChange={setDepartment}
+                  />
+                </BlockStack>
+                <MultiSelectDropdown
+                  label="Location"
+                  options={LOCATIONS}
+                  selected={selectedLocations}
+                  onChange={setSelectedLocations}
+                  placeholder="Select locations"
+                />
+              </InlineStack>
+            </Card>
+
+            {/* Search and add products */}
             <Card>
               <BlockStack gap="300">
                 <Text variant="headingSm">Search and add products</Text>
@@ -214,30 +236,6 @@ const handleCSVUpload = (e) => {
             {/* Filters */}
             <Card>
               <BlockStack gap="400">
-                <InlineStack gap="400" wrap align="start">
-                  <BlockStack gap="100">
-                    <Text variant="bodySm" tone="subdued">Department</Text>
-                    <Select
-                      label="" labelHidden
-                      options={[
-                        { label: 'CARE', value: 'CARE' },
-                        { label: 'HAIR', value: 'HAIR' },
-                        { label: 'GENM', value: 'GENM' },
-                      ]}
-                      value={department}
-                      onChange={setDepartment}
-                    />
-                  </BlockStack>
-
-                  <MultiSelectDropdown
-                    label="Location"
-                    options={LOCATIONS}
-                    selected={selectedLocations}
-                    onChange={setSelectedLocations}
-                    placeholder="Select locations"
-                  />
-                </InlineStack>
-
                 {/* Type filter */}
                 <InlineStack gap="200" align="start" wrap>
                   <BlockStack gap="100">
@@ -328,7 +326,6 @@ const handleCSVUpload = (e) => {
                     </InlineStack>
                   </InlineStack>
 
-                  {/* Result filter — only show when >= 2 products */}
                   {products.length >= 2 && (
                     <input
                       type="text"
