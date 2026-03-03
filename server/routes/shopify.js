@@ -95,7 +95,6 @@ router.post('/products', async (req, res) => {
     }
     const queryString = queryParts.join(' AND ') || 'status:active';
 
-    // Parse metafield key: "namespace.key"
     let mfNamespace = null;
     let mfKey = null;
     if (hasMetafilter) {
@@ -128,6 +127,10 @@ router.post('/products', async (req, res) => {
                     metafield(namespace: "custom", key: "name") {
                       value
                     }
+                    ${hasMetafilter && mfNamespace && mfKey ? `
+                    filterMetafield: metafield(namespace: "${mfNamespace}", key: "${mfKey}") {
+                      value
+                    }` : ''}
                   }
                 }
               }
@@ -137,7 +140,6 @@ router.post('/products', async (req, res) => {
       }
     `;
 
-    // Paginate through all products
     let allProducts = [];
     let cursor = null;
     let hasNextPage = true;
@@ -150,10 +152,9 @@ router.post('/products', async (req, res) => {
       cursor = page.pageInfo.endCursor;
     }
 
-    // Helper: check if metafield value matches condition
-    const matchesMetafield = (productMfValue) => {
+    const matchesMetafield = (mfValue) => {
       if (!hasMetafilter) return true;
-      const val = (productMfValue || '').toLowerCase().trim();
+      const val = (mfValue || '').toLowerCase().trim();
       const target = metafieldValue.trim().toLowerCase();
 
       switch (metafieldCondition) {
@@ -168,7 +169,7 @@ router.post('/products', async (req, res) => {
         case 'exists with':
           return val === target;
         case "doesn't exist with":
-          return !productMfValue || val !== target;
+          return !mfValue || val !== target;
         default:
           return true;
       }
@@ -179,12 +180,15 @@ router.post('/products', async (req, res) => {
       const dept = getDepartment(product.productType);
       if (department && department !== 'ALL' && dept !== department) continue;
 
-      if (hasMetafilter) {
-        const mfValue = product.metafield?.value || null;
-        if (!matchesMetafield(mfValue)) continue;
-      }
-
       for (const { node: variant } of product.variants.edges) {
+        if (hasMetafilter) {
+          const productMfValue = product.metafield?.value || null;
+          const variantMfValue = variant.filterMetafield?.value || null;
+          const productMatches = matchesMetafield(productMfValue);
+          const variantMatches = matchesMetafield(variantMfValue);
+          if (!productMatches && !variantMatches) continue;
+        }
+
         const name = variant.metafield?.value || product.title;
         variants.push({
           productId: product.id,
