@@ -83,6 +83,8 @@ router.post('/products', async (req, res) => {
     const shopify = getShopify();
     const client = new shopify.clients.Graphql({ session });
 
+    const hasMetafilter = metafieldKey && metafieldKey.trim() && metafieldValue && metafieldValue.trim();
+
     let queryParts = [];
     if (types && types.length > 0) {
       if (typeCondition === 'is') {
@@ -91,17 +93,32 @@ router.post('/products', async (req, res) => {
         queryParts.push(`NOT (${types.map(t => `product_type:${t}`).join(' OR ')})`);
       }
     }
-
     const queryString = queryParts.join(' AND ') || 'status:active';
 
+    // Parse metafield key: "namespace.key"
+    let mfNamespace = null;
+    let mfKey = null;
+    if (hasMetafilter) {
+      const parts = metafieldKey.trim().split('.');
+      if (parts.length >= 2) {
+        mfNamespace = parts[0];
+        mfKey = parts.slice(1).join('.');
+      }
+    }
+
     const gqlQuery = `
-      query getProducts($queryString: String!) {
-        products(first: 250, query: $queryString) {
+      query getProducts($queryString: String!, $cursor: String) {
+        products(first: 250, query: $queryString, after: $cursor) {
+          pageInfo { hasNextPage endCursor }
           edges {
             node {
               id
               title
               productType
+              ${hasMetafilter && mfNamespace && mfKey ? `
+              metafield(namespace: "${mfNamespace}", key: "${mfKey}") {
+                value
+              }` : ''}
               variants(first: 100) {
                 edges {
                   node {
@@ -120,13 +137,53 @@ router.post('/products', async (req, res) => {
       }
     `;
 
-    const response = await shopifyRequest(client, gqlQuery, { queryString });
-    const products = response.data.products.edges;
+    // Paginate through all products
+    let allProducts = [];
+    let cursor = null;
+    let hasNextPage = true;
+
+    while (hasNextPage) {
+      const response = await shopifyRequest(client, gqlQuery, { queryString, cursor });
+      const page = response.data.products;
+      allProducts = [...allProducts, ...page.edges];
+      hasNextPage = page.pageInfo.hasNextPage;
+      cursor = page.pageInfo.endCursor;
+    }
+
+    // Helper: check if metafield value matches condition
+    const matchesMetafield = (productMfValue) => {
+      if (!hasMetafilter) return true;
+      const val = (productMfValue || '').toLowerCase().trim();
+      const target = metafieldValue.trim().toLowerCase();
+
+      switch (metafieldCondition) {
+        case 'value matches exactly':
+          return val === target;
+        case "value doesn't match exactly":
+          return val !== target;
+        case 'value contains':
+          return val.includes(target);
+        case "value doesn't contain":
+          return !val.includes(target);
+        case 'exists with':
+          return val === target;
+        case "doesn't exist with":
+          return !productMfValue || val !== target;
+        default:
+          return true;
+      }
+    };
 
     let variants = [];
-    for (const { node: product } of products) {
+    for (const { node: product } of allProducts) {
       const dept = getDepartment(product.productType);
       if (department && department !== 'ALL' && dept !== department) continue;
+
+      if (hasMetafilter) {
+        const mfValue = product.metafield?.value || null;
+        if (!matchesMetafield(mfValue)) continue;
+      }
+
       for (const { node: variant } of product.variants.edges) {
         const name = variant.metafield?.value || product.title;
         variants.push({
@@ -384,7 +441,6 @@ router.get('/vendors-tags', async (req, res) => {
     const shopify = getShopify();
     const client = new shopify.clients.Graphql({ session });
 
-    // Fetch vendors
     const vendorQuery = `{
       shop {
         productVendors(first: 250) {
@@ -396,7 +452,6 @@ router.get('/vendors-tags', async (req, res) => {
     const vendors = vendorResponse.data.shop.productVendors.edges
       .map(e => e.node).filter(Boolean).sort();
 
-    // Fetch all tags with pagination
     let allTags = [];
     let tagCursor = null;
     let hasMoreTags = true;
@@ -430,6 +485,7 @@ router.get('/vendors-tags', async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
 // POST /api/shopify/soh-check
 router.post('/soh-check', async (req, res) => {
   try {
@@ -445,7 +501,6 @@ router.post('/soh-check', async (req, res) => {
     const shopify = getShopify();
     const client = new shopify.clients.Graphql({ session });
 
-    // Get shopify location IDs
     const locMap = await pool.query(
       'SELECT location_name, shopify_location_id FROM location_map WHERE location_name = ANY($1)',
       [locations]
@@ -453,13 +508,11 @@ router.post('/soh-check', async (req, res) => {
     const locationIdMap = {};
     locMap.rows.forEach(r => { locationIdMap[r.location_name] = r.shopify_location_id; });
 
-    // result: { locationName: [barcodesWithZeroSOH] }
     const result = {};
     for (const location of locations) {
       result[location] = [];
     }
 
-    // Query each barcode
     for (const barcode of barcodes) {
       const variantQuery = `
         query getInventory($barcode: String!) {
