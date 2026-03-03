@@ -72,13 +72,14 @@ function PreviewTask() {
     try {
       const res = await fetch('/api/tasks', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },       
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           department: taskData.department,
           locations: taskData.locations,
           filterSummary: taskData.filterSummary,
           items: taskData.items,
           negativeItems: taskData.negativeItems || {},
+          excludedBarcodes: taskData.excludedBarcodes || {},
           notes,
           publish,
         }),
@@ -121,10 +122,8 @@ function PreviewTask() {
           <BlockStack gap="400">
             {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
 
-            {/* Filter summary */}
             <Text variant="bodySm" tone="subdued">{taskData.filterSummary}</Text>
 
-            {/* Action buttons */}
             <Card>
               <BlockStack gap="300">
                 <InlineStack gap="200" wrap>
@@ -147,7 +146,6 @@ function PreviewTask() {
                   </Button>
                 </InlineStack>
 
-                {/* Note input */}
                 {showNoteInput && (
                   <InlineStack gap="200" align="start">
                     <div style={{ flex: 1 }}>
@@ -167,7 +165,6 @@ function PreviewTask() {
                   </InlineStack>
                 )}
 
-                {/* Notes list */}
                 {notes.length > 0 && (
                   <BlockStack gap="200">
                     {notes.map((note, i) => (
@@ -175,13 +172,7 @@ function PreviewTask() {
                         <Text variant="bodyMd">{note.text}</Text>
                         <InlineStack gap="200">
                           <Text variant="bodySm" tone="subdued">{formatDate(note.created_at)}</Text>
-                          <Button
-                            variant="plain"
-                            tone="critical"
-                            onClick={() => handleDeleteNote(i)}
-                          >
-                            ✕
-                          </Button>
+                          <Button variant="plain" tone="critical" onClick={() => handleDeleteNote(i)}>✕</Button>
                         </InlineStack>
                       </InlineStack>
                     ))}
@@ -190,7 +181,6 @@ function PreviewTask() {
               </BlockStack>
             </Card>
 
-            {/* Items list */}
             <Card>
               <DataTable
                 columnContentTypes={['text','text','text']}

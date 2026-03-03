@@ -40,7 +40,6 @@ router.get('/', async (req, res) => {
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
-    
     const query = `
       SELECT 
         t.*,
@@ -95,259 +94,7 @@ router.patch('/archive', async (req, res) => {
   }
 });
 
-// Generate next task number
-async function generateTaskNo(client) {
-  const result = await client.query('SELECT last_number, last_letter FROM task_counter WHERE id = 1 FOR UPDATE');
-  let { last_number, last_letter } = result.rows[0];
-  
-  last_number += 1;
-  if (last_number > 9999) {
-    last_number = 0;
-    last_letter = String.fromCharCode(last_letter.charCodeAt(0) + 1);
-  }
-  
-  await client.query(
-    'UPDATE task_counter SET last_number = $1, last_letter = $2 WHERE id = 1',
-    [last_number, last_letter]
-  );
-  
-  return `${last_letter}${String(last_number).padStart(4, '0')}`;
-}
-
-// POST /api/tasks - create new task(s)
-router.post('/', async (req, res) => {
-  const client = await pool.connect();
-  try {
-    const { department, locations, filterSummary, items, notes, publish, negativeItems } = req.body;
-    if (!department || !locations || locations.length === 0) {
-      return res.status(400).json({ error: 'Missing required fields' });
-    }
-
-    // Fetch location map
-    const locMap = await pool.query('SELECT location_name, shopify_location_id FROM location_map');
-    const locationIdMap = {};
-    locMap.rows.forEach(r => { locationIdMap[r.location_name] = r.shopify_location_id; });
-
-    const status = publish ? 'counting' : 'draft';
-    const createdTasks = [];
-
-    await client.query('BEGIN');
-
-    for (const location of locations) {
-      const shopifyLocationId = locationIdMap[location] || '';
-      const taskNo = await generateTaskNo(client);
-
-      const taskResult = await client.query(
-        `INSERT INTO tasks (task_no, department, location, shopify_location_id, status, filter_summary, notes)
-         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-        [taskNo, department, location, shopifyLocationId, status, filterSummary, JSON.stringify(notes || [])]
-      );
-
-      const task = taskResult.rows[0];
-
-
-      // Insert regular items
-      for (const item of items) {
-        await client.query(
-          `INSERT INTO task_items (task_id, barcode, name) VALUES ($1, $2, $3)`,
-          [task.id, item.barcode, item.name]
-        );
-      }
-
-      // Insert negative items for this location (appended at end, not visible in preview)
-      const locationNegativeItems = (negativeItems && negativeItems[location]) || [];
-      for (const item of locationNegativeItems) {
-        // Skip if already in regular items
-        const alreadyExists = items.some(i => i.barcode === item.barcode);
-        if (!alreadyExists) {
-          await client.query(
-            `INSERT INTO task_items (task_id, barcode, name) VALUES ($1, $2, $3)`,
-            [task.id, item.barcode, item.name]
-          );
-        }
-      }
-
-      createdTasks.push(task);
-    }
-
-    await client.query('COMMIT');
-    res.json({ success: true, tasks: createdTasks });
-  } catch (e) {
-    await client.query('ROLLBACK');
-    console.error('POST /api/tasks error:', e);
-    res.status(500).json({ error: e.message });
-  } finally {
-    client.release();
-  }
-});
-
-// GET /api/tasks/:id - get single task with items
-router.get('/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const taskResult = await pool.query('SELECT * FROM tasks WHERE id = $1', [id]);
-    if (taskResult.rows.length === 0) return res.status(404).json({ error: 'Task not found' });
-
-    const itemsResult = await pool.query(
-      'SELECT * FROM task_items WHERE task_id = $1 ORDER BY id',
-      [id]
-    );
-
-    res.json({ ...taskResult.rows[0], items: itemsResult.rows });
-  } catch (e) {
-    console.error('GET /api/tasks/:id error:', e);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// PATCH /api/tasks/:id/notes - update notes on a task
-router.patch('/:id/notes', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { notes } = req.body;
-    await pool.query(
-      'UPDATE tasks SET notes = $1, updated_at = NOW() WHERE id = $2',
-      [JSON.stringify(notes), id]
-    );
-    res.json({ success: true });
-  } catch (e) {
-    console.error('PATCH /api/tasks/:id/notes error:', e);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// PATCH /api/tasks/:id/commit - commit selected items
-router.patch('/:id/commit', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { itemIds } = req.body;
-
-    const task = await pool.query('SELECT * FROM tasks WHERE id = $1', [id]);
-    if (task.rows.length === 0) return res.status(404).json({ error: 'Task not found' });
-
-    const items = await pool.query(
-      'SELECT * FROM task_items WHERE id = ANY($1) AND task_id = $2',
-      [itemIds, id]
-    );
-
-    const { getShopify, getSession } = require('../shopify');
-    const session = await getSession();
-    const shopify = getShopify();
-    const client = new shopify.clients.Graphql({ session });
-
-    const shopifyLocationId = task.rows[0].shopify_location_id;
-
-    for (const item of items.rows) {
-      if (item.is_correct || item.poh === null || item.soh === null) continue;
-      const delta = item.poh - item.soh;
-      if (delta === 0) continue;
-
-      // Get inventory item id
-      const variantQuery = `{
-        productVariants(first: 1, query: "barcode:${item.barcode}") {
-          edges {
-            node {
-              inventoryItem { id }
-            }
-          }
-        }
-      }`;
-      const variantRes = await client.query({ data: variantQuery });
-      const invItemId = variantRes.body.data.productVariants.edges[0]?.node?.inventoryItem?.id;
-      if (!invItemId) continue;
-
-      // Adjust inventory
-      const mutation = `
-        mutation {
-          inventoryAdjustQuantities(input: {
-            reason: "correction",
-            name: "available",
-            changes: [{
-              inventoryItemId: "${invItemId}",
-              locationId: "${shopifyLocationId}",
-              delta: ${delta}
-            }]
-          }) {
-            userErrors { field message }
-          }
-        }
-      `;
-      await client.query({ data: mutation });
-
-      // Mark as committed
-      await pool.query(
-        'UPDATE task_items SET is_committed = TRUE WHERE id = $1',
-        [item.id]
-      );
-    }
-
-    // Check if all inaccurate items are now committed
-    const remaining = await pool.query(
-      `SELECT COUNT(*) FROM task_items 
-       WHERE task_id = $1 AND is_correct = FALSE AND poh IS NOT NULL AND is_committed = FALSE`,
-      [id]
-    );
-    if (parseInt(remaining.rows[0].count) === 0) {
-      await pool.query(
-        "UPDATE tasks SET status = 'committed', updated_at = NOW() WHERE id = $1",
-        [id]
-      );
-    }
-
-    res.json({ success: true });
-  } catch (e) {
-    console.error('PATCH /api/tasks/:id/commit error:', e);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// PATCH /api/tasks/:id/submit - manager submits task
-router.patch('/:id/submit', async (req, res) => {
-  try {
-    const { id } = req.params;
-    await pool.query(
-      "UPDATE tasks SET status = 'reviewing', updated_at = NOW() WHERE id = $1",
-      [id]
-    );
-    res.json({ success: true });
-  } catch (e) {
-    console.error('PATCH /api/tasks/:id/submit error:', e);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// PATCH /api/tasks/:taskId/items/:itemId/scan - save scan result
-router.patch('/:taskId/items/:itemId/scan', async (req, res) => {
-  try {
-    const { itemId } = req.params;
-    const { scan_history, poh, soh, is_correct } = req.body;
-    await pool.query(
-      `UPDATE task_items 
-       SET scan_history = $1, poh = $2, soh = $3, is_correct = $4
-       WHERE id = $5`,
-      [JSON.stringify(scan_history), poh, soh, is_correct, itemId]
-    );
-    res.json({ success: true });
-  } catch (e) {
-    console.error('PATCH scan error:', e);
-    res.status(500).json({ error: e.message });
-  }
-});
-// PATCH /api/tasks/:id/publish - publish draft to counting
-router.patch('/:id/publish', async (req, res) => {
-  try {
-    const { id } = req.params;
-    await pool.query(
-      "UPDATE tasks SET status = 'counting', updated_at = NOW() WHERE id = $1 AND status = 'draft'",
-      [id]
-    );
-    res.json({ success: true });
-  } catch (e) {
-    console.error('PATCH /api/tasks/:id/publish error:', e);
-    res.status(500).json({ error: e.message });
-  }
-});
-// POST /api/tasks/negative-inventory
+// PATCH /api/tasks/negative-inventory - must be before /:id routes
 router.post('/negative-inventory', async (req, res) => {
   try {
     const { locations, department } = req.body;
@@ -360,10 +107,7 @@ router.post('/negative-inventory', async (req, res) => {
     const shopify = getShopify();
     const client = new shopify.clients.Graphql({ session });
 
-   
-
-    // Get location IDs from DB
-    const locMap = await require('../database/init').pool.query(
+    const locMap = await pool.query(
       'SELECT location_name, shopify_location_id FROM location_map WHERE location_name = ANY($1)',
       [locations]
     );
@@ -376,7 +120,6 @@ router.post('/negative-inventory', async (req, res) => {
       const shopifyLocationId = locationIdMap[location];
       if (!shopifyLocationId) { result[location] = []; continue; }
 
-      // Query products with negative inventory at this location
       const gqlQuery = `
         query getNegativeInventory($locationId: ID!) {
           location(id: $locationId) {
@@ -429,4 +172,254 @@ router.post('/negative-inventory', async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
+// Generate next task number
+async function generateTaskNo(client) {
+  const result = await client.query('SELECT last_number, last_letter FROM task_counter WHERE id = 1 FOR UPDATE');
+  let { last_number, last_letter } = result.rows[0];
+
+  last_number += 1;
+  if (last_number > 9999) {
+    last_number = 0;
+    last_letter = String.fromCharCode(last_letter.charCodeAt(0) + 1);
+  }
+
+  await client.query(
+    'UPDATE task_counter SET last_number = $1, last_letter = $2 WHERE id = 1',
+    [last_number, last_letter]
+  );
+
+  return `${last_letter}${String(last_number).padStart(4, '0')}`;
+}
+
+// POST /api/tasks - create new task(s)
+router.post('/', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { department, locations, filterSummary, items, notes, publish, negativeItems, excludedBarcodes } = req.body;
+    if (!department || !locations || locations.length === 0) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    const locMap = await pool.query('SELECT location_name, shopify_location_id FROM location_map');
+    const locationIdMap = {};
+    locMap.rows.forEach(r => { locationIdMap[r.location_name] = r.shopify_location_id; });
+
+    const status = publish ? 'counting' : 'draft';
+    const createdTasks = [];
+
+    await client.query('BEGIN');
+
+    for (const location of locations) {
+      const shopifyLocationId = locationIdMap[location] || '';
+      const taskNo = await generateTaskNo(client);
+
+      const taskResult = await client.query(
+        `INSERT INTO tasks (task_no, department, location, shopify_location_id, status, filter_summary, notes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+        [taskNo, department, location, shopifyLocationId, status, filterSummary, JSON.stringify(notes || [])]
+      );
+
+      const task = taskResult.rows[0];
+
+      // Insert regular items, skipping excluded zero-SOH for this location
+      const locationExcluded = (excludedBarcodes && excludedBarcodes[location]) || [];
+      for (const item of items) {
+        if (locationExcluded.includes(item.barcode)) continue;
+        await client.query(
+          `INSERT INTO task_items (task_id, barcode, name) VALUES ($1, $2, $3)`,
+          [task.id, item.barcode, item.name]
+        );
+      }
+
+      // Insert negative items for this location (appended at end)
+      const locationNegativeItems = (negativeItems && negativeItems[location]) || [];
+      for (const item of locationNegativeItems) {
+        const alreadyExists = items.some(i => i.barcode === item.barcode);
+        if (!alreadyExists) {
+          await client.query(
+            `INSERT INTO task_items (task_id, barcode, name) VALUES ($1, $2, $3)`,
+            [task.id, item.barcode, item.name]
+          );
+        }
+      }
+
+      createdTasks.push(task);
+    }
+
+    await client.query('COMMIT');
+    res.json({ success: true, tasks: createdTasks });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    console.error('POST /api/tasks error:', e);
+    res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
+  }
+});
+
+// GET /api/tasks/:id - get single task with items
+router.get('/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const taskResult = await pool.query('SELECT * FROM tasks WHERE id = $1', [id]);
+    if (taskResult.rows.length === 0) return res.status(404).json({ error: 'Task not found' });
+
+    const itemsResult = await pool.query(
+      'SELECT * FROM task_items WHERE task_id = $1 ORDER BY id',
+      [id]
+    );
+
+    res.json({ ...taskResult.rows[0], items: itemsResult.rows });
+  } catch (e) {
+    console.error('GET /api/tasks/:id error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PATCH /api/tasks/:id/notes
+router.patch('/:id/notes', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { notes } = req.body;
+    await pool.query(
+      'UPDATE tasks SET notes = $1, updated_at = NOW() WHERE id = $2',
+      [JSON.stringify(notes), id]
+    );
+    res.json({ success: true });
+  } catch (e) {
+    console.error('PATCH /api/tasks/:id/notes error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PATCH /api/tasks/:id/commit
+router.patch('/:id/commit', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { itemIds } = req.body;
+
+    const task = await pool.query('SELECT * FROM tasks WHERE id = $1', [id]);
+    if (task.rows.length === 0) return res.status(404).json({ error: 'Task not found' });
+
+    const items = await pool.query(
+      'SELECT * FROM task_items WHERE id = ANY($1) AND task_id = $2',
+      [itemIds, id]
+    );
+
+    const { getShopify, getSession } = require('../shopify');
+    const session = await getSession();
+    const shopify = getShopify();
+    const client = new shopify.clients.Graphql({ session });
+
+    const shopifyLocationId = task.rows[0].shopify_location_id;
+
+    for (const item of items.rows) {
+      if (item.is_correct || item.poh === null || item.soh === null) continue;
+      const delta = item.poh - item.soh;
+      if (delta === 0) continue;
+
+      const variantQuery = `{
+        productVariants(first: 1, query: "barcode:${item.barcode}") {
+          edges {
+            node {
+              inventoryItem { id }
+            }
+          }
+        }
+      }`;
+      const variantRes = await client.query({ data: variantQuery });
+      const invItemId = variantRes.body.data.productVariants.edges[0]?.node?.inventoryItem?.id;
+      if (!invItemId) continue;
+
+      const mutation = `
+        mutation {
+          inventoryAdjustQuantities(input: {
+            reason: "correction",
+            name: "available",
+            changes: [{
+              inventoryItemId: "${invItemId}",
+              locationId: "${shopifyLocationId}",
+              delta: ${delta}
+            }]
+          }) {
+            userErrors { field message }
+          }
+        }
+      `;
+      await client.query({ data: mutation });
+
+      await pool.query(
+        'UPDATE task_items SET is_committed = TRUE WHERE id = $1',
+        [item.id]
+      );
+    }
+
+    const remaining = await pool.query(
+      `SELECT COUNT(*) FROM task_items 
+       WHERE task_id = $1 AND is_correct = FALSE AND poh IS NOT NULL AND is_committed = FALSE`,
+      [id]
+    );
+    if (parseInt(remaining.rows[0].count) === 0) {
+      await pool.query(
+        "UPDATE tasks SET status = 'committed', updated_at = NOW() WHERE id = $1",
+        [id]
+      );
+    }
+
+    res.json({ success: true });
+  } catch (e) {
+    console.error('PATCH /api/tasks/:id/commit error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PATCH /api/tasks/:id/submit
+router.patch('/:id/submit', async (req, res) => {
+  try {
+    const { id } = req.params;
+    await pool.query(
+      "UPDATE tasks SET status = 'reviewing', updated_at = NOW() WHERE id = $1",
+      [id]
+    );
+    res.json({ success: true });
+  } catch (e) {
+    console.error('PATCH /api/tasks/:id/submit error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PATCH /api/tasks/:taskId/items/:itemId/scan
+router.patch('/:taskId/items/:itemId/scan', async (req, res) => {
+  try {
+    const { itemId } = req.params;
+    const { scan_history, poh, soh, is_correct } = req.body;
+    await pool.query(
+      `UPDATE task_items 
+       SET scan_history = $1, poh = $2, soh = $3, is_correct = $4
+       WHERE id = $5`,
+      [JSON.stringify(scan_history), poh, soh, is_correct, itemId]
+    );
+    res.json({ success: true });
+  } catch (e) {
+    console.error('PATCH scan error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PATCH /api/tasks/:id/publish
+router.patch('/:id/publish', async (req, res) => {
+  try {
+    const { id } = req.params;
+    await pool.query(
+      "UPDATE tasks SET status = 'counting', updated_at = NOW() WHERE id = $1 AND status = 'draft'",
+      [id]
+    );
+    res.json({ success: true });
+  } catch (e) {
+    console.error('PATCH /api/tasks/:id/publish error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = router;

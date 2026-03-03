@@ -430,5 +430,86 @@ router.get('/vendors-tags', async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+// POST /api/shopify/soh-check
+router.post('/soh-check', async (req, res) => {
+  try {
+    const session = await getSession();
+    if (!session) return res.status(401).json({ error: 'No session' });
+
+    const { barcodes, locations } = req.body;
+    if (!barcodes || !locations || barcodes.length === 0 || locations.length === 0) {
+      return res.json({});
+    }
+
+    const { pool } = require('../database/init');
+    const shopify = getShopify();
+    const client = new shopify.clients.Graphql({ session });
+
+    // Get shopify location IDs
+    const locMap = await pool.query(
+      'SELECT location_name, shopify_location_id FROM location_map WHERE location_name = ANY($1)',
+      [locations]
+    );
+    const locationIdMap = {};
+    locMap.rows.forEach(r => { locationIdMap[r.location_name] = r.shopify_location_id; });
+
+    // result: { locationName: [barcodesWithZeroSOH] }
+    const result = {};
+    for (const location of locations) {
+      result[location] = [];
+    }
+
+    // Query each barcode
+    for (const barcode of barcodes) {
+      const variantQuery = `
+        query getInventory($barcode: String!) {
+          productVariants(first: 5, query: $barcode) {
+            edges {
+              node {
+                barcode
+                sku
+                inventoryItem {
+                  inventoryLevels(first: 30) {
+                    edges {
+                      node {
+                        location { id }
+                        quantities(names: ["available"]) {
+                          name
+                          quantity
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      `;
+
+      const response = await shopifyRequest(client, variantQuery, { barcode: `barcode:${barcode}` });
+      const variants = response.data?.productVariants?.edges || [];
+      if (variants.length === 0) continue;
+
+      const variant = variants[0].node;
+      const levels = variant.inventoryItem?.inventoryLevels?.edges || [];
+
+      for (const location of locations) {
+        const shopifyLocationId = locationIdMap[location];
+        if (!shopifyLocationId) continue;
+        const level = levels.find(e => e.node.location.id === shopifyLocationId);
+        const soh = level?.node.quantities.find(q => q.name === 'available')?.quantity ?? 0;
+        if (soh === 0) {
+          result[location].push(barcode);
+        }
+      }
+    }
+
+    res.json(result);
+  } catch (e) {
+    console.error('POST /api/shopify/soh-check error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
 
 module.exports = { router, getDepartment };

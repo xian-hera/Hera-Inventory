@@ -25,12 +25,15 @@ function CreatingTask() {
   const [metafieldValue, setMetafieldValue] = useState('');
   const [products, setProducts] = useState([]);
   const [taskItems, setTaskItems] = useState([]);
-  const [negativeItems, setNegativeItems] = useState({}); // { locationName: [barcodes] }
+  const [negativeItems, setNegativeItems] = useState({});
+  const [excludedBarcodes, setExcludedBarcodes] = useState({});
   const [selectedProductBarcodes, setSelectedProductBarcodes] = useState([]);
   const [loadingProducts, setLoadingProducts] = useState(false);
   const [loadingTypes, setLoadingTypes] = useState(false);
   const [loadingNegative, setLoadingNegative] = useState(false);
+  const [loadingExclude, setLoadingExclude] = useState(false);
   const [negativeSuccess, setNegativeSuccess] = useState(false);
+  const [excludeSuccess, setExcludeSuccess] = useState(false);
   const [error, setError] = useState('');
   const [resultFilter, setResultFilter] = useState('');
 
@@ -72,6 +75,8 @@ function CreatingTask() {
       setProducts(data);
       setSelectedProductBarcodes([]);
       setResultFilter('');
+      setExcludeSuccess(false);
+      setExcludedBarcodes({});
     } catch (e) {
       setError('Failed to fetch products');
     } finally {
@@ -95,13 +100,42 @@ function CreatingTask() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      // data = { MTL01: [{barcode, name}, ...], MTL02: [...] }
       setNegativeItems(data);
       setNegativeSuccess(true);
     } catch (e) {
       setError(e.message || 'Failed to fetch negative inventory');
     } finally {
       setLoadingNegative(false);
+    }
+  };
+
+  const handleExcludeZero = async () => {
+    if (selectedLocations.length === 0) {
+      setError('Please select at least one location first.');
+      return;
+    }
+    if (products.length === 0) {
+      setError('No products in list to check.');
+      return;
+    }
+    setLoadingExclude(true);
+    setExcludeSuccess(false);
+    setError('');
+    try {
+      const barcodes = products.map(p => p.barcode).filter(Boolean);
+      const res = await fetch('/api/shopify/soh-check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ barcodes, locations: selectedLocations }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setExcludedBarcodes(data);
+      setExcludeSuccess(true);
+    } catch (e) {
+      setError(e.message || 'Failed to check SOH');
+    } finally {
+      setLoadingExclude(false);
     }
   };
 
@@ -184,7 +218,8 @@ function CreatingTask() {
       locations: selectedLocations,
       filterSummary,
       items: products.filter(p => taskItems.includes(p.barcode)),
-      negativeItems, // per-location negative items
+      negativeItems,
+      excludedBarcodes,
     };
     sessionStorage.setItem('pendingTask', JSON.stringify(taskData));
     navigate('/buyer/counting-tasks/new/preview');
@@ -245,7 +280,6 @@ function CreatingTask() {
                   />
                 </InlineStack>
 
-                {/* Add negative button */}
                 <InlineStack gap="200" align="start">
                   <Button
                     onClick={handleAddNegative}
@@ -364,6 +398,16 @@ function CreatingTask() {
                   <InlineStack align="space-between">
                     <Text variant="bodySm" tone="subdued">{products.length} products</Text>
                     <InlineStack gap="200">
+                      {excludeSuccess && (
+                        <Text variant="bodySm" tone="success">Excluded successfully</Text>
+                      )}
+                      <Button
+                        onClick={handleExcludeZero}
+                        loading={loadingExclude}
+                        disabled={selectedLocations.length === 0}
+                      >
+                        Exclude 0
+                      </Button>
                       <Button disabled={selectedProductBarcodes.length === 0} onClick={handleAddSelected}>
                         Add selected
                       </Button>
