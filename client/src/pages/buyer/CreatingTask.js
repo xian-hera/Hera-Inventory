@@ -34,6 +34,7 @@ function CreatingTask() {
   const [loadingExclude, setLoadingExclude] = useState(false);
   const [negativeSuccess, setNegativeSuccess] = useState(false);
   const [excludeSuccess, setExcludeSuccess] = useState(false);
+  const [csvImported, setCsvImported] = useState(false);
   const [error, setError] = useState('');
   const [resultFilter, setResultFilter] = useState('');
 
@@ -189,6 +190,7 @@ function CreatingTask() {
         return [...prev, ...toAdd];
       });
       setTaskItems(prev => [...new Set([...prev, ...newProducts.map(p => p.barcode)])]);
+      setCsvImported(true);
     };
     reader.readAsText(file);
     e.target.value = '';
@@ -203,15 +205,26 @@ function CreatingTask() {
       setError('Please select at least one location.');
       return;
     }
-    let filterSummary = '';
+
+    const summaryParts = [];
+
     if (selectedTypes.length > 0) {
-      filterSummary += `type ${typeCondition} ${selectedTypes.join(', ')}`;
+      summaryParts.push(`type ${typeCondition} ${selectedTypes.join(', ')}`);
     }
     if (metafieldKey && metafieldValue) {
-      if (filterSummary) filterSummary += ', ';
-      filterSummary += `metafield ${metafieldKey} ${metafieldCondition} ${metafieldValue}`;
+      summaryParts.push(`metafield ${metafieldKey} ${metafieldCondition} ${metafieldValue}`);
     }
-    if (!filterSummary) filterSummary = 'All products';
+    if (csvImported) {
+      summaryParts.push('CSV imported');
+    }
+    if (Object.values(negativeItems).some(arr => arr.length > 0)) {
+      summaryParts.push('negative added');
+    }
+    if (Object.values(excludedBarcodes).some(arr => arr.length > 0)) {
+      summaryParts.push('0 excluded');
+    }
+
+    const filterSummary = summaryParts.length > 0 ? summaryParts.join(' | ') : 'All products';
 
     const taskData = {
       department,
