@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Page, Layout, Card, Button, BlockStack, InlineStack,
   Select, DataTable, Checkbox, Badge, Text, Banner
@@ -9,7 +9,7 @@ import MultiSelectDropdown from '../../components/MultiSelectDropdown';
 const LOCATIONS = [
   'MTL01','MTL02','MTL03','MTL04','MTL05','MTL06',
   'MTL07','MTL08','MTL09','MTL10','MTL11',
-  'EDM01','EDM02','CAL01','OTT01','OTT02','OTT03','QC01'
+  'EDM01','EDM02','CAL01','OTT01','OTT02','OTT03','QC01','HQ'
 ];
 
 const STATUS_OPTIONS = ['counting','reviewing','committed','auto_committed','draft','archived'];
@@ -29,16 +29,26 @@ function getStatusBadge(status) {
   return <Badge tone={toneMap[status] || ''}>{status}</Badge>;
 }
 
+// Sort order cycles: null → 'desc' (newest first) → 'asc' (oldest first) → null
+const SORT_CYCLE = [null, 'desc', 'asc'];
+
+function sortLabel(order) {
+  if (order === 'desc') return 'Sort ↓';
+  if (order === 'asc')  return 'Sort ↑';
+  return 'Sort';
+}
+
 function CountingTasksList() {
   const navigate = useNavigate();
-  const [tasks, setTasks] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [department, setDepartment] = useState('ALL');
+  const [tasks, setTasks]                     = useState([]);
+  const [loading, setLoading]                 = useState(false);
+  const [error, setError]                     = useState('');
+  const [department, setDepartment]           = useState('ALL');
   const [selectedLocations, setSelectedLocations] = useState([]);
-  const [selectedStatuses, setSelectedStatuses] = useState([]);
-  const [date, setDate] = useState('ALL');
-  const [selectedIds, setSelectedIds] = useState([]);
+  const [selectedStatuses, setSelectedStatuses]   = useState([]);
+  const [date, setDate]                       = useState('ALL');
+  const [selectedIds, setSelectedIds]         = useState([]);
+  const [sortOrder, setSortOrder]             = useState(null); // null | 'desc' | 'asc'
 
   const fetchTasks = useCallback(async () => {
     setLoading(true);
@@ -61,6 +71,25 @@ function CountingTasksList() {
 
   useEffect(() => { fetchTasks(); }, [fetchTasks]);
 
+  // ── Sort ────────────────────────────────────────────────────────────────
+  const handleSort = () => {
+    setSortOrder(prev => {
+      const idx = SORT_CYCLE.indexOf(prev);
+      return SORT_CYCLE[(idx + 1) % SORT_CYCLE.length];
+    });
+  };
+
+  const displayedTasks = useMemo(() => {
+    if (!sortOrder) return tasks;
+    return [...tasks].sort((a, b) => {
+      // task_no format: letter(s) + digits — lexicographic works because
+      // letters are the same length and digits are zero-padded.
+      const cmp = a.task_no.localeCompare(b.task_no);
+      return sortOrder === 'desc' ? -cmp : cmp;
+    });
+  }, [tasks, sortOrder]);
+
+  // ── Selection ───────────────────────────────────────────────────────────
   const toggleSelectAll = () => {
     setSelectedIds(selectedIds.length === tasks.length ? [] : tasks.map(t => t.id));
   };
@@ -69,6 +98,7 @@ function CountingTasksList() {
     setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   };
 
+  // ── Bulk actions ─────────────────────────────────────────────────────────
   const handleDelete = async () => {
     if (selectedIds.length === 0) return;
     if (!window.confirm(`Delete ${selectedIds.length} task(s)?`)) return;
@@ -92,7 +122,8 @@ function CountingTasksList() {
     fetchTasks();
   };
 
-  const rows = tasks.map(task => [
+  // ── Rows (based on sorted list) ──────────────────────────────────────────
+  const rows = displayedTasks.map(task => [
     <Checkbox checked={selectedIds.includes(task.id)} onChange={() => toggleSelectOne(task.id)} />,
     <Button variant="plain" onClick={() => navigate(`/buyer/counting-tasks/${task.id}`)}>{task.task_no}</Button>,
     task.department,
@@ -112,6 +143,8 @@ function CountingTasksList() {
         <Layout.Section>
           <BlockStack gap="400">
             {error && <Banner tone="critical">{error}</Banner>}
+
+            {/* Filters */}
             <Card>
               <InlineStack gap="400" wrap>
                 <BlockStack gap="100">
@@ -119,7 +152,7 @@ function CountingTasksList() {
                   <Select
                     label="" labelHidden
                     options={[
-                      { label: 'ALL', value: 'ALL' },
+                      { label: 'ALL',  value: 'ALL'  },
                       { label: 'CARE', value: 'CARE' },
                       { label: 'HAIR', value: 'HAIR' },
                       { label: 'GENM', value: 'GENM' },
@@ -145,9 +178,9 @@ function CountingTasksList() {
                   <Select
                     label="" labelHidden
                     options={[
-                      { label: 'ALL', value: 'ALL' },
-                      { label: 'Today', value: 'today' },
-                      { label: '7 days', value: '7days' },
+                      { label: 'ALL',     value: 'ALL'    },
+                      { label: 'Today',   value: 'today'  },
+                      { label: '7 days',  value: '7days'  },
                       { label: '30 days', value: '30days' },
                     ]}
                     value={date}
@@ -156,12 +189,36 @@ function CountingTasksList() {
                 </BlockStack>
               </InlineStack>
             </Card>
+
+            {/* Table + action bar */}
             <Card>
               <BlockStack gap="300">
-                <InlineStack align="end" gap="200">
-                  <Button tone="critical" disabled={selectedIds.length === 0} onClick={handleDelete}>Delete selected</Button>
-                  <Button disabled={selectedIds.length === 0} onClick={handleArchive}>Archive selected</Button>
+                {/* Button row: Sort on the left, Delete/Archive on the right */}
+                <InlineStack align="space-between" gap="200">
+                  <Button
+                    onClick={handleSort}
+                    pressed={sortOrder !== null}
+                    tone={sortOrder !== null ? 'success' : undefined}
+                  >
+                    {sortLabel(sortOrder)}
+                  </Button>
+                  <InlineStack gap="200">
+                    <Button
+                      tone="critical"
+                      disabled={selectedIds.length === 0}
+                      onClick={handleDelete}
+                    >
+                      Delete selected
+                    </Button>
+                    <Button
+                      disabled={selectedIds.length === 0}
+                      onClick={handleArchive}
+                    >
+                      Archive selected
+                    </Button>
+                  </InlineStack>
                 </InlineStack>
+
                 <DataTable
                   columnContentTypes={['text','text','text','text','text','text','text']}
                   headings={[

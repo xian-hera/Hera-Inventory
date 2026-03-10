@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   Page, Layout, Card, Button, BlockStack, InlineStack,
   Text, DataTable, Banner, TextField, Spinner
@@ -27,33 +27,34 @@ function computePOH(scanHistory, soh) {
 function ManagerTaskDetail() {
   const navigate = useNavigate();
   const { taskId } = useParams();
-  const [task, setTask] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [filter, setFilter] = useState('all');
-  const [notes, setNotes] = useState([]);
-  const [noteInput, setNoteInput] = useState('');
+  const [task, setTask]               = useState(null);
+  const [loading, setLoading]         = useState(true);
+  const [error, setError]             = useState('');
+  const [filter, setFilter]           = useState('all');
+  const [sortAZ, setSortAZ]           = useState(false); // false = default, true = A→Z
+  const [notes, setNotes]             = useState([]);
+  const [noteInput, setNoteInput]     = useState('');
   const [showNoteInput, setShowNoteInput] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+  const [submitting, setSubmitting]   = useState(false);
   const [submitWarning, setSubmitWarning] = useState(false);
 
   // Popup
-  const [popupItem, setPopupItem] = useState(null);
-  const [popupSoh, setPopupSoh] = useState(null);
+  const [popupItem, setPopupItem]   = useState(null);
+  const [popupSoh, setPopupSoh]     = useState(null);
   const [countInput, setCountInput] = useState('');
   const [loadingSoh, setLoadingSoh] = useState(false);
 
-  // Error popup (problem 8)
+  // Error popup
   const [errorPopup, setErrorPopup] = useState('');
 
   const barcodeBuffer = useRef('');
-  const barcodeTimer = useRef(null);
-  const location = localStorage.getItem('managerLocation') || '';
+  const barcodeTimer  = useRef(null);
+  const location      = localStorage.getItem('managerLocation') || '';
 
   const fetchTask = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/tasks/${taskId}`);
+      const res  = await fetch(`/api/tasks/${taskId}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       setTask(data);
@@ -96,11 +97,11 @@ function ManagerTaskDetail() {
     setCountInput('');
     setLoadingSoh(true);
     try {
-      const locRes = await fetch('/api/shopify/locations');
+      const locRes  = await fetch('/api/shopify/locations');
       const locData = await locRes.json();
-      const loc = locData.find(l => l.name === location);
+      const loc     = locData.find(l => l.name === location);
       if (!loc) throw new Error('Location not found');
-      const res = await fetch(`/api/shopify/inventory/${encodeURIComponent(item.barcode)}/${encodeURIComponent(loc.id)}`);
+      const res  = await fetch(`/api/shopify/inventory/${encodeURIComponent(item.barcode)}/${encodeURIComponent(loc.id)}`);
       const data = await res.json();
       setPopupSoh(data.soh ?? 0);
       setTask(prev => ({
@@ -140,9 +141,9 @@ function ManagerTaskDetail() {
       value: type === 'correct' ? popupSoh : value,
       created_at: new Date().toISOString(),
     };
-    const newHistory = [...(item.scan_history || []), newEntry];
-    const newPoh = computePOH(newHistory, popupSoh);
-    const isCorrect = newHistory[newHistory.length - 1]?.type === 'correct';
+    const newHistory  = [...(item.scan_history || []), newEntry];
+    const newPoh      = computePOH(newHistory, popupSoh);
+    const isCorrect   = newHistory[newHistory.length - 1]?.type === 'correct';
 
     await fetch(`/api/tasks/${taskId}/items/${item.id}/scan`, {
       method: 'PATCH',
@@ -201,6 +202,7 @@ function ManagerTaskDetail() {
     }
   };
 
+  // ── Loading / error states ─────────────────────────────────────────────
   if (loading) return (
     <Page title="Task" backAction={{ onAction: () => navigate('/manager/counting-tasks') }}>
       <Spinner />
@@ -213,21 +215,30 @@ function ManagerTaskDetail() {
     </Page>
   );
 
-  // Stats (problem 10)
-  const totalCount = task.items.length;
-  const processedCount = task.items.filter(i => i.soh !== null).length;
+  // ── Stats ──────────────────────────────────────────────────────────────
+  const totalCount       = task.items.length;
+  const processedCount   = task.items.filter(i => i.soh !== null).length;
   const unprocessedCount = totalCount - processedCount;
-  const qtyOffCount = task.items.filter(i => i.soh !== null && !i.is_correct && i.poh !== null).length;
+  const qtyOffCount      = task.items.filter(i => i.soh !== null && !i.is_correct && i.poh !== null).length;
 
+  // ── Filter ─────────────────────────────────────────────────────────────
   const filteredItems = task.items.filter(item => {
     if (filter === 'not_scanned') return item.soh === null;
-    if (filter === 'qty_off') return item.soh !== null && !item.is_correct && item.poh !== null;
+    if (filter === 'qty_off')     return item.soh !== null && !item.is_correct && item.poh !== null;
     return true;
   });
 
-  const rows = filteredItems.map(item => {
+  // ── Sort (A→Z by name, toggle back to default) ─────────────────────────
+  const displayedItems = sortAZ
+    ? [...filteredItems].sort((a, b) =>
+        (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' })
+      )
+    : filteredItems;
+
+  // ── Build rows ─────────────────────────────────────────────────────────
+  const rows = displayedItems.map(item => {
     const scanCount = (item.scan_history || []).length;
-    const scanBars = Array.from({ length: Math.min(scanCount, 10) }).map((_, i) => (
+    const scanBars  = Array.from({ length: Math.min(scanCount, 10) }).map((_, i) => (
       <span key={i} style={{
         display: 'inline-block', width: '3px', height: '16px',
         background: 'green', marginRight: '2px', borderRadius: '1px',
@@ -240,8 +251,8 @@ function ManagerTaskDetail() {
       pohDisplay = (
         <span style={{
           background: isMatch ? '#008060' : 'transparent',
-          color: isMatch ? 'white' : 'inherit',
-          padding: isMatch ? '2px 8px' : '0',
+          color:      isMatch ? 'white'   : 'inherit',
+          padding:    isMatch ? '2px 8px' : '0',
           borderRadius: '4px',
           fontWeight: isMatch ? 'bold' : 'normal',
         }}>
@@ -250,14 +261,13 @@ function ManagerTaskDetail() {
       );
     }
 
-    // Problem 9: Name/SKU combined column
     const nameSku = (
       <div>
         <div style={{ fontSize: '14px', fontWeight: '500' }}>{item.name || '-'}</div>
         <div style={{ fontSize: '12px', color: '#6d7175' }}>{item.barcode || '-'}</div>
       </div>
     );
-    
+
     return [
       <div onClick={() => openPopup(item)} style={{ cursor: 'pointer' }}>{nameSku}</div>,
       <div onClick={() => openPopup(item)} style={{ cursor: 'pointer' }}>{item.soh !== null ? String(item.soh) : ''}</div>,
@@ -266,8 +276,8 @@ function ManagerTaskDetail() {
     ];
   });
 
+  // ── Render ─────────────────────────────────────────────────────────────
   return (
-    // Problem 7: mobile padding
     <div style={{ padding: '0 5px' }}>
       <Page
         title={task.task_no}
@@ -283,7 +293,7 @@ function ManagerTaskDetail() {
 
               {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
 
-              {/* Problem 10: Stats */}
+              {/* Stats */}
               <Card>
                 <InlineStack gap="400" wrap>
                   <BlockStack gap="050">
@@ -354,26 +364,51 @@ function ManagerTaskDetail() {
                 </BlockStack>
               </Card>
 
-              {/* Filter tabs */}
-              <InlineStack gap="200">
-                {['all', 'not_scanned', 'qty_off'].map(f => (
-                  <button
-                    key={f}
-                    onClick={() => setFilter(f)}
-                    style={{
-                      padding: '6px 14px',
-                      borderRadius: '20px',
-                      border: '1px solid #c9cccf',
-                      background: filter === f ? '#008060' : 'white',
-                      color: filter === f ? 'white' : '#202223',
-                      cursor: 'pointer',
-                      fontSize: '13px',
-                      fontWeight: filter === f ? '600' : '400',
-                    }}
-                  >
-                    {f === 'all' ? `All (${totalCount})` : f === 'not_scanned' ? `Not scanned (${unprocessedCount})` : `Qty off (${qtyOffCount})`}
-                  </button>
-                ))}
+              {/* Filter tabs  +  Sort button */}
+              <InlineStack align="space-between" gap="200">
+                {/* Left: filter pills */}
+                <InlineStack gap="200">
+                  {['all', 'not_scanned', 'qty_off'].map(f => (
+                    <button
+                      key={f}
+                      onClick={() => setFilter(f)}
+                      style={{
+                        padding: '6px 14px',
+                        borderRadius: '20px',
+                        border: '1px solid #c9cccf',
+                        background: filter === f ? '#008060' : 'white',
+                        color: filter === f ? 'white' : '#202223',
+                        cursor: 'pointer',
+                        fontSize: '13px',
+                        fontWeight: filter === f ? '600' : '400',
+                      }}
+                    >
+                      {f === 'all'
+                        ? `All (${totalCount})`
+                        : f === 'not_scanned'
+                          ? `Not scanned (${unprocessedCount})`
+                          : `Qty off (${qtyOffCount})`}
+                    </button>
+                  ))}
+                </InlineStack>
+
+                {/* Right: Sort toggle */}
+                <button
+                  onClick={() => setSortAZ(v => !v)}
+                  style={{
+                    padding: '6px 14px',
+                    borderRadius: '20px',
+                    border: '1px solid #c9cccf',
+                    background: sortAZ ? '#1a1a1a' : 'white',
+                    color: sortAZ ? 'white' : '#202223',
+                    cursor: 'pointer',
+                    fontSize: '13px',
+                    fontWeight: sortAZ ? '600' : '400',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {sortAZ ? 'Sort A→Z ✓' : 'Sort'}
+                </button>
               </InlineStack>
 
               {/* Items table */}
@@ -388,7 +423,7 @@ function ManagerTaskDetail() {
           </Layout.Section>
         </Layout>
 
-        {/* Error popup (problem 8) */}
+        {/* Error popup */}
         {errorPopup && (
           <div
             onClick={() => setErrorPopup('')}
