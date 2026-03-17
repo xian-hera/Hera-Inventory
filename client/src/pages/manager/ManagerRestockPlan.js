@@ -1,0 +1,595 @@
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import {
+  Page, Layout, Card, Button, BlockStack, InlineStack,
+  Text, Banner, TextField, Spinner
+} from '@shopify/polaris';
+import { useNavigate } from 'react-router-dom';
+
+function ManagerRestockPlan() {
+  const navigate  = useNavigate();
+  const location  = localStorage.getItem('managerLocation') || '';
+
+  const [items, setItems]           = useState([]);
+  const [loadingItems, setLoadingItems] = useState(true);
+  const [error, setError]           = useState('');
+
+  // Scan popup
+  const [popupData, setPopupData]   = useState(null);   // { name, barcode, locationId }
+  const [popupSoh, setPopupSoh]     = useState(null);
+  const [restockInput, setRestockInput] = useState(''); // prefilled when editing
+  const [loadingSoh, setLoadingSoh] = useState(false);
+  const [editingBarcode, setEditingBarcode] = useState(null); // barcode being edited (not new)
+
+  // Add-by-typing popup
+  const [showAddByTyping, setShowAddByTyping]   = useState(false);
+  const [skuInput, setSkuInput]                 = useState('');
+  const [skuSearching, setSkuSearching]         = useState(false);
+  const [skuError, setSkuError]                 = useState('');
+
+  // Delete-all confirm
+  const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false);
+
+  // Delete-done confirm (when user taps check on an already-done item)
+  const [deleteConfirmId, setDeleteConfirmId] = useState(null);
+
+  // Long-press tracking
+  const longPressTimer = useRef(null);
+  const barcodeBuffer  = useRef('');
+  const barcodeTimer   = useRef(null);
+
+  // ── Load from server ───────────────────────────────────────────────────
+  const loadItems = useCallback(async () => {
+    if (!location) { setLoadingItems(false); return; }
+    try {
+      const res  = await fetch(`/api/reports/restock?location=${encodeURIComponent(location)}`);
+      const data = await res.json();
+      setItems(data);
+    } catch (e) {
+      setError('Failed to load restock plan');
+    } finally {
+      setLoadingItems(false);
+    }
+  }, [location]);
+
+  useEffect(() => { loadItems(); }, [loadItems]);
+
+  // ── Barcode scanner ────────────────────────────────────────────────────
+  useEffect(() => {
+    const handleKeyDown = async (e) => {
+      if (popupData || showAddByTyping) return;
+      if (e.key === 'Enter') {
+        const barcode = barcodeBuffer.current.trim();
+        barcodeBuffer.current = '';
+        if (barcode) await openPopupByBarcode(barcode, false);
+      } else if (e.key.length === 1) {
+        barcodeBuffer.current += e.key;
+        clearTimeout(barcodeTimer.current);
+        barcodeTimer.current = setTimeout(() => { barcodeBuffer.current = ''; }, 500);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [popupData, showAddByTyping, location, items]);
+
+  // ── Open popup (new scan or row edit) ─────────────────────────────────
+  const openPopupByBarcode = async (barcode, isEdit) => {
+    setLoadingSoh(true);
+    setError('');
+    setEditingBarcode(isEdit ? barcode : null);
+    try {
+      const locRes  = await fetch('/api/shopify/locations');
+      const locData = await locRes.json();
+      const loc     = locData.find(l => l.name === location);
+      if (!loc) throw new Error('Location not found');
+
+      const res  = await fetch(`/api/shopify/inventory/${encodeURIComponent(barcode)}/${encodeURIComponent(loc.id)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Product not found');
+
+      const existing = items.find(i => i.barcode === barcode);
+
+      setPopupData({ ...data, barcode, locationId: loc.id });
+      setPopupSoh(data.soh ?? 0);
+      setRestockInput(isEdit && existing ? String(existing.restock_qty) : '');
+    } catch (e) {
+      setError(e.message || 'Product not found');
+    } finally {
+      setLoadingSoh(false);
+    }
+  };
+
+  const closePopup = () => {
+    setPopupData(null);
+    setPopupSoh(null);
+    setRestockInput('');
+    setEditingBarcode(null);
+  };
+
+  // ── Save restock entry ─────────────────────────────────────────────────
+  const handleSave = async () => {
+    if (!popupData || restockInput === '') return;
+    const qty = parseInt(restockInput);
+    if (isNaN(qty)) return;
+
+    try {
+      const res  = await fetch('/api/reports/restock', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          barcode:             popupData.barcode,
+          name:                popupData.name,
+          location,
+          shopify_location_id: popupData.locationId,
+          soh:                 popupSoh,
+          restock_qty:         qty,
+        }),
+      });
+      const saved = await res.json();
+      setItems(prev => {
+        const exists = prev.find(i => i.barcode === saved.barcode);
+        return exists
+          ? prev.map(i => i.barcode === saved.barcode ? saved : i)
+          : [...prev, saved];
+      });
+    } catch (e) {
+      setError('Failed to save');
+    }
+    closePopup();
+  };
+
+  // ── Toggle done (check button first press) ─────────────────────────────
+  const handleCheckPress = async (item) => {
+    if (item.is_done) {
+      // Already done → ask to delete
+      setDeleteConfirmId(item.id);
+    } else {
+      // Mark as done
+      await toggleDone(item.id, true);
+    }
+  };
+
+  const toggleDone = async (id, isDone) => {
+    try {
+      const res  = await fetch(`/api/reports/restock/${id}/done`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_done: isDone }),
+      });
+      const updated = await res.json();
+      setItems(prev => prev.map(i => i.id === updated.id ? updated : i));
+    } catch (e) {
+      setError('Failed to update');
+    }
+  };
+
+  // ── Long-press: undo done ─────────────────────────────────────────────
+  const handleLongPressStart = (item) => {
+    if (!item.is_done) return;
+    longPressTimer.current = setTimeout(async () => {
+      await toggleDone(item.id, false);
+    }, 600);
+  };
+
+  const handleLongPressEnd = () => {
+    clearTimeout(longPressTimer.current);
+  };
+
+  // ── Delete confirmed ───────────────────────────────────────────────────
+  const handleDeleteConfirmed = async () => {
+    if (!deleteConfirmId) return;
+    try {
+      await fetch('/api/reports/restock', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: [deleteConfirmId] }),
+      });
+      setItems(prev => prev.filter(i => i.id !== deleteConfirmId));
+    } catch (e) {
+      setError('Failed to delete');
+    }
+    setDeleteConfirmId(null);
+  };
+
+  // ── Delete all ─────────────────────────────────────────────────────────
+  const handleDeleteAll = async () => {
+    try {
+      await fetch('/api/reports/restock', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ all: true, location }),
+      });
+      setItems([]);
+    } catch (e) {
+      setError('Failed to delete');
+    }
+    setShowDeleteAllConfirm(false);
+  };
+
+  // ── Add by typing — search ─────────────────────────────────────────────
+  const handleSkuSearch = async () => {
+    if (!skuInput.trim()) return;
+    setSkuSearching(true);
+    setSkuError('');
+    try {
+      const locRes  = await fetch('/api/shopify/locations');
+      const locData = await locRes.json();
+      const loc     = locData.find(l => l.name === location);
+      if (!loc) throw new Error('Location not found');
+
+      const res  = await fetch(`/api/shopify/inventory/${encodeURIComponent(skuInput.trim())}/${encodeURIComponent(loc.id)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'SKU not found');
+
+      // Found — close add-by-typing popup and open scan popup
+      setShowAddByTyping(false);
+      setSkuInput('');
+      setPopupData({ ...data, barcode: skuInput.trim(), locationId: loc.id });
+      setPopupSoh(data.soh ?? 0);
+      setRestockInput('');
+      setEditingBarcode(null);
+    } catch (e) {
+      setSkuError(e.message || 'SKU not found');
+    } finally {
+      setSkuSearching(false);
+    }
+  };
+
+  // ── Render rows ────────────────────────────────────────────────────────
+  const renderRows = () => {
+    if (items.length === 0) return null;
+    return items.map(item => {
+      const done = item.is_done;
+
+      const nameSkuCell = (
+        <div style={{ textDecoration: done ? 'line-through' : 'none', color: done ? '#8c9196' : 'inherit' }}>
+          <div style={{ fontSize: '14px', fontWeight: '500' }}>{item.name || '-'}</div>
+          <div style={{ fontSize: '12px', color: done ? '#b5b9bd' : '#6d7175' }}>{item.barcode || '-'}</div>
+        </div>
+      );
+
+      const sohCell = (
+        <span style={{ textDecoration: done ? 'line-through' : 'none', color: done ? '#8c9196' : 'inherit' }}>
+          {item.soh ?? '-'}
+        </span>
+      );
+
+      // Tapping restock qty opens edit popup (only if not done)
+      const restockCell = done ? (
+        <span style={{ textDecoration: 'line-through', color: '#8c9196' }}>{item.restock_qty}</span>
+      ) : (
+        <span
+          onClick={() => openPopupByBarcode(item.barcode, true)}
+          style={{ cursor: 'pointer', color: '#2c6ecb', fontWeight: '500', textDecoration: 'underline' }}
+        >
+          {item.restock_qty}
+        </span>
+      );
+
+      const checkCell = (
+        <button
+          onClick={() => handleCheckPress(item)}
+          onMouseDown={() => handleLongPressStart(item)}
+          onMouseUp={handleLongPressEnd}
+          onTouchStart={() => handleLongPressStart(item)}
+          onTouchEnd={handleLongPressEnd}
+          title={done ? 'Tap to delete · Long-press to undo' : 'Mark as done'}
+          style={{
+            background: done ? '#008060' : 'white',
+            color: done ? 'white' : '#008060',
+            border: '2px solid #008060',
+            borderRadius: '50%',
+            width: '32px', height: '32px',
+            fontSize: '16px', cursor: 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            flexShrink: 0,
+          }}
+        >
+          ✓
+        </button>
+      );
+
+      return (
+        <div
+          key={item.id}
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 60px 80px 44px',
+            gap: '8px',
+            alignItems: 'center',
+            padding: '10px 0',
+            borderBottom: '1px solid #e1e3e5',
+          }}
+        >
+          {nameSkuCell}
+          {sohCell}
+          {restockCell}
+          {checkCell}
+        </div>
+      );
+    });
+  };
+
+  // ── Render ─────────────────────────────────────────────────────────────
+  return (
+    <Page
+      title="Restock plan"
+      backAction={{ onAction: () => navigate('/manager') }}
+    >
+      <Layout>
+        <Layout.Section>
+          <BlockStack gap="400">
+            {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
+
+            <Text variant="bodySm" tone="subdued">
+              Scan to add items · saved for 15 days · shared across this location
+            </Text>
+
+            <Card>
+              <BlockStack gap="300">
+                {/* Top action bar */}
+                <InlineStack align="end" gap="200">
+                  <button
+                    disabled={items.length === 0}
+                    onClick={() => setShowDeleteAllConfirm(true)}
+                    style={{
+                      padding: '8px 16px', borderRadius: '8px', border: 'none',
+                      background: items.length === 0 ? '#f6f6f7' : '#d72c0d',
+                      color: items.length === 0 ? '#8c9196' : 'white',
+                      cursor: items.length === 0 ? 'not-allowed' : 'pointer',
+                      fontSize: '14px', fontWeight: '500',
+                    }}
+                  >
+                    Delete all
+                  </button>
+                  <button
+                    onClick={() => { setSkuInput(''); setSkuError(''); setShowAddByTyping(true); }}
+                    style={{
+                      padding: '8px 16px', borderRadius: '8px',
+                      border: '1px solid #c9cccf',
+                      background: 'white', color: '#202223',
+                      cursor: 'pointer', fontSize: '14px', fontWeight: '500',
+                    }}
+                  >
+                    Add by typing
+                  </button>
+                </InlineStack>
+
+                {/* Column headers */}
+                {items.length > 0 && (
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 60px 80px 44px',
+                    gap: '8px',
+                    padding: '4px 0',
+                    borderBottom: '2px solid #e1e3e5',
+                  }}>
+                    <Text variant="bodySm" fontWeight="semibold" tone="subdued">Name / SKU</Text>
+                    <Text variant="bodySm" fontWeight="semibold" tone="subdued">SOH</Text>
+                    <Text variant="bodySm" fontWeight="semibold" tone="subdued">Restock</Text>
+                    <Text variant="bodySm" fontWeight="semibold" tone="subdued"> </Text>
+                  </div>
+                )}
+
+                {loadingItems ? (
+                  <InlineStack align="center"><Spinner /></InlineStack>
+                ) : items.length === 0 ? (
+                  <Text tone="subdued" alignment="center">No items yet. Scan a barcode to add.</Text>
+                ) : (
+                  <div>{renderRows()}</div>
+                )}
+              </BlockStack>
+            </Card>
+          </BlockStack>
+        </Layout.Section>
+      </Layout>
+
+      {/* ── Scan / Edit Popup ──────────────────────────────────────────── */}
+      {(popupData || loadingSoh) && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.6)', zIndex: 1000,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          padding: '0 16px',
+        }}>
+          <div style={{
+            background: 'white', borderRadius: '12px',
+            padding: '24px', width: '100%', maxWidth: '460px',
+            position: 'relative',
+          }}>
+            {loadingSoh ? (
+              <InlineStack align="center"><Spinner /></InlineStack>
+            ) : (
+              <>
+                <button
+                  onClick={closePopup}
+                  style={{
+                    position: 'absolute', top: '12px', right: '12px',
+                    background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer',
+                  }}
+                >✕</button>
+
+                <BlockStack gap="300">
+                  <BlockStack gap="050">
+                    <Text variant="headingMd" fontWeight="bold">{popupData.name}</Text>
+                    <Text variant="bodyMd" tone="subdued">{popupData.barcode}</Text>
+                  </BlockStack>
+
+                  <InlineStack gap="200" blockAlign="end">
+                    <div style={{ flex: 1 }}>
+                      <TextField
+                        label="Restock quantity"
+                        type="number"
+                        placeholder="Input restock quantity"
+                        value={restockInput}
+                        onChange={setRestockInput}
+                        autoComplete="off"
+                        autoFocus
+                      />
+                    </div>
+                    <div style={{ paddingBottom: '2px' }}>
+                      <Button
+                        variant="primary"
+                        onClick={handleSave}
+                        disabled={restockInput === ''}
+                      >
+                        Save
+                      </Button>
+                    </div>
+                  </InlineStack>
+
+                  <div style={{
+                    background: '#f6f6f7', borderRadius: '8px',
+                    padding: '12px 16px', textAlign: 'center',
+                  }}>
+                    <Text variant="bodyLg" fontWeight="semibold">SOH {popupSoh}</Text>
+                  </div>
+                </BlockStack>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Add by typing popup ────────────────────────────────────────── */}
+      {showAddByTyping && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.6)', zIndex: 1000,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          padding: '0 16px',
+        }}>
+          <div style={{
+            background: 'white', borderRadius: '12px',
+            padding: '24px', width: '100%', maxWidth: '400px',
+            position: 'relative',
+          }}>
+            <button
+              onClick={() => setShowAddByTyping(false)}
+              style={{
+                position: 'absolute', top: '12px', right: '12px',
+                background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer',
+              }}
+            >✕</button>
+
+            <BlockStack gap="300">
+              <Text variant="headingMd" fontWeight="bold">Add by SKU</Text>
+              {skuError && (
+                <Banner tone="critical" onDismiss={() => setSkuError('')}>{skuError}</Banner>
+              )}
+              <InlineStack gap="200" blockAlign="end">
+                <div style={{ flex: 1 }}>
+                  <TextField
+                    label="SKU"
+                    value={skuInput}
+                    onChange={val => { setSkuInput(val); setSkuError(''); }}
+                    onKeyDown={e => { if (e.key === 'Enter') handleSkuSearch(); }}
+                    autoComplete="off"
+                    autoFocus
+                    placeholder="Enter exact SKU"
+                  />
+                </div>
+                <div style={{ paddingBottom: '2px' }}>
+                  <Button
+                    onClick={handleSkuSearch}
+                    loading={skuSearching}
+                    disabled={!skuInput.trim()}
+                  >
+                    Search
+                  </Button>
+                </div>
+              </InlineStack>
+            </BlockStack>
+          </div>
+        </div>
+      )}
+
+      {/* ── Delete-all confirm ─────────────────────────────────────────── */}
+      {showDeleteAllConfirm && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.5)', zIndex: 2000,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          padding: '0 16px',
+        }}>
+          <div style={{
+            background: 'white', borderRadius: '12px',
+            padding: '24px', width: '100%', maxWidth: '340px', textAlign: 'center',
+          }}>
+            <BlockStack gap="300">
+              <Text variant="headingMd" fontWeight="bold">Delete all items?</Text>
+              <Text variant="bodyMd" tone="subdued">This cannot be undone.</Text>
+              <InlineStack gap="200" align="center">
+                <button
+                  onClick={handleDeleteAll}
+                  style={{
+                    padding: '10px 24px', borderRadius: '8px', border: 'none',
+                    background: '#d72c0d', color: 'white',
+                    cursor: 'pointer', fontSize: '14px', fontWeight: '600',
+                  }}
+                >
+                  Delete all
+                </button>
+                <button
+                  onClick={() => setShowDeleteAllConfirm(false)}
+                  style={{
+                    padding: '10px 24px', borderRadius: '8px',
+                    border: '1px solid #c9cccf', background: 'white',
+                    cursor: 'pointer', fontSize: '14px',
+                  }}
+                >
+                  Cancel
+                </button>
+              </InlineStack>
+            </BlockStack>
+          </div>
+        </div>
+      )}
+
+      {/* ── Delete-done confirm (tap check on done item) ───────────────── */}
+      {deleteConfirmId && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.5)', zIndex: 2000,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          padding: '0 16px',
+        }}>
+          <div style={{
+            background: 'white', borderRadius: '12px',
+            padding: '24px', width: '100%', maxWidth: '340px', textAlign: 'center',
+          }}>
+            <BlockStack gap="300">
+              <Text variant="headingMd" fontWeight="bold">Delete this item?</Text>
+              <Text variant="bodyMd" tone="subdued">
+                Long-press the check button to undo done instead.
+              </Text>
+              <InlineStack gap="200" align="center">
+                <button
+                  onClick={handleDeleteConfirmed}
+                  style={{
+                    padding: '10px 24px', borderRadius: '8px', border: 'none',
+                    background: '#d72c0d', color: 'white',
+                    cursor: 'pointer', fontSize: '14px', fontWeight: '600',
+                  }}
+                >
+                  Delete
+                </button>
+                <button
+                  onClick={() => setDeleteConfirmId(null)}
+                  style={{
+                    padding: '10px 24px', borderRadius: '8px',
+                    border: '1px solid #c9cccf', background: 'white',
+                    cursor: 'pointer', fontSize: '14px',
+                  }}
+                >
+                  Cancel
+                </button>
+              </InlineStack>
+            </BlockStack>
+          </div>
+        </div>
+      )}
+    </Page>
+  );
+}
+
+export default ManagerRestockPlan;

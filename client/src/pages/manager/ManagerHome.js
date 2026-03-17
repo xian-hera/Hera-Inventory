@@ -8,7 +8,7 @@ import { useNavigate } from 'react-router-dom';
 const LOCATIONS = [
   'MTL01','MTL02','MTL03','MTL04','MTL05','MTL06',
   'MTL07','MTL08','MTL09','MTL10','MTL11',
-  'EDM01','EDM02','CAL01','OTT01','OTT02','OTT03','QC01'
+  'EDM01','EDM02','CAL01','OTT01','OTT02','OTT03','QC01','HQ'
 ];
 
 function ManagerHome() {
@@ -106,6 +106,13 @@ function ManagerHome() {
               onClick={() => handleNavigate('/manager/zero-qty-report')}
             >
               0 quantity report
+            </Button>
+            <Button
+              size="large"
+              fullWidth
+              onClick={() => handleNavigate('/manager/restock-plan')}
+            >
+              Restock plan
             </Button>
           </BlockStack>
         </Layout.Section>
