@@ -5,11 +5,8 @@ import {
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 
-// Extract real character from keydown event, bypassing Samsung IME 'Unidentified' keys.
 function resolveKey(e) {
-  if (e.key && e.key !== 'Unidentified' && e.key.length === 1) {
-    return e.key;
-  }
+  if (e.key && e.key !== 'Unidentified' && e.key.length === 1) return e.key;
   if (e.code) {
     if (e.code.startsWith('Digit')) return e.code.slice(5);
     if (e.code.startsWith('Numpad') && e.code.length === 7) return e.code.slice(6);
@@ -17,14 +14,16 @@ function resolveKey(e) {
       const ch = e.code.slice(3);
       return e.shiftKey ? ch : ch.toLowerCase();
     }
-    const symbolMap = {
-      Minus: '-', Equal: '=', BracketLeft: '[', BracketRight: ']',
-      Backslash: '\\', Semicolon: ';', Quote: "'", Backquote: '`',
-      Comma: ',', Period: '.', Slash: '/',
-    };
-    if (symbolMap[e.code]) return symbolMap[e.code];
+    const sym = { Minus:'-', Equal:'=', BracketLeft:'[', BracketRight:']',
+      Backslash:'\\', Semicolon:';', Quote:"'", Backquote:'`',
+      Comma:',', Period:'.', Slash:'/' };
+    if (sym[e.code]) return sym[e.code];
   }
   return null;
+}
+
+function cleanBarcode(raw) {
+  return raw.replace(/^[^0-9]+/, '');
 }
 
 function ManagerRestockPlan() {
@@ -35,20 +34,17 @@ function ManagerRestockPlan() {
   const [loadingItems, setLoadingItems] = useState(true);
   const [error, setError]               = useState('');
 
-  // Scan popup
   const [popupData, setPopupData]         = useState(null);
   const [popupSoh, setPopupSoh]           = useState(null);
   const [restockInput, setRestockInput]   = useState('');
   const [loadingSoh, setLoadingSoh]       = useState(false);
   const [editingBarcode, setEditingBarcode] = useState(null);
 
-  // Add-by-typing popup
   const [showAddByTyping, setShowAddByTyping] = useState(false);
   const [skuInput, setSkuInput]               = useState('');
   const [skuSearching, setSkuSearching]       = useState(false);
   const [skuError, setSkuError]               = useState('');
 
-  // Confirm dialogs
   const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId]           = useState(null);
 
@@ -58,11 +54,9 @@ function ManagerRestockPlan() {
   const popupRef       = useRef(null);
   const addByTypingRef = useRef(false);
 
-  // Keep refs in sync
   useEffect(() => { popupRef.current = popupData; }, [popupData]);
   useEffect(() => { addByTypingRef.current = showAddByTyping; }, [showAddByTyping]);
 
-  // ── Load from server ───────────────────────────────────────────────────
   const loadItems = useCallback(async () => {
     if (!location) { setLoadingItems(false); return; }
     try {
@@ -78,7 +72,7 @@ function ManagerRestockPlan() {
 
   useEffect(() => { loadItems(); }, [loadItems]);
 
-  // ── Global keydown using e.code to bypass Samsung IME ─────────────────
+  // ── Global keydown listener ────────────────────────────────────────────
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (popupRef.current) return;
@@ -88,7 +82,7 @@ function ManagerRestockPlan() {
 
       if (e.key === 'Enter') {
         clearTimeout(barcodeTimer.current);
-        const barcode = barcodeBuffer.current.trim();
+        const barcode = cleanBarcode(barcodeBuffer.current.trim());
         barcodeBuffer.current = '';
         if (barcode.length > 0) openPopupByBarcode(barcode, false);
         return;
@@ -98,9 +92,7 @@ function ManagerRestockPlan() {
       if (ch) {
         barcodeBuffer.current += ch;
         clearTimeout(barcodeTimer.current);
-        barcodeTimer.current = setTimeout(() => {
-          barcodeBuffer.current = '';
-        }, 500);
+        barcodeTimer.current = setTimeout(() => { barcodeBuffer.current = ''; }, 500);
       }
     };
 
@@ -109,9 +101,8 @@ function ManagerRestockPlan() {
       window.removeEventListener('keydown', handleKeyDown);
       clearTimeout(barcodeTimer.current);
     };
-  }, []); // empty deps — uses refs only
+  }, []);
 
-  // ── Open popup ─────────────────────────────────────────────────────────
   const openPopupByBarcode = async (barcode, isEdit) => {
     setLoadingSoh(true);
     setError('');
@@ -121,11 +112,9 @@ function ManagerRestockPlan() {
       const locData = await locRes.json();
       const loc     = locData.find(l => l.name === location);
       if (!loc) throw new Error('Location not found');
-
       const res  = await fetch(`/api/shopify/inventory/${encodeURIComponent(barcode)}/${encodeURIComponent(loc.id)}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Product not found');
-
       const existing = items.find(i => i.barcode === barcode);
       setPopupData({ ...data, barcode, locationId: loc.id });
       setPopupSoh(data.soh ?? 0);
@@ -138,21 +127,17 @@ function ManagerRestockPlan() {
   };
 
   const closePopup = () => {
-    setPopupData(null);
-    setPopupSoh(null);
-    setRestockInput('');
-    setEditingBarcode(null);
+    setPopupData(null); setPopupSoh(null);
+    setRestockInput(''); setEditingBarcode(null);
   };
 
-  // ── Save restock entry ─────────────────────────────────────────────────
   const handleSave = async () => {
     if (!popupData || restockInput === '') return;
     const qty = parseInt(restockInput);
     if (isNaN(qty)) return;
     try {
       const res  = await fetch('/api/reports/restock', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           barcode: popupData.barcode, name: popupData.name,
           location, shopify_location_id: popupData.locationId,
@@ -168,13 +153,9 @@ function ManagerRestockPlan() {
     closePopup();
   };
 
-  // ── Toggle done ────────────────────────────────────────────────────────
   const handleCheckPress = async (item) => {
-    if (item.is_done) {
-      setDeleteConfirmId(item.id);
-    } else {
-      await toggleDone(item.id, true);
-    }
+    if (item.is_done) setDeleteConfirmId(item.id);
+    else await toggleDone(item.id, true);
   };
 
   const toggleDone = async (id, isDone) => {
@@ -194,7 +175,6 @@ function ManagerRestockPlan() {
   };
   const handleLongPressEnd = () => clearTimeout(longPressTimer.current);
 
-  // ── Delete ─────────────────────────────────────────────────────────────
   const handleDeleteConfirmed = async () => {
     if (!deleteConfirmId) return;
     try {
@@ -216,11 +196,9 @@ function ManagerRestockPlan() {
     setShowDeleteAllConfirm(false);
   };
 
-  // ── Add by typing ──────────────────────────────────────────────────────
   const handleSkuSearch = async () => {
     if (!skuInput.trim()) return;
-    setSkuSearching(true);
-    setSkuError('');
+    setSkuSearching(true); setSkuError('');
     try {
       const locRes  = await fetch('/api/shopify/locations');
       const locData = await locRes.json();
@@ -229,17 +207,13 @@ function ManagerRestockPlan() {
       const res  = await fetch(`/api/shopify/inventory/${encodeURIComponent(skuInput.trim())}/${encodeURIComponent(loc.id)}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'SKU not found');
-      setShowAddByTyping(false);
-      setSkuInput('');
+      setShowAddByTyping(false); setSkuInput('');
       setPopupData({ ...data, barcode: skuInput.trim(), locationId: loc.id });
-      setPopupSoh(data.soh ?? 0);
-      setRestockInput('');
-      setEditingBarcode(null);
+      setPopupSoh(data.soh ?? 0); setRestockInput(''); setEditingBarcode(null);
     } catch (e) { setSkuError(e.message || 'SKU not found'); }
     finally { setSkuSearching(false); }
   };
 
-  // ── Render rows ────────────────────────────────────────────────────────
   const renderRows = () => items.map(item => {
     const done = item.is_done;
     return (
@@ -259,12 +233,9 @@ function ManagerRestockPlan() {
               {item.restock_qty}
             </span>
         }
-        <button
-          onClick={() => handleCheckPress(item)}
-          onMouseDown={() => handleLongPressStart(item)}
-          onMouseUp={handleLongPressEnd}
-          onTouchStart={() => handleLongPressStart(item)}
-          onTouchEnd={handleLongPressEnd}
+        <button onClick={() => handleCheckPress(item)}
+          onMouseDown={() => handleLongPressStart(item)} onMouseUp={handleLongPressEnd}
+          onTouchStart={() => handleLongPressStart(item)} onTouchEnd={handleLongPressEnd}
           title={done ? 'Tap to delete · Long-press to undo' : 'Mark as done'}
           style={{ background: done ? '#008060' : 'white', color: done ? 'white' : '#008060',
             border: '2px solid #008060', borderRadius: '50%', width: '32px', height: '32px',
@@ -276,7 +247,6 @@ function ManagerRestockPlan() {
     );
   });
 
-  // ── Render ─────────────────────────────────────────────────────────────
   return (
     <Page title="Restock plan" backAction={{ onAction: () => navigate('/manager') }}>
       <Layout>
@@ -293,12 +263,14 @@ function ManagerRestockPlan() {
                     style={{ padding: '8px 16px', borderRadius: '8px', border: 'none',
                       background: items.length === 0 ? '#f6f6f7' : '#d72c0d',
                       color: items.length === 0 ? '#8c9196' : 'white',
-                      cursor: items.length === 0 ? 'not-allowed' : 'pointer', fontSize: '14px', fontWeight: '500' }}>
+                      cursor: items.length === 0 ? 'not-allowed' : 'pointer',
+                      fontSize: '14px', fontWeight: '500' }}>
                     Delete all
                   </button>
                   <button onClick={() => { setSkuInput(''); setSkuError(''); setShowAddByTyping(true); }}
                     style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid #c9cccf',
-                      background: 'white', color: '#202223', cursor: 'pointer', fontSize: '14px', fontWeight: '500' }}>
+                      background: 'white', color: '#202223', cursor: 'pointer',
+                      fontSize: '14px', fontWeight: '500' }}>
                     Add by typing
                   </button>
                 </InlineStack>
@@ -313,7 +285,8 @@ function ManagerRestockPlan() {
                   </div>
                 )}
 
-                {loadingItems ? <InlineStack align="center"><Spinner /></InlineStack>
+                {loadingItems
+                  ? <InlineStack align="center"><Spinner /></InlineStack>
                   : items.length === 0
                     ? <Text tone="subdued" alignment="center">No items yet. Scan a barcode to add.</Text>
                     : <div>{renderRows()}</div>
@@ -343,9 +316,8 @@ function ManagerRestockPlan() {
                   <InlineStack gap="200" blockAlign="end">
                     <div style={{ flex: 1 }}>
                       <TextField label="Restock quantity" type="number"
-                        placeholder="Input restock quantity"
-                        value={restockInput} onChange={setRestockInput}
-                        autoComplete="off" autoFocus />
+                        placeholder="Input restock quantity" value={restockInput}
+                        onChange={setRestockInput} autoComplete="off" autoFocus />
                     </div>
                     <div style={{ paddingBottom: '2px' }}>
                       <Button variant="primary" onClick={handleSave} disabled={restockInput === ''}>Save</Button>
@@ -362,7 +334,7 @@ function ManagerRestockPlan() {
         </div>
       )}
 
-      {/* Add by typing popup */}
+      {/* Add by typing */}
       {showAddByTyping && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
           background: 'rgba(0,0,0,0.6)', zIndex: 1000,
@@ -370,7 +342,8 @@ function ManagerRestockPlan() {
           <div style={{ background: 'white', borderRadius: '12px', padding: '24px',
             width: '100%', maxWidth: '400px', position: 'relative' }}>
             <button onClick={() => setShowAddByTyping(false)} style={{ position: 'absolute',
-              top: '12px', right: '12px', background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer' }}>✕</button>
+              top: '12px', right: '12px', background: 'none', border: 'none',
+              fontSize: '20px', cursor: 'pointer' }}>✕</button>
             <BlockStack gap="300">
               <Text variant="headingMd" fontWeight="bold">Add by SKU</Text>
               {skuError && <Banner tone="critical" onDismiss={() => setSkuError('')}>{skuError}</Banner>}
@@ -402,8 +375,8 @@ function ManagerRestockPlan() {
               <Text variant="bodyMd" tone="subdued">This cannot be undone.</Text>
               <InlineStack gap="200" align="center">
                 <button onClick={handleDeleteAll} style={{ padding: '10px 24px', borderRadius: '8px',
-                  border: 'none', background: '#d72c0d', color: 'white', cursor: 'pointer',
-                  fontSize: '14px', fontWeight: '600' }}>Delete all</button>
+                  border: 'none', background: '#d72c0d', color: 'white',
+                  cursor: 'pointer', fontSize: '14px', fontWeight: '600' }}>Delete all</button>
                 <button onClick={() => setShowDeleteAllConfirm(false)} style={{ padding: '10px 24px',
                   borderRadius: '8px', border: '1px solid #c9cccf', background: 'white',
                   cursor: 'pointer', fontSize: '14px' }}>Cancel</button>
@@ -425,8 +398,8 @@ function ManagerRestockPlan() {
               <Text variant="bodyMd" tone="subdued">Long-press the check button to undo done instead.</Text>
               <InlineStack gap="200" align="center">
                 <button onClick={handleDeleteConfirmed} style={{ padding: '10px 24px', borderRadius: '8px',
-                  border: 'none', background: '#d72c0d', color: 'white', cursor: 'pointer',
-                  fontSize: '14px', fontWeight: '600' }}>Delete</button>
+                  border: 'none', background: '#d72c0d', color: 'white',
+                  cursor: 'pointer', fontSize: '14px', fontWeight: '600' }}>Delete</button>
                 <button onClick={() => setDeleteConfirmId(null)} style={{ padding: '10px 24px',
                   borderRadius: '8px', border: '1px solid #c9cccf', background: 'white',
                   cursor: 'pointer', fontSize: '14px' }}>Cancel</button>

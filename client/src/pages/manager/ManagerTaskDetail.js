@@ -24,6 +24,32 @@ function computePOH(scanHistory, soh) {
   return relevant.reduce((sum, s) => sum + (s.type === 'counted' ? (s.value || 0) : 0), 0);
 }
 
+// Resolve real character from keydown event, bypassing Samsung IME 'Unidentified'.
+function resolveKey(e) {
+  if (e.key && e.key !== 'Unidentified' && e.key.length === 1) return e.key;
+  if (e.code) {
+    if (e.code.startsWith('Digit')) return e.code.slice(5);
+    if (e.code.startsWith('Numpad') && e.code.length === 7) return e.code.slice(6);
+    if (e.code.startsWith('Key') && e.code.length === 4) {
+      const ch = e.code.slice(3);
+      return e.shiftKey ? ch : ch.toLowerCase();
+    }
+    const sym = {
+      Minus: '-', Equal: '=', BracketLeft: '[', BracketRight: ']',
+      Backslash: '\\', Semicolon: ';', Quote: "'", Backquote: '`',
+      Comma: ',', Period: '.', Slash: '/',
+    };
+    if (sym[e.code]) return sym[e.code];
+  }
+  return null;
+}
+
+// Strip any leading non-digit characters (e.g. scanner hardware prefix like 'A').
+// Safe because all barcodes in this system are pure numbers.
+function cleanBarcode(raw) {
+  return raw.replace(/^[^0-9]+/, '');
+}
+
 function ManagerTaskDetail() {
   const navigate = useNavigate();
   const { taskId } = useParams();
@@ -31,7 +57,7 @@ function ManagerTaskDetail() {
   const [loading, setLoading]         = useState(true);
   const [error, setError]             = useState('');
   const [filter, setFilter]           = useState('all');
-  const [sortAZ, setSortAZ]           = useState(false); // false = default, true = A→Z
+  const [sortAZ, setSortAZ]           = useState(false);
   const [notes, setNotes]             = useState([]);
   const [noteInput, setNoteInput]     = useState('');
   const [showNoteInput, setShowNoteInput] = useState(false);
@@ -49,7 +75,13 @@ function ManagerTaskDetail() {
 
   const barcodeBuffer = useRef('');
   const barcodeTimer  = useRef(null);
+  const popupRef      = useRef(null);  // track popup state inside listener
+  const taskRef       = useRef(null);  // track task state inside listener
   const location      = localStorage.getItem('managerLocation') || '';
+
+  // Keep refs in sync so keydown handler never has stale closures
+  useEffect(() => { popupRef.current = popupItem; }, [popupItem]);
+  useEffect(() => { taskRef.current = task; }, [task]);
 
   const fetchTask = useCallback(async () => {
     setLoading(true);
@@ -68,29 +100,42 @@ function ManagerTaskDetail() {
 
   useEffect(() => { fetchTask(); }, [fetchTask]);
 
+  // ── Global keydown — uses resolveKey + cleanBarcode ────────────────────
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (popupItem) return;
+      if (popupRef.current) return;
+      const activeTag = document.activeElement?.tagName;
+      if (['INPUT', 'TEXTAREA'].includes(activeTag)) return;
+
       if (e.key === 'Enter') {
-        const barcode = barcodeBuffer.current.trim();
+        clearTimeout(barcodeTimer.current);
+        const barcode = cleanBarcode(barcodeBuffer.current.trim());
         barcodeBuffer.current = '';
-        if (barcode && task) {
-          const matched = task.items.find(i => i.barcode === barcode);
+        if (barcode && taskRef.current) {
+          const matched = taskRef.current.items.find(i => i.barcode === barcode);
           if (matched) {
             openPopup(matched);
           } else {
             setErrorPopup(`Barcode "${barcode}" not found in this task.`);
           }
         }
-      } else if (e.key.length === 1) {
-        barcodeBuffer.current += e.key;
+        return;
+      }
+
+      const ch = resolveKey(e);
+      if (ch) {
+        barcodeBuffer.current += ch;
         clearTimeout(barcodeTimer.current);
         barcodeTimer.current = setTimeout(() => { barcodeBuffer.current = ''; }, 500);
       }
     };
+
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [task, popupItem]);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      clearTimeout(barcodeTimer.current);
+    };
+  }, []); // empty deps — uses refs only, no stale closures
 
   const openPopup = async (item) => {
     setPopupItem(item);
@@ -141,9 +186,9 @@ function ManagerTaskDetail() {
       value: type === 'correct' ? popupSoh : value,
       created_at: new Date().toISOString(),
     };
-    const newHistory  = [...(item.scan_history || []), newEntry];
-    const newPoh      = computePOH(newHistory, popupSoh);
-    const isCorrect   = newHistory[newHistory.length - 1]?.type === 'correct';
+    const newHistory = [...(item.scan_history || []), newEntry];
+    const newPoh     = computePOH(newHistory, popupSoh);
+    const isCorrect  = newHistory[newHistory.length - 1]?.type === 'correct';
 
     await fetch(`/api/tasks/${taskId}/items/${item.id}/scan`, {
       method: 'PATCH',
@@ -228,7 +273,7 @@ function ManagerTaskDetail() {
     return true;
   });
 
-  // ── Sort (A→Z by name, toggle back to default) ─────────────────────────
+  // ── Sort ───────────────────────────────────────────────────────────────
   const displayedItems = sortAZ
     ? [...filteredItems].sort((a, b) =>
         (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' })
@@ -364,22 +409,18 @@ function ManagerTaskDetail() {
                 </BlockStack>
               </Card>
 
-              {/* Filter tabs  +  Sort button */}
+              {/* Filter tabs + Sort button */}
               <InlineStack align="space-between" gap="200">
-                {/* Left: filter pills */}
                 <InlineStack gap="200">
                   {['all', 'not_scanned', 'qty_off'].map(f => (
                     <button
                       key={f}
                       onClick={() => setFilter(f)}
                       style={{
-                        padding: '6px 14px',
-                        borderRadius: '20px',
-                        border: '1px solid #c9cccf',
+                        padding: '6px 14px', borderRadius: '20px', border: '1px solid #c9cccf',
                         background: filter === f ? '#008060' : 'white',
                         color: filter === f ? 'white' : '#202223',
-                        cursor: 'pointer',
-                        fontSize: '13px',
+                        cursor: 'pointer', fontSize: '13px',
                         fontWeight: filter === f ? '600' : '400',
                       }}
                     >
@@ -391,20 +432,14 @@ function ManagerTaskDetail() {
                     </button>
                   ))}
                 </InlineStack>
-
-                {/* Right: Sort toggle */}
                 <button
                   onClick={() => setSortAZ(v => !v)}
                   style={{
-                    padding: '6px 14px',
-                    borderRadius: '20px',
-                    border: '1px solid #c9cccf',
+                    padding: '6px 14px', borderRadius: '20px', border: '1px solid #c9cccf',
                     background: sortAZ ? '#1a1a1a' : 'white',
                     color: sortAZ ? 'white' : '#202223',
-                    cursor: 'pointer',
-                    fontSize: '13px',
-                    fontWeight: sortAZ ? '600' : '400',
-                    whiteSpace: 'nowrap',
+                    cursor: 'pointer', fontSize: '13px',
+                    fontWeight: sortAZ ? '600' : '400', whiteSpace: 'nowrap',
                   }}
                 >
                   {sortAZ ? 'Sort A→Z ✓' : 'Sort'}
@@ -414,7 +449,7 @@ function ManagerTaskDetail() {
               {/* Items table */}
               <Card>
                 <DataTable
-                  columnContentTypes={['text','numeric','text','text']}
+                  columnContentTypes={['text', 'numeric', 'text', 'text']}
                   headings={['Name / SKU', 'SOH', 'Scans', 'POH']}
                   rows={rows}
                 />
@@ -425,14 +460,11 @@ function ManagerTaskDetail() {
 
         {/* Error popup */}
         {errorPopup && (
-          <div
-            onClick={() => setErrorPopup('')}
-            style={{
-              position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-              background: 'rgba(0,0,0,0.5)', zIndex: 2000,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}
-          >
+          <div onClick={() => setErrorPopup('')} style={{
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+            background: 'rgba(0,0,0,0.5)', zIndex: 2000,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
             <div style={{
               background: 'white', borderRadius: '12px',
               padding: '24px 32px', maxWidth: '320px', textAlign: 'center',
@@ -460,13 +492,10 @@ function ManagerTaskDetail() {
               padding: '24px', width: '100%', maxWidth: '500px',
               position: 'relative',
             }}>
-              <button
-                onClick={closePopup}
-                style={{
-                  position: 'absolute', top: '12px', right: '12px',
-                  background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer',
-                }}
-              >✕</button>
+              <button onClick={closePopup} style={{
+                position: 'absolute', top: '12px', right: '12px',
+                background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer',
+              }}>✕</button>
 
               <BlockStack gap="400">
                 <BlockStack gap="100">
@@ -494,27 +523,21 @@ function ManagerTaskDetail() {
                 <InlineStack gap="200">
                   <div style={{ flex: 1 }}>
                     <TextField
-                      label="" labelHidden
-                      type="number"
+                      label="" labelHidden type="number"
                       placeholder="Input your count"
-                      value={countInput}
-                      onChange={setCountInput}
-                      autoComplete="off"
-                      autoFocus
+                      value={countInput} onChange={setCountInput}
+                      autoComplete="off" autoFocus
                     />
                   </div>
                   <Button onClick={handleSubmitCount} disabled={!countInput}>Submit</Button>
                 </InlineStack>
 
                 {loadingSoh ? <Spinner /> : (
-                  <button
-                    onClick={handleCorrect}
-                    style={{
-                      background: '#008060', color: 'white', border: 'none',
-                      borderRadius: '12px', padding: '20px', fontSize: '22px',
-                      fontWeight: 'bold', cursor: 'pointer', width: '100%',
-                    }}
-                  >
+                  <button onClick={handleCorrect} style={{
+                    background: '#008060', color: 'white', border: 'none',
+                    borderRadius: '12px', padding: '20px', fontSize: '22px',
+                    fontWeight: 'bold', cursor: 'pointer', width: '100%',
+                  }}>
                     SOH {popupSoh}　Correct
                   </button>
                 )}

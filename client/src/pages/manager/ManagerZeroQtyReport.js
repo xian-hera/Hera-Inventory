@@ -17,10 +17,10 @@ function computePOH(scanHistory, soh) {
   return relevant.reduce((sum, s) => sum + (s.type === 'counted' ? (s.value || 0) : 0), 0);
 }
 
+// Resolve the real character from a keydown event.
+// When Samsung IME sets e.key = 'Unidentified', fall back to e.code.
 function resolveKey(e) {
-  if (e.key && e.key !== 'Unidentified' && e.key.length === 1) {
-    return e.key;
-  }
+  if (e.key && e.key !== 'Unidentified' && e.key.length === 1) return e.key;
   if (e.code) {
     if (e.code.startsWith('Digit')) return e.code.slice(5);
     if (e.code.startsWith('Numpad') && e.code.length === 7) return e.code.slice(6);
@@ -28,14 +28,18 @@ function resolveKey(e) {
       const ch = e.code.slice(3);
       return e.shiftKey ? ch : ch.toLowerCase();
     }
-    const symbolMap = {
-      Minus: '-', Equal: '=', BracketLeft: '[', BracketRight: ']',
-      Backslash: '\\', Semicolon: ';', Quote: "'", Backquote: '`',
-      Comma: ',', Period: '.', Slash: '/',
-    };
-    if (symbolMap[e.code]) return symbolMap[e.code];
+    const sym = { Minus:'-', Equal:'=', BracketLeft:'[', BracketRight:']',
+      Backslash:'\\', Semicolon:';', Quote:"'", Backquote:'`',
+      Comma:',', Period:'.', Slash:'/' };
+    if (sym[e.code]) return sym[e.code];
   }
   return null;
+}
+
+// Strip any leading non-digit characters (e.g. scanner hardware prefix like 'A').
+// Safe because all barcodes in this system are pure numbers.
+function cleanBarcode(raw) {
+  return raw.replace(/^[^0-9]+/, '');
 }
 
 function ManagerZeroQtyReport() {
@@ -45,12 +49,6 @@ function ManagerZeroQtyReport() {
   const [error, setError]               = useState('');
   const [submitting, setSubmitting]     = useState(false);
   const [loadingItems, setLoadingItems] = useState(true);
-
-  // Debug
-  const [debugLog, setDebugLog] = useState([]);
-  const addDebug = useCallback((msg) => {
-    setDebugLog(prev => [`${new Date().toISOString().slice(11,23)} ${msg}`, ...prev].slice(0, 30));
-  }, []);
 
   // Popup
   const [popupData, setPopupData]               = useState(null);
@@ -81,36 +79,26 @@ function ManagerZeroQtyReport() {
 
   useEffect(() => { loadDrafts(); }, [loadDrafts]);
 
-  // ── Global keydown with full debug logging ─────────────────────────────
+  // ── Global keydown listener ────────────────────────────────────────────
   useEffect(() => {
     const handleKeyDown = (e) => {
-      const activeTag = document.activeElement?.tagName || 'none';
-
-      // Log every single keydown event
-      addDebug(`key="${e.key}" code="${e.code}" active=${activeTag} popupOpen=${!!popupRef.current}`);
-
       if (popupRef.current) return;
+      const activeTag = document.activeElement?.tagName;
       if (['INPUT', 'TEXTAREA'].includes(activeTag)) return;
 
       if (e.key === 'Enter') {
         clearTimeout(barcodeTimer.current);
-        const barcode = barcodeBuffer.current.trim();
+        const barcode = cleanBarcode(barcodeBuffer.current.trim());
         barcodeBuffer.current = '';
-        addDebug(`▶ ENTER → barcode="${barcode}"`);
         if (barcode.length > 0) openPopupByBarcode(barcode);
         return;
       }
 
       const ch = resolveKey(e);
-      addDebug(`  resolveKey → "${ch}"`);
       if (ch) {
         barcodeBuffer.current += ch;
-        addDebug(`  buffer now = "${barcodeBuffer.current}"`);
         clearTimeout(barcodeTimer.current);
-        barcodeTimer.current = setTimeout(() => {
-          addDebug(`  buffer timeout, clearing "${barcodeBuffer.current}"`);
-          barcodeBuffer.current = '';
-        }, 500);
+        barcodeTimer.current = setTimeout(() => { barcodeBuffer.current = ''; }, 500);
       }
     };
 
@@ -119,7 +107,7 @@ function ManagerZeroQtyReport() {
       window.removeEventListener('keydown', handleKeyDown);
       clearTimeout(barcodeTimer.current);
     };
-  }, [addDebug]);
+  }, []);
 
   const openPopupByBarcode = async (barcode) => {
     setLoadingSoh(true);
@@ -138,7 +126,7 @@ function ManagerZeroQtyReport() {
       setPopupScanHistory(existing?.scan_history || []);
       setCountInput('');
     } catch (e) {
-      setError(`${e.message} [barcode: "${barcode}"]`);
+      setError(e.message || 'Product not found');
     } finally {
       setLoadingSoh(false);
     }
@@ -213,8 +201,10 @@ function ManagerZeroQtyReport() {
     } catch (e) { setError('Failed to delete'); }
   };
 
-  const toggleSelectOne = (id) => setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
-  const toggleSelectAll = () => setSelectedIds(selectedIds.length === items.length ? [] : items.map(i => i.id));
+  const toggleSelectOne = (id) => setSelectedIds(prev =>
+    prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  const toggleSelectAll = () =>
+    setSelectedIds(selectedIds.length === items.length ? [] : items.map(i => i.id));
 
   const rows = items.map(item => [
     <Checkbox checked={selectedIds.includes(item.id)} onChange={() => toggleSelectOne(item.id)} />,
@@ -232,35 +222,9 @@ function ManagerZeroQtyReport() {
         <Layout.Section>
           <BlockStack gap="400">
             {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
-
-            {/* ── DEBUG PANEL ── */}
-            <Card>
-              <BlockStack gap="200">
-                <InlineStack align="space-between">
-                  <Text variant="bodySm" fontWeight="bold" tone="subdued">Debug log (remove after fix)</Text>
-                  <Button size="slim" onClick={() => setDebugLog([])}>Clear</Button>
-                </InlineStack>
-                <Text variant="bodySm" tone="subdued">
-                  Buffer: <strong>{barcodeBuffer.current || '(empty)'}</strong>
-                </Text>
-                {debugLog.length === 0
-                  ? <Text variant="bodySm" tone="subdued">Scan something...</Text>
-                  : debugLog.map((line, i) => (
-                      <div key={i} style={{
-                        fontFamily: 'monospace', fontSize: '11px',
-                        color: line.includes('▶') ? '#008060' : line.includes('resolveKey → "null"') ? '#d72c0d' : '#444',
-                        borderBottom: '1px solid #f0f0f0', paddingBottom: '2px'
-                      }}>{line}</div>
-                    ))
-                }
-              </BlockStack>
-            </Card>
-            {/* ── END DEBUG ── */}
-
             <Text variant="bodySm" tone="subdued">
               Scan to add items · saved for 15 days · shared across this location
             </Text>
-
             <Card>
               <BlockStack gap="300">
                 <InlineStack align="end" gap="200" wrap>
@@ -268,14 +232,16 @@ function ManagerZeroQtyReport() {
                     style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid #d72c0d',
                       background: selectedIds.length === 0 ? '#f6f6f7' : 'white',
                       color: selectedIds.length === 0 ? '#8c9196' : '#d72c0d',
-                      cursor: selectedIds.length === 0 ? 'not-allowed' : 'pointer', fontSize: '14px', fontWeight: '500' }}>
+                      cursor: selectedIds.length === 0 ? 'not-allowed' : 'pointer',
+                      fontSize: '14px', fontWeight: '500' }}>
                     Delete selected
                   </button>
                   <button disabled={items.length === 0 || submitting} onClick={handleDeleteAll}
                     style={{ padding: '8px 16px', borderRadius: '8px', border: 'none',
                       background: items.length === 0 ? '#f6f6f7' : '#d72c0d',
                       color: items.length === 0 ? '#8c9196' : 'white',
-                      cursor: items.length === 0 ? 'not-allowed' : 'pointer', fontSize: '14px', fontWeight: '500' }}>
+                      cursor: items.length === 0 ? 'not-allowed' : 'pointer',
+                      fontSize: '14px', fontWeight: '500' }}>
                     Delete all
                   </button>
                   <Button disabled={selectedIds.length === 0 || submitting}
@@ -287,18 +253,21 @@ function ManagerZeroQtyReport() {
                     style={{ padding: '8px 16px', borderRadius: '8px', border: 'none',
                       background: items.length === 0 ? '#f6f6f7' : '#008060',
                       color: items.length === 0 ? '#8c9196' : 'white',
-                      cursor: items.length === 0 ? 'not-allowed' : 'pointer', fontSize: '14px', fontWeight: '500' }}>
+                      cursor: items.length === 0 ? 'not-allowed' : 'pointer',
+                      fontSize: '14px', fontWeight: '500' }}>
                     Submit all
                   </button>
                 </InlineStack>
 
-                {loadingItems ? <InlineStack align="center"><Spinner /></InlineStack>
+                {loadingItems
+                  ? <InlineStack align="center"><Spinner /></InlineStack>
                   : items.length === 0
                     ? <Text tone="subdued" alignment="center">No items yet. Scan a barcode to add.</Text>
                     : <DataTable
                         columnContentTypes={['text', 'text', 'numeric', 'numeric']}
                         headings={[
-                          <Checkbox checked={selectedIds.length === items.length && items.length > 0}
+                          <Checkbox
+                            checked={selectedIds.length === items.length && items.length > 0}
                             indeterminate={selectedIds.length > 0 && selectedIds.length < items.length}
                             onChange={toggleSelectAll} />,
                           'Name / SKU', 'SOH', 'POH',
@@ -319,44 +288,46 @@ function ManagerZeroQtyReport() {
           display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 16px' }}>
           <div style={{ background: 'white', borderRadius: '12px', padding: '24px',
             width: '100%', maxWidth: '500px', position: 'relative' }}>
-            {loadingSoh ? <InlineStack align="center"><Spinner /></InlineStack> : (
-              <>
-                <button onClick={closePopup} style={{ position: 'absolute', top: '12px', right: '12px',
-                  background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer' }}>✕</button>
-                <BlockStack gap="400">
-                  <BlockStack gap="100">
-                    <Text variant="headingMd" fontWeight="bold">{popupData.name}</Text>
-                    <Text variant="bodyMd" tone="subdued">{popupData.barcode}</Text>
-                  </BlockStack>
-                  {popupScanHistory.length > 0 && (
+            {loadingSoh
+              ? <InlineStack align="center"><Spinner /></InlineStack>
+              : <>
+                  <button onClick={closePopup} style={{ position: 'absolute', top: '12px', right: '12px',
+                    background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer' }}>✕</button>
+                  <BlockStack gap="400">
                     <BlockStack gap="100">
-                      {popupScanHistory.map((s, i) => (
-                        <InlineStack key={i} gap="200">
-                          <span style={{ width: '8px', height: '8px', borderRadius: '50%',
-                            background: 'black', display: 'inline-block', marginTop: '6px' }} />
-                          <Text>{s.type === 'correct' ? 'correct' : `counted ${s.value}`}</Text>
-                        </InlineStack>
-                      ))}
-                      <Text variant="bodySm" tone="subdued">
-                        total count {computePOH(popupScanHistory, popupSoh)}
-                      </Text>
+                      <Text variant="headingMd" fontWeight="bold">{popupData.name}</Text>
+                      <Text variant="bodyMd" tone="subdued">{popupData.barcode}</Text>
                     </BlockStack>
-                  )}
-                  <InlineStack gap="200">
-                    <div style={{ flex: 1 }}>
-                      <TextField label="" labelHidden type="number" placeholder="Input your count"
-                        value={countInput} onChange={setCountInput} autoComplete="off" autoFocus />
-                    </div>
-                    <Button onClick={handleSubmitCount} disabled={!countInput}>Submit</Button>
-                  </InlineStack>
-                  <button onClick={handleCorrect} style={{ background: 'green', color: 'white',
-                    border: 'none', borderRadius: '12px', padding: '20px', fontSize: '22px',
-                    fontWeight: 'bold', cursor: 'pointer', width: '100%' }}>
-                    SOH {popupSoh}　Correct
-                  </button>
-                </BlockStack>
-              </>
-            )}
+                    {popupScanHistory.length > 0 && (
+                      <BlockStack gap="100">
+                        {popupScanHistory.map((s, i) => (
+                          <InlineStack key={i} gap="200">
+                            <span style={{ width: '8px', height: '8px', borderRadius: '50%',
+                              background: 'black', display: 'inline-block', marginTop: '6px' }} />
+                            <Text>{s.type === 'correct' ? 'correct' : `counted ${s.value}`}</Text>
+                          </InlineStack>
+                        ))}
+                        <Text variant="bodySm" tone="subdued">
+                          total count {computePOH(popupScanHistory, popupSoh)}
+                        </Text>
+                      </BlockStack>
+                    )}
+                    <InlineStack gap="200">
+                      <div style={{ flex: 1 }}>
+                        <TextField label="" labelHidden type="number"
+                          placeholder="Input your count" value={countInput}
+                          onChange={setCountInput} autoComplete="off" autoFocus />
+                      </div>
+                      <Button onClick={handleSubmitCount} disabled={!countInput}>Submit</Button>
+                    </InlineStack>
+                    <button onClick={handleCorrect} style={{ background: 'green', color: 'white',
+                      border: 'none', borderRadius: '12px', padding: '20px', fontSize: '22px',
+                      fontWeight: 'bold', cursor: 'pointer', width: '100%' }}>
+                      SOH {popupSoh}　Correct
+                    </button>
+                  </BlockStack>
+                </>
+            }
           </div>
         </div>
       )}
