@@ -25,6 +25,12 @@ function ManagerZeroQtyReport() {
   const [submitting, setSubmitting]     = useState(false);
   const [loadingItems, setLoadingItems] = useState(true);
 
+  // ── DEBUG state ────────────────────────────────────────────────────────
+  const [debugLog, setDebugLog] = useState([]);
+  const addDebug = (msg) => {
+    setDebugLog(prev => [`${new Date().toISOString().slice(11,23)} ${msg}`, ...prev].slice(0, 20));
+  };
+
   // Popup
   const [popupData, setPopupData]               = useState(null);
   const [popupSoh, setPopupSoh]                 = useState(null);
@@ -32,32 +38,34 @@ function ManagerZeroQtyReport() {
   const [countInput, setCountInput]             = useState('');
   const [loadingSoh, setLoadingSoh]             = useState(false);
 
-  // Hidden input for scanner — keeps focus so device treats it as input mode
-  const hiddenInputRef  = useRef(null);
-  const hiddenInputValue = useRef('');  // track value without re-render
+  const hiddenInputRef   = useRef(null);
+  const hiddenInputValue = useRef('');
 
   const location = localStorage.getItem('managerLocation') || '';
 
-  // ── Refocus hidden input whenever popup closes ─────────────────────────
   const refocusHidden = useCallback(() => {
     setTimeout(() => {
-      hiddenInputRef.current?.focus();
-    }, 50);
+      if (hiddenInputRef.current) {
+        hiddenInputRef.current.focus();
+        addDebug(`refocus called, activeElement: ${document.activeElement?.tagName}#${document.activeElement?.id}`);
+      }
+    }, 80);
   }, []);
 
-  // Focus on mount
-  useEffect(() => {
-    refocusHidden();
-  }, [refocusHidden]);
+  useEffect(() => { refocusHidden(); }, [refocusHidden]);
 
-  // Refocus whenever popup closes
   useEffect(() => {
-    if (!popupData && !loadingSoh) {
-      refocusHidden();
-    }
+    if (!popupData && !loadingSoh) refocusHidden();
   }, [popupData, loadingSoh, refocusHidden]);
 
-  // ── Load drafts from server on mount ──────────────────────────────────
+  // ── Also refocus when user taps anywhere on the page background ────────
+  const handlePageClick = (e) => {
+    // Don't steal focus from buttons/inputs
+    const tag = e.target.tagName;
+    if (['BUTTON', 'INPUT', 'TEXTAREA', 'SELECT', 'A'].includes(tag)) return;
+    refocusHidden();
+  };
+
   const loadDrafts = useCallback(async () => {
     if (!location) { setLoadingItems(false); return; }
     try {
@@ -73,29 +81,51 @@ function ManagerZeroQtyReport() {
 
   useEffect(() => { loadDrafts(); }, [loadDrafts]);
 
-  // ── Hidden input handlers (replaces window keydown listener) ──────────
+  // ── Hidden input handlers ──────────────────────────────────────────────
   const handleHiddenChange = (e) => {
-    // Store raw value — onChange fires after each character
     hiddenInputValue.current = e.target.value;
+    addDebug(`onChange: "${e.target.value}"`);
   };
 
   const handleHiddenKeyDown = async (e) => {
+    addDebug(`keydown: key="${e.key}" val="${hiddenInputValue.current}"`);
     if (e.key === 'Enter') {
       const barcode = hiddenInputValue.current.trim();
       hiddenInputValue.current = '';
-      // Clear the actual input element value
       if (hiddenInputRef.current) hiddenInputRef.current.value = '';
-      if (barcode.length > 0) {
-        await openPopupByBarcode(barcode);
-      }
+      addDebug(`ENTER fired, barcode="${barcode}"`);
+      if (barcode.length > 0) await openPopupByBarcode(barcode);
     }
   };
 
-  // ── Open popup by barcode ──────────────────────────────────────────────
+  // ── Fallback: also listen on window in case hidden input loses focus ───
+  useEffect(() => {
+    let buf = '';
+    let timer = null;
+    const handler = (e) => {
+      // Only fire if hidden input is NOT the active element
+      if (document.activeElement === hiddenInputRef.current) return;
+      if (popupData) return;
+      addDebug(`window keydown (fallback): key="${e.key}" active=${document.activeElement?.tagName}`);
+      if (e.key === 'Enter') {
+        clearTimeout(timer);
+        const barcode = buf.trim();
+        buf = '';
+        if (barcode.length > 0) openPopupByBarcode(barcode);
+      } else if (e.key.length === 1) {
+        buf += e.key;
+        clearTimeout(timer);
+        timer = setTimeout(() => { buf = ''; }, 500);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => { window.removeEventListener('keydown', handler); clearTimeout(timer); };
+  }, [popupData]);
+
   const openPopupByBarcode = async (barcode) => {
     setLoadingSoh(true);
     setError('');
-    // Blur hidden input while popup is open so it doesn't interfere
+    addDebug(`opening popup for barcode="${barcode}"`);
     hiddenInputRef.current?.blur();
     try {
       const locRes  = await fetch('/api/shopify/locations');
@@ -113,7 +143,7 @@ function ManagerZeroQtyReport() {
       setPopupScanHistory(existing?.scan_history || []);
       setCountInput('');
     } catch (e) {
-      setError(e.message || 'Product not found');
+      setError(`${e.message} (barcode captured: "${barcode}")`);
       refocusHidden();
     } finally {
       setLoadingSoh(false);
@@ -125,7 +155,6 @@ function ManagerZeroQtyReport() {
     setPopupSoh(null);
     setPopupScanHistory([]);
     setCountInput('');
-    // refocusHidden() is triggered by the useEffect watching popupData
   };
 
   const handleCorrect = () => closePopup();
@@ -134,105 +163,70 @@ function ManagerZeroQtyReport() {
     if (!popupData || !countInput) return;
     const value = parseInt(countInput);
     if (isNaN(value)) return;
-
     const newEntry   = { type: 'counted', value, created_at: new Date().toISOString() };
     const newHistory = [...popupScanHistory, newEntry];
     const poh        = computePOH(newHistory, popupSoh);
-
     try {
       const res  = await fetch('/api/reports/drafts', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          barcode:             popupData.barcode,
-          name:                popupData.name,
-          department:          popupData.department,
-          location,
+          barcode: popupData.barcode, name: popupData.name,
+          department: popupData.department, location,
           shopify_location_id: popupData.locationId,
-          soh:                 popupSoh,
-          poh,
-          scan_history:        newHistory,
+          soh: popupSoh, poh, scan_history: newHistory,
         }),
       });
       const saved = await res.json();
       setItems(prev => {
         const exists = prev.find(i => i.barcode === saved.barcode);
-        return exists
-          ? prev.map(i => i.barcode === saved.barcode ? saved : i)
-          : [...prev, saved];
+        return exists ? prev.map(i => i.barcode === saved.barcode ? saved : i) : [...prev, saved];
       });
-    } catch (e) {
-      setError('Failed to save item');
-    }
+    } catch (e) { setError('Failed to save item'); }
     closePopup();
   };
 
-  // ── Submit to buyer ────────────────────────────────────────────────────
   const handleSubmitItems = async (ids) => {
     setSubmitting(true);
-    setError('');
     try {
       const toSubmit = items.filter(i => ids.includes(i.id));
       const res = await fetch('/api/reports/submit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ items: toSubmit }),
       });
       if (!res.ok) throw new Error('Failed to submit');
       setItems(prev => prev.filter(i => !ids.includes(i.id)));
       setSelectedIds([]);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setSubmitting(false);
-    }
+    } catch (e) { setError(e.message); }
+    finally { setSubmitting(false); }
   };
 
-  // ── Delete ─────────────────────────────────────────────────────────────
   const handleDeleteSelected = async () => {
     if (selectedIds.length === 0) return;
     try {
-      await fetch('/api/reports/drafts', {
-        method: 'DELETE',
+      await fetch('/api/reports/drafts', { method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids: selectedIds }),
-      });
+        body: JSON.stringify({ ids: selectedIds }) });
       setItems(prev => prev.filter(i => !selectedIds.includes(i.id)));
       setSelectedIds([]);
-    } catch (e) {
-      setError('Failed to delete');
-    }
+    } catch (e) { setError('Failed to delete'); }
   };
 
   const handleDeleteAll = async () => {
     if (!window.confirm('Delete all items?')) return;
     try {
-      await fetch('/api/reports/drafts', {
-        method: 'DELETE',
+      await fetch('/api/reports/drafts', { method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ all: true, location }),
-      });
-      setItems([]);
-      setSelectedIds([]);
-    } catch (e) {
-      setError('Failed to delete');
-    }
+        body: JSON.stringify({ all: true, location }) });
+      setItems([]); setSelectedIds([]);
+    } catch (e) { setError('Failed to delete'); }
   };
 
-  // ── Selection ──────────────────────────────────────────────────────────
-  const toggleSelectOne = (id) => {
-    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
-  };
-  const toggleSelectAll = () => {
-    setSelectedIds(selectedIds.length === items.length ? [] : items.map(i => i.id));
-  };
+  const toggleSelectOne = (id) => setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  const toggleSelectAll = () => setSelectedIds(selectedIds.length === items.length ? [] : items.map(i => i.id));
 
-  // ── Rows ───────────────────────────────────────────────────────────────
   const rows = items.map(item => [
-    <Checkbox
-      checked={selectedIds.includes(item.id)}
-      onChange={() => toggleSelectOne(item.id)}
-    />,
+    <Checkbox checked={selectedIds.includes(item.id)} onChange={() => toggleSelectOne(item.id)} />,
     <div>
       <div style={{ fontSize: '14px', fontWeight: '500' }}>{item.name || '-'}</div>
       <div style={{ fontSize: '12px', color: '#6d7175' }}>{item.barcode || '-'}</div>
@@ -241,158 +235,121 @@ function ManagerZeroQtyReport() {
     item.poh ?? '-',
   ]);
 
-  // ── Render ─────────────────────────────────────────────────────────────
   return (
-    <Page
-      title="0 quantity report"
-      backAction={{ onAction: () => navigate('/manager') }}
-    >
-      {/* Hidden input — always focused in standby, captures scanner input */}
+    <Page title="0 quantity report" backAction={{ onAction: () => navigate('/manager') }}>
+
+      {/* Hidden input */}
       <input
         ref={hiddenInputRef}
         onChange={handleHiddenChange}
         onKeyDown={handleHiddenKeyDown}
-        style={{
-          position: 'fixed',
-          top: '-9999px',
-          left: '-9999px',
-          width: '1px',
-          height: '1px',
-          opacity: 0,
-          pointerEvents: 'none',
-        }}
-        readOnly={false}
-        autoComplete="off"
-        autoCorrect="off"
-        autoCapitalize="off"
-        spellCheck="false"
-        inputMode="none"
-        aria-hidden="true"
+        style={{ position: 'fixed', top: '-9999px', left: '-9999px', width: '1px', height: '1px', opacity: 0, pointerEvents: 'none' }}
+        autoComplete="off" autoCorrect="off" autoCapitalize="off"
+        spellCheck="false" aria-hidden="true"
       />
 
-      <Layout>
-        <Layout.Section>
-          <BlockStack gap="400">
-            {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
+      <div onClick={handlePageClick}>
+        <Layout>
+          <Layout.Section>
+            <BlockStack gap="400">
+              {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
 
-            <Text variant="bodySm" tone="subdued">
-              Scan to add items · saved for 15 days · shared across this location
-            </Text>
+              {/* ── DEBUG PANEL ── remove after diagnosis ── */}
+              <Card>
+                <BlockStack gap="200">
+                  <InlineStack align="space-between">
+                    <Text variant="bodySm" fontWeight="bold">Debug log</Text>
+                    <Button size="slim" onClick={() => setDebugLog([])}>Clear</Button>
+                  </InlineStack>
+                  <Text variant="bodySm" tone="subdued">
+                    Active el: <strong id="activeElDisplay">—</strong>
+                  </Text>
+                  {debugLog.length === 0
+                    ? <Text variant="bodySm" tone="subdued">Scan something to see what's captured...</Text>
+                    : debugLog.map((line, i) => (
+                        <Text key={i} variant="bodySm" tone={line.includes('ENTER') ? 'success' : 'subdued'}>{line}</Text>
+                      ))
+                  }
+                </BlockStack>
+              </Card>
+              {/* ── END DEBUG PANEL ── */}
 
-            <Card>
-              <BlockStack gap="300">
-                <InlineStack align="end" gap="200" wrap>
-                  <button
-                    disabled={selectedIds.length === 0 || submitting}
-                    onClick={handleDeleteSelected}
-                    style={{
-                      padding: '8px 16px', borderRadius: '8px', border: '1px solid #d72c0d',
-                      background: selectedIds.length === 0 ? '#f6f6f7' : 'white',
-                      color: selectedIds.length === 0 ? '#8c9196' : '#d72c0d',
-                      cursor: selectedIds.length === 0 ? 'not-allowed' : 'pointer',
-                      fontSize: '14px', fontWeight: '500',
-                    }}
-                  >
-                    Delete selected
-                  </button>
-                  <button
-                    disabled={items.length === 0 || submitting}
-                    onClick={handleDeleteAll}
-                    style={{
-                      padding: '8px 16px', borderRadius: '8px', border: 'none',
-                      background: items.length === 0 ? '#f6f6f7' : '#d72c0d',
-                      color: items.length === 0 ? '#8c9196' : 'white',
-                      cursor: items.length === 0 ? 'not-allowed' : 'pointer',
-                      fontSize: '14px', fontWeight: '500',
-                    }}
-                  >
-                    Delete all
-                  </button>
-                  <Button
-                    disabled={selectedIds.length === 0 || submitting}
-                    onClick={() => handleSubmitItems(selectedIds)}
-                    loading={submitting}
-                  >
-                    Submit selected
-                  </Button>
-                  <button
-                    disabled={items.length === 0 || submitting}
-                    onClick={() => handleSubmitItems(items.map(i => i.id))}
-                    style={{
-                      padding: '8px 16px', borderRadius: '8px', border: 'none',
-                      background: items.length === 0 ? '#f6f6f7' : '#008060',
-                      color: items.length === 0 ? '#8c9196' : 'white',
-                      cursor: items.length === 0 ? 'not-allowed' : 'pointer',
-                      fontSize: '14px', fontWeight: '500',
-                    }}
-                  >
-                    Submit all
-                  </button>
-                </InlineStack>
+              <Text variant="bodySm" tone="subdued">Scan to add items · saved for 15 days · shared across this location</Text>
 
-                {loadingItems ? (
-                  <InlineStack align="center"><Spinner /></InlineStack>
-                ) : items.length === 0 ? (
-                  <Text tone="subdued" alignment="center">No items yet. Scan a barcode to add.</Text>
-                ) : (
-                  <DataTable
-                    columnContentTypes={['text', 'text', 'numeric', 'numeric']}
-                    headings={[
-                      <Checkbox
-                        checked={selectedIds.length === items.length && items.length > 0}
-                        indeterminate={selectedIds.length > 0 && selectedIds.length < items.length}
-                        onChange={toggleSelectAll}
-                      />,
-                      'Name / SKU', 'SOH', 'POH',
-                    ]}
-                    rows={rows}
-                  />
-                )}
-              </BlockStack>
-            </Card>
-          </BlockStack>
-        </Layout.Section>
-      </Layout>
+              <Card>
+                <BlockStack gap="300">
+                  <InlineStack align="end" gap="200" wrap>
+                    <button disabled={selectedIds.length === 0 || submitting} onClick={handleDeleteSelected}
+                      style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid #d72c0d',
+                        background: selectedIds.length === 0 ? '#f6f6f7' : 'white',
+                        color: selectedIds.length === 0 ? '#8c9196' : '#d72c0d',
+                        cursor: selectedIds.length === 0 ? 'not-allowed' : 'pointer', fontSize: '14px', fontWeight: '500' }}>
+                      Delete selected
+                    </button>
+                    <button disabled={items.length === 0 || submitting} onClick={handleDeleteAll}
+                      style={{ padding: '8px 16px', borderRadius: '8px', border: 'none',
+                        background: items.length === 0 ? '#f6f6f7' : '#d72c0d',
+                        color: items.length === 0 ? '#8c9196' : 'white',
+                        cursor: items.length === 0 ? 'not-allowed' : 'pointer', fontSize: '14px', fontWeight: '500' }}>
+                      Delete all
+                    </button>
+                    <Button disabled={selectedIds.length === 0 || submitting}
+                      onClick={() => handleSubmitItems(selectedIds)} loading={submitting}>
+                      Submit selected
+                    </Button>
+                    <button disabled={items.length === 0 || submitting}
+                      onClick={() => handleSubmitItems(items.map(i => i.id))}
+                      style={{ padding: '8px 16px', borderRadius: '8px', border: 'none',
+                        background: items.length === 0 ? '#f6f6f7' : '#008060',
+                        color: items.length === 0 ? '#8c9196' : 'white',
+                        cursor: items.length === 0 ? 'not-allowed' : 'pointer', fontSize: '14px', fontWeight: '500' }}>
+                      Submit all
+                    </button>
+                  </InlineStack>
+
+                  {loadingItems ? <InlineStack align="center"><Spinner /></InlineStack>
+                    : items.length === 0
+                      ? <Text tone="subdued" alignment="center">No items yet. Scan a barcode to add.</Text>
+                      : <DataTable
+                          columnContentTypes={['text', 'text', 'numeric', 'numeric']}
+                          headings={[
+                            <Checkbox checked={selectedIds.length === items.length && items.length > 0}
+                              indeterminate={selectedIds.length > 0 && selectedIds.length < items.length}
+                              onChange={toggleSelectAll} />,
+                            'Name / SKU', 'SOH', 'POH',
+                          ]}
+                          rows={rows}
+                        />
+                  }
+                </BlockStack>
+              </Card>
+            </BlockStack>
+          </Layout.Section>
+        </Layout>
+      </div>
 
       {/* Scan Popup */}
       {(popupData || loadingSoh) && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
           background: 'rgba(0,0,0,0.6)', zIndex: 1000,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          padding: '0 16px',
-        }}>
-          <div style={{
-            background: 'white', borderRadius: '12px',
-            padding: '24px', width: '100%', maxWidth: '500px',
-            position: 'relative',
-          }}>
-            {loadingSoh ? (
-              <InlineStack align="center"><Spinner /></InlineStack>
-            ) : (
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 16px' }}>
+          <div style={{ background: 'white', borderRadius: '12px', padding: '24px',
+            width: '100%', maxWidth: '500px', position: 'relative' }}>
+            {loadingSoh ? <InlineStack align="center"><Spinner /></InlineStack> : (
               <>
-                <button
-                  onClick={closePopup}
-                  style={{
-                    position: 'absolute', top: '12px', right: '12px',
-                    background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer',
-                  }}
-                >✕</button>
-
+                <button onClick={closePopup} style={{ position: 'absolute', top: '12px', right: '12px',
+                  background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer' }}>✕</button>
                 <BlockStack gap="400">
                   <BlockStack gap="100">
                     <Text variant="headingMd" fontWeight="bold">{popupData.name}</Text>
                     <Text variant="bodyMd" tone="subdued">{popupData.barcode}</Text>
                   </BlockStack>
-
                   {popupScanHistory.length > 0 && (
                     <BlockStack gap="100">
                       {popupScanHistory.map((s, i) => (
                         <InlineStack key={i} gap="200">
-                          <span style={{
-                            width: '8px', height: '8px', borderRadius: '50%',
-                            background: 'black', display: 'inline-block', marginTop: '6px',
-                          }} />
+                          <span style={{ width: '8px', height: '8px', borderRadius: '50%',
+                            background: 'black', display: 'inline-block', marginTop: '6px' }} />
                           <Text>{s.type === 'correct' ? 'correct' : `counted ${s.value}`}</Text>
                         </InlineStack>
                       ))}
@@ -401,30 +358,16 @@ function ManagerZeroQtyReport() {
                       </Text>
                     </BlockStack>
                   )}
-
                   <InlineStack gap="200">
                     <div style={{ flex: 1 }}>
-                      <TextField
-                        label="" labelHidden
-                        type="number"
-                        placeholder="Input your count"
-                        value={countInput}
-                        onChange={setCountInput}
-                        autoComplete="off"
-                        autoFocus
-                      />
+                      <TextField label="" labelHidden type="number" placeholder="Input your count"
+                        value={countInput} onChange={setCountInput} autoComplete="off" autoFocus />
                     </div>
                     <Button onClick={handleSubmitCount} disabled={!countInput}>Submit</Button>
                   </InlineStack>
-
-                  <button
-                    onClick={handleCorrect}
-                    style={{
-                      background: 'green', color: 'white', border: 'none',
-                      borderRadius: '12px', padding: '20px', fontSize: '22px',
-                      fontWeight: 'bold', cursor: 'pointer', width: '100%',
-                    }}
-                  >
+                  <button onClick={handleCorrect} style={{ background: 'green', color: 'white',
+                    border: 'none', borderRadius: '12px', padding: '20px', fontSize: '22px',
+                    fontWeight: 'bold', cursor: 'pointer', width: '100%' }}>
                     SOH {popupSoh}　Correct
                   </button>
                 </BlockStack>
