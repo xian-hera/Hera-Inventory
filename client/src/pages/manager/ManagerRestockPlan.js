@@ -9,33 +9,49 @@ function ManagerRestockPlan() {
   const navigate  = useNavigate();
   const location  = localStorage.getItem('managerLocation') || '';
 
-  const [items, setItems]           = useState([]);
+  const [items, setItems]               = useState([]);
   const [loadingItems, setLoadingItems] = useState(true);
-  const [error, setError]           = useState('');
+  const [error, setError]               = useState('');
 
   // Scan popup
-  const [popupData, setPopupData]   = useState(null);   // { name, barcode, locationId }
-  const [popupSoh, setPopupSoh]     = useState(null);
-  const [restockInput, setRestockInput] = useState(''); // prefilled when editing
-  const [loadingSoh, setLoadingSoh] = useState(false);
-  const [editingBarcode, setEditingBarcode] = useState(null); // barcode being edited (not new)
+  const [popupData, setPopupData]         = useState(null);
+  const [popupSoh, setPopupSoh]           = useState(null);
+  const [restockInput, setRestockInput]   = useState('');
+  const [loadingSoh, setLoadingSoh]       = useState(false);
+  const [editingBarcode, setEditingBarcode] = useState(null);
 
   // Add-by-typing popup
-  const [showAddByTyping, setShowAddByTyping]   = useState(false);
-  const [skuInput, setSkuInput]                 = useState('');
-  const [skuSearching, setSkuSearching]         = useState(false);
-  const [skuError, setSkuError]                 = useState('');
+  const [showAddByTyping, setShowAddByTyping] = useState(false);
+  const [skuInput, setSkuInput]               = useState('');
+  const [skuSearching, setSkuSearching]       = useState(false);
+  const [skuError, setSkuError]               = useState('');
 
-  // Delete-all confirm
+  // Confirm dialogs
   const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false);
+  const [deleteConfirmId, setDeleteConfirmId]           = useState(null);
 
-  // Delete-done confirm (when user taps check on an already-done item)
-  const [deleteConfirmId, setDeleteConfirmId] = useState(null);
-
-  // Long-press tracking
+  // Long-press
   const longPressTimer = useRef(null);
-  const barcodeBuffer  = useRef('');
-  const barcodeTimer   = useRef(null);
+
+  // Hidden input for scanner
+  const hiddenInputRef   = useRef(null);
+  const hiddenInputValue = useRef('');
+
+  // ── Refocus hidden input ───────────────────────────────────────────────
+  const refocusHidden = useCallback(() => {
+    setTimeout(() => {
+      hiddenInputRef.current?.focus();
+    }, 50);
+  }, []);
+
+  useEffect(() => { refocusHidden(); }, [refocusHidden]);
+
+  // Refocus when all popups are closed
+  useEffect(() => {
+    if (!popupData && !loadingSoh && !showAddByTyping) {
+      refocusHidden();
+    }
+  }, [popupData, loadingSoh, showAddByTyping, refocusHidden]);
 
   // ── Load from server ───────────────────────────────────────────────────
   const loadItems = useCallback(async () => {
@@ -53,29 +69,28 @@ function ManagerRestockPlan() {
 
   useEffect(() => { loadItems(); }, [loadItems]);
 
-  // ── Barcode scanner ────────────────────────────────────────────────────
-  useEffect(() => {
-    const handleKeyDown = async (e) => {
-      if (popupData || showAddByTyping) return;
-      if (e.key === 'Enter') {
-        const barcode = barcodeBuffer.current.trim();
-        barcodeBuffer.current = '';
-        if (barcode) await openPopupByBarcode(barcode, false);
-      } else if (e.key.length === 1) {
-        barcodeBuffer.current += e.key;
-        clearTimeout(barcodeTimer.current);
-        barcodeTimer.current = setTimeout(() => { barcodeBuffer.current = ''; }, 500);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [popupData, showAddByTyping, location, items]);
+  // ── Hidden input handlers ──────────────────────────────────────────────
+  const handleHiddenChange = (e) => {
+    hiddenInputValue.current = e.target.value;
+  };
 
-  // ── Open popup (new scan or row edit) ─────────────────────────────────
+  const handleHiddenKeyDown = async (e) => {
+    if (e.key === 'Enter') {
+      const barcode = hiddenInputValue.current.trim();
+      hiddenInputValue.current = '';
+      if (hiddenInputRef.current) hiddenInputRef.current.value = '';
+      if (barcode.length > 0) {
+        await openPopupByBarcode(barcode, false);
+      }
+    }
+  };
+
+  // ── Open popup ─────────────────────────────────────────────────────────
   const openPopupByBarcode = async (barcode, isEdit) => {
     setLoadingSoh(true);
     setError('');
     setEditingBarcode(isEdit ? barcode : null);
+    hiddenInputRef.current?.blur();
     try {
       const locRes  = await fetch('/api/shopify/locations');
       const locData = await locRes.json();
@@ -87,12 +102,12 @@ function ManagerRestockPlan() {
       if (!res.ok) throw new Error(data.error || 'Product not found');
 
       const existing = items.find(i => i.barcode === barcode);
-
       setPopupData({ ...data, barcode, locationId: loc.id });
       setPopupSoh(data.soh ?? 0);
       setRestockInput(isEdit && existing ? String(existing.restock_qty) : '');
     } catch (e) {
       setError(e.message || 'Product not found');
+      refocusHidden();
     } finally {
       setLoadingSoh(false);
     }
@@ -137,20 +152,18 @@ function ManagerRestockPlan() {
     closePopup();
   };
 
-  // ── Toggle done (check button first press) ─────────────────────────────
+  // ── Toggle done ────────────────────────────────────────────────────────
   const handleCheckPress = async (item) => {
     if (item.is_done) {
-      // Already done → ask to delete
       setDeleteConfirmId(item.id);
     } else {
-      // Mark as done
       await toggleDone(item.id, true);
     }
   };
 
   const toggleDone = async (id, isDone) => {
     try {
-      const res  = await fetch(`/api/reports/restock/${id}/done`, {
+      const res     = await fetch(`/api/reports/restock/${id}/done`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ is_done: isDone }),
@@ -174,7 +187,7 @@ function ManagerRestockPlan() {
     clearTimeout(longPressTimer.current);
   };
 
-  // ── Delete confirmed ───────────────────────────────────────────────────
+  // ── Delete ─────────────────────────────────────────────────────────────
   const handleDeleteConfirmed = async () => {
     if (!deleteConfirmId) return;
     try {
@@ -190,7 +203,6 @@ function ManagerRestockPlan() {
     setDeleteConfirmId(null);
   };
 
-  // ── Delete all ─────────────────────────────────────────────────────────
   const handleDeleteAll = async () => {
     try {
       await fetch('/api/reports/restock', {
@@ -205,7 +217,7 @@ function ManagerRestockPlan() {
     setShowDeleteAllConfirm(false);
   };
 
-  // ── Add by typing — search ─────────────────────────────────────────────
+  // ── Add by typing ──────────────────────────────────────────────────────
   const handleSkuSearch = async () => {
     if (!skuInput.trim()) return;
     setSkuSearching(true);
@@ -220,7 +232,6 @@ function ManagerRestockPlan() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'SKU not found');
 
-      // Found — close add-by-typing popup and open scan popup
       setShowAddByTyping(false);
       setSkuInput('');
       setPopupData({ ...data, barcode: skuInput.trim(), locationId: loc.id });
@@ -253,7 +264,6 @@ function ManagerRestockPlan() {
         </span>
       );
 
-      // Tapping restock qty opens edit popup (only if not done)
       const restockCell = done ? (
         <span style={{ textDecoration: 'line-through', color: '#8c9196' }}>{item.restock_qty}</span>
       ) : (
@@ -315,6 +325,29 @@ function ManagerRestockPlan() {
       title="Restock plan"
       backAction={{ onAction: () => navigate('/manager') }}
     >
+      {/* Hidden input — always focused in standby, captures scanner input */}
+      <input
+        ref={hiddenInputRef}
+        onChange={handleHiddenChange}
+        onKeyDown={handleHiddenKeyDown}
+        style={{
+          position: 'fixed',
+          top: '-9999px',
+          left: '-9999px',
+          width: '1px',
+          height: '1px',
+          opacity: 0,
+          pointerEvents: 'none',
+        }}
+        readOnly={false}
+        autoComplete="off"
+        autoCorrect="off"
+        autoCapitalize="off"
+        spellCheck="false"
+        inputMode="none"
+        aria-hidden="true"
+      />
+
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">
@@ -545,7 +578,7 @@ function ManagerRestockPlan() {
         </div>
       )}
 
-      {/* ── Delete-done confirm (tap check on done item) ───────────────── */}
+      {/* ── Delete-done confirm ────────────────────────────────────────── */}
       {deleteConfirmId && (
         <div style={{
           position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,

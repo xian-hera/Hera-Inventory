@@ -32,9 +32,30 @@ function ManagerZeroQtyReport() {
   const [countInput, setCountInput]             = useState('');
   const [loadingSoh, setLoadingSoh]             = useState(false);
 
-  const barcodeBuffer = useRef('');
-  const barcodeTimer  = useRef(null);
-  const location      = localStorage.getItem('managerLocation') || '';
+  // Hidden input for scanner — keeps focus so device treats it as input mode
+  const hiddenInputRef  = useRef(null);
+  const hiddenInputValue = useRef('');  // track value without re-render
+
+  const location = localStorage.getItem('managerLocation') || '';
+
+  // ── Refocus hidden input whenever popup closes ─────────────────────────
+  const refocusHidden = useCallback(() => {
+    setTimeout(() => {
+      hiddenInputRef.current?.focus();
+    }, 50);
+  }, []);
+
+  // Focus on mount
+  useEffect(() => {
+    refocusHidden();
+  }, [refocusHidden]);
+
+  // Refocus whenever popup closes
+  useEffect(() => {
+    if (!popupData && !loadingSoh) {
+      refocusHidden();
+    }
+  }, [popupData, loadingSoh, refocusHidden]);
 
   // ── Load drafts from server on mount ──────────────────────────────────
   const loadDrafts = useCallback(async () => {
@@ -52,27 +73,30 @@ function ManagerZeroQtyReport() {
 
   useEffect(() => { loadDrafts(); }, [loadDrafts]);
 
-  // ── Barcode scanner listener ───────────────────────────────────────────
-  useEffect(() => {
-    const handleKeyDown = async (e) => {
-      if (popupData) return;
-      if (e.key === 'Enter') {
-        const barcode = barcodeBuffer.current.trim();
-        barcodeBuffer.current = '';
-        if (barcode) await openPopupByBarcode(barcode);
-      } else if (e.key.length === 1) {
-        barcodeBuffer.current += e.key;
-        clearTimeout(barcodeTimer.current);
-        barcodeTimer.current = setTimeout(() => { barcodeBuffer.current = ''; }, 500);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [popupData, location, items]);
+  // ── Hidden input handlers (replaces window keydown listener) ──────────
+  const handleHiddenChange = (e) => {
+    // Store raw value — onChange fires after each character
+    hiddenInputValue.current = e.target.value;
+  };
 
+  const handleHiddenKeyDown = async (e) => {
+    if (e.key === 'Enter') {
+      const barcode = hiddenInputValue.current.trim();
+      hiddenInputValue.current = '';
+      // Clear the actual input element value
+      if (hiddenInputRef.current) hiddenInputRef.current.value = '';
+      if (barcode.length > 0) {
+        await openPopupByBarcode(barcode);
+      }
+    }
+  };
+
+  // ── Open popup by barcode ──────────────────────────────────────────────
   const openPopupByBarcode = async (barcode) => {
     setLoadingSoh(true);
     setError('');
+    // Blur hidden input while popup is open so it doesn't interfere
+    hiddenInputRef.current?.blur();
     try {
       const locRes  = await fetch('/api/shopify/locations');
       const locData = await locRes.json();
@@ -84,13 +108,13 @@ function ManagerZeroQtyReport() {
       if (!res.ok) throw new Error(data.error || 'Product not found');
 
       const existing = items.find(i => i.barcode === barcode);
-
       setPopupData({ ...data, barcode, locationId: loc.id });
       setPopupSoh(data.soh ?? 0);
       setPopupScanHistory(existing?.scan_history || []);
       setCountInput('');
     } catch (e) {
       setError(e.message || 'Product not found');
+      refocusHidden();
     } finally {
       setLoadingSoh(false);
     }
@@ -101,11 +125,10 @@ function ManagerZeroQtyReport() {
     setPopupSoh(null);
     setPopupScanHistory([]);
     setCountInput('');
+    // refocusHidden() is triggered by the useEffect watching popupData
   };
 
-  const handleCorrect = () => {
-    closePopup();
-  };
+  const handleCorrect = () => closePopup();
 
   const handleSubmitCount = async () => {
     if (!popupData || !countInput) return;
@@ -204,7 +227,7 @@ function ManagerZeroQtyReport() {
     setSelectedIds(selectedIds.length === items.length ? [] : items.map(i => i.id));
   };
 
-  // ── Rows: Name + SKU combined into one column ──────────────────────────
+  // ── Rows ───────────────────────────────────────────────────────────────
   const rows = items.map(item => [
     <Checkbox
       checked={selectedIds.includes(item.id)}
@@ -224,6 +247,29 @@ function ManagerZeroQtyReport() {
       title="0 quantity report"
       backAction={{ onAction: () => navigate('/manager') }}
     >
+      {/* Hidden input — always focused in standby, captures scanner input */}
+      <input
+        ref={hiddenInputRef}
+        onChange={handleHiddenChange}
+        onKeyDown={handleHiddenKeyDown}
+        style={{
+          position: 'fixed',
+          top: '-9999px',
+          left: '-9999px',
+          width: '1px',
+          height: '1px',
+          opacity: 0,
+          pointerEvents: 'none',
+        }}
+        readOnly={false}
+        autoComplete="off"
+        autoCorrect="off"
+        autoCapitalize="off"
+        spellCheck="false"
+        inputMode="none"
+        aria-hidden="true"
+      />
+
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">
