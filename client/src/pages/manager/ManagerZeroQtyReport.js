@@ -17,6 +17,32 @@ function computePOH(scanHistory, soh) {
   return relevant.reduce((sum, s) => sum + (s.type === 'counted' ? (s.value || 0) : 0), 0);
 }
 
+// Extract the real character from a keydown event,
+// even when Samsung IME sets e.key = 'Unidentified'.
+// Barcode scanners only emit digits and a few symbols,
+// so we map e.code → character directly.
+function resolveKey(e) {
+  if (e.key && e.key !== 'Unidentified' && e.key.length === 1) {
+    return e.key;
+  }
+  // e.code examples: 'Digit7', 'KeyA', 'Minus', 'Period'
+  if (e.code) {
+    if (e.code.startsWith('Digit')) return e.code.slice(5); // 'Digit7' → '7'
+    if (e.code.startsWith('Numpad') && e.code.length === 7) return e.code.slice(6); // 'Numpad3' → '3'
+    if (e.code.startsWith('Key') && e.code.length === 4) {
+      const ch = e.code.slice(3); // 'KeyA' → 'A'
+      return e.shiftKey ? ch : ch.toLowerCase();
+    }
+    const symbolMap = {
+      Minus: '-', Equal: '=', BracketLeft: '[', BracketRight: ']',
+      Backslash: '\\', Semicolon: ';', Quote: "'", Backquote: '`',
+      Comma: ',', Period: '.', Slash: '/',
+    };
+    if (symbolMap[e.code]) return symbolMap[e.code];
+  }
+  return null; // skip unmappable keys (Shift, Alt, etc.)
+}
+
 function ManagerZeroQtyReport() {
   const navigate = useNavigate();
   const [items, setItems]               = useState([]);
@@ -25,12 +51,6 @@ function ManagerZeroQtyReport() {
   const [submitting, setSubmitting]     = useState(false);
   const [loadingItems, setLoadingItems] = useState(true);
 
-  // ── DEBUG state ────────────────────────────────────────────────────────
-  const [debugLog, setDebugLog] = useState([]);
-  const addDebug = (msg) => {
-    setDebugLog(prev => [`${new Date().toISOString().slice(11,23)} ${msg}`, ...prev].slice(0, 20));
-  };
-
   // Popup
   const [popupData, setPopupData]               = useState(null);
   const [popupSoh, setPopupSoh]                 = useState(null);
@@ -38,33 +58,11 @@ function ManagerZeroQtyReport() {
   const [countInput, setCountInput]             = useState('');
   const [loadingSoh, setLoadingSoh]             = useState(false);
 
-  const hiddenInputRef   = useRef(null);
-  const hiddenInputValue = useRef('');
+  const barcodeBuffer = useRef('');
+  const barcodeTimer  = useRef(null);
+  const popupRef      = useRef(null); // track popup open state inside the listener
 
   const location = localStorage.getItem('managerLocation') || '';
-
-  const refocusHidden = useCallback(() => {
-    setTimeout(() => {
-      if (hiddenInputRef.current) {
-        hiddenInputRef.current.focus();
-        addDebug(`refocus called, activeElement: ${document.activeElement?.tagName}#${document.activeElement?.id}`);
-      }
-    }, 80);
-  }, []);
-
-  useEffect(() => { refocusHidden(); }, [refocusHidden]);
-
-  useEffect(() => {
-    if (!popupData && !loadingSoh) refocusHidden();
-  }, [popupData, loadingSoh, refocusHidden]);
-
-  // ── Also refocus when user taps anywhere on the page background ────────
-  const handlePageClick = (e) => {
-    // Don't steal focus from buttons/inputs
-    const tag = e.target.tagName;
-    if (['BUTTON', 'INPUT', 'TEXTAREA', 'SELECT', 'A'].includes(tag)) return;
-    refocusHidden();
-  };
 
   const loadDrafts = useCallback(async () => {
     if (!location) { setLoadingItems(false); return; }
@@ -81,52 +79,50 @@ function ManagerZeroQtyReport() {
 
   useEffect(() => { loadDrafts(); }, [loadDrafts]);
 
-  // ── Hidden input handlers ──────────────────────────────────────────────
-  const handleHiddenChange = (e) => {
-    hiddenInputValue.current = e.target.value;
-    addDebug(`onChange: "${e.target.value}"`);
-  };
-
-  const handleHiddenKeyDown = async (e) => {
-    addDebug(`keydown: key="${e.key}" val="${hiddenInputValue.current}"`);
-    if (e.key === 'Enter') {
-      const barcode = hiddenInputValue.current.trim();
-      hiddenInputValue.current = '';
-      if (hiddenInputRef.current) hiddenInputRef.current.value = '';
-      addDebug(`ENTER fired, barcode="${barcode}"`);
-      if (barcode.length > 0) await openPopupByBarcode(barcode);
-    }
-  };
-
-  // ── Fallback: also listen on window in case hidden input loses focus ───
+  // Keep popupRef in sync so the keydown handler can read it without stale closure
   useEffect(() => {
-    let buf = '';
-    let timer = null;
-    const handler = (e) => {
-      // Only fire if hidden input is NOT the active element
-      if (document.activeElement === hiddenInputRef.current) return;
-      if (popupData) return;
-      addDebug(`window keydown (fallback): key="${e.key}" active=${document.activeElement?.tagName}`);
+    popupRef.current = popupData;
+  }, [popupData]);
+
+  // ── Global keydown listener — reads e.code to bypass Samsung IME ───────
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      // Don't capture when popup is open or user is typing in a real input
+      if (popupRef.current) return;
+      const activeTag = document.activeElement?.tagName;
+      if (['INPUT', 'TEXTAREA'].includes(activeTag)) {
+        // Allow only if it's our dummy focus div, not a real text field
+        if (document.activeElement?.id !== 'scanner-anchor') return;
+      }
+
       if (e.key === 'Enter') {
-        clearTimeout(timer);
-        const barcode = buf.trim();
-        buf = '';
+        clearTimeout(barcodeTimer.current);
+        const barcode = barcodeBuffer.current.trim();
+        barcodeBuffer.current = '';
         if (barcode.length > 0) openPopupByBarcode(barcode);
-      } else if (e.key.length === 1) {
-        buf += e.key;
-        clearTimeout(timer);
-        timer = setTimeout(() => { buf = ''; }, 500);
+        return;
+      }
+
+      const ch = resolveKey(e);
+      if (ch) {
+        barcodeBuffer.current += ch;
+        clearTimeout(barcodeTimer.current);
+        barcodeTimer.current = setTimeout(() => {
+          barcodeBuffer.current = '';
+        }, 500);
       }
     };
-    window.addEventListener('keydown', handler);
-    return () => { window.removeEventListener('keydown', handler); clearTimeout(timer); };
-  }, [popupData]);
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      clearTimeout(barcodeTimer.current);
+    };
+  }, []); // empty deps — handler uses refs, not stale closures
 
   const openPopupByBarcode = async (barcode) => {
     setLoadingSoh(true);
     setError('');
-    addDebug(`opening popup for barcode="${barcode}"`);
-    hiddenInputRef.current?.blur();
     try {
       const locRes  = await fetch('/api/shopify/locations');
       const locData = await locRes.json();
@@ -143,8 +139,7 @@ function ManagerZeroQtyReport() {
       setPopupScanHistory(existing?.scan_history || []);
       setCountInput('');
     } catch (e) {
-      setError(`${e.message} (barcode captured: "${barcode}")`);
-      refocusHidden();
+      setError(e.message || 'Product not found');
     } finally {
       setLoadingSoh(false);
     }
@@ -237,96 +232,64 @@ function ManagerZeroQtyReport() {
 
   return (
     <Page title="0 quantity report" backAction={{ onAction: () => navigate('/manager') }}>
+      <Layout>
+        <Layout.Section>
+          <BlockStack gap="400">
+            {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
+            <Text variant="bodySm" tone="subdued">
+              Scan to add items · saved for 15 days · shared across this location
+            </Text>
 
-      {/* Hidden input */}
-      <input
-        ref={hiddenInputRef}
-        onChange={handleHiddenChange}
-        onKeyDown={handleHiddenKeyDown}
-        style={{ position: 'fixed', top: '-9999px', left: '-9999px', width: '1px', height: '1px', opacity: 0, pointerEvents: 'none' }}
-        autoComplete="off" autoCorrect="off" autoCapitalize="off"
-        spellCheck="false" aria-hidden="true"
-      />
+            <Card>
+              <BlockStack gap="300">
+                <InlineStack align="end" gap="200" wrap>
+                  <button disabled={selectedIds.length === 0 || submitting} onClick={handleDeleteSelected}
+                    style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid #d72c0d',
+                      background: selectedIds.length === 0 ? '#f6f6f7' : 'white',
+                      color: selectedIds.length === 0 ? '#8c9196' : '#d72c0d',
+                      cursor: selectedIds.length === 0 ? 'not-allowed' : 'pointer', fontSize: '14px', fontWeight: '500' }}>
+                    Delete selected
+                  </button>
+                  <button disabled={items.length === 0 || submitting} onClick={handleDeleteAll}
+                    style={{ padding: '8px 16px', borderRadius: '8px', border: 'none',
+                      background: items.length === 0 ? '#f6f6f7' : '#d72c0d',
+                      color: items.length === 0 ? '#8c9196' : 'white',
+                      cursor: items.length === 0 ? 'not-allowed' : 'pointer', fontSize: '14px', fontWeight: '500' }}>
+                    Delete all
+                  </button>
+                  <Button disabled={selectedIds.length === 0 || submitting}
+                    onClick={() => handleSubmitItems(selectedIds)} loading={submitting}>
+                    Submit selected
+                  </Button>
+                  <button disabled={items.length === 0 || submitting}
+                    onClick={() => handleSubmitItems(items.map(i => i.id))}
+                    style={{ padding: '8px 16px', borderRadius: '8px', border: 'none',
+                      background: items.length === 0 ? '#f6f6f7' : '#008060',
+                      color: items.length === 0 ? '#8c9196' : 'white',
+                      cursor: items.length === 0 ? 'not-allowed' : 'pointer', fontSize: '14px', fontWeight: '500' }}>
+                    Submit all
+                  </button>
+                </InlineStack>
 
-      <div onClick={handlePageClick}>
-        <Layout>
-          <Layout.Section>
-            <BlockStack gap="400">
-              {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
-
-              {/* ── DEBUG PANEL ── remove after diagnosis ── */}
-              <Card>
-                <BlockStack gap="200">
-                  <InlineStack align="space-between">
-                    <Text variant="bodySm" fontWeight="bold">Debug log</Text>
-                    <Button size="slim" onClick={() => setDebugLog([])}>Clear</Button>
-                  </InlineStack>
-                  <Text variant="bodySm" tone="subdued">
-                    Active el: <strong id="activeElDisplay">—</strong>
-                  </Text>
-                  {debugLog.length === 0
-                    ? <Text variant="bodySm" tone="subdued">Scan something to see what's captured...</Text>
-                    : debugLog.map((line, i) => (
-                        <Text key={i} variant="bodySm" tone={line.includes('ENTER') ? 'success' : 'subdued'}>{line}</Text>
-                      ))
-                  }
-                </BlockStack>
-              </Card>
-              {/* ── END DEBUG PANEL ── */}
-
-              <Text variant="bodySm" tone="subdued">Scan to add items · saved for 15 days · shared across this location</Text>
-
-              <Card>
-                <BlockStack gap="300">
-                  <InlineStack align="end" gap="200" wrap>
-                    <button disabled={selectedIds.length === 0 || submitting} onClick={handleDeleteSelected}
-                      style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid #d72c0d',
-                        background: selectedIds.length === 0 ? '#f6f6f7' : 'white',
-                        color: selectedIds.length === 0 ? '#8c9196' : '#d72c0d',
-                        cursor: selectedIds.length === 0 ? 'not-allowed' : 'pointer', fontSize: '14px', fontWeight: '500' }}>
-                      Delete selected
-                    </button>
-                    <button disabled={items.length === 0 || submitting} onClick={handleDeleteAll}
-                      style={{ padding: '8px 16px', borderRadius: '8px', border: 'none',
-                        background: items.length === 0 ? '#f6f6f7' : '#d72c0d',
-                        color: items.length === 0 ? '#8c9196' : 'white',
-                        cursor: items.length === 0 ? 'not-allowed' : 'pointer', fontSize: '14px', fontWeight: '500' }}>
-                      Delete all
-                    </button>
-                    <Button disabled={selectedIds.length === 0 || submitting}
-                      onClick={() => handleSubmitItems(selectedIds)} loading={submitting}>
-                      Submit selected
-                    </Button>
-                    <button disabled={items.length === 0 || submitting}
-                      onClick={() => handleSubmitItems(items.map(i => i.id))}
-                      style={{ padding: '8px 16px', borderRadius: '8px', border: 'none',
-                        background: items.length === 0 ? '#f6f6f7' : '#008060',
-                        color: items.length === 0 ? '#8c9196' : 'white',
-                        cursor: items.length === 0 ? 'not-allowed' : 'pointer', fontSize: '14px', fontWeight: '500' }}>
-                      Submit all
-                    </button>
-                  </InlineStack>
-
-                  {loadingItems ? <InlineStack align="center"><Spinner /></InlineStack>
-                    : items.length === 0
-                      ? <Text tone="subdued" alignment="center">No items yet. Scan a barcode to add.</Text>
-                      : <DataTable
-                          columnContentTypes={['text', 'text', 'numeric', 'numeric']}
-                          headings={[
-                            <Checkbox checked={selectedIds.length === items.length && items.length > 0}
-                              indeterminate={selectedIds.length > 0 && selectedIds.length < items.length}
-                              onChange={toggleSelectAll} />,
-                            'Name / SKU', 'SOH', 'POH',
-                          ]}
-                          rows={rows}
-                        />
-                  }
-                </BlockStack>
-              </Card>
-            </BlockStack>
-          </Layout.Section>
-        </Layout>
-      </div>
+                {loadingItems ? <InlineStack align="center"><Spinner /></InlineStack>
+                  : items.length === 0
+                    ? <Text tone="subdued" alignment="center">No items yet. Scan a barcode to add.</Text>
+                    : <DataTable
+                        columnContentTypes={['text', 'text', 'numeric', 'numeric']}
+                        headings={[
+                          <Checkbox checked={selectedIds.length === items.length && items.length > 0}
+                            indeterminate={selectedIds.length > 0 && selectedIds.length < items.length}
+                            onChange={toggleSelectAll} />,
+                          'Name / SKU', 'SOH', 'POH',
+                        ]}
+                        rows={rows}
+                      />
+                }
+              </BlockStack>
+            </Card>
+          </BlockStack>
+        </Layout.Section>
+      </Layout>
 
       {/* Scan Popup */}
       {(popupData || loadingSoh) && (
