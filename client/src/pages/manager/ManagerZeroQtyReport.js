@@ -17,20 +17,15 @@ function computePOH(scanHistory, soh) {
   return relevant.reduce((sum, s) => sum + (s.type === 'counted' ? (s.value || 0) : 0), 0);
 }
 
-// Extract the real character from a keydown event,
-// even when Samsung IME sets e.key = 'Unidentified'.
-// Barcode scanners only emit digits and a few symbols,
-// so we map e.code → character directly.
 function resolveKey(e) {
   if (e.key && e.key !== 'Unidentified' && e.key.length === 1) {
     return e.key;
   }
-  // e.code examples: 'Digit7', 'KeyA', 'Minus', 'Period'
   if (e.code) {
-    if (e.code.startsWith('Digit')) return e.code.slice(5); // 'Digit7' → '7'
-    if (e.code.startsWith('Numpad') && e.code.length === 7) return e.code.slice(6); // 'Numpad3' → '3'
+    if (e.code.startsWith('Digit')) return e.code.slice(5);
+    if (e.code.startsWith('Numpad') && e.code.length === 7) return e.code.slice(6);
     if (e.code.startsWith('Key') && e.code.length === 4) {
-      const ch = e.code.slice(3); // 'KeyA' → 'A'
+      const ch = e.code.slice(3);
       return e.shiftKey ? ch : ch.toLowerCase();
     }
     const symbolMap = {
@@ -40,7 +35,7 @@ function resolveKey(e) {
     };
     if (symbolMap[e.code]) return symbolMap[e.code];
   }
-  return null; // skip unmappable keys (Shift, Alt, etc.)
+  return null;
 }
 
 function ManagerZeroQtyReport() {
@@ -51,6 +46,12 @@ function ManagerZeroQtyReport() {
   const [submitting, setSubmitting]     = useState(false);
   const [loadingItems, setLoadingItems] = useState(true);
 
+  // Debug
+  const [debugLog, setDebugLog] = useState([]);
+  const addDebug = useCallback((msg) => {
+    setDebugLog(prev => [`${new Date().toISOString().slice(11,23)} ${msg}`, ...prev].slice(0, 30));
+  }, []);
+
   // Popup
   const [popupData, setPopupData]               = useState(null);
   const [popupSoh, setPopupSoh]                 = useState(null);
@@ -60,9 +61,10 @@ function ManagerZeroQtyReport() {
 
   const barcodeBuffer = useRef('');
   const barcodeTimer  = useRef(null);
-  const popupRef      = useRef(null); // track popup open state inside the listener
+  const popupRef      = useRef(null);
+  const location      = localStorage.getItem('managerLocation') || '';
 
-  const location = localStorage.getItem('managerLocation') || '';
+  useEffect(() => { popupRef.current = popupData; }, [popupData]);
 
   const loadDrafts = useCallback(async () => {
     if (!location) { setLoadingItems(false); return; }
@@ -79,35 +81,34 @@ function ManagerZeroQtyReport() {
 
   useEffect(() => { loadDrafts(); }, [loadDrafts]);
 
-  // Keep popupRef in sync so the keydown handler can read it without stale closure
-  useEffect(() => {
-    popupRef.current = popupData;
-  }, [popupData]);
-
-  // ── Global keydown listener — reads e.code to bypass Samsung IME ───────
+  // ── Global keydown with full debug logging ─────────────────────────────
   useEffect(() => {
     const handleKeyDown = (e) => {
-      // Don't capture when popup is open or user is typing in a real input
+      const activeTag = document.activeElement?.tagName || 'none';
+
+      // Log every single keydown event
+      addDebug(`key="${e.key}" code="${e.code}" active=${activeTag} popupOpen=${!!popupRef.current}`);
+
       if (popupRef.current) return;
-      const activeTag = document.activeElement?.tagName;
-      if (['INPUT', 'TEXTAREA'].includes(activeTag)) {
-        // Allow only if it's our dummy focus div, not a real text field
-        if (document.activeElement?.id !== 'scanner-anchor') return;
-      }
+      if (['INPUT', 'TEXTAREA'].includes(activeTag)) return;
 
       if (e.key === 'Enter') {
         clearTimeout(barcodeTimer.current);
         const barcode = barcodeBuffer.current.trim();
         barcodeBuffer.current = '';
+        addDebug(`▶ ENTER → barcode="${barcode}"`);
         if (barcode.length > 0) openPopupByBarcode(barcode);
         return;
       }
 
       const ch = resolveKey(e);
+      addDebug(`  resolveKey → "${ch}"`);
       if (ch) {
         barcodeBuffer.current += ch;
+        addDebug(`  buffer now = "${barcodeBuffer.current}"`);
         clearTimeout(barcodeTimer.current);
         barcodeTimer.current = setTimeout(() => {
+          addDebug(`  buffer timeout, clearing "${barcodeBuffer.current}"`);
           barcodeBuffer.current = '';
         }, 500);
       }
@@ -118,7 +119,7 @@ function ManagerZeroQtyReport() {
       window.removeEventListener('keydown', handleKeyDown);
       clearTimeout(barcodeTimer.current);
     };
-  }, []); // empty deps — handler uses refs, not stale closures
+  }, [addDebug]);
 
   const openPopupByBarcode = async (barcode) => {
     setLoadingSoh(true);
@@ -128,28 +129,24 @@ function ManagerZeroQtyReport() {
       const locData = await locRes.json();
       const loc     = locData.find(l => l.name === location);
       if (!loc) throw new Error('Location not found');
-
       const res  = await fetch(`/api/shopify/inventory/${encodeURIComponent(barcode)}/${encodeURIComponent(loc.id)}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Product not found');
-
       const existing = items.find(i => i.barcode === barcode);
       setPopupData({ ...data, barcode, locationId: loc.id });
       setPopupSoh(data.soh ?? 0);
       setPopupScanHistory(existing?.scan_history || []);
       setCountInput('');
     } catch (e) {
-      setError(e.message || 'Product not found');
+      setError(`${e.message} [barcode: "${barcode}"]`);
     } finally {
       setLoadingSoh(false);
     }
   };
 
   const closePopup = () => {
-    setPopupData(null);
-    setPopupSoh(null);
-    setPopupScanHistory([]);
-    setCountInput('');
+    setPopupData(null); setPopupSoh(null);
+    setPopupScanHistory([]); setCountInput('');
   };
 
   const handleCorrect = () => closePopup();
@@ -163,8 +160,7 @@ function ManagerZeroQtyReport() {
     const poh        = computePOH(newHistory, popupSoh);
     try {
       const res  = await fetch('/api/reports/drafts', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           barcode: popupData.barcode, name: popupData.name,
           department: popupData.department, location,
@@ -236,6 +232,31 @@ function ManagerZeroQtyReport() {
         <Layout.Section>
           <BlockStack gap="400">
             {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
+
+            {/* ── DEBUG PANEL ── */}
+            <Card>
+              <BlockStack gap="200">
+                <InlineStack align="space-between">
+                  <Text variant="bodySm" fontWeight="bold" tone="subdued">Debug log (remove after fix)</Text>
+                  <Button size="slim" onClick={() => setDebugLog([])}>Clear</Button>
+                </InlineStack>
+                <Text variant="bodySm" tone="subdued">
+                  Buffer: <strong>{barcodeBuffer.current || '(empty)'}</strong>
+                </Text>
+                {debugLog.length === 0
+                  ? <Text variant="bodySm" tone="subdued">Scan something...</Text>
+                  : debugLog.map((line, i) => (
+                      <div key={i} style={{
+                        fontFamily: 'monospace', fontSize: '11px',
+                        color: line.includes('▶') ? '#008060' : line.includes('resolveKey → "null"') ? '#d72c0d' : '#444',
+                        borderBottom: '1px solid #f0f0f0', paddingBottom: '2px'
+                      }}>{line}</div>
+                    ))
+                }
+              </BlockStack>
+            </Card>
+            {/* ── END DEBUG ── */}
+
             <Text variant="bodySm" tone="subdued">
               Scan to add items · saved for 15 days · shared across this location
             </Text>
