@@ -86,11 +86,23 @@ router.post('/submit', async (req, res) => {
     if (!items || items.length === 0) return res.status(400).json({ error: 'No items' });
 
     for (const item of items) {
+      // shopify_location_id may come in as item.shopify_location_id (from draft)
+      // or item.locationId (legacy). Fall back to location_map lookup if both are null.
+      let shopifyLocationId = item.shopify_location_id || item.locationId || null;
+
+      if (!shopifyLocationId && item.location) {
+        const mapRow = await pool.query(
+          'SELECT shopify_location_id FROM location_map WHERE location_name = $1',
+          [item.location]
+        );
+        if (mapRow.rows.length > 0) shopifyLocationId = mapRow.rows[0].shopify_location_id;
+      }
+
       await pool.query(
         `INSERT INTO zero_qty_reports
          (barcode, name, department, location, shopify_location_id, soh, poh, status)
          VALUES ($1, $2, $3, $4, $5, $6, $7, 'reviewing')`,
-        [item.barcode, item.name, item.department, item.location, item.locationId, item.soh, item.poh]
+        [item.barcode, item.name, item.department, item.location, shopifyLocationId, item.soh, item.poh]
       );
     }
 
