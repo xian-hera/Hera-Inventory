@@ -122,7 +122,7 @@ function ManagerZeroQtyReport() {
       if (!res.ok) throw new Error(data.error || 'Product not found');
       const existing = items.find(i => i.barcode === barcode);
       setPopupData({ ...data, barcode, locationId: loc.id });
-      setPopupSoh(data.soh ?? 0);
+      setPopupSoh(data.soh ?? null);
       setPopupScanHistory(existing?.scan_history || []);
       setCountInput('');
     } catch (e) {
@@ -320,11 +320,18 @@ function ManagerZeroQtyReport() {
                       </div>
                       <Button onClick={handleSubmitCount} disabled={!countInput}>Submit</Button>
                     </InlineStack>
-                    <button onClick={handleCorrect} style={{ background: 'green', color: 'white',
-                      border: 'none', borderRadius: '12px', padding: '20px', fontSize: '22px',
-                      fontWeight: 'bold', cursor: 'pointer', width: '100%' }}>
-                      SOH {popupSoh}　Correct
-                    </button>
+                    {popupSoh === null ? (
+                      <div style={{ background: '#f6f6f7', borderRadius: '12px', padding: '16px',
+                        textAlign: 'center', fontSize: '14px', color: '#d72c0d' }}>
+                        SOH unavailable — network error. Please close and retry.
+                      </div>
+                    ) : (
+                      <button onClick={handleCorrect} style={{ background: 'green', color: 'white',
+                        border: 'none', borderRadius: '12px', padding: '20px', fontSize: '22px',
+                        fontWeight: 'bold', cursor: 'pointer', width: '100%' }}>
+                        SOH {popupSoh}　Correct
+                      </button>
+                    )}
                   </BlockStack>
                 </>
             }

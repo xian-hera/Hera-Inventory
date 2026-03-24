@@ -148,13 +148,13 @@ function ManagerTaskDetail() {
       if (!loc) throw new Error('Location not found');
       const res  = await fetch(`/api/shopify/inventory/${encodeURIComponent(item.barcode)}/${encodeURIComponent(loc.id)}`);
       const data = await res.json();
-      setPopupSoh(data.soh ?? 0);
+      setPopupSoh(data.soh ?? null);
       setTask(prev => ({
         ...prev,
-        items: prev.items.map(i => i.id === item.id ? { ...i, soh: data.soh ?? 0 } : i),
+        items: prev.items.map(i => i.id === item.id ? { ...i, soh: data.soh ?? null } : i),
       }));
     } catch (e) {
-      setPopupSoh(0);
+      setPopupSoh(null); // network error
     } finally {
       setLoadingSoh(false);
     }
@@ -532,7 +532,12 @@ function ManagerTaskDetail() {
                   <Button onClick={handleSubmitCount} disabled={!countInput}>Submit</Button>
                 </InlineStack>
 
-                {loadingSoh ? <Spinner /> : (
+                {loadingSoh ? <Spinner /> : popupSoh === null ? (
+                  <div style={{ background: '#fff4f4', borderRadius: '12px', padding: '16px',
+                    textAlign: 'center', fontSize: '14px', color: '#d72c0d' }}>
+                    SOH — (network error, please close and retry)
+                  </div>
+                ) : (
                   <button onClick={handleCorrect} style={{
                     background: '#008060', color: 'white', border: 'none',
                     borderRadius: '12px', padding: '20px', fontSize: '22px',

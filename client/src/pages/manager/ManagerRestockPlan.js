@@ -117,7 +117,7 @@ function ManagerRestockPlan() {
       if (!res.ok) throw new Error(data.error || 'Product not found');
       const existing = items.find(i => i.barcode === barcode);
       setPopupData({ ...data, barcode, locationId: loc.id });
-      setPopupSoh(data.soh ?? 0);
+      setPopupSoh(data.soh ?? null);
       setRestockInput(isEdit && existing ? String(existing.restock_qty) : '');
     } catch (e) {
       setError(e.message || 'Product not found');
@@ -209,7 +209,7 @@ function ManagerRestockPlan() {
       if (!res.ok) throw new Error(data.error || 'SKU not found');
       setShowAddByTyping(false); setSkuInput('');
       setPopupData({ ...data, barcode: skuInput.trim(), locationId: loc.id });
-      setPopupSoh(data.soh ?? 0); setRestockInput(''); setEditingBarcode(null);
+      setPopupSoh(data.soh ?? null); setRestockInput(''); setEditingBarcode(null);
     } catch (e) { setSkuError(e.message || 'SKU not found'); }
     finally { setSkuSearching(false); }
   };
@@ -323,9 +323,12 @@ function ManagerRestockPlan() {
                       <Button variant="primary" onClick={handleSave} disabled={restockInput === ''}>Save</Button>
                     </div>
                   </InlineStack>
-                  <div style={{ background: '#f6f6f7', borderRadius: '8px',
-                    padding: '12px 16px', textAlign: 'center' }}>
-                    <Text variant="bodyLg" fontWeight="semibold">SOH {popupSoh}</Text>
+                  <div style={{ background: popupSoh === null ? '#fff4f4' : '#f6f6f7',
+                    borderRadius: '8px', padding: '12px 16px', textAlign: 'center' }}>
+                    {popupSoh === null
+                      ? <Text variant="bodyMd" tone="critical">SOH — (network error, please retry)</Text>
+                      : <Text variant="bodyLg" fontWeight="semibold">SOH {popupSoh}</Text>
+                    }
                   </div>
                 </BlockStack>
               </>

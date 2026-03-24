@@ -103,11 +103,13 @@ function ManagerCountingTasksList() {
 
             <Card>
               {loading ? <Spinner /> : (
-                <DataTable
-                  columnContentTypes={['text','text','text','text','text']}
-                  headings={['No.', 'Department', '', 'Date', 'Progress']}
-                  rows={rows}
-                />
+                <div style={{ overflowX: 'hidden' }}>
+                  <DataTable
+                    columnContentTypes={['text','text','text','text','text']}
+                    headings={['No.', 'Department', '', 'Date', 'Progress']}
+                    rows={rows}
+                  />
+                </div>
               )}
             </Card>
           </BlockStack>
