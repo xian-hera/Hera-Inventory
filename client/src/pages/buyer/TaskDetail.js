@@ -106,6 +106,9 @@ function TaskDetail() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
+      if (data.warnings && data.warnings.length > 0) {
+        setError(`Some items could not be committed and may need to be retried:\n${data.warnings.join('\n')}`);
+      }
       setSelectedItemIds([]);
       fetchTask();
     } catch (e) {

@@ -314,47 +314,90 @@ router.patch('/:id/commit', async (req, res) => {
 
     const shopifyLocationId = task.rows[0].shopify_location_id;
 
+    // Helper: call Shopify with up to 2 retries on timeout
+    const shopifyRequest = async (fn, retries = 2) => {
+      for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+          return await fn();
+        } catch (e) {
+          const isTimeout = e.code === 'ETIMEDOUT' || e.code === 'ECONNRESET' ||
+            (e.message && (e.message.includes('ETIMEDOUT') || e.message.includes('ECONNRESET')));
+          if (isTimeout && attempt < retries) {
+            console.log(`Shopify timeout, retrying (${attempt + 1}/${retries})...`);
+            await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+            continue;
+          }
+          throw e;
+        }
+      }
+    };
+
+    const errors = [];
+
     for (const item of items.rows) {
       if (item.is_correct || item.poh === null || item.soh === null) continue;
+
       const delta = item.poh - item.soh;
-      if (delta === 0) continue;
 
-      const variantQuery = `{
-        productVariants(first: 1, query: "barcode:${item.barcode}") {
-          edges {
-            node {
-              inventoryItem { id }
-            }
-          }
+      // delta = 0: SOH and POH match — no Shopify call needed, just mark committed
+      if (delta === 0) {
+        await pool.query(
+          'UPDATE task_items SET is_committed = TRUE WHERE id = $1',
+          [item.id]
+        );
+        continue;
+      }
+
+      try {
+        // Fetch inventory item ID with retry
+        const variantRes = await shopifyRequest(() =>
+          client.query({
+            data: `{
+              productVariants(first: 1, query: "barcode:${item.barcode}") {
+                edges { node { inventoryItem { id } } }
+              }
+            }`
+          })
+        );
+        const invItemId = variantRes.body.data.productVariants.edges[0]?.node?.inventoryItem?.id;
+        if (!invItemId) {
+          errors.push(`Barcode ${item.barcode}: inventory item not found in Shopify`);
+          continue;
         }
-      }`;
-      const variantRes = await client.query({ data: variantQuery });
-      const invItemId = variantRes.body.data.productVariants.edges[0]?.node?.inventoryItem?.id;
-      if (!invItemId) continue;
 
-      const mutation = `
-        mutation {
-          inventoryAdjustQuantities(input: {
-            reason: "correction",
-            name: "available",
-            changes: [{
-              inventoryItemId: "${invItemId}",
-              locationId: "${shopifyLocationId}",
-              delta: ${delta}
-            }]
-          }) {
-            userErrors { field message }
-          }
-        }
-      `;
-      await client.query({ data: mutation });
+        // Adjust inventory with retry
+        await shopifyRequest(() =>
+          client.query({
+            data: `
+              mutation {
+                inventoryAdjustQuantities(input: {
+                  reason: "correction",
+                  name: "available",
+                  changes: [{
+                    inventoryItemId: "${invItemId}",
+                    locationId: "${shopifyLocationId}",
+                    delta: ${delta}
+                  }]
+                }) {
+                  userErrors { field message }
+                }
+              }
+            `
+          })
+        );
 
-      await pool.query(
-        'UPDATE task_items SET is_committed = TRUE WHERE id = $1',
-        [item.id]
-      );
+        await pool.query(
+          'UPDATE task_items SET is_committed = TRUE WHERE id = $1',
+          [item.id]
+        );
+      } catch (e) {
+        // Log but continue with other items — don't abort the whole commit
+        console.error(`Commit failed for item ${item.id} (barcode: ${item.barcode}):`, e.message);
+        errors.push(`Barcode ${item.barcode}: ${e.message}`);
+      }
     }
 
+    // Update task status if all inaccurate items are now committed
     const remaining = await pool.query(
       `SELECT COUNT(*) FROM task_items 
        WHERE task_id = $1 AND is_correct = FALSE AND poh IS NOT NULL AND is_committed = FALSE`,
@@ -365,6 +408,11 @@ router.patch('/:id/commit', async (req, res) => {
         "UPDATE tasks SET status = 'committed', updated_at = NOW() WHERE id = $1",
         [id]
       );
+    }
+
+    if (errors.length > 0) {
+      // Partial success — some items committed, some failed
+      return res.json({ success: true, warnings: errors });
     }
 
     res.json({ success: true });
