@@ -470,7 +470,8 @@ router.patch('/:taskId/items/:itemId/poh', async (req, res) => {
   }
 });
 
- async (req, res) => {
+// PATCH /api/tasks/:taskId/items/:itemId/scan
+router.patch('/:taskId/items/:itemId/scan', async (req, res) => {
   try {
     const { itemId } = req.params;
     const { scan_history, poh, soh, is_correct } = req.body;
