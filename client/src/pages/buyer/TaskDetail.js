@@ -36,6 +36,9 @@ function TaskDetail() {
   const [committing, setCommitting] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  // inline POH editing in result column
+  const [editingItemId, setEditingItemId] = useState(null);
+  const [editingValue, setEditingValue]   = useState('');
 
   const fetchTask = useCallback(async () => {
     setLoading(true);
@@ -84,6 +87,10 @@ function TaskDetail() {
 
   const handleCommit = async (all) => {
     if (!task) return;
+    if (task.status === 'counting') {
+      setError('Counting not finished yet.');
+      return;
+    }
     setCommitting(true);
     setError('');
     try {
@@ -148,6 +155,26 @@ function TaskDetail() {
     }
   };
 
+  const handleSavePoh = async (itemId) => {
+    const val = parseInt(editingValue);
+    if (isNaN(val)) { setEditingItemId(null); return; }
+    try {
+      const res = await fetch(`/api/tasks/${taskId}/items/${itemId}/poh`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ poh: val }),
+      });
+      const updated = await res.json();
+      setTask(prev => ({
+        ...prev,
+        items: prev.items.map(i => i.id === updated.id ? updated : i),
+      }));
+    } catch (e) {
+      setError('Failed to save');
+    }
+    setEditingItemId(null);
+  };
+
   const toggleSelectOne = (id) => {
     setSelectedItemIds(prev =>
       prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
@@ -179,17 +206,84 @@ function TaskDetail() {
     let detail = '';
     let result = '';
 
+    const canEdit = task.status === 'reviewing' && !item.is_committed;
+    const isEditing = editingItemId === item.id;
+
     if (item.soh !== null && item.poh !== null) {
-      if (item.is_correct) {
-        result = <span style={{ color: 'green', fontSize: '18px' }}>✓</span>;
+      // delta=0 always shows green check regardless of how it was recorded
+      const delta = item.is_correct ? 0 : item.poh - item.soh;
+      const isZeroDelta = delta === 0;
+
+      if (item.is_correct || isZeroDelta) {
+        detail = '';
+        if (canEdit) {
+          result = isEditing ? (
+            <InlineStack gap="100">
+              <div style={{ width: '70px' }}>
+                <TextField
+                  label="" labelHidden type="number"
+                  value={editingValue}
+                  onChange={setEditingValue}
+                  autoComplete="off"
+                  autoFocus
+                  onBlur={() => setEditingItemId(null)}
+                />
+              </div>
+              <Button size="slim" variant="primary"
+                onMouseDown={e => e.preventDefault()}
+                onClick={() => handleSavePoh(item.id)}>
+                Save
+              </Button>
+            </InlineStack>
+          ) : (
+            <span
+              onClick={() => { setEditingItemId(item.id); setEditingValue('0'); }}
+              style={{ color: 'green', fontSize: '18px', cursor: 'pointer' }}
+              title="Click to edit"
+            >✓</span>
+          );
+        } else {
+          result = <span style={{ color: 'green', fontSize: '18px' }}>✓</span>;
+        }
       } else {
-        const delta = item.poh - item.soh;
         detail = `SOH ${item.soh}  POH ${item.poh}`;
-        result = (
-          <Text tone={delta > 0 ? 'success' : 'critical'} fontWeight="bold">
-            {delta > 0 ? `+${delta}` : `${delta}`}
-          </Text>
-        );
+        const displayDelta = delta > 0 ? `+${delta}` : `${delta}`;
+        if (canEdit) {
+          result = isEditing ? (
+            <InlineStack gap="100">
+              <div style={{ width: '70px' }}>
+                <TextField
+                  label="" labelHidden type="number"
+                  value={editingValue}
+                  onChange={setEditingValue}
+                  autoComplete="off"
+                  autoFocus
+                  onBlur={() => setEditingItemId(null)}
+                />
+              </div>
+              <Button size="slim" variant="primary"
+                onMouseDown={e => e.preventDefault()}
+                onClick={() => handleSavePoh(item.id)}>
+                Save
+              </Button>
+            </InlineStack>
+          ) : (
+            <span
+              onClick={() => { setEditingItemId(item.id); setEditingValue(String(item.poh)); }}
+              style={{ cursor: 'pointer', fontWeight: 'bold',
+                color: delta > 0 ? '#008060' : '#d72c0d' }}
+              title="Click to edit"
+            >
+              {displayDelta}
+            </span>
+          );
+        } else {
+          result = (
+            <Text tone={delta > 0 ? 'success' : 'critical'} fontWeight="bold">
+              {displayDelta}
+            </Text>
+          );
+        }
       }
     }
 

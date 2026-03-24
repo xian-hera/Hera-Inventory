@@ -60,11 +60,9 @@ function ManagerZeroQtyReport() {
   const barcodeBuffer = useRef('');
   const barcodeTimer  = useRef(null);
   const popupRef      = useRef(null);
-  const itemsRef      = useRef([]);  // always-current copy of items for use inside keydown listener
   const location      = localStorage.getItem('managerLocation') || '';
 
   useEffect(() => { popupRef.current = popupData; }, [popupData]);
-  useEffect(() => { itemsRef.current = items; }, [items]);
 
   const loadDrafts = useCallback(async () => {
     if (!location) { setLoadingItems(false); return; }
@@ -122,7 +120,7 @@ function ManagerZeroQtyReport() {
       const res  = await fetch(`/api/shopify/inventory/${encodeURIComponent(barcode)}/${encodeURIComponent(loc.id)}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Product not found');
-      const existing = itemsRef.current.find(i => i.barcode === barcode);
+      const existing = items.find(i => i.barcode === barcode);
       setPopupData({ ...data, barcode, locationId: loc.id });
       setPopupSoh(data.soh ?? null);
       setPopupScanHistory(existing?.scan_history || []);
@@ -210,12 +208,17 @@ function ManagerZeroQtyReport() {
 
   const rows = items.map(item => [
     <Checkbox checked={selectedIds.includes(item.id)} onChange={() => toggleSelectOne(item.id)} />,
-    <div style={{ minWidth: 0 }}>
+    <div onClick={() => openPopupByBarcode(item.barcode)}
+      style={{ cursor: 'pointer', minWidth: 0 }}>
       <div style={{ fontSize: '14px', fontWeight: '500', wordBreak: 'break-word', whiteSpace: 'normal' }}>{item.name || '-'}</div>
       <div style={{ fontSize: '12px', color: '#6d7175', wordBreak: 'break-all' }}>{item.barcode || '-'}</div>
     </div>,
-    item.soh ?? '-',
-    item.poh ?? '-',
+    <div onClick={() => openPopupByBarcode(item.barcode)} style={{ cursor: 'pointer' }}>
+      {item.soh ?? '-'}
+    </div>,
+    <div onClick={() => openPopupByBarcode(item.barcode)} style={{ cursor: 'pointer' }}>
+      {item.poh ?? '-'}
+    </div>,
   ]);
 
   return (
@@ -265,19 +268,17 @@ function ManagerZeroQtyReport() {
                   ? <InlineStack align="center"><Spinner /></InlineStack>
                   : items.length === 0
                     ? <Text tone="subdued" alignment="center">No items yet. Scan a barcode to add.</Text>
-                    : <div style={{ overflowX: 'hidden' }}>
-                        <DataTable
-                          columnContentTypes={['text', 'text', 'numeric', 'numeric']}
-                          headings={[
-                            <Checkbox
-                              checked={selectedIds.length === items.length && items.length > 0}
-                              indeterminate={selectedIds.length > 0 && selectedIds.length < items.length}
-                              onChange={toggleSelectAll} />,
-                            'Name / SKU', 'SOH', 'POH',
-                          ]}
-                          rows={rows}
-                        />
-                      </div>
+                    : <DataTable
+                        columnContentTypes={['text', 'text', 'numeric', 'numeric']}
+                        headings={[
+                          <Checkbox
+                            checked={selectedIds.length === items.length && items.length > 0}
+                            indeterminate={selectedIds.length > 0 && selectedIds.length < items.length}
+                            onChange={toggleSelectAll} />,
+                          'Name / SKU', 'SOH', 'POH',
+                        ]}
+                        rows={rows}
+                      />
                 }
               </BlockStack>
             </Card>

@@ -437,8 +437,40 @@ router.patch('/:id/submit', async (req, res) => {
   }
 });
 
-// PATCH /api/tasks/:taskId/items/:itemId/scan
-router.patch('/:taskId/items/:itemId/scan', async (req, res) => {
+// PATCH /api/tasks/:taskId/items/:itemId/poh — buyer overrides POH for a single item
+router.patch('/:taskId/items/:itemId/poh', async (req, res) => {
+  try {
+    const { taskId, itemId } = req.params;
+    const { poh } = req.body;
+    if (poh === undefined || poh === null) return res.status(400).json({ error: 'poh required' });
+
+    const pohVal = parseInt(poh);
+    if (isNaN(pohVal)) return res.status(400).json({ error: 'poh must be a number' });
+
+    // Fetch current item to recalculate is_correct
+    const itemRes = await pool.query(
+      'SELECT * FROM task_items WHERE id = $1 AND task_id = $2',
+      [itemId, taskId]
+    );
+    if (itemRes.rows.length === 0) return res.status(404).json({ error: 'Item not found' });
+    const item = itemRes.rows[0];
+
+    const isCorrect = item.soh !== null && pohVal === item.soh;
+
+    await pool.query(
+      `UPDATE task_items SET poh = $1, is_correct = $2 WHERE id = $3`,
+      [pohVal, isCorrect, itemId]
+    );
+
+    const updated = await pool.query('SELECT * FROM task_items WHERE id = $1', [itemId]);
+    res.json(updated.rows[0]);
+  } catch (e) {
+    console.error('PATCH /:taskId/items/:itemId/poh error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+ async (req, res) => {
   try {
     const { itemId } = req.params;
     const { scan_history, poh, soh, is_correct } = req.body;
