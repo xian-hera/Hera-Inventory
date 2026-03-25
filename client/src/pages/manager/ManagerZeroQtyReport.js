@@ -38,28 +38,6 @@ function cleanBarcode(raw) {
   return raw.replace(/^[^0-9]+/, '');
 }
 
-function formatHistoryDate(dateStr) {
-  if (!dateStr) return '';
-  const d = new Date(dateStr);
-  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const now = new Date();
-  const diffMs = now - d;
-  const diffMins = Math.floor(diffMs / 60000);
-  if (diffMins < 1) return 'Just now';
-  if (diffMins < 60) return `${diffMins} minute${diffMins > 1 ? 's' : ''} ago`;
-  const diffHours = Math.floor(diffMins / 60);
-  if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
-  const diffDays = Math.floor(diffHours / 24);
-  if (diffDays === 1) return `Yesterday at ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-  return `${months[d.getMonth()]} ${d.getDate()} at ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-}
-
-function formatDelta(delta, qty) {
-  if (delta === null || delta === undefined) return qty ?? '—';
-  const sign = delta > 0 ? '+' : '';
-  return `(${sign}${delta}) ${qty ?? ''}`;
-}
-
 function ManagerZeroQtyReport() {
   const navigate = useNavigate();
   const [items, setItems]               = useState([]);
@@ -75,18 +53,36 @@ function ManagerZeroQtyReport() {
   const [countInput, setCountInput]             = useState('');
   const [loadingSoh, setLoadingSoh]             = useState(false);
 
-  // History panel (inline inside popup)
-  const [showHistory, setShowHistory]   = useState(false);
-  const [historyData, setHistoryData]   = useState([]);
-  const [historyLoading, setHistoryLoading] = useState(false);
-  const [historyError, setHistoryError] = useState('');
+  // Type in SKU
+  const [showTypeIn, setShowTypeIn]   = useState(false);
+  const [skuInput, setSkuInput]       = useState('');
+  const [skuSearching, setSkuSearching] = useState(false);
+  const [skuError, setSkuError]       = useState('');
+
+  const openHistory = async (barcode) => {
+    try {
+      const locRes  = await fetch('/api/shopify/locations');
+      const locData = await locRes.json();
+      const loc     = locData.find(l => l.name === location);
+      const locationId = loc ? encodeURIComponent(loc.id) : '';
+
+      const res  = await fetch(`/api/shopify/inventory-history/${encodeURIComponent(barcode)}?locationId=${locationId}`);
+      const data = await res.json();
+      if (!res.ok || !data.url) throw new Error('Could not get history URL');
+      window.top.open(data.url, '_blank');
+    } catch (e) {
+      setError('Could not open history: ' + e.message);
+    }
+  };
 
   const barcodeBuffer = useRef('');
   const barcodeTimer  = useRef(null);
   const popupRef      = useRef(null);
+  const typeInRef     = useRef(false);
   const location      = localStorage.getItem('managerLocation') || '';
 
   useEffect(() => { popupRef.current = popupData; }, [popupData]);
+  useEffect(() => { typeInRef.current = showTypeIn; }, [showTypeIn]);
 
   const loadDrafts = useCallback(async () => {
     if (!location) { setLoadingItems(false); return; }
@@ -106,6 +102,7 @@ function ManagerZeroQtyReport() {
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (popupRef.current) return;
+      if (typeInRef.current) return;
       const activeTag = document.activeElement?.tagName;
       if (['INPUT', 'TEXTAREA'].includes(activeTag)) return;
 
@@ -158,31 +155,9 @@ function ManagerZeroQtyReport() {
   const closePopup = () => {
     setPopupData(null); setPopupSoh(null);
     setPopupScanHistory([]); setCountInput('');
-    setShowHistory(false); setHistoryData([]); setHistoryError('');
   };
 
-  const openHistory = async (barcode) => {
-    setShowHistory(true);
-    setHistoryData([]);
-    setHistoryError('');
-    setHistoryLoading(true);
-    try {
-      const res  = await fetch(`/api/shopify/inventory-history/${encodeURIComponent(barcode)}`);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to load history');
-      setHistoryData(data);
-    } catch (e) {
-      setHistoryError(e.message);
-    } finally {
-      setHistoryLoading(false);
-    }
-  };
 
-  const closeHistory = () => {
-    setShowHistory(false);
-    setHistoryData([]);
-    setHistoryError('');
-  };
 
   const handleCorrect = () => closePopup();
 
@@ -210,6 +185,30 @@ function ManagerZeroQtyReport() {
       });
     } catch (e) { setError('Failed to save item'); }
     closePopup();
+  };
+
+  const handleSkuSearch = async () => {
+    if (!skuInput.trim()) return;
+    setSkuSearching(true); setSkuError('');
+    try {
+      const locRes  = await fetch('/api/shopify/locations');
+      const locData = await locRes.json();
+      const loc     = locData.find(l => l.name === location);
+      if (!loc) throw new Error('Location not found');
+      const res  = await fetch(`/api/shopify/inventory/${encodeURIComponent(skuInput.trim())}/${encodeURIComponent(loc.id)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'SKU not found');
+      setShowTypeIn(false); setSkuInput('');
+      const existing = items.find(i => i.barcode === skuInput.trim());
+      setPopupData({ ...data, barcode: skuInput.trim(), locationId: loc.id });
+      setPopupSoh(data.soh ?? null);
+      setPopupScanHistory(existing?.scan_history || []);
+      setCountInput('');
+    } catch (e) {
+      setSkuError(e.message || 'SKU not found');
+    } finally {
+      setSkuSearching(false);
+    }
   };
 
   const handleSubmitItems = async (ids) => {
@@ -279,36 +278,44 @@ function ManagerZeroQtyReport() {
             </Text>
             <Card>
               <BlockStack gap="300">
-                <InlineStack align="end" gap="200" wrap>
-                  <button disabled={selectedIds.length === 0 || submitting} onClick={handleDeleteSelected}
-                    style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid #d72c0d',
-                      background: selectedIds.length === 0 ? '#f6f6f7' : 'white',
-                      color: selectedIds.length === 0 ? '#8c9196' : '#d72c0d',
-                      cursor: selectedIds.length === 0 ? 'not-allowed' : 'pointer',
+                <InlineStack align="space-between" gap="200" wrap>
+                  <button onClick={() => { setSkuInput(''); setSkuError(''); setShowTypeIn(true); }}
+                    style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid #c9cccf',
+                      background: 'white', color: '#202223', cursor: 'pointer',
                       fontSize: '14px', fontWeight: '500' }}>
-                    Delete selected
+                    Type in SKU
                   </button>
-                  <button disabled={items.length === 0 || submitting} onClick={handleDeleteAll}
-                    style={{ padding: '8px 16px', borderRadius: '8px', border: 'none',
-                      background: items.length === 0 ? '#f6f6f7' : '#d72c0d',
-                      color: items.length === 0 ? '#8c9196' : 'white',
-                      cursor: items.length === 0 ? 'not-allowed' : 'pointer',
-                      fontSize: '14px', fontWeight: '500' }}>
-                    Delete all
-                  </button>
-                  <Button disabled={selectedIds.length === 0 || submitting}
-                    onClick={() => handleSubmitItems(selectedIds)} loading={submitting}>
-                    Submit selected
-                  </Button>
-                  <button disabled={items.length === 0 || submitting}
-                    onClick={() => handleSubmitItems(items.map(i => i.id))}
-                    style={{ padding: '8px 16px', borderRadius: '8px', border: 'none',
-                      background: items.length === 0 ? '#f6f6f7' : '#008060',
-                      color: items.length === 0 ? '#8c9196' : 'white',
-                      cursor: items.length === 0 ? 'not-allowed' : 'pointer',
-                      fontSize: '14px', fontWeight: '500' }}>
-                    Submit all
-                  </button>
+                  <InlineStack align="end" gap="200" wrap>
+                    <button disabled={selectedIds.length === 0 || submitting} onClick={handleDeleteSelected}
+                      style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid #d72c0d',
+                        background: selectedIds.length === 0 ? '#f6f6f7' : 'white',
+                        color: selectedIds.length === 0 ? '#8c9196' : '#d72c0d',
+                        cursor: selectedIds.length === 0 ? 'not-allowed' : 'pointer',
+                        fontSize: '14px', fontWeight: '500' }}>
+                      Delete selected
+                    </button>
+                    <button disabled={items.length === 0 || submitting} onClick={handleDeleteAll}
+                      style={{ padding: '8px 16px', borderRadius: '8px', border: 'none',
+                        background: items.length === 0 ? '#f6f6f7' : '#d72c0d',
+                        color: items.length === 0 ? '#8c9196' : 'white',
+                        cursor: items.length === 0 ? 'not-allowed' : 'pointer',
+                        fontSize: '14px', fontWeight: '500' }}>
+                      Delete all
+                    </button>
+                    <Button disabled={selectedIds.length === 0 || submitting}
+                      onClick={() => handleSubmitItems(selectedIds)} loading={submitting}>
+                      Submit selected
+                    </Button>
+                    <button disabled={items.length === 0 || submitting}
+                      onClick={() => handleSubmitItems(items.map(i => i.id))}
+                      style={{ padding: '8px 16px', borderRadius: '8px', border: 'none',
+                        background: items.length === 0 ? '#f6f6f7' : '#008060',
+                        color: items.length === 0 ? '#8c9196' : 'white',
+                        cursor: items.length === 0 ? 'not-allowed' : 'pointer',
+                        fontSize: '14px', fontWeight: '500' }}>
+                      Submit all
+                    </button>
+                  </InlineStack>
                 </InlineStack>
 
                 {loadingItems
@@ -337,11 +344,9 @@ function ManagerZeroQtyReport() {
       {(popupData || loadingSoh) && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
           background: 'rgba(0,0,0,0.6)', zIndex: 1000,
-          display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
-          padding: '16px', overflowY: 'auto' }}>
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 16px' }}>
           <div style={{ background: 'white', borderRadius: '12px', padding: '24px',
-            width: '100%', maxWidth: '500px', position: 'relative',
-            marginTop: '8px', marginBottom: '8px' }}>
+            width: '100%', maxWidth: '500px', position: 'relative' }}>
             {loadingSoh
               ? <InlineStack align="center"><Spinner /></InlineStack>
               : <>
@@ -354,79 +359,14 @@ function ManagerZeroQtyReport() {
                         <Text variant="bodyMd" tone="subdued">{popupData.barcode}</Text>
                       </BlockStack>
                       <div style={{ paddingRight: '32px' }}>
-                        {showHistory ? (
-                          <button onClick={closeHistory} style={{
-                            padding: '6px 14px', borderRadius: '8px',
-                            border: '1px solid #008060', background: '#f0faf7',
-                            color: '#008060', cursor: 'pointer', fontSize: '13px',
-                            fontWeight: '500', whiteSpace: 'nowrap',
-                          }}>Hide history</button>
-                        ) : (
-                          <button onClick={() => openHistory(popupData.barcode)} style={{
-                            padding: '6px 14px', borderRadius: '8px',
-                            border: '1px solid #c9cccf', background: 'white',
-                            color: '#202223', cursor: 'pointer', fontSize: '13px',
-                            fontWeight: '500', whiteSpace: 'nowrap',
-                          }}>History</button>
-                        )}
+                        <button onClick={() => openHistory(popupData.barcode)} style={{
+                          padding: '6px 14px', borderRadius: '8px',
+                          border: '1px solid #c9cccf', background: 'white',
+                          color: '#202223', cursor: 'pointer', fontSize: '13px',
+                          fontWeight: '500', whiteSpace: 'nowrap',
+                        }}>History ↗</button>
                       </div>
                     </InlineStack>
-
-                    {/* Inline History Panel */}
-                    {showHistory && (
-                      <div style={{ borderTop: '1px solid #e1e3e5', paddingTop: '12px' }}>
-                        {historyLoading ? (
-                          <InlineStack align="center"><Spinner /></InlineStack>
-                        ) : historyError ? (
-                          <Banner tone="critical">{historyError}</Banner>
-                        ) : historyData.length === 0 ? (
-                          <Text tone="subdued" alignment="center">No adjustment history found.</Text>
-                        ) : (
-                          <BlockStack gap="0">
-                            {historyData.map((row, i) => (
-                              <div key={i} style={{ padding: '10px 0', borderBottom: '1px solid #f1f2f3' }}>
-                                <div style={{ marginBottom: '4px' }}>
-                                  <Text variant="bodySm" fontWeight="semibold">{row.activity}</Text>
-                                </div>
-                                <div style={{ marginBottom: '6px' }}>
-                                  <Text variant="bodySm" tone="subdued">
-                                    {formatHistoryDate(row.created_at)}
-                                    {row.created_by ? ` · ${row.created_by}` : ''}
-                                  </Text>
-                                </div>
-                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                                  {[
-                                    { label: 'System', delta: row.available_delta, qty: row.available_qty },
-                                    { label: 'On hand', delta: row.on_hand_delta, qty: row.on_hand_qty },
-                                    { label: 'Committed', delta: row.committed_delta, qty: row.committed_qty },
-                                    { label: 'Incoming', delta: row.incoming_delta, qty: row.incoming_qty },
-                                  ].filter(c => c.qty !== null && c.qty !== undefined).map(col => (
-                                    <div key={col.label} style={{
-                                      background: '#f6f6f7', borderRadius: '6px',
-                                      padding: '4px 10px', display: 'flex', alignItems: 'center', gap: '5px',
-                                    }}>
-                                      <span style={{ fontSize: '11px', color: '#6d7175' }}>{col.label}</span>
-                                      {col.delta !== null && col.delta !== undefined && col.delta !== 0 && (
-                                        <span style={{
-                                          fontSize: '11px', fontWeight: '600',
-                                          color: col.delta > 0 ? '#008060' : '#d72c0d',
-                                        }}>
-                                          {col.delta > 0 ? `+${col.delta}` : col.delta}
-                                        </span>
-                                      )}
-                                      <span style={{ fontSize: '13px', fontWeight: '600', color: '#202223' }}>
-                                        {col.qty}
-                                      </span>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            ))}
-                          </BlockStack>
-                        )}
-                      </div>
-                    )}
-
                     {popupScanHistory.length > 0 && (
                       <BlockStack gap="100">
                         {popupScanHistory.map((s, i) => (
@@ -464,6 +404,34 @@ function ManagerZeroQtyReport() {
                   </BlockStack>
                 </>
             }
+          </div>
+        </div>
+      )}
+      {/* Type in SKU popup */}
+      {showTypeIn && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.6)', zIndex: 1000,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 16px' }}>
+          <div style={{ background: 'white', borderRadius: '12px', padding: '24px',
+            width: '100%', maxWidth: '400px', position: 'relative' }}>
+            <button onClick={() => setShowTypeIn(false)} style={{ position: 'absolute',
+              top: '12px', right: '12px', background: 'none', border: 'none',
+              fontSize: '20px', cursor: 'pointer' }}>✕</button>
+            <BlockStack gap="300">
+              <Text variant="headingMd" fontWeight="bold">Type in SKU</Text>
+              {skuError && <Banner tone="critical" onDismiss={() => setSkuError('')}>{skuError}</Banner>}
+              <InlineStack gap="200" blockAlign="end">
+                <div style={{ flex: 1 }}>
+                  <TextField label="SKU" value={skuInput}
+                    onChange={val => { setSkuInput(val); setSkuError(''); }}
+                    onKeyDown={e => { if (e.key === 'Enter') handleSkuSearch(); }}
+                    autoComplete="off" autoFocus placeholder="Enter exact SKU" />
+                </div>
+                <div style={{ paddingBottom: '2px' }}>
+                  <Button onClick={handleSkuSearch} loading={skuSearching} disabled={!skuInput.trim()}>Search</Button>
+                </div>
+              </InlineStack>
+            </BlockStack>
           </div>
         </div>
       )}

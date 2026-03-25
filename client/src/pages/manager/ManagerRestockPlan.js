@@ -26,28 +26,6 @@ function cleanBarcode(raw) {
   return raw.replace(/^[^0-9]+/, '');
 }
 
-function formatHistoryDate(dateStr) {
-  if (!dateStr) return '';
-  const d = new Date(dateStr);
-  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const now = new Date();
-  const diffMs = now - d;
-  const diffMins = Math.floor(diffMs / 60000);
-  if (diffMins < 1) return 'Just now';
-  if (diffMins < 60) return `${diffMins} minute${diffMins > 1 ? 's' : ''} ago`;
-  const diffHours = Math.floor(diffMins / 60);
-  if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
-  const diffDays = Math.floor(diffHours / 24);
-  if (diffDays === 1) return `Yesterday at ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-  return `${months[d.getMonth()]} ${d.getDate()} at ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-}
-
-function formatDelta(delta, qty) {
-  if (delta === null || delta === undefined) return qty ?? '—';
-  const sign = delta > 0 ? '+' : '';
-  return `(${sign}${delta}) ${qty ?? ''}`;
-}
-
 function ManagerRestockPlan() {
   const navigate = useNavigate();
   const location = localStorage.getItem('managerLocation') || '';
@@ -70,11 +48,21 @@ function ManagerRestockPlan() {
   const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId]           = useState(null);
 
-  // History panel (inline inside popup)
-  const [showHistory, setShowHistory]   = useState(false);
-  const [historyData, setHistoryData]   = useState([]);
-  const [historyLoading, setHistoryLoading] = useState(false);
-  const [historyError, setHistoryError] = useState('');
+  const openHistory = async (barcode) => {
+    try {
+      const locRes  = await fetch('/api/shopify/locations');
+      const locData = await locRes.json();
+      const loc     = locData.find(l => l.name === location);
+      const locationId = loc ? encodeURIComponent(loc.id) : '';
+
+      const res  = await fetch(`/api/shopify/inventory-history/${encodeURIComponent(barcode)}?locationId=${locationId}`);
+      const data = await res.json();
+      if (!res.ok || !data.url) throw new Error('Could not get history URL');
+      window.top.open(data.url, '_blank');
+    } catch (e) {
+      setError('Could not open history: ' + e.message);
+    }
+  };
 
   const longPressTimer = useRef(null);
   const barcodeBuffer  = useRef('');
@@ -156,31 +144,9 @@ function ManagerRestockPlan() {
   const closePopup = () => {
     setPopupData(null); setPopupSoh(null);
     setRestockInput(''); setEditingBarcode(null);
-    setShowHistory(false); setHistoryData([]); setHistoryError('');
   };
 
-  const openHistory = async (barcode) => {
-    setShowHistory(true);
-    setHistoryData([]);
-    setHistoryError('');
-    setHistoryLoading(true);
-    try {
-      const res  = await fetch(`/api/shopify/inventory-history/${encodeURIComponent(barcode)}`);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to load history');
-      setHistoryData(data);
-    } catch (e) {
-      setHistoryError(e.message);
-    } finally {
-      setHistoryLoading(false);
-    }
-  };
 
-  const closeHistory = () => {
-    setShowHistory(false);
-    setHistoryData([]);
-    setHistoryError('');
-  };
 
   const handleSave = async () => {
     if (!popupData || restockInput === '') return;
@@ -352,11 +318,9 @@ function ManagerRestockPlan() {
       {(popupData || loadingSoh) && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
           background: 'rgba(0,0,0,0.6)', zIndex: 1000,
-          display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
-          padding: '16px', overflowY: 'auto' }}>
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 16px' }}>
           <div style={{ background: 'white', borderRadius: '12px', padding: '24px',
-            width: '100%', maxWidth: '460px', position: 'relative',
-            marginTop: '8px', marginBottom: '8px' }}>
+            width: '100%', maxWidth: '460px', position: 'relative' }}>
             {loadingSoh ? <InlineStack align="center"><Spinner /></InlineStack> : (
               <>
                 <button onClick={closePopup} style={{ position: 'absolute', top: '12px', right: '12px',
@@ -368,79 +332,14 @@ function ManagerRestockPlan() {
                       <Text variant="bodyMd" tone="subdued">{popupData.barcode}</Text>
                     </BlockStack>
                     <div style={{ paddingRight: '32px' }}>
-                      {showHistory ? (
-                        <button onClick={closeHistory} style={{
-                          padding: '6px 14px', borderRadius: '8px',
-                          border: '1px solid #008060', background: '#f0faf7',
-                          color: '#008060', cursor: 'pointer', fontSize: '13px',
-                          fontWeight: '500', whiteSpace: 'nowrap',
-                        }}>Hide history</button>
-                      ) : (
-                        <button onClick={() => openHistory(popupData.barcode)} style={{
-                          padding: '6px 14px', borderRadius: '8px',
-                          border: '1px solid #c9cccf', background: 'white',
-                          color: '#202223', cursor: 'pointer', fontSize: '13px',
-                          fontWeight: '500', whiteSpace: 'nowrap',
-                        }}>History</button>
-                      )}
+                      <button onClick={() => openHistory(popupData.barcode)} style={{
+                        padding: '6px 14px', borderRadius: '8px',
+                        border: '1px solid #c9cccf', background: 'white',
+                        color: '#202223', cursor: 'pointer', fontSize: '13px',
+                        fontWeight: '500', whiteSpace: 'nowrap',
+                      }}>History ↗</button>
                     </div>
                   </InlineStack>
-
-                  {/* Inline History Panel */}
-                  {showHistory && (
-                    <div style={{ borderTop: '1px solid #e1e3e5', paddingTop: '12px' }}>
-                      {historyLoading ? (
-                        <InlineStack align="center"><Spinner /></InlineStack>
-                      ) : historyError ? (
-                        <Banner tone="critical">{historyError}</Banner>
-                      ) : historyData.length === 0 ? (
-                        <Text tone="subdued" alignment="center">No adjustment history found.</Text>
-                      ) : (
-                        <BlockStack gap="0">
-                          {historyData.map((row, i) => (
-                            <div key={i} style={{ padding: '10px 0', borderBottom: '1px solid #f1f2f3' }}>
-                              <div style={{ marginBottom: '4px' }}>
-                                <Text variant="bodySm" fontWeight="semibold">{row.activity}</Text>
-                              </div>
-                              <div style={{ marginBottom: '6px' }}>
-                                <Text variant="bodySm" tone="subdued">
-                                  {formatHistoryDate(row.created_at)}
-                                  {row.created_by ? ` · ${row.created_by}` : ''}
-                                </Text>
-                              </div>
-                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                                {[
-                                  { label: 'System', delta: row.available_delta, qty: row.available_qty },
-                                  { label: 'On hand', delta: row.on_hand_delta, qty: row.on_hand_qty },
-                                  { label: 'Committed', delta: row.committed_delta, qty: row.committed_qty },
-                                  { label: 'Incoming', delta: row.incoming_delta, qty: row.incoming_qty },
-                                ].filter(c => c.qty !== null && c.qty !== undefined).map(col => (
-                                  <div key={col.label} style={{
-                                    background: '#f6f6f7', borderRadius: '6px',
-                                    padding: '4px 10px', display: 'flex', alignItems: 'center', gap: '5px',
-                                  }}>
-                                    <span style={{ fontSize: '11px', color: '#6d7175' }}>{col.label}</span>
-                                    {col.delta !== null && col.delta !== undefined && col.delta !== 0 && (
-                                      <span style={{
-                                        fontSize: '11px', fontWeight: '600',
-                                        color: col.delta > 0 ? '#008060' : '#d72c0d',
-                                      }}>
-                                        {col.delta > 0 ? `+${col.delta}` : col.delta}
-                                      </span>
-                                    )}
-                                    <span style={{ fontSize: '13px', fontWeight: '600', color: '#202223' }}>
-                                      {col.qty}
-                                    </span>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          ))}
-                        </BlockStack>
-                      )}
-                    </div>
-                  )}
-
                   <InlineStack gap="200" blockAlign="end">
                     <div style={{ flex: 1 }}>
                       <TextField label="Restock quantity" type="number"
