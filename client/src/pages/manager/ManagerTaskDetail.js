@@ -68,27 +68,6 @@ function ManagerTaskDetail() {
   const [countInput, setCountInput] = useState('');
   const [loadingSoh, setLoadingSoh] = useState(false);
 
-  // History — navigate in same WebView (session preserved)
-  const [historyLoading, setHistoryLoading] = useState(false);
-
-  const openHistory = async (barcode) => {
-    setHistoryLoading(true);
-    try {
-      const locRes  = await fetch('/api/shopify/locations');
-      const locData = await locRes.json();
-      const loc     = locData.find(l => l.name === location);
-      const locationId = loc ? encodeURIComponent(loc.id) : '';
-
-      const res  = await fetch(`/api/shopify/inventory-history/${encodeURIComponent(barcode)}?locationId=${locationId}`);
-      const data = await res.json();
-      if (!res.ok || !data.url) throw new Error('Could not get history URL');
-      window.location.href = data.url;
-    } catch (e) {
-      setError('Could not open history: ' + e.message);
-    } finally {
-      setHistoryLoading(false);
-    }
-  };
 
   // Error popup
   const [errorPopup, setErrorPopup] = useState('');
@@ -513,26 +492,11 @@ function ManagerTaskDetail() {
               }}>✕</button>
 
               <BlockStack gap="400">
-                {/* Pure CSS flex header — no Polaris InlineStack to avoid overflow */}
-                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', paddingRight: '28px' }}>
-                  <div style={{ flex: 1, minWidth: 0, wordBreak: 'break-word', overflow: 'hidden' }}>
-                    <div style={{ fontSize: '16px', fontWeight: '700', lineHeight: '1.4' }}>
-                      {popupItem.name}
-                    </div>
+                {/* Popup header */}
+                <div style={{ paddingRight: '28px' }}>
+                  <div style={{ fontSize: '16px', fontWeight: '700', lineHeight: '1.4', wordBreak: 'break-word' }}>
+                    {popupItem.name}
                   </div>
-                  <button
-                    onClick={() => openHistory(popupItem.barcode)}
-                    disabled={historyLoading}
-                    style={{
-                      flexShrink: 0, padding: '6px 12px', borderRadius: '8px',
-                      border: '1px solid #c9cccf', background: 'white',
-                      color: historyLoading ? '#8c9196' : '#202223',
-                      cursor: historyLoading ? 'not-allowed' : 'pointer',
-                      fontSize: '13px', fontWeight: '500', whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {historyLoading ? '...' : 'History ↗'}
-                  </button>
                 </div>
 
                 {(popupItem.scan_history || []).length > 0 && (

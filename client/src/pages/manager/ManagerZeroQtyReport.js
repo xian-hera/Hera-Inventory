@@ -59,29 +59,6 @@ function ManagerZeroQtyReport() {
   const [skuSearching, setSkuSearching] = useState(false);
   const [skuError, setSkuError]       = useState('');
 
-  // History - open in browser (has Shopify session cookies)
-  const [historyUrl, setHistoryUrl] = useState(null);
-  const [historyLoading, setHistoryLoading] = useState(false);
-
-  const openHistory = async (barcode) => {
-    setHistoryLoading(true);
-    try {
-      const locRes  = await fetch('/api/shopify/locations');
-      const locData = await locRes.json();
-      const loc     = locData.find(l => l.name === location);
-      const locationId = loc ? encodeURIComponent(loc.id) : '';
-
-      const res  = await fetch(`/api/shopify/inventory-history/${encodeURIComponent(barcode)}?locationId=${locationId}`);
-      const data = await res.json();
-      if (!res.ok || !data.url) throw new Error('Could not get history URL');
-      // Open in system browser which has Shopify Admin session
-      window.location.href = data.url; /* navigate in same WebView - session preserved */
-    } catch (e) {
-      setError('Could not open history: ' + e.message);
-    } finally {
-      setHistoryLoading(false);
-    }
-  };
 
   const barcodeBuffer = useRef('');
   const barcodeTimer  = useRef(null);
@@ -377,22 +354,11 @@ function ManagerZeroQtyReport() {
                     background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', zIndex: 1,
                   }}>✕</button>
                   <BlockStack gap="400">
-                    {/* Pure CSS flex header — no Polaris InlineStack to avoid overflow */}
-                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', paddingRight: '28px' }}>
-                      <div style={{ flex: 1, minWidth: 0, wordBreak: 'break-word', overflow: 'hidden' }}>
-                        <div style={{ fontSize: '16px', fontWeight: '700', lineHeight: '1.4' }}>
-                          {popupData.name}
-                        </div>
+                    {/* Popup header */}
+                    <div style={{ paddingRight: '28px', wordBreak: 'break-word' }}>
+                      <div style={{ fontSize: '16px', fontWeight: '700', lineHeight: '1.4' }}>
+                        {popupData.name}
                       </div>
-                      <button onClick={() => openHistory(popupData.barcode)}
-                        disabled={historyLoading}
-                        style={{
-                          flexShrink: 0, padding: '6px 12px', borderRadius: '8px',
-                          border: '1px solid #c9cccf', background: 'white',
-                          color: historyLoading ? '#8c9196' : '#202223',
-                          cursor: historyLoading ? 'not-allowed' : 'pointer',
-                          fontSize: '13px', fontWeight: '500', whiteSpace: 'nowrap',
-                        }}>{historyLoading ? '...' : 'History ↗'}</button>
                     </div>
                     {popupScanHistory.length > 0 && (
                       <BlockStack gap="100">
@@ -461,37 +427,18 @@ function ManagerZeroQtyReport() {
                 onChange={val => { setSkuInput(val); setSkuError(''); }}
                 onKeyDown={e => { if (e.key === 'Enter') handleSkuSearch(); }}
                 autoComplete="off" autoFocus placeholder="Enter exact SKU"
-                connectedRight={
-                  <Button onClick={handleSkuSearch} loading={skuSearching} disabled={!skuInput.trim()}>Search</Button>
-                }
               />
+              <Button
+                variant="primary"
+                onClick={handleSkuSearch}
+                loading={skuSearching}
+                disabled={!skuInput.trim()}
+                fullWidth
+              >
+                Search
+              </Button>
             </BlockStack>
           </div>
-        </div>
-      )}
-      {/* History iframe overlay */}
-      {historyUrl && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          zIndex: 3000, background: 'white',
-          display: 'flex', flexDirection: 'column',
-        }}>
-          <div style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            padding: '12px 16px', borderBottom: '1px solid #e1e3e5',
-            background: 'white', flexShrink: 0,
-          }}>
-            <Text variant="headingSm" fontWeight="bold">Adjustment History</Text>
-            <button
-              onClick={() => setHistoryUrl(null)}
-              style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', padding: '4px 8px' }}
-            >✕</button>
-          </div>
-          <iframe
-            src={historyUrl}
-            style={{ flex: 1, border: 'none', width: '100%' }}
-            title="Inventory History"
-          />
         </div>
       )}
     </Page>
