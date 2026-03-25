@@ -68,9 +68,13 @@ function ManagerTaskDetail() {
   const [countInput, setCountInput] = useState('');
   const [loadingSoh, setLoadingSoh] = useState(false);
 
+  // History iframe overlay
+  const [historyUrl, setHistoryUrl] = useState(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
   const openHistory = async (barcode) => {
+    setHistoryLoading(true);
     try {
-      // Resolve Shopify location GID for current manager location
       const locRes  = await fetch('/api/shopify/locations');
       const locData = await locRes.json();
       const loc     = locData.find(l => l.name === location);
@@ -79,9 +83,11 @@ function ManagerTaskDetail() {
       const res  = await fetch(`/api/shopify/inventory-history/${encodeURIComponent(barcode)}?locationId=${locationId}`);
       const data = await res.json();
       if (!res.ok || !data.url) throw new Error('Could not get history URL');
-      window.open(data.url, '_blank');
+      setHistoryUrl(data.url);
     } catch (e) {
       setError('Could not open history: ' + e.message);
+    } finally {
+      setHistoryLoading(false);
     }
   };
 
@@ -515,14 +521,16 @@ function ManagerTaskDetail() {
                   <div style={{ paddingRight: '32px' }}>
                     <button
                       onClick={() => openHistory(popupItem.barcode)}
+                      disabled={historyLoading}
                       style={{
                         padding: '6px 14px', borderRadius: '8px',
                         border: '1px solid #c9cccf', background: 'white',
-                        color: '#202223', cursor: 'pointer', fontSize: '13px',
-                        fontWeight: '500', whiteSpace: 'nowrap',
+                        color: historyLoading ? '#8c9196' : '#202223',
+                        cursor: historyLoading ? 'not-allowed' : 'pointer',
+                        fontSize: '13px', fontWeight: '500', whiteSpace: 'nowrap',
                       }}
                     >
-                      History ↗
+                      {historyLoading ? '...' : 'History ↗'}
                     </button>
                   </div>
                 </InlineStack>
@@ -572,6 +580,32 @@ function ManagerTaskDetail() {
                 )}
               </BlockStack>
             </div>
+          </div>
+        )}
+        {/* History iframe overlay */}
+        {historyUrl && (
+          <div style={{
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+            zIndex: 3000, background: 'white',
+            display: 'flex', flexDirection: 'column',
+          }}>
+            {/* Header bar */}
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '12px 16px', borderBottom: '1px solid #e1e3e5',
+              background: 'white', flexShrink: 0,
+            }}>
+              <Text variant="headingSm" fontWeight="bold">Adjustment History</Text>
+              <button
+                onClick={() => setHistoryUrl(null)}
+                style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', padding: '4px 8px' }}
+              >✕</button>
+            </div>
+            <iframe
+              src={historyUrl}
+              style={{ flex: 1, border: 'none', width: '100%' }}
+              title="Inventory History"
+            />
           </div>
         )}
       </Page>
