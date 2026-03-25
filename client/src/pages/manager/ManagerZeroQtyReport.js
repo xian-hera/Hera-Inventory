@@ -59,7 +59,7 @@ function ManagerZeroQtyReport() {
   const [skuSearching, setSkuSearching] = useState(false);
   const [skuError, setSkuError]       = useState('');
 
-  // History iframe overlay
+  // History - open in browser (has Shopify session cookies)
   const [historyUrl, setHistoryUrl] = useState(null);
   const [historyLoading, setHistoryLoading] = useState(false);
 
@@ -74,7 +74,8 @@ function ManagerZeroQtyReport() {
       const res  = await fetch(`/api/shopify/inventory-history/${encodeURIComponent(barcode)}?locationId=${locationId}`);
       const data = await res.json();
       if (!res.ok || !data.url) throw new Error('Could not get history URL');
-      setHistoryUrl(data.url);
+      // Open in system browser which has Shopify Admin session
+      window.location.href = data.url; /* navigate in same WebView - session preserved */
     } catch (e) {
       setError('Could not open history: ' + e.message);
     } finally {
@@ -357,35 +358,42 @@ function ManagerZeroQtyReport() {
 
       {/* Scan Popup */}
       {(popupData || loadingSoh) && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
           background: 'rgba(0,0,0,0.6)', zIndex: 1000,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          boxSizing: 'border-box', padding: '16px' }}>
-          <div style={{ background: 'white', borderRadius: '12px', padding: '24px',
-            width: '100%', boxSizing: 'border-box', position: 'relative' }}>
+          padding: '16px', boxSizing: 'border-box',
+        }}>
+          <div style={{
+            background: 'white', borderRadius: '12px', padding: '24px',
+            width: '100%', maxWidth: 'calc(100vw - 32px)', boxSizing: 'border-box',
+            position: 'relative', overflow: 'hidden',
+          }}>
             {loadingSoh
               ? <InlineStack align="center"><Spinner /></InlineStack>
               : <>
-                  <button onClick={closePopup} style={{ position: 'absolute', top: '12px', right: '12px',
-                    background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer' }}>✕</button>
+                  <button onClick={closePopup} style={{
+                    position: 'absolute', top: '12px', right: '12px',
+                    background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', zIndex: 1,
+                  }}>✕</button>
                   <BlockStack gap="400">
-                    <InlineStack align="space-between" blockAlign="start">
-                      <BlockStack gap="100">
-                        <Text variant="headingMd" fontWeight="bold">{popupData.name}</Text>
-                        <Text variant="bodyMd" tone="subdued">{popupData.barcode}</Text>
-                      </BlockStack>
-                      <div style={{ paddingRight: '32px' }}>
-                        <button onClick={() => openHistory(popupData.barcode)}
-                          disabled={historyLoading}
-                          style={{
-                            padding: '6px 14px', borderRadius: '8px',
-                            border: '1px solid #c9cccf', background: 'white',
-                            color: historyLoading ? '#8c9196' : '#202223',
-                            cursor: historyLoading ? 'not-allowed' : 'pointer',
-                            fontSize: '13px', fontWeight: '500', whiteSpace: 'nowrap',
-                          }}>{historyLoading ? '...' : 'History ↗'}</button>
+                    {/* Pure CSS flex header — no Polaris InlineStack to avoid overflow */}
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', paddingRight: '28px' }}>
+                      <div style={{ flex: 1, minWidth: 0, wordBreak: 'break-word', overflow: 'hidden' }}>
+                        <div style={{ fontSize: '16px', fontWeight: '700', lineHeight: '1.4' }}>
+                          {popupData.name}
+                        </div>
                       </div>
-                    </InlineStack>
+                      <button onClick={() => openHistory(popupData.barcode)}
+                        disabled={historyLoading}
+                        style={{
+                          flexShrink: 0, padding: '6px 12px', borderRadius: '8px',
+                          border: '1px solid #c9cccf', background: 'white',
+                          color: historyLoading ? '#8c9196' : '#202223',
+                          cursor: historyLoading ? 'not-allowed' : 'pointer',
+                          fontSize: '13px', fontWeight: '500', whiteSpace: 'nowrap',
+                        }}>{historyLoading ? '...' : 'History ↗'}</button>
+                    </div>
                     {popupScanHistory.length > 0 && (
                       <BlockStack gap="100">
                         {popupScanHistory.map((s, i) => (
@@ -429,12 +437,17 @@ function ManagerZeroQtyReport() {
 
       {/* Type in SKU popup */}
       {showTypeIn && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
           background: 'rgba(0,0,0,0.6)', zIndex: 1000,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          boxSizing: 'border-box', padding: '16px' }}>
-          <div style={{ background: 'white', borderRadius: '12px', padding: '24px',
-            width: '100%', boxSizing: 'border-box', position: 'relative' }}>
+          padding: '16px', boxSizing: 'border-box',
+        }}>
+          <div style={{
+            background: 'white', borderRadius: '12px', padding: '24px',
+            width: '100%', maxWidth: 'calc(100vw - 32px)', boxSizing: 'border-box',
+            position: 'relative',
+          }}>
             <button onClick={() => setShowTypeIn(false)} style={{ position: 'absolute',
               top: '12px', right: '12px', background: 'none', border: 'none',
               fontSize: '20px', cursor: 'pointer' }}>✕</button>

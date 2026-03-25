@@ -68,8 +68,7 @@ function ManagerTaskDetail() {
   const [countInput, setCountInput] = useState('');
   const [loadingSoh, setLoadingSoh] = useState(false);
 
-  // History iframe overlay
-  const [historyUrl, setHistoryUrl] = useState(null);
+  // History — navigate in same WebView (session preserved)
   const [historyLoading, setHistoryLoading] = useState(false);
 
   const openHistory = async (barcode) => {
@@ -83,7 +82,7 @@ function ManagerTaskDetail() {
       const res  = await fetch(`/api/shopify/inventory-history/${encodeURIComponent(barcode)}?locationId=${locationId}`);
       const data = await res.json();
       if (!res.ok || !data.url) throw new Error('Could not get history URL');
-      setHistoryUrl(data.url);
+      window.location.href = data.url;
     } catch (e) {
       setError('Could not open history: ' + e.message);
     } finally {
@@ -500,40 +499,41 @@ function ManagerTaskDetail() {
             position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
             background: 'rgba(0,0,0,0.6)', zIndex: 1000,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            boxSizing: 'border-box', padding: '16px',
+            padding: '16px', boxSizing: 'border-box',
           }}>
             <div style={{
               background: 'white', borderRadius: '12px',
-              padding: '24px', width: '100%', boxSizing: 'border-box',
-              position: 'relative',
+              padding: '24px', width: '100%',
+              maxWidth: 'calc(100vw - 32px)', boxSizing: 'border-box',
+              position: 'relative', overflow: 'hidden',
             }}>
               <button onClick={closePopup} style={{
                 position: 'absolute', top: '12px', right: '12px',
-                background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer',
+                background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', zIndex: 1,
               }}>✕</button>
 
               <BlockStack gap="400">
-                <InlineStack align="space-between" blockAlign="start">
-                  <BlockStack gap="100">
-                    <Text variant="headingMd" fontWeight="bold">{popupItem.name}</Text>
-                    <Text variant="bodyMd" tone="subdued">{popupItem.barcode}</Text>
-                  </BlockStack>
-                  <div style={{ paddingRight: '32px' }}>
-                    <button
-                      onClick={() => openHistory(popupItem.barcode)}
-                      disabled={historyLoading}
-                      style={{
-                        padding: '6px 14px', borderRadius: '8px',
-                        border: '1px solid #c9cccf', background: 'white',
-                        color: historyLoading ? '#8c9196' : '#202223',
-                        cursor: historyLoading ? 'not-allowed' : 'pointer',
-                        fontSize: '13px', fontWeight: '500', whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {historyLoading ? '...' : 'History ↗'}
-                    </button>
+                {/* Pure CSS flex header — no Polaris InlineStack to avoid overflow */}
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', paddingRight: '28px' }}>
+                  <div style={{ flex: 1, minWidth: 0, wordBreak: 'break-word', overflow: 'hidden' }}>
+                    <div style={{ fontSize: '16px', fontWeight: '700', lineHeight: '1.4' }}>
+                      {popupItem.name}
+                    </div>
                   </div>
-                </InlineStack>
+                  <button
+                    onClick={() => openHistory(popupItem.barcode)}
+                    disabled={historyLoading}
+                    style={{
+                      flexShrink: 0, padding: '6px 12px', borderRadius: '8px',
+                      border: '1px solid #c9cccf', background: 'white',
+                      color: historyLoading ? '#8c9196' : '#202223',
+                      cursor: historyLoading ? 'not-allowed' : 'pointer',
+                      fontSize: '13px', fontWeight: '500', whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {historyLoading ? '...' : 'History ↗'}
+                  </button>
+                </div>
 
                 {(popupItem.scan_history || []).length > 0 && (
                   <BlockStack gap="100">
@@ -580,32 +580,6 @@ function ManagerTaskDetail() {
                 )}
               </BlockStack>
             </div>
-          </div>
-        )}
-        {/* History iframe overlay */}
-        {historyUrl && (
-          <div style={{
-            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-            zIndex: 3000, background: 'white',
-            display: 'flex', flexDirection: 'column',
-          }}>
-            {/* Header bar */}
-            <div style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              padding: '12px 16px', borderBottom: '1px solid #e1e3e5',
-              background: 'white', flexShrink: 0,
-            }}>
-              <Text variant="headingSm" fontWeight="bold">Adjustment History</Text>
-              <button
-                onClick={() => setHistoryUrl(null)}
-                style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', padding: '4px 8px' }}
-              >✕</button>
-            </div>
-            <iframe
-              src={historyUrl}
-              style={{ flex: 1, border: 'none', width: '100%' }}
-              title="Inventory History"
-            />
           </div>
         )}
       </Page>
