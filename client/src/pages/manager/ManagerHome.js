@@ -98,21 +98,21 @@ function ManagerHome() {
               fullWidth
               onClick={() => handleNavigate('/manager/counting-tasks')}
             >
-              Counting tasks
+              Weekly Inventory Count
             </Button>
             <Button
               size="large"
               fullWidth
               onClick={() => handleNavigate('/manager/zero-qty-report')}
             >
-              0 quantity report
+              Zero/ Low Inventory Count
             </Button>
             <Button
               size="large"
               fullWidth
               onClick={() => handleNavigate('/manager/restock-plan')}
             >
-              Restock plan
+              Restock
             </Button>
           </BlockStack>
         </Layout.Section>

@@ -9,7 +9,7 @@ import MultiSelectDropdown from '../../components/MultiSelectDropdown';
 const LOCATIONS = [
   'MTL01','MTL02','MTL03','MTL04','MTL05','MTL06',
   'MTL07','MTL08','MTL09','MTL10','MTL11',
-  'EDM01','EDM02','CAL01','OTT01','OTT02','OTT03','QC01'
+  'EDM01','EDM02','CAL01','OTT01','OTT02','OTT03','QC01','HQ'
 ];
 
 function formatDate(dateStr) {
@@ -27,7 +27,7 @@ function ZeroQtyReport() {
   const [committing, setCommitting] = useState(false);
   const [department, setDepartment] = useState('ALL');
   const [selectedLocations, setSelectedLocations] = useState([]);
-  const [selectedStatuses, setSelectedStatuses] = useState([]);
+  const [selectedStatuses, setSelectedStatuses] = useState(['reviewing','committed']);
   const [date, setDate] = useState('ALL');
   const [selectedIds, setSelectedIds] = useState([]);
 
@@ -150,7 +150,7 @@ function ZeroQtyReport() {
   ]);
 
   return (
-    <Page title="0 quantity report" backAction={{ onAction: () => navigate('/buyer') }}>
+    <Page title="Zero/ Low Inventory Count" backAction={{ onAction: () => navigate('/buyer') }}>
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">

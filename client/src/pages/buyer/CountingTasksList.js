@@ -45,7 +45,7 @@ function CountingTasksList() {
   const [error, setError]                     = useState('');
   const [department, setDepartment]           = useState('ALL');
   const [selectedLocations, setSelectedLocations] = useState([]);
-  const [selectedStatuses, setSelectedStatuses]   = useState([]);
+  const [selectedStatuses, setSelectedStatuses]   = useState(['counting','reviewing','committed','auto_committed','draft']);
   const [date, setDate]                       = useState('ALL');
   const [selectedIds, setSelectedIds]         = useState([]);
   const [sortOrder, setSortOrder]             = useState(null); // null | 'desc' | 'asc'

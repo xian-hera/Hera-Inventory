@@ -63,15 +63,15 @@ function Home() {
   };
 
   return (
-    <Page title="Hera Inventory counting">
+    <Page title="Inventory Count">
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">
             <Button size="large" fullWidth onClick={handleBuyerClick}>
-              Buyer
+              Purchasing
             </Button>
             <Button size="large" fullWidth onClick={() => navigate('/manager')}>
-              Manager
+              Store
             </Button>
           </BlockStack>
         </Layout.Section>

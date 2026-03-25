@@ -81,10 +81,10 @@ function BuyerHome() {
         <Layout.Section>
           <BlockStack gap="400">
             <Button size="large" fullWidth onClick={() => navigate('/buyer/counting-tasks')}>
-              Counting tasks
+              Weekly Inventory Count
             </Button>
             <Button size="large" fullWidth onClick={() => navigate('/buyer/zero-qty-report')}>
-              0 quantity report
+              Zero/ Low Inventory Count
             </Button>
             <Button size="large" fullWidth onClick={openModal}>
               Set PIN
