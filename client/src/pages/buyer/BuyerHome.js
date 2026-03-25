@@ -76,7 +76,7 @@ function BuyerHome() {
     : { content: 'Save PIN', onAction: handleSave, disabled: newPin.length !== 4 };
 
   return (
-    <Page title="Buyer" backAction={{ onAction: () => navigate('/') }}>
+    <Page title="Purchasing" backAction={{ onAction: () => navigate('/') }}>
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">
@@ -84,7 +84,7 @@ function BuyerHome() {
               Weekly Inventory Count
             </Button>
             <Button size="large" fullWidth onClick={() => navigate('/buyer/zero-qty-report')}>
-              Zero/ Low Inventory Count
+              Zero/Low Inventory Count
             </Button>
             <Button size="large" fullWidth onClick={openModal}>
               Set PIN

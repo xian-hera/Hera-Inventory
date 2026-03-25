@@ -59,7 +59,7 @@ function ManagerCountingTasksList() {
 
   return (
     <Page
-      title="Counting tasks"
+      title="Weekly Inventory Count"
       backAction={{ onAction: () => navigate('/manager') }}
     >
       <Layout>

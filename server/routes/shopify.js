@@ -569,4 +569,140 @@ router.post('/soh-check', async (req, res) => {
   }
 });
 
+// GET /api/shopify/inventory-history/:barcode
+// Returns inventory adjustment history for a variant identified by barcode.
+// Uses Shopify's inventoryItem.inventoryHistoryItems (available on Plus / standard).
+router.get('/inventory-history/:barcode', async (req, res) => {
+  try {
+    const session = await getSession();
+    if (!session) return res.status(401).json({ error: 'No session' });
+
+    const { barcode } = req.params;
+    const shopify = getShopify();
+    const client = new shopify.clients.Graphql({ session });
+
+    // Step 1: resolve the inventoryItem ID from barcode
+    const variantQuery = `
+      query getInventoryItem($barcode: String!) {
+        productVariants(first: 1, query: $barcode) {
+          edges {
+            node {
+              inventoryItem {
+                id
+              }
+            }
+          }
+        }
+      }
+    `;
+
+    const variantRes = await shopifyRequest(client, variantQuery, { barcode: `barcode:${barcode}` });
+    const variantEdges = variantRes.data?.productVariants?.edges || [];
+    if (variantEdges.length === 0) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+
+    const inventoryItemId = variantEdges[0].node.inventoryItem.id;
+
+    // Step 2: fetch inventory history
+    const historyQuery = `
+      query getHistory($id: ID!) {
+        inventoryItem(id: $id) {
+          inventoryHistoryItems(first: 50) {
+            edges {
+              node {
+                happenedAt
+                reason
+                name
+                changes {
+                  name
+                  delta
+                  quantityAfterChange
+                  location {
+                    name
+                  }
+                }
+                staffMember {
+                  firstName
+                  lastName
+                }
+                app {
+                  title
+                }
+              }
+            }
+          }
+        }
+      }
+    `;
+
+    const historyRes = await shopifyRequest(client, historyQuery, { id: inventoryItemId });
+    const edges = historyRes.data?.inventoryItem?.inventoryHistoryItems?.edges || [];
+
+    // Flatten into one row per history event (aggregated across location changes)
+    const rows = edges.map(edge => {
+      const node = edge.node;
+
+      // Build a label for the activity
+      const reasonLabels = {
+        correction: 'Inventory correction',
+        cycle_count_available: 'Inventory correction',
+        damaged: 'Damaged',
+        movement_created: 'Movement created',
+        movement_updated: 'Movement updated',
+        movement_received: 'Shipment received',
+        movement_canceled: 'Movement canceled',
+        received: 'Shipment received',
+        return_restock: 'Return restocked',
+        reservation_created: 'Order created',
+        reservation_deleted: 'Order fulfilled',
+        reservation_updated: 'Order updated',
+        shrinkage: 'Shrinkage',
+        other: 'Adjusted',
+        promotion: 'Promotion',
+        quality_control: 'Quality control',
+        manual_adjustment: 'Manually adjusted',
+      };
+      const activity = reasonLabels[node.reason] || node.reason || node.name || 'Adjusted';
+
+      // Extract per-quantity-type deltas and final values
+      const changeMap = {};
+      for (const change of node.changes || []) {
+        changeMap[change.name] = {
+          delta: change.delta,
+          qty: change.quantityAfterChange,
+        };
+      }
+
+      // Resolve who made the change
+      let created_by = null;
+      if (node.staffMember) {
+        const { firstName, lastName } = node.staffMember;
+        created_by = [firstName, lastName].filter(Boolean).join(' ') || null;
+      } else if (node.app?.title) {
+        created_by = node.app.title;
+      }
+
+      return {
+        created_at: node.happenedAt,
+        activity,
+        created_by,
+        available_delta: changeMap['available']?.delta ?? null,
+        available_qty:   changeMap['available']?.qty ?? null,
+        on_hand_delta:   changeMap['on_hand']?.delta ?? null,
+        on_hand_qty:     changeMap['on_hand']?.qty ?? null,
+        committed_delta: changeMap['committed']?.delta ?? null,
+        committed_qty:   changeMap['committed']?.qty ?? null,
+        incoming_delta:  changeMap['incoming']?.delta ?? null,
+        incoming_qty:    changeMap['incoming']?.qty ?? null,
+      };
+    });
+
+    res.json(rows);
+  } catch (e) {
+    console.error('GET /api/shopify/inventory-history error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = { router, getDepartment };

@@ -82,8 +82,6 @@ function CountingTasksList() {
   const displayedTasks = useMemo(() => {
     if (!sortOrder) return tasks;
     return [...tasks].sort((a, b) => {
-      // task_no format: letter(s) + digits — lexicographic works because
-      // letters are the same length and digits are zero-padded.
       const cmp = a.task_no.localeCompare(b.task_no);
       return sortOrder === 'desc' ? -cmp : cmp;
     });
@@ -135,9 +133,9 @@ function CountingTasksList() {
 
   return (
     <Page
-      title="Counting tasks"
+      title="Weekly Inventory Count"
       backAction={{ onAction: () => navigate('/buyer') }}
-      primaryAction={{ content: 'Creating task', onAction: () => navigate('/buyer/counting-tasks/new') }}
+      primaryAction={{ content: 'Create New Count', onAction: () => navigate('/buyer/counting-tasks/new') }}
     >
       <Layout>
         <Layout.Section>

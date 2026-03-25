@@ -55,7 +55,7 @@ function ManagerHome() {
   ];
 
   return (
-    <Page title="Manager" backAction={{ onAction: () => navigate('/') }}>
+    <Page title="Store" backAction={{ onAction: () => navigate('/') }}>
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">
@@ -105,7 +105,7 @@ function ManagerHome() {
               fullWidth
               onClick={() => handleNavigate('/manager/zero-qty-report')}
             >
-              Zero/ Low Inventory Count
+              Zero/Low Inventory Count
             </Button>
             <Button
               size="large"

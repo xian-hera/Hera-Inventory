@@ -150,7 +150,7 @@ function ZeroQtyReport() {
   ]);
 
   return (
-    <Page title="Zero/ Low Inventory Count" backAction={{ onAction: () => navigate('/buyer') }}>
+    <Page title="Zero/Low Inventory Count" backAction={{ onAction: () => navigate('/buyer') }}>
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">
@@ -220,7 +220,7 @@ function ZeroQtyReport() {
                         indeterminate={selectedIds.length > 0 && selectedIds.length < reports.length}
                         onChange={toggleSelectAll}
                       />,
-                      'Name', 'SKU', 'Department', 'Location', 'SOH', 'POH', 'Date', '',
+                      'Name', 'SKU', 'Department', 'Location', 'System', 'Actual', 'Date', '',
                     ]}
                     rows={rows}
                   />

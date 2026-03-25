@@ -12,6 +12,23 @@ function formatDate(dateStr) {
   return `${d.getFullYear()}.${months[d.getMonth()]}.${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
 }
 
+function formatHistoryDate(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const now = new Date();
+  const diffMs = now - d;
+  const diffMins = Math.floor(diffMs / 60000);
+  if (diffMins < 1) return 'Just now';
+  if (diffMins < 60) return `${diffMins} minute${diffMins > 1 ? 's' : ''} ago`;
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays === 1) return `Yesterday at ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+  const monthStr = `${months[d.getMonth()]} ${d.getDate()}`;
+  return `${monthStr} at ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+}
+
 function computePOH(scanHistory, soh) {
   if (!scanHistory || scanHistory.length === 0) return null;
   const last = scanHistory[scanHistory.length - 1];
@@ -24,7 +41,6 @@ function computePOH(scanHistory, soh) {
   return relevant.reduce((sum, s) => sum + (s.type === 'counted' ? (s.value || 0) : 0), 0);
 }
 
-// Resolve real character from keydown event, bypassing Samsung IME 'Unidentified'.
 function resolveKey(e) {
   if (e.key && e.key !== 'Unidentified' && e.key.length === 1) return e.key;
   if (e.code) {
@@ -44,8 +60,6 @@ function resolveKey(e) {
   return null;
 }
 
-// Strip any leading non-digit characters (e.g. scanner hardware prefix like 'A').
-// Safe because all barcodes in this system are pure numbers.
 function cleanBarcode(raw) {
   return raw.replace(/^[^0-9]+/, '');
 }
@@ -70,16 +84,21 @@ function ManagerTaskDetail() {
   const [countInput, setCountInput] = useState('');
   const [loadingSoh, setLoadingSoh] = useState(false);
 
+  // History panel (inline inside popup)
+  const [showHistory, setShowHistory]       = useState(false);
+  const [historyData, setHistoryData]       = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError]     = useState('');
+
   // Error popup
   const [errorPopup, setErrorPopup] = useState('');
 
   const barcodeBuffer = useRef('');
   const barcodeTimer  = useRef(null);
-  const popupRef      = useRef(null);  // track popup state inside listener
-  const taskRef       = useRef(null);  // track task state inside listener
+  const popupRef      = useRef(null);
+  const taskRef       = useRef(null);
   const location      = localStorage.getItem('managerLocation') || '';
 
-  // Keep refs in sync so keydown handler never has stale closures
   useEffect(() => { popupRef.current = popupItem; }, [popupItem]);
   useEffect(() => { taskRef.current = task; }, [task]);
 
@@ -100,7 +119,6 @@ function ManagerTaskDetail() {
 
   useEffect(() => { fetchTask(); }, [fetchTask]);
 
-  // ── Global keydown — uses resolveKey + cleanBarcode ────────────────────
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (popupRef.current) return;
@@ -135,7 +153,7 @@ function ManagerTaskDetail() {
       window.removeEventListener('keydown', handleKeyDown);
       clearTimeout(barcodeTimer.current);
     };
-  }, []); // empty deps — uses refs only, no stale closures
+  }, []);
 
   const openPopup = async (item) => {
     setPopupItem(item);
@@ -154,7 +172,7 @@ function ManagerTaskDetail() {
         items: prev.items.map(i => i.id === item.id ? { ...i, soh: data.soh ?? null } : i),
       }));
     } catch (e) {
-      setPopupSoh(null); // network error
+      setPopupSoh(null);
     } finally {
       setLoadingSoh(false);
     }
@@ -164,6 +182,32 @@ function ManagerTaskDetail() {
     setPopupItem(null);
     setPopupSoh(null);
     setCountInput('');
+    setShowHistory(false);
+    setHistoryData([]);
+    setHistoryError('');
+  };
+
+  const openHistory = async (barcode) => {
+    setShowHistory(true);
+    setHistoryData([]);
+    setHistoryError('');
+    setHistoryLoading(true);
+    try {
+      const res  = await fetch(`/api/shopify/inventory-history/${encodeURIComponent(barcode)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to load history');
+      setHistoryData(data);
+    } catch (e) {
+      setHistoryError(e.message);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const closeHistory = () => {
+    setShowHistory(false);
+    setHistoryData([]);
+    setHistoryError('');
   };
 
   const handleCorrect = async () => {
@@ -247,7 +291,6 @@ function ManagerTaskDetail() {
     }
   };
 
-  // ── Loading / error states ─────────────────────────────────────────────
   if (loading) return (
     <Page title="Task" backAction={{ onAction: () => navigate('/manager/counting-tasks') }}>
       <Spinner />
@@ -260,27 +303,23 @@ function ManagerTaskDetail() {
     </Page>
   );
 
-  // ── Stats ──────────────────────────────────────────────────────────────
   const totalCount       = task.items.length;
   const processedCount   = task.items.filter(i => i.soh !== null).length;
   const unprocessedCount = totalCount - processedCount;
   const qtyOffCount      = task.items.filter(i => i.soh !== null && !i.is_correct && i.poh !== null).length;
 
-  // ── Filter ─────────────────────────────────────────────────────────────
   const filteredItems = task.items.filter(item => {
     if (filter === 'not_scanned') return item.soh === null;
     if (filter === 'qty_off')     return item.soh !== null && !item.is_correct && item.poh !== null;
     return true;
   });
 
-  // ── Sort ───────────────────────────────────────────────────────────────
   const displayedItems = sortAZ
     ? [...filteredItems].sort((a, b) =>
         (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' })
       )
     : filteredItems;
 
-  // ── Build rows ─────────────────────────────────────────────────────────
   const rows = displayedItems.map(item => {
     const scanCount = (item.scan_history || []).length;
     const scanBars  = Array.from({ length: Math.min(scanCount, 10) }).map((_, i) => (
@@ -321,7 +360,6 @@ function ManagerTaskDetail() {
     ];
   });
 
-  // ── Render ─────────────────────────────────────────────────────────────
   return (
     <div style={{ padding: '0 5px' }}>
       <Page
@@ -450,7 +488,7 @@ function ManagerTaskDetail() {
               <Card>
                 <DataTable
                   columnContentTypes={['text', 'numeric', 'text', 'text']}
-                  headings={['Name / SKU', 'SOH', 'Scans', 'POH']}
+                  headings={['Name / SKU', 'System', 'Scans', 'Actual']}
                   rows={rows}
                 />
               </Card>
@@ -484,13 +522,15 @@ function ManagerTaskDetail() {
           <div style={{
             position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
             background: 'rgba(0,0,0,0.6)', zIndex: 1000,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            padding: '0 5px',
+            display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+            padding: '16px 5px',
+            overflowY: 'auto',
           }}>
             <div style={{
               background: 'white', borderRadius: '12px',
               padding: '24px', width: '100%', maxWidth: '500px',
               position: 'relative',
+              marginTop: '8px', marginBottom: '8px',
             }}>
               <button onClick={closePopup} style={{
                 position: 'absolute', top: '12px', right: '12px',
@@ -498,10 +538,102 @@ function ManagerTaskDetail() {
               }}>✕</button>
 
               <BlockStack gap="400">
-                <BlockStack gap="100">
-                  <Text variant="headingMd" fontWeight="bold">{popupItem.name}</Text>
-                  <Text variant="bodyMd" tone="subdued">{popupItem.barcode}</Text>
-                </BlockStack>
+                <InlineStack align="space-between" blockAlign="start">
+                  <BlockStack gap="100">
+                    <Text variant="headingMd" fontWeight="bold">{popupItem.name}</Text>
+                    <Text variant="bodyMd" tone="subdued">{popupItem.barcode}</Text>
+                  </BlockStack>
+                  <div style={{ paddingRight: '32px' }}>
+                    {showHistory ? (
+                      <button
+                        onClick={closeHistory}
+                        style={{
+                          padding: '6px 14px', borderRadius: '8px',
+                          border: '1px solid #008060', background: '#f0faf7',
+                          color: '#008060', cursor: 'pointer', fontSize: '13px',
+                          fontWeight: '500', whiteSpace: 'nowrap',
+                        }}
+                      >
+                        Hide history
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => openHistory(popupItem.barcode)}
+                        style={{
+                          padding: '6px 14px', borderRadius: '8px',
+                          border: '1px solid #c9cccf', background: 'white',
+                          color: '#202223', cursor: 'pointer', fontSize: '13px',
+                          fontWeight: '500', whiteSpace: 'nowrap',
+                        }}
+                      >
+                        History
+                      </button>
+                    )}
+                  </div>
+                </InlineStack>
+
+                {/* Inline History Panel */}
+                {showHistory && (
+                  <div style={{
+                    borderTop: '1px solid #e1e3e5',
+                    paddingTop: '12px',
+                  }}>
+                    {historyLoading ? (
+                      <InlineStack align="center"><Spinner /></InlineStack>
+                    ) : historyError ? (
+                      <Banner tone="critical">{historyError}</Banner>
+                    ) : historyData.length === 0 ? (
+                      <Text tone="subdued" alignment="center">No adjustment history found.</Text>
+                    ) : (
+                      <BlockStack gap="0">
+                        {historyData.map((row, i) => (
+                          <div key={i} style={{
+                            padding: '10px 0',
+                            borderBottom: '1px solid #f1f2f3',
+                          }}>
+                            {/* Row 1: date + activity */}
+                            <div style={{ marginBottom: '4px' }}>
+                              <Text variant="bodySm" fontWeight="semibold">{row.activity}</Text>
+                            </div>
+                            <div style={{ marginBottom: '6px' }}>
+                              <Text variant="bodySm" tone="subdued">
+                                {formatHistoryDate(row.created_at)}
+                                {row.created_by ? ` · ${row.created_by}` : ''}
+                              </Text>
+                            </div>
+                            {/* Row 2: qty chips */}
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                              {[
+                                { label: 'System', delta: row.available_delta, qty: row.available_qty },
+                                { label: 'On hand', delta: row.on_hand_delta, qty: row.on_hand_qty },
+                                { label: 'Committed', delta: row.committed_delta, qty: row.committed_qty },
+                                { label: 'Incoming', delta: row.incoming_delta, qty: row.incoming_qty },
+                              ].filter(c => c.qty !== null && c.qty !== undefined).map(col => (
+                                <div key={col.label} style={{
+                                  background: '#f6f6f7', borderRadius: '6px',
+                                  padding: '4px 10px', display: 'flex', alignItems: 'center', gap: '5px',
+                                }}>
+                                  <span style={{ fontSize: '11px', color: '#6d7175' }}>{col.label}</span>
+                                  {col.delta !== null && col.delta !== undefined && col.delta !== 0 && (
+                                    <span style={{
+                                      fontSize: '11px', fontWeight: '600',
+                                      color: col.delta > 0 ? '#008060' : '#d72c0d',
+                                    }}>
+                                      {col.delta > 0 ? `+${col.delta}` : col.delta}
+                                    </span>
+                                  )}
+                                  <span style={{ fontSize: '13px', fontWeight: '600', color: '#202223' }}>
+                                    {col.qty}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </BlockStack>
+                    )}
+                  </div>
+                )}
 
                 {(popupItem.scan_history || []).length > 0 && (
                   <BlockStack gap="100">
@@ -535,7 +667,7 @@ function ManagerTaskDetail() {
                 {loadingSoh ? <Spinner /> : popupSoh === null ? (
                   <div style={{ background: '#fff4f4', borderRadius: '12px', padding: '16px',
                     textAlign: 'center', fontSize: '14px', color: '#d72c0d' }}>
-                    SOH — (network error, please close and retry)
+                    System — (network error, please close and retry)
                   </div>
                 ) : (
                   <button onClick={handleCorrect} style={{
@@ -543,7 +675,7 @@ function ManagerTaskDetail() {
                     borderRadius: '12px', padding: '20px', fontSize: '22px',
                     fontWeight: 'bold', cursor: 'pointer', width: '100%',
                   }}>
-                    SOH {popupSoh}　Correct
+                    System {popupSoh}　Correct
                   </button>
                 )}
               </BlockStack>
@@ -553,6 +685,12 @@ function ManagerTaskDetail() {
       </Page>
     </div>
   );
+}
+
+function formatDelta(delta, qty) {
+  if (delta === null || delta === undefined) return qty ?? '—';
+  const sign = delta > 0 ? '+' : '';
+  return `(${sign}${delta}) ${qty ?? ''}`;
 }
 
 export default ManagerTaskDetail;

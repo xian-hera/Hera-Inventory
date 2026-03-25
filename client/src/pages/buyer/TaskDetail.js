@@ -210,7 +210,6 @@ function TaskDetail() {
     const isEditing = editingItemId === item.id;
 
     if (item.soh !== null && item.poh !== null) {
-      // delta=0 always shows green check regardless of how it was recorded
       const delta = item.is_correct ? 0 : item.poh - item.soh;
       const isZeroDelta = delta === 0;
 
@@ -246,7 +245,7 @@ function TaskDetail() {
           result = <span style={{ color: 'green', fontSize: '18px' }}>✓</span>;
         }
       } else {
-        detail = `SOH ${item.soh}  POH ${item.poh}`;
+        detail = `System ${item.soh}  Actual ${item.poh}`;
         const displayDelta = delta > 0 ? `+${delta}` : `${delta}`;
         if (canEdit) {
           result = isEditing ? (
