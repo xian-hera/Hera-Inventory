@@ -79,7 +79,7 @@ function ManagerTaskDetail() {
       const res  = await fetch(`/api/shopify/inventory-history/${encodeURIComponent(barcode)}?locationId=${locationId}`);
       const data = await res.json();
       if (!res.ok || !data.url) throw new Error('Could not get history URL');
-      window.top.open(data.url, '_blank');
+      window.open(data.url, '_blank');
     } catch (e) {
       setError('Could not open history: ' + e.message);
     }
@@ -494,11 +494,11 @@ function ManagerTaskDetail() {
             position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
             background: 'rgba(0,0,0,0.6)', zIndex: 1000,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            padding: '0 5px',
+            boxSizing: 'border-box', padding: '16px',
           }}>
             <div style={{
               background: 'white', borderRadius: '12px',
-              padding: '24px', width: '100%', maxWidth: '500px',
+              padding: '24px', width: '100%', boxSizing: 'border-box',
               position: 'relative',
             }}>
               <button onClick={closePopup} style={{

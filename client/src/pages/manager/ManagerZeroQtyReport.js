@@ -69,7 +69,7 @@ function ManagerZeroQtyReport() {
       const res  = await fetch(`/api/shopify/inventory-history/${encodeURIComponent(barcode)}?locationId=${locationId}`);
       const data = await res.json();
       if (!res.ok || !data.url) throw new Error('Could not get history URL');
-      window.top.open(data.url, '_blank');
+      window.open(data.url, '_blank');
     } catch (e) {
       setError('Could not open history: ' + e.message);
     }
@@ -278,45 +278,53 @@ function ManagerZeroQtyReport() {
             </Text>
             <Card>
               <BlockStack gap="300">
-                <InlineStack align="space-between" gap="200" wrap>
-                  <button onClick={() => { setSkuInput(''); setSkuError(''); setShowTypeIn(true); }}
-                    style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid #c9cccf',
-                      background: 'white', color: '#202223', cursor: 'pointer',
-                      fontSize: '14px', fontWeight: '500' }}>
-                    Type in SKU
+                {/* Mobile-first: Type in SKU full width, then action buttons in two rows */}
+                <button onClick={() => { setSkuInput(''); setSkuError(''); setShowTypeIn(true); }}
+                  style={{ width: '100%', padding: '10px 16px', borderRadius: '8px',
+                    border: '1px solid #c9cccf', background: 'white', color: '#202223',
+                    cursor: 'pointer', fontSize: '14px', fontWeight: '500', textAlign: 'center' }}>
+                  Type in SKU
+                </button>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  <button disabled={selectedIds.length === 0 || submitting} onClick={handleDeleteSelected}
+                    style={{ flex: '1 1 auto', padding: '8px 12px', borderRadius: '8px',
+                      border: '1px solid #d72c0d',
+                      background: selectedIds.length === 0 ? '#f6f6f7' : 'white',
+                      color: selectedIds.length === 0 ? '#8c9196' : '#d72c0d',
+                      cursor: selectedIds.length === 0 ? 'not-allowed' : 'pointer',
+                      fontSize: '13px', fontWeight: '500' }}>
+                    Delete selected
                   </button>
-                  <InlineStack align="end" gap="200" wrap>
-                    <button disabled={selectedIds.length === 0 || submitting} onClick={handleDeleteSelected}
-                      style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid #d72c0d',
-                        background: selectedIds.length === 0 ? '#f6f6f7' : 'white',
-                        color: selectedIds.length === 0 ? '#8c9196' : '#d72c0d',
-                        cursor: selectedIds.length === 0 ? 'not-allowed' : 'pointer',
-                        fontSize: '14px', fontWeight: '500' }}>
-                      Delete selected
-                    </button>
-                    <button disabled={items.length === 0 || submitting} onClick={handleDeleteAll}
-                      style={{ padding: '8px 16px', borderRadius: '8px', border: 'none',
-                        background: items.length === 0 ? '#f6f6f7' : '#d72c0d',
-                        color: items.length === 0 ? '#8c9196' : 'white',
-                        cursor: items.length === 0 ? 'not-allowed' : 'pointer',
-                        fontSize: '14px', fontWeight: '500' }}>
-                      Delete all
-                    </button>
-                    <Button disabled={selectedIds.length === 0 || submitting}
-                      onClick={() => handleSubmitItems(selectedIds)} loading={submitting}>
-                      Submit selected
-                    </Button>
-                    <button disabled={items.length === 0 || submitting}
-                      onClick={() => handleSubmitItems(items.map(i => i.id))}
-                      style={{ padding: '8px 16px', borderRadius: '8px', border: 'none',
-                        background: items.length === 0 ? '#f6f6f7' : '#008060',
-                        color: items.length === 0 ? '#8c9196' : 'white',
-                        cursor: items.length === 0 ? 'not-allowed' : 'pointer',
-                        fontSize: '14px', fontWeight: '500' }}>
-                      Submit all
-                    </button>
-                  </InlineStack>
-                </InlineStack>
+                  <button disabled={items.length === 0 || submitting} onClick={handleDeleteAll}
+                    style={{ flex: '1 1 auto', padding: '8px 12px', borderRadius: '8px',
+                      border: 'none',
+                      background: items.length === 0 ? '#f6f6f7' : '#d72c0d',
+                      color: items.length === 0 ? '#8c9196' : 'white',
+                      cursor: items.length === 0 ? 'not-allowed' : 'pointer',
+                      fontSize: '13px', fontWeight: '500' }}>
+                    Delete all
+                  </button>
+                  <button disabled={selectedIds.length === 0 || submitting}
+                    onClick={() => handleSubmitItems(selectedIds)}
+                    style={{ flex: '1 1 auto', padding: '8px 12px', borderRadius: '8px',
+                      border: '1px solid #c9cccf',
+                      background: selectedIds.length === 0 ? '#f6f6f7' : 'white',
+                      color: selectedIds.length === 0 ? '#8c9196' : '#202223',
+                      cursor: selectedIds.length === 0 ? 'not-allowed' : 'pointer',
+                      fontSize: '13px', fontWeight: '500' }}>
+                    Submit selected
+                  </button>
+                  <button disabled={items.length === 0 || submitting}
+                    onClick={() => handleSubmitItems(items.map(i => i.id))}
+                    style={{ flex: '1 1 auto', padding: '8px 12px', borderRadius: '8px',
+                      border: 'none',
+                      background: items.length === 0 ? '#f6f6f7' : '#008060',
+                      color: items.length === 0 ? '#8c9196' : 'white',
+                      cursor: items.length === 0 ? 'not-allowed' : 'pointer',
+                      fontSize: '13px', fontWeight: '500' }}>
+                    Submit all
+                  </button>
+                </div>
 
                 {loadingItems
                   ? <InlineStack align="center"><Spinner /></InlineStack>
@@ -344,9 +352,10 @@ function ManagerZeroQtyReport() {
       {(popupData || loadingSoh) && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
           background: 'rgba(0,0,0,0.6)', zIndex: 1000,
-          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 16px' }}>
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          boxSizing: 'border-box', padding: '16px' }}>
           <div style={{ background: 'white', borderRadius: '12px', padding: '24px',
-            width: '100%', maxWidth: '500px', position: 'relative' }}>
+            width: '100%', boxSizing: 'border-box', position: 'relative' }}>
             {loadingSoh
               ? <InlineStack align="center"><Spinner /></InlineStack>
               : <>
@@ -407,30 +416,32 @@ function ManagerZeroQtyReport() {
           </div>
         </div>
       )}
+
       {/* Type in SKU popup */}
       {showTypeIn && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
           background: 'rgba(0,0,0,0.6)', zIndex: 1000,
-          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 16px' }}>
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          boxSizing: 'border-box', padding: '16px' }}>
           <div style={{ background: 'white', borderRadius: '12px', padding: '24px',
-            width: '100%', maxWidth: '400px', position: 'relative' }}>
+            width: '100%', boxSizing: 'border-box', position: 'relative' }}>
             <button onClick={() => setShowTypeIn(false)} style={{ position: 'absolute',
               top: '12px', right: '12px', background: 'none', border: 'none',
               fontSize: '20px', cursor: 'pointer' }}>✕</button>
             <BlockStack gap="300">
               <Text variant="headingMd" fontWeight="bold">Type in SKU</Text>
               {skuError && <Banner tone="critical" onDismiss={() => setSkuError('')}>{skuError}</Banner>}
-              <InlineStack gap="200" blockAlign="end">
-                <div style={{ flex: 1 }}>
-                  <TextField label="SKU" value={skuInput}
-                    onChange={val => { setSkuInput(val); setSkuError(''); }}
-                    onKeyDown={e => { if (e.key === 'Enter') handleSkuSearch(); }}
-                    autoComplete="off" autoFocus placeholder="Enter exact SKU" />
-                </div>
-                <div style={{ paddingBottom: '2px' }}>
+              <TextField
+                label="SKU" value={skuInput}
+                type="number"
+                inputMode="numeric"
+                onChange={val => { setSkuInput(val); setSkuError(''); }}
+                onKeyDown={e => { if (e.key === 'Enter') handleSkuSearch(); }}
+                autoComplete="off" autoFocus placeholder="Enter exact SKU"
+                connectedRight={
                   <Button onClick={handleSkuSearch} loading={skuSearching} disabled={!skuInput.trim()}>Search</Button>
-                </div>
-              </InlineStack>
+                }
+              />
             </BlockStack>
           </div>
         </div>
