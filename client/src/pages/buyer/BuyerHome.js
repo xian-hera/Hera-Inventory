@@ -43,6 +43,12 @@ function BuyerHome() {
     setShowModal(false);
   };
 
+  // ── Log out — clear device trust and return to Home ─────────────────────
+  const handleLogout = () => {
+    localStorage.removeItem(PIN_VERIFIED_KEY);
+    navigate('/');
+  };
+
   // ── Step 1: verify current PIN ──────────────────────────────────────────
   const handleVerify = () => {
     if (currentInput === pinConfig.pin) {
@@ -88,6 +94,9 @@ function BuyerHome() {
             </Button>
             <Button size="large" fullWidth onClick={openModal}>
               Set PIN
+            </Button>
+            <Button size="large" fullWidth tone="critical" onClick={handleLogout}>
+              Log out
             </Button>
           </BlockStack>
         </Layout.Section>
