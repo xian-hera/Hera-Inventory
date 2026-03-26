@@ -302,7 +302,7 @@ function ManagerRestockPlan() {
                 </InlineStack>
 
                 {/* Type filter — only shown when 2+ types present */}
-                {allTypes.length >= 2 && (
+                {allTypes.length >= 1 && (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                     {allTypes.map(type => {
                       const selected = activeTypes === null || activeTypes.includes(type);
@@ -391,6 +391,10 @@ function ManagerRestockPlan() {
                   <div style={{ paddingRight: '28px', wordBreak: 'break-word' }}>
                     <div style={{ fontSize: '16px', fontWeight: '700', lineHeight: '1.4' }}>
                       {popupData.name}
+                    </div>
+                    {/* DEBUG — remove after testing */}
+                    <div style={{ fontSize: '11px', color: '#8c9196', marginTop: '2px' }}>
+                      type: {popupData.productType || '(none)'}
                     </div>
                   </div>
                   <InlineStack gap="200" blockAlign="end">

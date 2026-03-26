@@ -14,6 +14,8 @@ import ManagerCountingTasksList from './pages/manager/ManagerCountingTasksList';
 import ManagerTaskDetail from './pages/manager/ManagerTaskDetail';
 import ManagerZeroQtyReport from './pages/manager/ManagerZeroQtyReport';
 import ManagerRestockPlan from './pages/manager/ManagerRestockPlan';
+import HistoryTest from './pages/HistoryTest';
+<Route path="/history-test" element={<HistoryTest />} />
 
 function App() {
   return (
