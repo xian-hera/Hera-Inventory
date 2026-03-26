@@ -590,6 +590,9 @@ router.get('/inventory-history/:barcode', async (req, res) => {
           edges {
             node {
               id
+              inventoryItem {
+                id
+              }
             }
           }
         }
@@ -602,15 +605,19 @@ router.get('/inventory-history/:barcode', async (req, res) => {
       return res.status(404).json({ error: 'Product not found' });
     }
 
-    // Extract numeric variant ID from GID: gid://shopify/ProductVariant/47280245408054 → 47280245408054
-    const variantGid = variantEdges[0].node.id;
-    const variantId = variantGid.split('/').pop();
+    // Use inventoryItem ID for the URL (not variant ID)
+    // gid://shopify/InventoryItem/47280245702966 → 47280245702966
+    const inventoryItemGid = variantEdges[0].node.inventoryItem?.id;
+    if (!inventoryItemGid) {
+      return res.status(404).json({ error: 'Inventory item not found' });
+    }
+    const inventoryItemId = inventoryItemGid.split('/').pop();
 
     // Extract store name from shop domain: beaute-hera.myshopify.com → beaute-hera
     const storeName = session.shop.replace('.myshopify.com', '');
 
-    // Build URL: https://admin.shopify.com/store/{storeName}/products/inventory/{variantId}/inventory_history
-    let url = `https://admin.shopify.com/store/${storeName}/products/inventory/${variantId}/inventory_history`;
+    // Build URL using inventoryItem ID
+    let url = `https://admin.shopify.com/store/${storeName}/products/inventory/${inventoryItemId}/inventory_history`;
 
     // Append location_id if provided
     if (locationId) {
