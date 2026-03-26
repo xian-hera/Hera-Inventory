@@ -66,6 +66,7 @@ function ManagerTaskDetail() {
   const [popupItem, setPopupItem]   = useState(null);
   const [popupSoh, setPopupSoh]         = useState(null);
   const [popupCommitted, setPopupCommitted] = useState(0);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [countInput, setCountInput]     = useState('');
   const [loadingSoh, setLoadingSoh]     = useState(false);
 
@@ -163,6 +164,24 @@ function ManagerTaskDetail() {
       setPopupSoh(null);
     } finally {
       setLoadingSoh(false);
+    }
+  };
+
+  const openHistory = async (barcode) => {
+    setHistoryLoading(true);
+    try {
+      const locRes  = await fetch('/api/shopify/locations');
+      const locData = await locRes.json();
+      const loc     = locData.find(l => l.name === location);
+      const locationId = loc ? encodeURIComponent(loc.id) : '';
+      const res  = await fetch(`/api/shopify/inventory-history/${encodeURIComponent(barcode)}?locationId=${locationId}`);
+      const data = await res.json();
+      if (!res.ok || !data.url) throw new Error('Could not get history URL');
+      window.open(data.url, '_blank');
+    } catch (e) {
+      setError('Could not open history: ' + e.message);
+    } finally {
+      setHistoryLoading(false);
     }
   };
 
@@ -561,6 +580,18 @@ function ManagerTaskDetail() {
                         {popupCommitted} committed
                       </div>
                     )}
+                    <button
+                      onClick={() => openHistory(popupItem.barcode)}
+                      disabled={historyLoading}
+                      style={{
+                        padding: '8px 16px', borderRadius: '8px',
+                        border: '1px solid #c9cccf', background: 'white',
+                        color: historyLoading ? '#8c9196' : '#202223',
+                        cursor: historyLoading ? 'not-allowed' : 'pointer',
+                        fontSize: '14px', fontWeight: '500',
+                      }}>
+                      {historyLoading ? '...' : 'Check History ↗'}
+                    </button>
                   </>
                 )}
               </BlockStack>

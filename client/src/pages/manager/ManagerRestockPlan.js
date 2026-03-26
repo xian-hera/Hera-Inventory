@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Page, Layout, Card, Button, BlockStack, InlineStack,
-  Text, Banner, TextField, Spinner
+  Text, Banner, Spinner
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 
@@ -36,6 +36,8 @@ function ManagerRestockPlan() {
 
   const [popupData, setPopupData]         = useState(null);
   const [popupSoh, setPopupSoh]           = useState(null);
+  const [popupCommitted, setPopupCommitted] = useState(0);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [restockInput, setRestockInput]   = useState('');
   const [loadingSoh, setLoadingSoh]       = useState(false);
   const [editingBarcode, setEditingBarcode] = useState(null);
@@ -125,6 +127,7 @@ function ManagerRestockPlan() {
       const existing = items.find(i => i.barcode === barcode);
       setPopupData({ ...data, barcode, locationId: loc.id });
       setPopupSoh(data.soh ?? null);
+      setPopupCommitted(data.committed ?? 0);
       setRestockInput(isEdit && existing ? String(existing.restock_qty) : '');
     } catch (e) {
       setError(e.message || 'Product not found');
@@ -133,8 +136,26 @@ function ManagerRestockPlan() {
     }
   };
 
+  const openHistory = async (barcode) => {
+    setHistoryLoading(true);
+    try {
+      const locRes  = await fetch('/api/shopify/locations');
+      const locData = await locRes.json();
+      const loc     = locData.find(l => l.name === location);
+      const locationId = loc ? encodeURIComponent(loc.id) : '';
+      const res  = await fetch(`/api/shopify/inventory-history/${encodeURIComponent(barcode)}?locationId=${locationId}`);
+      const data = await res.json();
+      if (!res.ok || !data.url) throw new Error('Could not get history URL');
+      window.open(data.url, '_blank');
+    } catch (e) {
+      setError('Could not open history: ' + e.message);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
   const closePopup = () => {
-    setPopupData(null); setPopupSoh(null);
+    setPopupData(null); setPopupSoh(null); setPopupCommitted(0);
     setRestockInput(''); setEditingBarcode(null);
   };
 
@@ -228,7 +249,7 @@ function ManagerRestockPlan() {
       if (!res.ok) throw new Error(data.error || 'SKU not found');
       setShowAddByTyping(false); setSkuInput('');
       setPopupData({ ...data, barcode: skuInput.trim(), locationId: loc.id });
-      setPopupSoh(data.soh ?? null); setRestockInput(''); setEditingBarcode(null);
+      setPopupSoh(data.soh ?? null); setPopupCommitted(data.committed ?? 0); setRestockInput(''); setEditingBarcode(null);
     } catch (e) { setSkuError(e.message || 'SKU not found'); }
     finally { setSkuSearching(false); }
   };
@@ -374,13 +395,12 @@ function ManagerRestockPlan() {
         <div style={{
           position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
           background: 'rgba(0,0,0,0.6)', zIndex: 1000,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          padding: '16px',
         }}>
           <div style={{
+            position: 'fixed', top: '50%', left: '16px', right: '16px',
+            transform: 'translateY(-50%)',
             background: 'white', borderRadius: '12px', padding: '24px',
-            width: '100%', maxWidth: '480px',
-            position: 'relative', overflow: 'hidden',
+            maxWidth: '480px', margin: '0 auto', zIndex: 1001,
           }}>
             {loadingSoh ? <InlineStack align="center"><Spinner /></InlineStack> : (
               <>
@@ -397,16 +417,26 @@ function ManagerRestockPlan() {
                       type: {popupData.productType || '(none)'}
                     </div>
                   </div>
-                  <InlineStack gap="200" blockAlign="end">
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
                     <div style={{ flex: 1 }}>
-                      <TextField label="Restock quantity" type="number"
-                        placeholder="Input restock quantity" value={restockInput}
-                        onChange={setRestockInput} autoComplete="off" autoFocus />
+                      <div style={{ fontSize: '14px', color: '#202223', fontWeight: '500', marginBottom: '4px' }}>Restock quantity</div>
+                      <input
+                        inputMode="numeric"
+                        placeholder="Input restock quantity"
+                        value={restockInput}
+                        onChange={e => setRestockInput(e.target.value)}
+                        autoComplete="off" autoFocus
+                        style={{
+                          width: '100%', padding: '10px 12px', fontSize: '16px',
+                          border: '1px solid #c9cccf', borderRadius: '8px',
+                          outline: 'none', boxSizing: 'border-box', display: 'block',
+                        }}
+                        onFocus={e => { e.target.style.borderColor = '#005bd3'; }}
+                        onBlur={e => { e.target.style.borderColor = '#c9cccf'; }}
+                      />
                     </div>
-                    <div style={{ paddingBottom: '2px' }}>
-                      <Button variant="primary" onClick={handleSave} disabled={restockInput === ''}>Save</Button>
-                    </div>
-                  </InlineStack>
+                    <Button variant="primary" onClick={handleSave} disabled={restockInput === ''}>Save</Button>
+                  </div>
                   <div style={{ background: popupSoh === null ? '#fff4f4' : '#f6f6f7',
                     borderRadius: '8px', padding: '12px 16px', textAlign: 'center' }}>
                     {popupSoh === null
@@ -414,6 +444,23 @@ function ManagerRestockPlan() {
                       : <Text variant="bodyLg" fontWeight="semibold">System {popupSoh}</Text>
                     }
                   </div>
+                  {popupCommitted > 0 && (
+                    <div style={{ textAlign: 'center', fontSize: '13px', color: '#e67c00', fontWeight: '500' }}>
+                      {popupCommitted} committed
+                    </div>
+                  )}
+                  <button
+                    onClick={() => openHistory(popupData.barcode)}
+                    disabled={historyLoading}
+                    style={{
+                      padding: '8px 16px', borderRadius: '8px',
+                      border: '1px solid #c9cccf', background: 'white',
+                      color: historyLoading ? '#8c9196' : '#202223',
+                      cursor: historyLoading ? 'not-allowed' : 'pointer',
+                      fontSize: '14px', fontWeight: '500',
+                    }}>
+                    {historyLoading ? '...' : 'Check History ↗'}
+                  </button>
                 </BlockStack>
               </>
             )}
@@ -425,26 +472,39 @@ function ManagerRestockPlan() {
       {showAddByTyping && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
           background: 'rgba(0,0,0,0.6)', zIndex: 1000,
-          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 16px' }}>
-          <div style={{ background: 'white', borderRadius: '12px', padding: '24px',
-            width: '100%', maxWidth: '400px', position: 'relative' }}>
+        }}>
+          <div style={{
+            position: 'fixed', top: '50%', left: '16px', right: '16px',
+            transform: 'translateY(-50%)',
+            background: 'white', borderRadius: '12px', padding: '24px',
+            maxWidth: '400px', margin: '0 auto', zIndex: 1001,
+          }}>
             <button onClick={() => setShowAddByTyping(false)} style={{ position: 'absolute',
               top: '12px', right: '12px', background: 'none', border: 'none',
               fontSize: '20px', cursor: 'pointer' }}>✕</button>
             <BlockStack gap="300">
               <Text variant="headingMd" fontWeight="bold">Add by SKU</Text>
               {skuError && <Banner tone="critical" onDismiss={() => setSkuError('')}>{skuError}</Banner>}
-              <InlineStack gap="200" blockAlign="end">
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
                 <div style={{ flex: 1 }}>
-                  <TextField label="SKU" value={skuInput}
-                    onChange={val => { setSkuInput(val); setSkuError(''); }}
+                  <div style={{ fontSize: '14px', color: '#202223', fontWeight: '500', marginBottom: '4px' }}>SKU</div>
+                  <input
+                    inputMode="numeric"
+                    value={skuInput}
+                    onChange={e => { setSkuInput(e.target.value); setSkuError(''); }}
                     onKeyDown={e => { if (e.key === 'Enter') handleSkuSearch(); }}
-                    autoComplete="off" autoFocus placeholder="Enter exact SKU" />
+                    autoComplete="off" autoFocus placeholder="Enter exact SKU"
+                    style={{
+                      width: '100%', padding: '10px 12px', fontSize: '16px',
+                      border: '1px solid #c9cccf', borderRadius: '8px',
+                      outline: 'none', boxSizing: 'border-box', display: 'block',
+                    }}
+                    onFocus={e => { e.target.style.borderColor = '#005bd3'; }}
+                    onBlur={e => { e.target.style.borderColor = '#c9cccf'; }}
+                  />
                 </div>
-                <div style={{ paddingBottom: '2px' }}>
-                  <Button onClick={handleSkuSearch} loading={skuSearching} disabled={!skuInput.trim()}>Search</Button>
-                </div>
-              </InlineStack>
+                <Button onClick={handleSkuSearch} loading={skuSearching} disabled={!skuInput.trim()}>Search</Button>
+              </div>
             </BlockStack>
           </div>
         </div>
