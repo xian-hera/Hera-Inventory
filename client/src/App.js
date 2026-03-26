@@ -15,7 +15,6 @@ import ManagerTaskDetail from './pages/manager/ManagerTaskDetail';
 import ManagerZeroQtyReport from './pages/manager/ManagerZeroQtyReport';
 import ManagerRestockPlan from './pages/manager/ManagerRestockPlan';
 import HistoryTest from './pages/HistoryTest';
-<Route path="/history-test" element={<HistoryTest />} />
 
 function App() {
   return (
@@ -34,6 +33,7 @@ function App() {
           <Route path="/manager/counting-tasks/:taskId" element={<ManagerTaskDetail />} />
           <Route path="/manager/zero-qty-report" element={<ManagerZeroQtyReport />} />
           <Route path="/manager/restock-plan" element={<ManagerRestockPlan />} />
+          <Route path="/history-test" element={<HistoryTest />} />
         </Routes>
       </BrowserRouter>
     </AppProvider>
