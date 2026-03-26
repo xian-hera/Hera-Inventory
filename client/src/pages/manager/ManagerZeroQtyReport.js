@@ -256,17 +256,18 @@ function ManagerZeroQtyReport() {
     </div>,
   ]);
 
-  // Shared styles
+  // Shared styles — popup is positioned directly with left/right to avoid 100vw issues on iOS
   const overlayStyle = {
     position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
     background: 'rgba(0,0,0,0.6)', zIndex: 1000,
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
-    padding: '16px',
   };
   const popupInnerStyle = {
+    position: 'fixed',
+    top: '50%', left: '16px', right: '16px',
+    transform: 'translateY(-50%)',
     background: 'white', borderRadius: '12px', padding: '24px',
-    width: 'calc(100vw - 32px)', maxWidth: '480px',
-    position: 'relative',
+    maxWidth: '480px', margin: '0 auto',
+    zIndex: 1001,
   };
 
   return (
@@ -381,7 +382,7 @@ function ManagerZeroQtyReport() {
                       </BlockStack>
                     )}
                     <InlineStack gap="200">
-                      <div style={{ flex: 1, overflow: 'hidden', minWidth: 0 }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
                         <TextField label="" labelHidden inputMode="numeric"
                           placeholder="Input your count" value={countInput}
                           onChange={setCountInput} autoComplete="off" autoFocus />
@@ -417,15 +418,13 @@ function ManagerZeroQtyReport() {
             <BlockStack gap="300">
               <Text variant="headingMd" fontWeight="bold">Type in SKU</Text>
               {skuError && <Banner tone="critical" onDismiss={() => setSkuError('')}>{skuError}</Banner>}
-              <div style={{ overflow: 'hidden', width: '100%' }}>
-                <TextField
-                  label="SKU" value={skuInput}
-                  inputMode="numeric"
-                  onChange={val => { setSkuInput(val); setSkuError(''); }}
-                  onKeyDown={e => { if (e.key === 'Enter') handleSkuSearch(); }}
-                  autoComplete="off" autoFocus placeholder="Enter exact SKU"
-                />
-              </div>
+              <TextField
+                label="SKU" value={skuInput}
+                inputMode="numeric"
+                onChange={val => { setSkuInput(val); setSkuError(''); }}
+                onKeyDown={e => { if (e.key === 'Enter') handleSkuSearch(); }}
+                autoComplete="off" autoFocus placeholder="Enter exact SKU"
+              />
               <Button
                 variant="primary"
                 onClick={handleSkuSearch}
