@@ -305,11 +305,11 @@ function ManagerRestockPlan() {
           position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
           background: 'rgba(0,0,0,0.6)', zIndex: 1000,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          padding: '16px', boxSizing: 'border-box',
+          padding: '16px',
         }}>
           <div style={{
             background: 'white', borderRadius: '12px', padding: '24px',
-            width: '100%', maxWidth: 'calc(100vw - 32px)', boxSizing: 'border-box',
+            width: '100%', maxWidth: '480px',
             position: 'relative', overflow: 'hidden',
           }}>
             {loadingSoh ? <InlineStack align="center"><Spinner /></InlineStack> : (
