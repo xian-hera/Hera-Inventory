@@ -54,11 +54,10 @@ function ManagerZeroQtyReport() {
   const [loadingSoh, setLoadingSoh]             = useState(false);
 
   // Type in SKU
-  const [showTypeIn, setShowTypeIn]   = useState(false);
-  const [skuInput, setSkuInput]       = useState('');
+  const [showTypeIn, setShowTypeIn]     = useState(false);
+  const [skuInput, setSkuInput]         = useState('');
   const [skuSearching, setSkuSearching] = useState(false);
-  const [skuError, setSkuError]       = useState('');
-
+  const [skuError, setSkuError]         = useState('');
 
   const barcodeBuffer = useRef('');
   const barcodeTimer  = useRef(null);
@@ -68,6 +67,13 @@ function ManagerZeroQtyReport() {
 
   useEffect(() => { popupRef.current = popupData; }, [popupData]);
   useEffect(() => { typeInRef.current = showTypeIn; }, [showTypeIn]);
+
+  // Lock body scroll when any popup is open
+  useEffect(() => {
+    const anyOpen = !!(popupData || loadingSoh || showTypeIn);
+    document.body.style.overflow = anyOpen ? 'hidden' : '';
+    return () => { document.body.style.overflow = ''; };
+  }, [popupData, loadingSoh, showTypeIn]);
 
   const loadDrafts = useCallback(async () => {
     if (!location) { setLoadingItems(false); return; }
@@ -141,8 +147,6 @@ function ManagerZeroQtyReport() {
     setPopupData(null); setPopupSoh(null);
     setPopupScanHistory([]); setCountInput('');
   };
-
-
 
   const handleCorrect = () => closePopup();
 
@@ -252,6 +256,19 @@ function ManagerZeroQtyReport() {
     </div>,
   ]);
 
+  // Shared styles
+  const overlayStyle = {
+    position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+    background: 'rgba(0,0,0,0.6)', zIndex: 1000,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    padding: '16px',
+  };
+  const popupInnerStyle = {
+    background: 'white', borderRadius: '12px', padding: '24px',
+    width: 'calc(100vw - 32px)', maxWidth: '480px',
+    position: 'relative',
+  };
+
   return (
     <Page title="Zero/Low Inventory Count" backAction={{ onAction: () => navigate('/manager') }}>
       <Layout>
@@ -263,7 +280,6 @@ function ManagerZeroQtyReport() {
             </Text>
             <Card>
               <BlockStack gap="300">
-                {/* Mobile-first: Type in SKU full width, then action buttons in two rows */}
                 <button onClick={() => { setSkuInput(''); setSkuError(''); setShowTypeIn(true); }}
                   style={{ width: '100%', padding: '10px 16px', borderRadius: '8px',
                     border: '1px solid #c9cccf', background: 'white', color: '#202223',
@@ -335,17 +351,8 @@ function ManagerZeroQtyReport() {
 
       {/* Scan Popup */}
       {(popupData || loadingSoh) && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          background: 'rgba(0,0,0,0.6)', zIndex: 1000,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          padding: '16px',
-        }}>
-          <div style={{
-            background: 'white', borderRadius: '12px', padding: '24px',
-            width: '100%', maxWidth: '480px',
-            position: 'relative', overflow: 'hidden',
-          }}>
+        <div style={overlayStyle}>
+          <div style={popupInnerStyle}>
             {loadingSoh
               ? <InlineStack align="center"><Spinner /></InlineStack>
               : <>
@@ -354,7 +361,6 @@ function ManagerZeroQtyReport() {
                     background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', zIndex: 1,
                   }}>✕</button>
                   <BlockStack gap="400">
-                    {/* Popup header */}
                     <div style={{ paddingRight: '28px', wordBreak: 'break-word' }}>
                       <div style={{ fontSize: '16px', fontWeight: '700', lineHeight: '1.4' }}>
                         {popupData.name}
@@ -403,17 +409,8 @@ function ManagerZeroQtyReport() {
 
       {/* Type in SKU popup */}
       {showTypeIn && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          background: 'rgba(0,0,0,0.6)', zIndex: 1000,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          padding: '16px',
-        }}>
-          <div style={{
-            background: 'white', borderRadius: '12px', padding: '24px',
-            width: '100%', maxWidth: '480px',
-            position: 'relative',
-          }}>
+        <div style={overlayStyle}>
+          <div style={popupInnerStyle}>
             <button onClick={() => setShowTypeIn(false)} style={{ position: 'absolute',
               top: '12px', right: '12px', background: 'none', border: 'none',
               fontSize: '20px', cursor: 'pointer' }}>✕</button>
