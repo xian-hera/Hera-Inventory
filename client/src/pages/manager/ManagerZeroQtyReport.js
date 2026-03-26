@@ -381,8 +381,8 @@ function ManagerZeroQtyReport() {
                       </BlockStack>
                     )}
                     <InlineStack gap="200">
-                      <div style={{ flex: 1 }}>
-                        <TextField label="" labelHidden type="number"
+                      <div style={{ flex: 1, overflow: 'hidden', minWidth: 0 }}>
+                        <TextField label="" labelHidden inputMode="numeric"
                           placeholder="Input your count" value={countInput}
                           onChange={setCountInput} autoComplete="off" autoFocus />
                       </div>
@@ -417,14 +417,15 @@ function ManagerZeroQtyReport() {
             <BlockStack gap="300">
               <Text variant="headingMd" fontWeight="bold">Type in SKU</Text>
               {skuError && <Banner tone="critical" onDismiss={() => setSkuError('')}>{skuError}</Banner>}
-              <TextField
-                label="SKU" value={skuInput}
-                type="number"
-                inputMode="numeric"
-                onChange={val => { setSkuInput(val); setSkuError(''); }}
-                onKeyDown={e => { if (e.key === 'Enter') handleSkuSearch(); }}
-                autoComplete="off" autoFocus placeholder="Enter exact SKU"
-              />
+              <div style={{ overflow: 'hidden', width: '100%' }}>
+                <TextField
+                  label="SKU" value={skuInput}
+                  inputMode="numeric"
+                  onChange={val => { setSkuInput(val); setSkuError(''); }}
+                  onKeyDown={e => { if (e.key === 'Enter') handleSkuSearch(); }}
+                  autoComplete="off" autoFocus placeholder="Enter exact SKU"
+                />
+              </div>
               <Button
                 variant="primary"
                 onClick={handleSkuSearch}
