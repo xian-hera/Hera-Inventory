@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Page, Layout, Card, Button, BlockStack, InlineStack,
-  Text, DataTable, Checkbox, Banner, TextField, Spinner
+  Text, DataTable, Checkbox, Banner, Spinner
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 
@@ -381,14 +381,24 @@ function ManagerZeroQtyReport() {
                         </Text>
                       </BlockStack>
                     )}
-                    <InlineStack gap="200">
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <TextField label="" labelHidden inputMode="numeric"
-                          placeholder="Input your count" value={countInput}
-                          onChange={setCountInput} autoComplete="off" autoFocus />
-                      </div>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <input
+                        inputMode="numeric"
+                        placeholder="Input your count"
+                        value={countInput}
+                        onChange={e => setCountInput(e.target.value)}
+                        autoComplete="off"
+                        autoFocus
+                        style={{
+                          flex: 1, minWidth: 0, padding: '10px 12px', fontSize: '16px',
+                          border: '1px solid #c9cccf', borderRadius: '8px',
+                          outline: 'none', boxSizing: 'border-box', display: 'block',
+                        }}
+                        onFocus={e => { e.target.style.borderColor = '#005bd3'; }}
+                        onBlur={e => { e.target.style.borderColor = '#c9cccf'; }}
+                      />
                       <Button onClick={handleSubmitCount} disabled={!countInput}>Submit</Button>
-                    </InlineStack>
+                    </div>
                     {popupSoh === null ? (
                       <div style={{ background: '#f6f6f7', borderRadius: '12px', padding: '16px',
                         textAlign: 'center', fontSize: '14px', color: '#d72c0d' }}>
@@ -418,12 +428,22 @@ function ManagerZeroQtyReport() {
             <BlockStack gap="300">
               <Text variant="headingMd" fontWeight="bold">Type in SKU</Text>
               {skuError && <Banner tone="critical" onDismiss={() => setSkuError('')}>{skuError}</Banner>}
-              <TextField
-                label="SKU" value={skuInput}
+              <div style={{ marginBottom: '4px', fontSize: '14px', color: '#202223', fontWeight: '500' }}>SKU</div>
+              <input
+                value={skuInput}
                 inputMode="numeric"
-                onChange={val => { setSkuInput(val); setSkuError(''); }}
+                onChange={e => { setSkuInput(e.target.value); setSkuError(''); }}
                 onKeyDown={e => { if (e.key === 'Enter') handleSkuSearch(); }}
-                autoComplete="off" autoFocus placeholder="Enter exact SKU"
+                autoComplete="off"
+                autoFocus
+                placeholder="Enter exact SKU"
+                style={{
+                  width: '100%', padding: '10px 12px', fontSize: '16px',
+                  border: '1px solid #c9cccf', borderRadius: '8px',
+                  outline: 'none', boxSizing: 'border-box', display: 'block',
+                }}
+                onFocus={e => { e.target.style.borderColor = '#005bd3'; }}
+                onBlur={e => { e.target.style.borderColor = '#c9cccf'; }}
               />
               <Button
                 variant="primary"
