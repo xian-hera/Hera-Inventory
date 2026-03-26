@@ -365,18 +365,18 @@ router.patch('/:id/commit', async (req, res) => {
           continue;
         }
 
-        // Adjust inventory with retry
+        // Set on_hand inventory (cycle count — adjust absolute on_hand value)
+        const newOnHand = item.soh + delta;
         await shopifyRequest(() =>
           client.query({
             data: `
               mutation {
-                inventoryAdjustQuantities(input: {
-                  reason: "correction",
-                  name: "available",
-                  changes: [{
+                inventorySetOnHandQuantities(input: {
+                  reason: "cycle_count_available",
+                  setQuantities: [{
                     inventoryItemId: "${invItemId}",
                     locationId: "${shopifyLocationId}",
-                    delta: ${delta}
+                    quantity: ${newOnHand}
                   }]
                 }) {
                   userErrors { field message }

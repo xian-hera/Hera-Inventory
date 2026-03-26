@@ -48,6 +48,10 @@ function ManagerRestockPlan() {
   const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId]           = useState(null);
 
+  // Type filter — null means "all selected" (initial state before any items load)
+  const [activeTypes, setActiveTypes] = useState(null);
+
+
 
   const longPressTimer = useRef(null);
   const barcodeBuffer  = useRef('');
@@ -64,6 +68,9 @@ function ManagerRestockPlan() {
       const res  = await fetch(`/api/reports/restock?location=${encodeURIComponent(location)}`);
       const data = await res.json();
       setItems(data);
+      // Initialise filter to all types present
+      const types = [...new Set(data.map(i => i.product_type).filter(Boolean))];
+      setActiveTypes(types.length > 0 ? types : null);
     } catch (e) {
       setError('Failed to load restock plan');
     } finally {
@@ -144,6 +151,7 @@ function ManagerRestockPlan() {
           barcode: popupData.barcode, name: popupData.name,
           location, shopify_location_id: popupData.locationId,
           soh: popupSoh, restock_qty: qty,
+          product_type: popupData.productType || null,
         }),
       });
       const saved = await res.json();
@@ -151,6 +159,13 @@ function ManagerRestockPlan() {
         const exists = prev.find(i => i.barcode === saved.barcode);
         return exists ? prev.map(i => i.barcode === saved.barcode ? saved : i) : [...prev, saved];
       });
+      // Add new type to activeTypes if not already present
+      if (saved.product_type) {
+        setActiveTypes(prev => {
+          if (!prev) return [saved.product_type];
+          return prev.includes(saved.product_type) ? prev : [...prev, saved.product_type];
+        });
+      }
     } catch (e) { setError('Failed to save'); }
     closePopup();
   };
@@ -190,10 +205,12 @@ function ManagerRestockPlan() {
 
   const handleDeleteAll = async () => {
     try {
+      const toDelete = filteredItems.map(i => i.id);
+      if (toDelete.length === 0) { setShowDeleteAllConfirm(false); return; }
       await fetch('/api/reports/restock', { method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ all: true, location }) });
-      setItems([]);
+        body: JSON.stringify({ ids: toDelete }) });
+      setItems(prev => prev.filter(i => !toDelete.includes(i.id)));
     } catch (e) { setError('Failed to delete'); }
     setShowDeleteAllConfirm(false);
   };
@@ -216,7 +233,14 @@ function ManagerRestockPlan() {
     finally { setSkuSearching(false); }
   };
 
-  const renderRows = () => items.map(item => {
+  // Derived: all unique types in current items
+  const allTypes = [...new Set(items.map(i => i.product_type).filter(Boolean))];
+  // Derived: filtered items (null activeTypes = show all)
+  const filteredItems = activeTypes === null
+    ? items
+    : items.filter(i => !i.product_type || activeTypes.includes(i.product_type));
+
+  const renderRows = () => filteredItems.map(item => {
     const done = item.is_done;
     return (
       <div key={item.id} style={{ display: 'grid', gridTemplateColumns: '1fr 60px 80px 44px',
@@ -277,6 +301,50 @@ function ManagerRestockPlan() {
                   </button>
                 </InlineStack>
 
+                {/* Type filter — only shown when 2+ types present */}
+                {allTypes.length >= 2 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                    {allTypes.map(type => {
+                      const selected = activeTypes === null || activeTypes.includes(type);
+                      return (
+                        <button
+                          key={type}
+                          onClick={() => {
+                            setActiveTypes(prev => {
+                              const all = prev === null
+                                ? allTypes
+                                : prev;
+                              if (all.includes(type) && all.length === 1) return all; // keep at least one
+                              const next = all.includes(type)
+                                ? all.filter(t => t !== type)
+                                : [...all, type];
+                              return next.length === allTypes.length ? null : next;
+                            });
+                          }}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: '6px',
+                            padding: '4px 10px', borderRadius: '20px', fontSize: '12px',
+                            fontWeight: '500', cursor: 'pointer',
+                            border: selected ? '1px solid #005bd3' : '1px solid #c9cccf',
+                            background: selected ? '#f0f5ff' : '#f6f6f7',
+                            color: selected ? '#005bd3' : '#6d7175',
+                          }}
+                        >
+                          <span style={{
+                            width: '12px', height: '12px', borderRadius: '3px', flexShrink: 0,
+                            border: selected ? '2px solid #005bd3' : '2px solid #c9cccf',
+                            background: selected ? '#005bd3' : 'white',
+                            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                          }}>
+                            {selected && <span style={{ color: 'white', fontSize: '9px', lineHeight: 1 }}>✓</span>}
+                          </span>
+                          {type}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
                 {items.length > 0 && (
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 60px 80px 44px',
                     gap: '8px', padding: '4px 0', borderBottom: '2px solid #e1e3e5' }}>
@@ -291,7 +359,9 @@ function ManagerRestockPlan() {
                   ? <InlineStack align="center"><Spinner /></InlineStack>
                   : items.length === 0
                     ? <Text tone="subdued" alignment="center">No items yet. Scan a barcode to add.</Text>
-                    : <div>{renderRows()}</div>
+                    : filteredItems.length === 0
+                      ? <Text tone="subdued" alignment="center">No items match the selected filter.</Text>
+                      : <div>{renderRows()}</div>
                 }
               </BlockStack>
             </Card>

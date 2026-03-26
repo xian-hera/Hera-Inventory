@@ -3,6 +3,8 @@ const router = express.Router();
 const { pool } = require('../database/init');
 const { getShopify, getSession } = require('../shopify');
 
+
+
 // ═══════════════════════════════════════════════════════════════════════════
 // ZERO QTY REPORTS  (buyer-side, submitted data)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -166,14 +168,15 @@ async function commitReport(id) {
     });
     const invItemId = variantRes.body.data.productVariants.edges[0]?.node?.inventoryItem?.id;
     if (invItemId) {
+      const newOnHand = r.soh + delta;
       await client.query({
         data: `mutation {
-          inventoryAdjustQuantities(input: {
-            reason: "correction", name: "available",
-            changes: [{
+          inventorySetOnHandQuantities(input: {
+            reason: "cycle_count_available",
+            setQuantities: [{
               inventoryItemId: "${invItemId}",
               locationId: "${r.shopify_location_id}",
-              delta: ${delta}
+              quantity: ${newOnHand}
             }]
           }) { userErrors { field message } }
         }`
@@ -283,22 +286,23 @@ router.get('/restock', async (req, res) => {
 // PUT /api/reports/restock  — upsert a single restock entry
 router.put('/restock', async (req, res) => {
   try {
-    const { barcode, name, location, shopify_location_id, soh, restock_qty } = req.body;
+    const { barcode, name, location, shopify_location_id, soh, restock_qty, product_type } = req.body;
     if (!barcode || !location) return res.status(400).json({ error: 'barcode and location required' });
 
     const result = await pool.query(
       `INSERT INTO restock_plans
-         (barcode, name, location, shopify_location_id, soh, restock_qty, is_done, expires_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, FALSE, NOW() + INTERVAL '15 days', NOW())
+         (barcode, name, location, shopify_location_id, soh, restock_qty, product_type, is_done, expires_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, FALSE, NOW() + INTERVAL '15 days', NOW())
        ON CONFLICT (barcode, location) DO UPDATE SET
          name                = EXCLUDED.name,
          shopify_location_id = EXCLUDED.shopify_location_id,
          soh                 = EXCLUDED.soh,
          restock_qty         = EXCLUDED.restock_qty,
+         product_type        = EXCLUDED.product_type,
          expires_at          = NOW() + INTERVAL '15 days',
          updated_at          = NOW()
        RETURNING *`,
-      [barcode, name, location, shopify_location_id, soh, restock_qty]
+      [barcode, name, location, shopify_location_id, soh, restock_qty, product_type || null]
     );
     res.json(result.rows[0]);
   } catch (e) {

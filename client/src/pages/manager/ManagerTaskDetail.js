@@ -64,9 +64,10 @@ function ManagerTaskDetail() {
 
   // Popup
   const [popupItem, setPopupItem]   = useState(null);
-  const [popupSoh, setPopupSoh]     = useState(null);
-  const [countInput, setCountInput] = useState('');
-  const [loadingSoh, setLoadingSoh] = useState(false);
+  const [popupSoh, setPopupSoh]         = useState(null);
+  const [popupCommitted, setPopupCommitted] = useState(0);
+  const [countInput, setCountInput]     = useState('');
+  const [loadingSoh, setLoadingSoh]     = useState(false);
 
 
   // Error popup
@@ -80,6 +81,13 @@ function ManagerTaskDetail() {
 
   useEffect(() => { popupRef.current = popupItem; }, [popupItem]);
   useEffect(() => { taskRef.current = task; }, [task]);
+
+  // Lock body scroll when popup is open
+  useEffect(() => {
+    const anyOpen = !!(popupItem || loadingSoh);
+    document.body.style.overflow = anyOpen ? 'hidden' : '';
+    return () => { document.body.style.overflow = ''; };
+  }, [popupItem, loadingSoh]);
 
   const fetchTask = useCallback(async () => {
     setLoading(true);
@@ -146,6 +154,7 @@ function ManagerTaskDetail() {
       const res  = await fetch(`/api/shopify/inventory/${encodeURIComponent(item.barcode)}/${encodeURIComponent(loc.id)}`);
       const data = await res.json();
       setPopupSoh(data.soh ?? null);
+      setPopupCommitted(data.committed ?? 0);
       setTask(prev => ({
         ...prev,
         items: prev.items.map(i => i.id === item.id ? { ...i, soh: data.soh ?? null } : i),
@@ -160,6 +169,7 @@ function ManagerTaskDetail() {
   const closePopup = () => {
     setPopupItem(null);
     setPopupSoh(null);
+    setPopupCommitted(0);
     setCountInput('');
   };
 
@@ -477,13 +487,12 @@ function ManagerTaskDetail() {
           <div style={{
             position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
             background: 'rgba(0,0,0,0.6)', zIndex: 1000,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            padding: '16px',
           }}>
             <div style={{
-              background: 'white', borderRadius: '12px',
-              padding: '24px', width: '100%', maxWidth: '480px',
-              position: 'relative',
+              position: 'fixed', top: '50%', left: '16px', right: '16px',
+              transform: 'translateY(-50%)',
+              background: 'white', borderRadius: '12px', padding: '24px',
+              maxWidth: '480px', margin: '0 auto', zIndex: 1001,
             }}>
               <button onClick={closePopup} style={{
                 position: 'absolute', top: '12px', right: '12px',
@@ -515,17 +524,23 @@ function ManagerTaskDetail() {
                   </BlockStack>
                 )}
 
-                <InlineStack gap="200">
-                  <div style={{ flex: 1 }}>
-                    <TextField
-                      label="" labelHidden type="number"
-                      placeholder="Input your count"
-                      value={countInput} onChange={setCountInput}
-                      autoComplete="off" autoFocus
-                    />
-                  </div>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <input
+                    inputMode="numeric"
+                    placeholder="Input your count"
+                    value={countInput}
+                    onChange={e => setCountInput(e.target.value)}
+                    autoComplete="off" autoFocus
+                    style={{
+                      flex: 1, minWidth: 0, padding: '10px 12px', fontSize: '16px',
+                      border: '1px solid #c9cccf', borderRadius: '8px',
+                      outline: 'none', boxSizing: 'border-box', display: 'block',
+                    }}
+                    onFocus={e => { e.target.style.borderColor = '#005bd3'; }}
+                    onBlur={e => { e.target.style.borderColor = '#c9cccf'; }}
+                  />
                   <Button onClick={handleSubmitCount} disabled={!countInput}>Submit</Button>
-                </InlineStack>
+                </div>
 
                 {loadingSoh ? <Spinner /> : popupSoh === null ? (
                   <div style={{ background: '#fff4f4', borderRadius: '12px', padding: '16px',
@@ -533,13 +548,20 @@ function ManagerTaskDetail() {
                     System — (network error, please close and retry)
                   </div>
                 ) : (
-                  <button onClick={handleCorrect} style={{
-                    background: '#008060', color: 'white', border: 'none',
-                    borderRadius: '12px', padding: '20px', fontSize: '22px',
-                    fontWeight: 'bold', cursor: 'pointer', width: '100%',
-                  }}>
-                    System {popupSoh}　Correct
-                  </button>
+                  <>
+                    <button onClick={handleCorrect} style={{
+                      background: '#008060', color: 'white', border: 'none',
+                      borderRadius: '12px', padding: '20px', fontSize: '22px',
+                      fontWeight: 'bold', cursor: 'pointer', width: '100%',
+                    }}>
+                      System {popupSoh}　Correct
+                    </button>
+                    {popupCommitted > 0 && (
+                      <div style={{ textAlign: 'center', fontSize: '13px', color: '#e67c00', fontWeight: '500' }}>
+                        {popupCommitted} committed
+                      </div>
+                    )}
+                  </>
                 )}
               </BlockStack>
             </div>

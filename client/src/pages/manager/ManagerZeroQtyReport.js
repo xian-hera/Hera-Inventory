@@ -52,6 +52,7 @@ function ManagerZeroQtyReport() {
   const [popupScanHistory, setPopupScanHistory] = useState([]);
   const [countInput, setCountInput]             = useState('');
   const [loadingSoh, setLoadingSoh]             = useState(false);
+  const [popupCommitted, setPopupCommitted]     = useState(0);
 
   // Type in SKU
   const [showTypeIn, setShowTypeIn]     = useState(false);
@@ -67,6 +68,13 @@ function ManagerZeroQtyReport() {
 
   useEffect(() => { popupRef.current = popupData; }, [popupData]);
   useEffect(() => { typeInRef.current = showTypeIn; }, [showTypeIn]);
+
+  // Lock body scroll when any popup is open
+  useEffect(() => {
+    const anyOpen = !!(popupData || loadingSoh || showTypeIn);
+    document.body.style.overflow = anyOpen ? 'hidden' : '';
+    return () => { document.body.style.overflow = ''; };
+  }, [popupData, loadingSoh, showTypeIn]);
 
   // Lock body scroll when any popup is open
   useEffect(() => {
@@ -134,6 +142,7 @@ function ManagerZeroQtyReport() {
       const existing = items.find(i => i.barcode === barcode);
       setPopupData({ ...data, barcode, locationId: loc.id });
       setPopupSoh(data.soh ?? null);
+      setPopupCommitted(data.committed ?? 0);
       setPopupScanHistory(existing?.scan_history || []);
       setCountInput('');
     } catch (e) {
@@ -145,7 +154,7 @@ function ManagerZeroQtyReport() {
 
   const closePopup = () => {
     setPopupData(null); setPopupSoh(null);
-    setPopupScanHistory([]); setCountInput('');
+    setPopupCommitted(0); setPopupScanHistory([]); setCountInput('');
   };
 
   const handleCorrect = () => closePopup();
@@ -405,11 +414,18 @@ function ManagerZeroQtyReport() {
                         System unavailable — network error. Please close and retry.
                       </div>
                     ) : (
-                      <button onClick={handleCorrect} style={{ background: 'green', color: 'white',
-                        border: 'none', borderRadius: '12px', padding: '20px', fontSize: '22px',
-                        fontWeight: 'bold', cursor: 'pointer', width: '100%' }}>
-                        System {popupSoh}　Correct
-                      </button>
+                      <>
+                        <button onClick={handleCorrect} style={{ background: 'green', color: 'white',
+                          border: 'none', borderRadius: '12px', padding: '20px', fontSize: '22px',
+                          fontWeight: 'bold', cursor: 'pointer', width: '100%' }}>
+                          System {popupSoh}　Correct
+                        </button>
+                        {popupCommitted > 0 && (
+                          <div style={{ textAlign: 'center', fontSize: '13px', color: '#e67c00', fontWeight: '500' }}>
+                            {popupCommitted} committed
+                          </div>
+                        )}
+                      </>
                     )}
                   </BlockStack>
                 </>

@@ -266,7 +266,7 @@ router.get('/inventory/:barcode/:locationId', async (req, res) => {
                       location {
                         id
                       }
-                      quantities(names: ["available"]) {
+                      quantities(names: ["on_hand", "committed"]) {
                         name
                         quantity
                       }
@@ -299,7 +299,9 @@ router.get('/inventory/:barcode/:locationId', async (req, res) => {
 
     const levels = variant.inventoryItem.inventoryLevels.edges;
     const level = levels.find(e => e.node.location.id === decodedLocationId);
-    const soh = level?.node.quantities.find(q => q.name === 'available')?.quantity ?? 0;
+    const quantities = level?.node.quantities || [];
+    const soh = quantities.find(q => q.name === 'on_hand')?.quantity ?? 0;
+    const committed = quantities.find(q => q.name === 'committed')?.quantity ?? 0;
 
     const name = variant.metafield?.value || variant.product.title;
     const department = getDepartment(variant.product.productType);
@@ -308,6 +310,7 @@ router.get('/inventory/:barcode/:locationId', async (req, res) => {
       barcode: variant.barcode || variant.sku,
       name,
       soh,
+      committed,
       department,
       productType: variant.product.productType,
       variantId: variant.id,
