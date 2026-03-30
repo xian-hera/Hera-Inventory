@@ -30,6 +30,10 @@ function ZeroQtyReport() {
   const [selectedStatuses, setSelectedStatuses] = useState([]);
   const [date, setDate] = useState('ALL');
   const [selectedIds, setSelectedIds] = useState([]);
+  // 0 = no sort, 1 = A→Z, 2 = Z→A
+  const [sortMode, setSortMode] = useState(0);
+
+  const handleSort = () => setSortMode(prev => (prev + 1) % 3);
 
   const fetchReports = useCallback(async () => {
     setLoading(true);
@@ -135,7 +139,18 @@ function ZeroQtyReport() {
     setSelectedIds(selectedIds.length === reports.length ? [] : reports.map(r => r.id));
   };
 
-  const rows = reports.map(report => [
+  // Apply sort
+  const sortedReports = (() => {
+    if (sortMode === 0) return reports;
+    const sorted = [...reports].sort((a, b) =>
+      (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' })
+    );
+    return sortMode === 2 ? sorted.reverse() : sorted;
+  })();
+
+  const sortLabel = sortMode === 0 ? 'Sort' : sortMode === 1 ? 'Sort A→Z ✓' : 'Sort Z→A ✓';
+
+  const rows = sortedReports.map(report => [
     <Checkbox checked={selectedIds.includes(report.id)} onChange={() => toggleSelectOne(report.id)} />,
     report.department || '-',
     report.location || '-',
@@ -150,7 +165,7 @@ function ZeroQtyReport() {
   ]);
 
   return (
-    <Page title="0 quantity report" backAction={{ onAction: () => navigate('/buyer') }}>
+    <Page title="Zero/Low Inventory Count" backAction={{ onAction: () => navigate('/buyer') }}>
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">
@@ -203,14 +218,32 @@ function ZeroQtyReport() {
 
             <Card>
               <BlockStack gap="300">
-                <InlineStack align="end" gap="200">
-                  <Button disabled={selectedIds.length === 0 || committing} onClick={handleCommitSelected} loading={committing}>
-                    Commit selected
-                  </Button>
-                  <Button onClick={handleCommitAll} loading={committing}>Commit all</Button>
-                  <Button tone="critical" disabled={selectedIds.length === 0} onClick={handleDelete}>Delete</Button>
-                  <Button disabled={selectedIds.length === 0} onClick={handleArchive}>Archive</Button>
+                <InlineStack align="space-between" gap="200">
+                  {/* Sort button — left side */}
+                  <button
+                    onClick={handleSort}
+                    style={{
+                      padding: '6px 14px', borderRadius: '20px', border: '1px solid #c9cccf',
+                      background: sortMode !== 0 ? '#1a1a1a' : 'white',
+                      color: sortMode !== 0 ? 'white' : '#202223',
+                      cursor: 'pointer', fontSize: '13px',
+                      fontWeight: sortMode !== 0 ? '600' : '400', whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {sortLabel}
+                  </button>
+
+                  {/* Action buttons — right side */}
+                  <InlineStack gap="200">
+                    <Button disabled={selectedIds.length === 0 || committing} onClick={handleCommitSelected} loading={committing}>
+                      Commit selected
+                    </Button>
+                    <Button onClick={handleCommitAll} loading={committing}>Commit all</Button>
+                    <Button tone="critical" disabled={selectedIds.length === 0} onClick={handleDelete}>Delete</Button>
+                    <Button disabled={selectedIds.length === 0} onClick={handleArchive}>Archive</Button>
+                  </InlineStack>
                 </InlineStack>
+
                 {loading ? <Spinner /> : (
                   <div style={{ overflowX: 'hidden', width: '100%' }}>
                     <DataTable

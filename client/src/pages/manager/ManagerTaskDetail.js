@@ -12,7 +12,6 @@ function formatDate(dateStr) {
   return `${d.getFullYear()}.${months[d.getMonth()]}.${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
 }
 
-
 function computePOH(scanHistory, soh) {
   if (!scanHistory || scanHistory.length === 0) return null;
   const last = scanHistory[scanHistory.length - 1];
@@ -63,13 +62,21 @@ function ManagerTaskDetail() {
   const [submitWarning, setSubmitWarning] = useState(false);
 
   // Popup
-  const [popupItem, setPopupItem]   = useState(null);
-  const [popupSoh, setPopupSoh]         = useState(null);
+  const [popupItem, setPopupItem]           = useState(null);
+  const [popupSoh, setPopupSoh]             = useState(null);
   const [popupCommitted, setPopupCommitted] = useState(0);
   const [historyLoading, setHistoryLoading] = useState(false);
-  const [countInput, setCountInput]     = useState('');
-  const [loadingSoh, setLoadingSoh]     = useState(false);
+  const [countInput, setCountInput]         = useState('');
+  const [loadingSoh, setLoadingSoh]         = useState(false);
 
+  // Reset confirm
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+
+  // Type in SKU
+  const [showSkuInput, setShowSkuInput]   = useState(false);
+  const [skuInput, setSkuInput]           = useState('');
+  const [skuError, setSkuError]           = useState('');
+  const showSkuInputRef                   = useRef(false);
 
   // Error popup
   const [errorPopup, setErrorPopup] = useState('');
@@ -82,13 +89,14 @@ function ManagerTaskDetail() {
 
   useEffect(() => { popupRef.current = popupItem; }, [popupItem]);
   useEffect(() => { taskRef.current = task; }, [task]);
+  useEffect(() => { showSkuInputRef.current = showSkuInput; }, [showSkuInput]);
 
   // Lock body scroll when popup is open
   useEffect(() => {
-    const anyOpen = !!(popupItem || loadingSoh);
+    const anyOpen = !!(popupItem || loadingSoh || showSkuInput);
     document.body.style.overflow = anyOpen ? 'hidden' : '';
     return () => { document.body.style.overflow = ''; };
-  }, [popupItem, loadingSoh]);
+  }, [popupItem, loadingSoh, showSkuInput]);
 
   const fetchTask = useCallback(async () => {
     setLoading(true);
@@ -110,6 +118,7 @@ function ManagerTaskDetail() {
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (popupRef.current) return;
+      if (showSkuInputRef.current) return;
       const activeTag = document.activeElement?.tagName;
       if (['INPUT', 'TEXTAREA'].includes(activeTag)) return;
 
@@ -146,6 +155,7 @@ function ManagerTaskDetail() {
   const openPopup = async (item) => {
     setPopupItem(item);
     setCountInput('');
+    setShowResetConfirm(false);
     setLoadingSoh(true);
     try {
       const locRes  = await fetch('/api/shopify/locations');
@@ -190,9 +200,8 @@ function ManagerTaskDetail() {
     setPopupSoh(null);
     setPopupCommitted(0);
     setCountInput('');
+    setShowResetConfirm(false);
   };
-
-
 
   const handleCorrect = async () => {
     if (!popupItem) return;
@@ -232,6 +241,45 @@ function ManagerTaskDetail() {
           : i
       ),
     }));
+  };
+
+  // Reset: clears scan_history, poh, is_correct — keeps soh intact
+  const handleResetConfirmed = async () => {
+    if (!popupItem) return;
+    const currentSoh = popupSoh; // keep the already-fetched soh
+
+    await fetch(`/api/tasks/${taskId}/items/${popupItem.id}/scan`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scan_history: [], poh: null, soh: currentSoh, is_correct: false }),
+    });
+
+    // Update local task state
+    const resetItem = { ...popupItem, scan_history: [], poh: null, is_correct: false, soh: currentSoh };
+    setTask(prev => ({
+      ...prev,
+      items: prev.items.map(i => i.id === popupItem.id ? resetItem : i),
+    }));
+
+    // Reopen popup with the reset item (fresh state, no history)
+    setPopupItem(resetItem);
+    setCountInput('');
+    setShowResetConfirm(false);
+  };
+
+  // Type in SKU: find item in task and open popup
+  const handleSkuSearch = () => {
+    const sku = skuInput.trim();
+    if (!sku || !taskRef.current) return;
+    const matched = taskRef.current.items.find(i => i.barcode === sku);
+    if (matched) {
+      setShowSkuInput(false);
+      setSkuInput('');
+      setSkuError('');
+      openPopup(matched);
+    } else {
+      setSkuError(`SKU "${sku}" not found in this task.`);
+    }
   };
 
   const handleAddNote = async () => {
@@ -303,6 +351,8 @@ function ManagerTaskDetail() {
         (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' })
       )
     : filteredItems;
+
+  const hasHistory = (popupItem?.scan_history || []).length > 0;
 
   const rows = displayedItems.map(item => {
     const scanCount = (item.scan_history || []).length;
@@ -388,6 +438,9 @@ function ManagerTaskDetail() {
               <Card>
                 <BlockStack gap="300">
                   <InlineStack gap="200" wrap align="end">
+                    <Button onClick={() => { setSkuInput(''); setSkuError(''); setShowSkuInput(true); }}>
+                      Type in SKU
+                    </Button>
                     <Button onClick={() => setShowNoteInput(true)}>Add note</Button>
                     <Button variant="primary" onClick={handleSubmit} loading={submitting}>Submit</Button>
                   </InlineStack>
@@ -501,6 +554,70 @@ function ManagerTaskDetail() {
           </div>
         )}
 
+        {/* Type in SKU popup */}
+        {showSkuInput && (
+          <div style={{
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+            background: 'rgba(0,0,0,0.6)', zIndex: 1000,
+          }}>
+            <div style={{
+              position: 'fixed', top: '50%', left: '16px', right: '16px',
+              transform: 'translateY(-50%)',
+              background: 'white', borderRadius: '12px', padding: '24px',
+              maxWidth: '400px', margin: '0 auto', zIndex: 1001,
+            }}>
+              <button
+                onClick={() => { setShowSkuInput(false); setSkuInput(''); setSkuError(''); }}
+                style={{ position: 'absolute', top: '12px', right: '12px',
+                  background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer' }}
+              >✕</button>
+              <BlockStack gap="300">
+                <Text variant="headingMd" fontWeight="bold">Type in SKU</Text>
+                {skuError && (
+                  <div style={{ background: '#fff4f4', borderRadius: '8px', padding: '10px 14px',
+                    fontSize: '14px', color: '#d72c0d' }}>
+                    {skuError}
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: '14px', color: '#202223', fontWeight: '500', marginBottom: '4px' }}>SKU</div>
+                    <input
+                      inputMode="numeric"
+                      value={skuInput}
+                      onChange={e => { setSkuInput(e.target.value); setSkuError(''); }}
+                      onKeyDown={e => { if (e.key === 'Enter') handleSkuSearch(); }}
+                      autoComplete="off"
+                      autoFocus
+                      placeholder="Enter exact SKU"
+                      style={{
+                        width: '100%', padding: '10px 12px', fontSize: '16px',
+                        border: '1px solid #c9cccf', borderRadius: '8px',
+                        outline: 'none', boxSizing: 'border-box', display: 'block',
+                      }}
+                      onFocus={e => { e.target.style.borderColor = '#005bd3'; }}
+                      onBlur={e => { e.target.style.borderColor = '#c9cccf'; }}
+                    />
+                  </div>
+                  <button
+                    onClick={handleSkuSearch}
+                    disabled={!skuInput.trim()}
+                    style={{
+                      padding: '10px 18px', borderRadius: '8px', border: 'none',
+                      background: skuInput.trim() ? '#008060' : '#f6f6f7',
+                      color: skuInput.trim() ? 'white' : '#8c9196',
+                      cursor: skuInput.trim() ? 'pointer' : 'not-allowed',
+                      fontSize: '14px', fontWeight: '600', whiteSpace: 'nowrap',
+                    }}
+                  >
+                    Search
+                  </button>
+                </div>
+              </BlockStack>
+            </div>
+          </div>
+        )}
+
         {/* Scan Popup */}
         {popupItem && (
           <div style={{
@@ -568,13 +685,31 @@ function ManagerTaskDetail() {
                   </div>
                 ) : (
                   <>
-                    <button onClick={handleCorrect} style={{
-                      background: '#008060', color: 'white', border: 'none',
-                      borderRadius: '12px', padding: '20px', fontSize: '22px',
-                      fontWeight: 'bold', cursor: 'pointer', width: '100%',
-                    }}>
-                      System {popupSoh}　Correct
-                    </button>
+                    {/* Correct button row — with Reset on the left when there's history */}
+                    <div style={{ display: 'flex', gap: '10px', alignItems: 'stretch' }}>
+                      {hasHistory && (
+                        <button
+                          onClick={() => setShowResetConfirm(true)}
+                          style={{
+                            padding: '0 16px', borderRadius: '12px',
+                            border: '2px solid #c9cccf', background: 'white',
+                            color: '#202223', cursor: 'pointer',
+                            fontSize: '14px', fontWeight: '600', whiteSpace: 'nowrap',
+                          }}
+                        >
+                          Reset
+                        </button>
+                      )}
+                      <button onClick={handleCorrect} style={{
+                        flex: 1,
+                        background: '#008060', color: 'white', border: 'none',
+                        borderRadius: '12px', padding: '20px', fontSize: '22px',
+                        fontWeight: 'bold', cursor: 'pointer',
+                      }}>
+                        System {popupSoh}　Correct
+                      </button>
+                    </div>
+
                     {popupCommitted > 0 && (
                       <div style={{ textAlign: 'center', fontSize: '13px', color: '#e67c00', fontWeight: '500' }}>
                         {popupCommitted} committed
@@ -598,6 +733,50 @@ function ManagerTaskDetail() {
             </div>
           </div>
         )}
+
+        {/* Reset confirm dialog */}
+        {showResetConfirm && (
+          <div style={{
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+            background: 'rgba(0,0,0,0.5)', zIndex: 2000,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 16px',
+          }}>
+            <div style={{
+              background: 'white', borderRadius: '12px', padding: '24px',
+              width: '100%', maxWidth: '360px',
+            }}>
+              <BlockStack gap="300">
+                <Text variant="headingMd" fontWeight="bold">Confirm to reset the count?</Text>
+                <Text variant="bodyMd" tone="subdued">
+                  It will erase all the count history and start from the beginning.
+                </Text>
+                <InlineStack gap="200" align="center">
+                  <button
+                    onClick={handleResetConfirmed}
+                    style={{
+                      padding: '10px 24px', borderRadius: '8px', border: 'none',
+                      background: '#d72c0d', color: 'white',
+                      cursor: 'pointer', fontSize: '14px', fontWeight: '600',
+                    }}
+                  >
+                    Confirm
+                  </button>
+                  <button
+                    onClick={() => setShowResetConfirm(false)}
+                    style={{
+                      padding: '10px 24px', borderRadius: '8px',
+                      border: '1px solid #c9cccf', background: 'white',
+                      cursor: 'pointer', fontSize: '14px',
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </InlineStack>
+              </BlockStack>
+            </div>
+          </div>
+        )}
+
       </Page>
     </div>
   );
