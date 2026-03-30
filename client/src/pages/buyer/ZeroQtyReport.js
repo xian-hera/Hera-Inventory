@@ -9,7 +9,7 @@ import MultiSelectDropdown from '../../components/MultiSelectDropdown';
 const LOCATIONS = [
   'MTL01','MTL02','MTL03','MTL04','MTL05','MTL06',
   'MTL07','MTL08','MTL09','MTL10','MTL11',
-  'EDM01','EDM02','CAL01','OTT01','OTT02','OTT03','QC01','HQ'
+  'EDM01','EDM02','CAL01','OTT01','OTT02','OTT03','QC01'
 ];
 
 function formatDate(dateStr) {
@@ -27,7 +27,7 @@ function ZeroQtyReport() {
   const [committing, setCommitting] = useState(false);
   const [department, setDepartment] = useState('ALL');
   const [selectedLocations, setSelectedLocations] = useState([]);
-  const [selectedStatuses, setSelectedStatuses] = useState(['reviewing','committed']);
+  const [selectedStatuses, setSelectedStatuses] = useState([]);
   const [date, setDate] = useState('ALL');
   const [selectedIds, setSelectedIds] = useState([]);
 
@@ -137,20 +137,20 @@ function ZeroQtyReport() {
 
   const rows = reports.map(report => [
     <Checkbox checked={selectedIds.includes(report.id)} onChange={() => toggleSelectOne(report.id)} />,
-    report.name || '-',
-    report.barcode || '-',
     report.department || '-',
     report.location || '-',
+    formatDate(report.submitted_at),
+    <div style={{ maxWidth: '200px', wordBreak: 'break-word', whiteSpace: 'normal' }}>{report.name || '-'}</div>,
+    report.barcode || '-',
     report.soh ?? '-',
     report.poh ?? '-',
-    formatDate(report.submitted_at),
     report.status === 'reviewing'
       ? <Button size="slim" onClick={() => handleCommitOne(report.id)}>Commit</Button>
       : <Badge tone="success">committed</Badge>,
   ]);
 
   return (
-    <Page title="Zero/Low Inventory Count" backAction={{ onAction: () => navigate('/buyer') }}>
+    <Page title="0 quantity report" backAction={{ onAction: () => navigate('/buyer') }}>
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">
@@ -212,18 +212,20 @@ function ZeroQtyReport() {
                   <Button disabled={selectedIds.length === 0} onClick={handleArchive}>Archive</Button>
                 </InlineStack>
                 {loading ? <Spinner /> : (
-                  <DataTable
-                    columnContentTypes={['text','text','text','text','text','numeric','numeric','text','text']}
-                    headings={[
-                      <Checkbox
-                        checked={selectedIds.length === reports.length && reports.length > 0}
-                        indeterminate={selectedIds.length > 0 && selectedIds.length < reports.length}
-                        onChange={toggleSelectAll}
-                      />,
-                      'Name', 'SKU', 'Department', 'Location', 'System', 'Actual', 'Date', '',
-                    ]}
-                    rows={rows}
-                  />
+                  <div style={{ overflowX: 'hidden', width: '100%' }}>
+                    <DataTable
+                      columnContentTypes={['text','text','text','text','text','text','numeric','numeric','text']}
+                      headings={[
+                        <Checkbox
+                          checked={selectedIds.length === reports.length && reports.length > 0}
+                          indeterminate={selectedIds.length > 0 && selectedIds.length < reports.length}
+                          onChange={toggleSelectAll}
+                        />,
+                        'Dept.', 'Location', 'Date', 'Name', 'SKU', 'System', 'Actual', '',
+                      ]}
+                      rows={rows}
+                    />
+                  </div>
                 )}
               </BlockStack>
             </Card>
