@@ -9,6 +9,7 @@ import CreatingTask from './pages/buyer/CreatingTask';
 import PreviewTask from './pages/buyer/PreviewTask';
 import TaskDetail from './pages/buyer/TaskDetail';
 import ZeroQtyReport from './pages/buyer/ZeroQtyReport';
+import ManagerRestockPlan from './pages/manager/ManagerRestockPlan';
 import BuyerLabelTemplates from './pages/buyer/BuyerLabelTemplates';
 import BuyerLabelEditor from './pages/buyer/BuyerLabelEditor';
 import ManagerHome from './pages/manager/ManagerHome';
