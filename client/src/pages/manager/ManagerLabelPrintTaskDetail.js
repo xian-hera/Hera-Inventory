@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Page, Layout, Card, Button, BlockStack, InlineStack,
   Text, Banner, Spinner, TextField, Modal, Select, Checkbox,
-  DataTable, Badge,
+  DataTable,
 } from '@shopify/polaris';
 import { useParams, useNavigate } from 'react-router-dom';
 
@@ -192,7 +192,8 @@ function ManagerLabelPrintTaskDetail() {
       win.document.write(printContent);
       win.document.close();
       win.focus();
-      setTimeout(() => { win.print(); }, 500);
+      // Wait for JsBarcode to render before printing
+      setTimeout(() => { win.print(); }, 800);
       setShowPrint(false);
     } catch (e) {
       setPrintError(e.message);
@@ -207,8 +208,10 @@ function ManagerLabelPrintTaskDetail() {
     const pw = tmpl.paper_width_mm;
     const ph = tmpl.paper_height_mm;
 
-    const labelHtml = (item) => {
-      // Full field map — all supported field_key values
+    // Collect all barcode elements with their data for the init script
+    const barcodeInits = [];
+
+    const labelHtml = (item, labelIndex) => {
       const fields = {
         'product.title':            item.product_title || '',
         'variant.title':            item.variant_title || '',
@@ -218,12 +221,11 @@ function ManagerLabelPrintTaskDetail() {
         'variant.barcode':          item.barcode || '',
         'product.vendor':           item.vendor || '',
         'product.product_type':     item.product_type || '',
-        // custom.name metafield
         'variant.metafield':        item.custom_name || '',
         'product.metafield':        '',
       };
 
-      const elementsHtml = (tmpl.elements || []).map(el => {
+      const elementsHtml = (tmpl.elements || []).map((el, elIndex) => {
         const left = el.x * MM_TO_PX;
         const top = el.y * MM_TO_PX;
         const width = el.w * MM_TO_PX;
@@ -231,18 +233,24 @@ function ManagerLabelPrintTaskDetail() {
         const baseStyle = `position:absolute;left:${left}px;top:${top}px;width:${width}px;height:${height}px;overflow:hidden;box-sizing:border-box;`;
 
         if (el.type === 'text') {
-          let value = '';
-          if (el.field_key === 'custom') {
-            value = el.custom_value || '';
-          } else {
-            value = fields[el.field_key] ?? '';
-          }
+          let value = el.field_key === 'custom' ? (el.custom_value || '') : (fields[el.field_key] ?? '');
           const displayValue = applyCase(value, el.convert_case);
           const fw = el.font_weight || '400';
           const fs = (el.font_size || 3) * MM_TO_PX;
           const align = el.align || 'left';
           const decoration = el.underline ? 'underline' : el.linethrough ? 'line-through' : 'none';
           return `<div style="${baseStyle}font-size:${fs}px;font-weight:${fw};text-align:${align};font-family:sans-serif;text-decoration:${decoration};line-height:1.2;">${displayValue}</div>`;
+        }
+
+        if (el.type === 'barcode') {
+          // Get barcode value from the field binding
+          const barcodeValue = fields[el.field_key] || item.barcode || item.sku || '';
+          if (!barcodeValue) return `<div style="${baseStyle}"></div>`;
+          const barcodeType = el.barcode_type || 'CODE128';
+          const svgId = `bc_${labelIndex}_${elIndex}`;
+          // Queue this barcode for post-load rendering
+          barcodeInits.push({ id: svgId, value: barcodeValue, type: barcodeType });
+          return `<div style="${baseStyle}display:flex;align-items:center;justify-content:center;"><svg id="${svgId}" style="width:100%;height:100%;"></svg></div>`;
         }
 
         if (el.type === 'line') {
@@ -267,9 +275,36 @@ function ManagerLabelPrintTaskDetail() {
       return `<div style="position:relative;width:${pw}mm;height:${ph}mm;overflow:hidden;page-break-after:always;box-sizing:border-box;">${elementsHtml}</div>`;
     };
 
+    let labelIndex = 0;
     const allLabels = selectedItems.flatMap(item =>
-      Array.from({ length: item.qty_to_print * qty }, () => labelHtml(item))
+      Array.from({ length: item.qty_to_print * qty }, () => labelHtml(item, labelIndex++))
     ).join('');
+
+    // Build JsBarcode init script for all barcodes
+    const barcodeScript = barcodeInits.length > 0 ? `
+<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>
+<script>
+window.addEventListener('load', function() {
+  var barcodes = ${JSON.stringify(barcodeInits)};
+  barcodes.forEach(function(bc) {
+    var el = document.getElementById(bc.id);
+    if (!el) return;
+    try {
+      JsBarcode(el, bc.value, {
+        format: bc.type,
+        displayValue: false,
+        margin: 2,
+        width: 2,
+        height: Math.max(20, el.parentElement.clientHeight * 0.8),
+      });
+      el.setAttribute('width', '100%');
+      el.setAttribute('height', '100%');
+    } catch(e) {
+      console.warn('Barcode error for', bc.value, e);
+    }
+  });
+});
+<\/script>` : '';
 
     return `<!DOCTYPE html>
 <html>
@@ -281,6 +316,7 @@ function ManagerLabelPrintTaskDetail() {
   @page { size: ${pw}mm ${ph}mm; margin: 0; }
   body { background: #fff; }
 </style>
+${barcodeScript}
 </head>
 <body>${allLabels}</body>
 </html>`;
