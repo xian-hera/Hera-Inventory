@@ -19,15 +19,12 @@ function ManagerLabelPrintTaskDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  // Scan input
   const [scanValue, setScanValue] = useState('');
   const [scanLoading, setScanLoading] = useState(false);
   const [scanError, setScanError] = useState('');
 
-  // Selection
   const [selectedIds, setSelectedIds] = useState([]);
 
-  // Print modal
   const [showPrint, setShowPrint] = useState(false);
   const [templates, setTemplates] = useState([]);
   const [templatesLoading, setTemplatesLoading] = useState(false);
@@ -36,11 +33,9 @@ function ManagerLabelPrintTaskDetail() {
   const [printing, setPrinting] = useState(false);
   const [printError, setPrintError] = useState('');
 
-  // Delete item
   const [deleteItemId, setDeleteItemId] = useState(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
 
-  // ── Fetch task + items ──────────────────────────────────────────────────
   const fetchTask = useCallback(async () => {
     setLoading(true);
     setError('');
@@ -62,7 +57,6 @@ function ManagerLabelPrintTaskDetail() {
 
   useEffect(() => { fetchTask(); }, [fetchTask]);
 
-  // Auto-focus scan input after load
   useEffect(() => {
     if (!loading) setTimeout(() => scanInputRef.current?.focus(), 100);
   }, [loading]);
@@ -74,7 +68,6 @@ function ManagerLabelPrintTaskDetail() {
     setScanLoading(true);
     setScanError('');
     try {
-      // Look up variant by SKU from Shopify
       const res = await fetch(`/api/shopify/variant-by-sku?sku=${encodeURIComponent(sku)}`);
       if (!res.ok) {
         const err = await res.json();
@@ -82,10 +75,8 @@ function ManagerLabelPrintTaskDetail() {
       }
       const { variant, product } = await res.json();
 
-      // Check if SKU already in list
       const existing = items.find(i => i.sku === variant.sku);
       if (existing) {
-        // Increment qty instead of adding duplicate
         await handleQtyChange(existing.id, existing.qty_to_print + 1);
         setScanValue('');
         return;
@@ -104,6 +95,11 @@ function ManagerLabelPrintTaskDetail() {
           product_title: product.title,
           variant_title: variant.title,
           custom_name: customName,
+          price: variant.price || null,
+          compare_at_price: variant.compare_at_price || null,
+          barcode: variant.barcode || null,
+          vendor: product.vendor || null,
+          product_type: product.product_type || null,
           qty_to_print: 1,
         }),
       });
@@ -185,15 +181,11 @@ function ManagerLabelPrintTaskDetail() {
     setPrinting(true);
     setPrintError('');
     try {
-      // Fetch full template
       const tmplRes = await fetch(`/api/label-templates/${selectedTemplate}`);
       if (!tmplRes.ok) throw new Error('Failed to load template');
       const tmpl = await tmplRes.json();
 
-      // For each selected item, build print data and open print window
       const selectedItems = items.filter(i => selectedIds.includes(i.id));
-
-      // Build an HTML print page with all labels
       const printContent = buildPrintHtml(tmpl, selectedItems, qty);
       const win = window.open('', '_blank');
       if (!win) throw new Error('Pop-up blocked. Please allow pop-ups for this site.');
@@ -201,7 +193,6 @@ function ManagerLabelPrintTaskDetail() {
       win.document.close();
       win.focus();
       setTimeout(() => { win.print(); }, 500);
-
       setShowPrint(false);
     } catch (e) {
       setPrintError(e.message);
@@ -217,11 +208,19 @@ function ManagerLabelPrintTaskDetail() {
     const ph = tmpl.paper_height_mm;
 
     const labelHtml = (item) => {
+      // Full field map — all supported field_key values
       const fields = {
-        'product.title': item.product_title,
-        'variant.title': item.variant_title,
-        'variant.sku': item.sku,
-        'custom.name': item.custom_name,
+        'product.title':            item.product_title || '',
+        'variant.title':            item.variant_title || '',
+        'variant.sku':              item.sku || '',
+        'variant.price':            item.price ? `$${item.price}` : '',
+        'variant.compare_at_price': item.compare_at_price ? `$${item.compare_at_price}` : '',
+        'variant.barcode':          item.barcode || '',
+        'product.vendor':           item.vendor || '',
+        'product.product_type':     item.product_type || '',
+        // custom.name metafield
+        'variant.metafield':        item.custom_name || '',
+        'product.metafield':        '',
       };
 
       const elementsHtml = (tmpl.elements || []).map(el => {
@@ -232,14 +231,18 @@ function ManagerLabelPrintTaskDetail() {
         const baseStyle = `position:absolute;left:${left}px;top:${top}px;width:${width}px;height:${height}px;overflow:hidden;box-sizing:border-box;`;
 
         if (el.type === 'text') {
-          const value = el.field_key === 'custom'
-            ? (el.custom_value || '')
-            : (fields[el.field_key] || el.field_key || '');
+          let value = '';
+          if (el.field_key === 'custom') {
+            value = el.custom_value || '';
+          } else {
+            value = fields[el.field_key] ?? '';
+          }
           const displayValue = applyCase(value, el.convert_case);
           const fw = el.font_weight || '400';
           const fs = (el.font_size || 3) * MM_TO_PX;
           const align = el.align || 'left';
-          return `<div style="${baseStyle}font-size:${fs}px;font-weight:${fw};text-align:${align};font-family:sans-serif;${el.underline ? 'text-decoration:underline;' : ''}${el.linethrough ? 'text-decoration:line-through;' : ''}">${displayValue}</div>`;
+          const decoration = el.underline ? 'underline' : el.linethrough ? 'line-through' : 'none';
+          return `<div style="${baseStyle}font-size:${fs}px;font-weight:${fw};text-align:${align};font-family:sans-serif;text-decoration:${decoration};line-height:1.2;">${displayValue}</div>`;
         }
 
         if (el.type === 'line') {
@@ -304,7 +307,10 @@ function ManagerLabelPrintTaskDetail() {
     </Page>
   );
 
-  const templateOptions = templates.map(t => ({ label: `${t.name} (${t.paper_width_mm}×${t.paper_height_mm}mm)`, value: String(t.id) }));
+  const templateOptions = templates.map(t => ({
+    label: `${t.name} (${t.paper_width_mm}×${t.paper_height_mm}mm)`,
+    value: String(t.id),
+  }));
 
   return (
     <Page
@@ -319,7 +325,6 @@ function ManagerLabelPrintTaskDetail() {
         <Layout.Section>
           {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
 
-          {/* Scan bar */}
           <Card>
             <BlockStack gap="200">
               <Text variant="headingSm">Scan or enter SKU</Text>
@@ -333,7 +338,6 @@ function ManagerLabelPrintTaskDetail() {
                     placeholder="Scan barcode or type SKU..."
                     autoComplete="off"
                     ref={scanInputRef}
-                    error={scanError}
                   />
                 </div>
                 <Button onClick={handleScan} loading={scanLoading} disabled={!scanValue.trim()}>
@@ -345,7 +349,6 @@ function ManagerLabelPrintTaskDetail() {
           </Card>
         </Layout.Section>
 
-        {/* Items list */}
         <Layout.Section>
           <Card padding="0">
             {items.length === 0 ? (
@@ -370,7 +373,9 @@ function ManagerLabelPrintTaskDetail() {
                   />,
                   <BlockStack gap="050">
                     <Text variant="bodyMd" fontWeight="semibold">{item.sku}</Text>
-                    <Text variant="bodySm" tone="subdued">{item.variant_title !== 'Default Title' ? item.variant_title : ''}</Text>
+                    <Text variant="bodySm" tone="subdued">
+                      {item.variant_title !== 'Default Title' ? item.variant_title : ''}
+                    </Text>
                   </BlockStack>,
                   item.custom_name || item.product_title || '—',
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -391,11 +396,7 @@ function ManagerLabelPrintTaskDetail() {
                       style={{ width: 28, height: 28, borderRadius: 4, border: '1px solid #c9cccf', background: '#fff', cursor: 'pointer', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                     >+</button>
                   </div>,
-                  <Button
-                    variant="plain"
-                    tone="critical"
-                    onClick={() => setDeleteItemId(item.id)}
-                  >
+                  <Button variant="plain" tone="critical" onClick={() => setDeleteItemId(item.id)}>
                     Remove
                   </Button>,
                 ])}

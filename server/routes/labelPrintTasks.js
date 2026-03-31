@@ -12,21 +12,28 @@ async function ensureTables() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     CREATE TABLE IF NOT EXISTS label_print_items (
-      id            SERIAL PRIMARY KEY,
-      task_id       INTEGER NOT NULL REFERENCES label_print_tasks(id) ON DELETE CASCADE,
-      variant_id    VARCHAR(255),
-      sku           VARCHAR(255),
-      product_title VARCHAR(255),
-      variant_title VARCHAR(255),
-      custom_name   VARCHAR(255),
-      qty_to_print  INTEGER NOT NULL DEFAULT 1,
-      created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      id                SERIAL PRIMARY KEY,
+      task_id           INTEGER NOT NULL REFERENCES label_print_tasks(id) ON DELETE CASCADE,
+      variant_id        VARCHAR(255),
+      sku               VARCHAR(255),
+      product_title     VARCHAR(255),
+      variant_title     VARCHAR(255),
+      custom_name       VARCHAR(255),
+      price             VARCHAR(50),
+      compare_at_price  VARCHAR(50),
+      barcode           VARCHAR(255),
+      vendor            VARCHAR(255),
+      product_type      VARCHAR(255),
+      qty_to_print      INTEGER NOT NULL DEFAULT 1,
+      created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
-  // Add location column if upgrading from old schema
-  await pool.query(`
-    ALTER TABLE label_print_tasks ADD COLUMN IF NOT EXISTS location VARCHAR(50);
-  `).catch(() => {});
+  await pool.query(`ALTER TABLE label_print_tasks ADD COLUMN IF NOT EXISTS location VARCHAR(50);`).catch(() => {});
+  await pool.query(`ALTER TABLE label_print_items ADD COLUMN IF NOT EXISTS price VARCHAR(50);`).catch(() => {});
+  await pool.query(`ALTER TABLE label_print_items ADD COLUMN IF NOT EXISTS compare_at_price VARCHAR(50);`).catch(() => {});
+  await pool.query(`ALTER TABLE label_print_items ADD COLUMN IF NOT EXISTS barcode VARCHAR(255);`).catch(() => {});
+  await pool.query(`ALTER TABLE label_print_items ADD COLUMN IF NOT EXISTS vendor VARCHAR(255);`).catch(() => {});
+  await pool.query(`ALTER TABLE label_print_items ADD COLUMN IF NOT EXISTS product_type VARCHAR(255);`).catch(() => {});
 }
 ensureTables().catch(e => console.error('label_print_tasks table init error:', e));
 
@@ -103,8 +110,6 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
-// ── Items ─────────────────────────────────────────────────────────────────────
-
 // GET /api/label-print-tasks/:id/items
 router.get('/:id/items', async (req, res) => {
   try {
@@ -121,12 +126,21 @@ router.get('/:id/items', async (req, res) => {
 // POST /api/label-print-tasks/:id/items
 router.post('/:id/items', async (req, res) => {
   try {
-    const { variant_id, sku, product_title, variant_title, custom_name, qty_to_print } = req.body;
+    const {
+      variant_id, sku, product_title, variant_title, custom_name,
+      price, compare_at_price, barcode, vendor, product_type,
+      qty_to_print,
+    } = req.body;
     const result = await pool.query(
       `INSERT INTO label_print_items
-        (task_id, variant_id, sku, product_title, variant_title, custom_name, qty_to_print)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-      [req.params.id, variant_id, sku, product_title, variant_title, custom_name, qty_to_print || 1]
+        (task_id, variant_id, sku, product_title, variant_title, custom_name,
+         price, compare_at_price, barcode, vendor, product_type, qty_to_print)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+      [
+        req.params.id, variant_id, sku, product_title, variant_title, custom_name,
+        price || null, compare_at_price || null, barcode || null,
+        vendor || null, product_type || null, qty_to_print || 1,
+      ]
     );
     res.status(201).json(result.rows[0]);
   } catch (e) {
@@ -135,7 +149,7 @@ router.post('/:id/items', async (req, res) => {
   }
 });
 
-// PATCH /api/label-print-tasks/:id/items/:itemId — update qty
+// PATCH /api/label-print-tasks/:id/items/:itemId
 router.patch('/:id/items/:itemId', async (req, res) => {
   try {
     const { qty_to_print } = req.body;
