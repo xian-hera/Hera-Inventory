@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Spinner, Banner, Modal, TextField, Button, Text, Select, BlockStack } from '@shopify/polaris';
-import * as fabric from 'fabric';
+import { fabric } from 'fabric';
 import JsBarcode from 'jsbarcode';
 
 // ─── Font ────────────────────────────────────────────────────────────────────
