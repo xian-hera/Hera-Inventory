@@ -10,7 +10,7 @@
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^13.5.0",
-    "fabric": "^7.2.0",
+    "fabric": "^5.5.2",
     "jsbarcode": "^3.12.3",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
