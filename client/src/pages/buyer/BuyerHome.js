@@ -92,6 +92,9 @@ function BuyerHome() {
             <Button size="large" fullWidth onClick={() => navigate('/buyer/zero-qty-report')}>
               Zero/Low Inventory Count
             </Button>
+            <Button size="large" fullWidth onClick={() => navigate('/buyer/label-templates')}>
+              Label templates
+            </Button>
             <Button size="large" fullWidth onClick={openModal}>
               Set PIN
             </Button>
@@ -143,6 +146,7 @@ function BuyerHome() {
             {step === 'set' && !success && (
               <>
                 <TextField
+
                   label="New PIN (4 digits)"
                   type="password"
                   value={newPin}
