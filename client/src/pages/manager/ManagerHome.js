@@ -55,7 +55,7 @@ function ManagerHome() {
   ];
 
   return (
-    <Page title="Store" backAction={{ onAction: () => navigate('/') }}>
+    <Page title="Manager" backAction={{ onAction: () => navigate('/') }}>
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">
@@ -98,21 +98,28 @@ function ManagerHome() {
               fullWidth
               onClick={() => handleNavigate('/manager/counting-tasks')}
             >
-              Weekly Inventory Count
+              Counting tasks
             </Button>
             <Button
               size="large"
               fullWidth
               onClick={() => handleNavigate('/manager/zero-qty-report')}
             >
-              Zero/Low Inventory Count
+              0 quantity report
             </Button>
             <Button
               size="large"
               fullWidth
               onClick={() => handleNavigate('/manager/restock-plan')}
             >
-              Restock
+              Restock plan
+            </Button>
+            <Button
+              size="large"
+              fullWidth
+              onClick={() => handleNavigate('/manager/label-print')}
+            >
+              Label print
             </Button>
           </BlockStack>
         </Layout.Section>

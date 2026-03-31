@@ -26,6 +26,7 @@ app.get('/api/health', (req, res) => {
 app.use('/api/tasks', require('./routes/tasks'));
 app.use('/api/shopify', require('./routes/shopify').router);
 app.use('/api/label-templates', require('./routes/labelTemplates'));
+app.use('/api/label-print-tasks', require('./routes/labelPrintTasks'));
 
 // Serve static files in production
 if (process.env.NODE_ENV === 'production') {

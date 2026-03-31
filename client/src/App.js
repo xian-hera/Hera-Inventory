@@ -15,7 +15,8 @@ import ManagerHome from './pages/manager/ManagerHome';
 import ManagerCountingTasksList from './pages/manager/ManagerCountingTasksList';
 import ManagerTaskDetail from './pages/manager/ManagerTaskDetail';
 import ManagerZeroQtyReport from './pages/manager/ManagerZeroQtyReport';
-import ManagerRestockPlan from './pages/manager/ManagerRestockPlan';
+import ManagerLabelPrintTasks from './pages/manager/ManagerLabelPrintTasks';
+import ManagerLabelPrintTaskDetail from './pages/manager/ManagerLabelPrintTaskDetail';
 
 function App() {
   return (
@@ -40,6 +41,8 @@ function App() {
           <Route path="/manager/counting-tasks/:taskId" element={<ManagerTaskDetail />} />
           <Route path="/manager/zero-qty-report" element={<ManagerZeroQtyReport />} />
           <Route path="/manager/restock-plan" element={<ManagerRestockPlan />} />
+          <Route path="/manager/label-print" element={<ManagerLabelPrintTasks />} />
+          <Route path="/manager/label-print/:taskId" element={<ManagerLabelPrintTaskDetail />} />
         </Routes>
       </BrowserRouter>
     </AppProvider>
