@@ -1,11 +1,11 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Spinner, Banner, Modal, TextField, Button, Text, Select, BlockStack } from '@shopify/polaris';
-import { fabric } from 'fabric';
+import * as fabric from 'fabric';
 import JsBarcode from 'jsbarcode';
 
 // ─── Font ────────────────────────────────────────────────────────────────────
-const FONT_FAMILY = 'InstrumentSans';
+const FONT_FAMILY = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
 
 // ─── Field options ────────────────────────────────────────────────────────────
 const FIELD_OPTIONS = [
@@ -56,52 +56,16 @@ function makeBarcodeDataUrl(type = 'CODE128', value = '0123456789') {
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     JsBarcode(svg, value, {
       format: type,
-      displayValue: true,
-      fontSize: 12,
-      margin: 4,
+      displayValue: false,
+      margin: 2,
       width: 2,
-      height: 40,
+      height: 60,
     });
     const serialized = new XMLSerializer().serializeToString(svg);
     return 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(serialized)));
   } catch {
-    // fallback: plain rect placeholder
     return null;
   }
-}
-
-// ─── Serialize / deserialize fabric canvas to our JSON schema ────────────────
-function canvasToElements(canvas) {
-  return canvas.getObjects().map(obj => {
-    const base = {
-      type: obj.customType,
-      x: pxToMm(obj.left),
-      y: pxToMm(obj.top),
-      w: pxToMm(obj.getScaledWidth()),
-      h: pxToMm(obj.getScaledHeight()),
-      angle: obj.angle || 0,
-    };
-    if (obj.customType === 'text') {
-      return { ...base, field_key: obj.fieldKey, custom_value: obj.customValue,
-        metafield_namespace: obj.metafieldNamespace, metafield_key: obj.metafieldKey,
-        font_weight: obj.fontWeight, font_size: pxToMm(obj.fontSize),
-        align: obj.textAlign, underline: obj.underline, linethrough: obj.linethrough,
-        shrink: obj.shrink, convert_case: obj.convertCase };
-    }
-    if (obj.customType === 'barcode') {
-      return { ...base, field_key: obj.fieldKey, barcode_type: obj.barcodeType };
-    }
-    if (obj.customType === 'line') {
-      return { ...base, orientation: obj.orientation, stroke_key: obj.strokeKey };
-    }
-    if (obj.customType === 'frame') {
-      return { ...base, stroke_key: obj.strokeKey, border_radius: obj.borderRadius };
-    }
-    if (obj.customType === 'svg') {
-      return { ...base, svg_data: obj.svgData };
-    }
-    return base;
-  });
 }
 
 // ─── Main component ───────────────────────────────────────────────────────────
@@ -110,6 +74,7 @@ function BuyerLabelEditor() {
   const navigate = useNavigate();
   const canvasRef = useRef(null);
   const fabricRef = useRef(null);
+  const paperOffsetRef = useRef({ left: 100, top: 100 });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -118,6 +83,12 @@ function BuyerLabelEditor() {
   const [, forceUpdate] = useState(0);              // trigger re-render when selection props change
   const [saveModal, setSaveModal] = useState(false);
   const [templateName, setTemplateName] = useState('');
+  const [zoom, setZoom] = useState(1);
+  const [previewModal, setPreviewModal] = useState(false);
+  const [previewSku, setPreviewSku] = useState('');
+  const [previewData, setPreviewData] = useState(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState('');
 
   // ── Load template ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -138,11 +109,15 @@ function BuyerLabelEditor() {
     const paperW = mmToPx(template.paper_width_mm);
     const paperH = mmToPx(template.paper_height_mm);
 
-    // Canvas is larger than paper to give workspace around it
-    const canvasW = paperW + 200;
-    const canvasH = paperH + 200;
-    const paperLeft = 100;
-    const paperTop = 100;
+    // Canvas fills the container div — get its actual size
+    const container = canvasRef.current.parentElement;
+    const canvasW = Math.max(container.clientWidth || 0, window.innerWidth - 220);
+    const canvasH = Math.max(container.clientHeight || 0, window.innerHeight - 52);
+
+    // Paper centered in canvas
+    const paperLeft = Math.max(80, (canvasW - paperW) / 2);
+    const paperTop = Math.max(80, (canvasH - paperH) / 2);
+    paperOffsetRef.current = { left: paperLeft, top: paperTop };
 
     const canvas = new fabric.Canvas(canvasRef.current, {
       width: canvasW,
@@ -168,7 +143,6 @@ function BuyerLabelEditor() {
     if (template.elements && template.elements.length > 0) {
       template.elements.forEach(el => restoreElement(canvas, el, paperLeft, paperTop));
     }
-
     // Selection listeners
     canvas.on('selection:created', (e) => { setSelected(e.selected[0] || null); });
     canvas.on('selection:updated', (e) => { setSelected(e.selected[0] || null); });
@@ -266,6 +240,7 @@ function BuyerLabelEditor() {
     const line = new fabric.Line(
       isH ? [0, 0, w || 80, 0] : [0, 0, 0, h || 80],
       { left: x, top: y, stroke: '#000', strokeWidth: sw,
+        strokeUniform: true,
         lockUniScaling: false, hasBorders: true }
     );
     line.customType = 'line';
@@ -282,6 +257,7 @@ function BuyerLabelEditor() {
     const rect = new fabric.Rect({
       left: x, top: y, width: w || 80, height: h || 40,
       fill: 'transparent', stroke: '#000', strokeWidth: sw,
+      strokeUniform: true,
       rx: borderRadius || 0, ry: borderRadius || 0,
       lockUniScaling: false,
     });
@@ -313,8 +289,10 @@ function BuyerLabelEditor() {
   const addElement = (type) => {
     const canvas = fabricRef.current;
     if (!canvas) return;
-    // Drop position: just outside paper (top-left area of canvas)
-    const x = 10; const y = 10;
+    // Drop just outside the paper top-left corner
+    const { left: pl, top: pt } = paperOffsetRef.current;
+    const x = Math.max(10, pl - 100);
+    const y = pt;
     if (type === 'text') addTextObject(canvas, x, y, 120, 0);
     else if (type === 'barcode') addBarcodeObject(canvas, x, y, 160, 60);
     else if (type === 'line') addLineObject(canvas, x, y, 80, 0);
@@ -397,7 +375,39 @@ function BuyerLabelEditor() {
     setSaving(true);
     setError('');
     try {
-      const elements = canvasToElements(fabricRef.current).filter(e => e.type);
+      const { left: pl, top: pt } = paperOffsetRef.current;
+      const elements = fabricRef.current.getObjects()
+        .filter(obj => obj.customType)
+        .map(obj => {
+          const base = {
+            type: obj.customType,
+            x: pxToMm(obj.left - pl),
+            y: pxToMm(obj.top - pt),
+            w: pxToMm(obj.getScaledWidth()),
+            h: pxToMm(obj.getScaledHeight()),
+            angle: obj.angle || 0,
+          };
+          if (obj.customType === 'text') {
+            return { ...base, field_key: obj.fieldKey, custom_value: obj.customValue,
+              metafield_namespace: obj.metafieldNamespace, metafield_key: obj.metafieldKey,
+              font_weight: obj.fontWeight, font_size: pxToMm(obj.fontSize),
+              align: obj.textAlign, underline: obj.underline, linethrough: obj.linethrough,
+              shrink: obj.shrink, convert_case: obj.convertCase };
+          }
+          if (obj.customType === 'barcode') {
+            return { ...base, field_key: obj.fieldKey, barcode_type: obj.barcodeType };
+          }
+          if (obj.customType === 'line') {
+            return { ...base, orientation: obj.orientation, stroke_key: obj.strokeKey };
+          }
+          if (obj.customType === 'frame') {
+            return { ...base, stroke_key: obj.strokeKey, border_radius: obj.borderRadius };
+          }
+          if (obj.customType === 'svg') {
+            return { ...base, svg_data: obj.svgData };
+          }
+          return base;
+        });
       const res = await fetch(`/api/label-templates/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -430,6 +440,59 @@ function BuyerLabelEditor() {
     reader.readAsText(file);
   };
 
+  // ── Zoom ─────────────────────────────────────────────────────────────────
+  const handleZoom = (delta) => {
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+    const newZoom = Math.min(3, Math.max(0.2, zoom + delta));
+    canvas.setZoom(newZoom);
+    canvas.setWidth(canvas.getWidth() * (newZoom / zoom));
+    canvas.setHeight(canvas.getHeight() * (newZoom / zoom));
+    setZoom(newZoom);
+  };
+
+  // ── Preview ───────────────────────────────────────────────────────────────
+  const handlePreview = async () => {
+    if (!previewSku.trim()) return;
+    setPreviewLoading(true);
+    setPreviewError('');
+    setPreviewData(null);
+    try {
+      const res = await fetch(`/api/shopify/variant-by-sku?sku=${encodeURIComponent(previewSku.trim())}`);
+      if (!res.ok) throw new Error('SKU not found');
+      const data = await res.json();
+      setPreviewData(data);
+    } catch (e) {
+      setPreviewError(e.message || 'Failed to fetch product data');
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const getPreviewValue = (fieldKey, metaNs, metaKey) => {
+    if (!previewData) return null;
+    const { product, variant } = previewData;
+    const map = {
+      'product.title': product?.title,
+      'variant.title': variant?.title,
+      'variant.sku': variant?.sku,
+      'variant.price': variant?.price ? `$${variant.price}` : null,
+      'variant.compare_at_price': variant?.compare_at_price ? `$${variant.compare_at_price}` : null,
+      'variant.barcode': variant?.barcode,
+      'product.vendor': product?.vendor,
+      'product.product_type': product?.product_type,
+    };
+    if (fieldKey === 'product.metafield' && metaNs && metaKey) {
+      const mf = product?.metafields?.find(m => m.namespace === metaNs && m.key === metaKey);
+      return mf?.value || `[metafield: ${metaNs}.${metaKey}]`;
+    }
+    if (fieldKey === 'variant.metafield' && metaNs && metaKey) {
+      const mf = variant?.metafields?.find(m => m.namespace === metaNs && m.key === metaKey);
+      return mf?.value || `[metafield: ${metaNs}.${metaKey}]`;
+    }
+    return map[fieldKey] || fieldKey;
+  };
+
   // ─────────────────────────────────────────────────────────────────────────
   if (loading) return (
     <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
@@ -444,7 +507,7 @@ function BuyerLabelEditor() {
   const selType = sel?.customType;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', fontFamily: FONT_FAMILY }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' }}>
 
       {/* ── Top bar ── */}
       <div style={{
@@ -519,8 +582,21 @@ function BuyerLabelEditor() {
 
         {/* Save button */}
         <button
+          onClick={() => setPreviewModal(true)}
+          style={{ marginLeft: 8, padding: '6px 14px', background: '#fff', color: '#333',
+            border: '1px solid #c9cccf', borderRadius: 6, fontWeight: 500, cursor: 'pointer', fontSize: 14 }}>
+          Preview
+        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginLeft: 8 }}>
+          <ToolBtn title="Zoom out" onClick={() => handleZoom(-0.1)}>−</ToolBtn>
+          <span style={{ fontSize: 12, color: '#666', minWidth: 36, textAlign: 'center' }}>
+            {Math.round(zoom * 100)}%
+          </span>
+          <ToolBtn title="Zoom in" onClick={() => handleZoom(0.1)}>+</ToolBtn>
+        </div>
+        <button
           onClick={() => setSaveModal(true)}
-          style={{ marginLeft: 16, padding: '6px 18px', background: '#008060', color: '#fff',
+          style={{ marginLeft: 8, padding: '6px 18px', background: '#008060', color: '#fff',
             border: 'none', borderRadius: 6, fontWeight: 600, cursor: 'pointer', fontSize: 14 }}>
           Save
         </button>
@@ -721,8 +797,11 @@ function BuyerLabelEditor() {
           )}
         </div>
 
-        {/* Canvas area */}
-        <div style={{ flex: 1, overflow: 'auto', background: '#e5e5e5', padding: 0 }}>
+        {/* Canvas area — fills remaining space */}
+        <div
+          id="canvas-container"
+          style={{ flex: 1, overflow: 'auto', background: '#e0e0e0', position: 'relative', minHeight: 0 }}
+        >
           <canvas ref={canvasRef} />
         </div>
       </div>
@@ -744,6 +823,45 @@ function BuyerLabelEditor() {
               onChange={setTemplateName}
               autoComplete="off"
             />
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
+      {/* Preview modal */}
+      <Modal
+        open={previewModal}
+        onClose={() => { setPreviewModal(false); setPreviewData(null); setPreviewError(''); setPreviewSku(''); }}
+        title="Preview with product data"
+        primaryAction={{ content: 'Look up', onAction: handlePreview, loading: previewLoading }}
+        secondaryActions={[{ content: 'Close', onAction: () => { setPreviewModal(false); setPreviewData(null); setPreviewError(''); setPreviewSku(''); } }]}
+      >
+        <Modal.Section>
+          <BlockStack gap="400">
+            <TextField
+              label="Enter SKU"
+              value={previewSku}
+              onChange={setPreviewSku}
+              onKeyDown={e => { if (e.key === 'Enter') handlePreview(); }}
+              placeholder="e.g. WIG-LUCY-BLK-M"
+              autoComplete="off"
+            />
+            {previewError && <Banner tone="critical">{previewError}</Banner>}
+            {previewData && (
+              <BlockStack gap="200">
+                <Text variant="headingSm">Preview values</Text>
+                {(template?.elements || [])
+                  .filter(el => el.type === 'text' && el.field_key && el.field_key !== 'custom')
+                  .map((el, i) => {
+                    const val = getPreviewValue(el.field_key, el.metafield_namespace, el.metafield_key);
+                    return (
+                      <div key={i} style={{ display: 'flex', gap: 8, fontSize: 13, padding: '4px 0',
+                        borderBottom: '1px solid #f0f0f0' }}>
+                        <span style={{ color: '#666', minWidth: 160 }}>{el.field_key}</span>
+                        <span style={{ fontWeight: 500 }}>{val || '—'}</span>
+                      </div>
+                    );
+                  })}
+              </BlockStack>
+            )}
           </BlockStack>
         </Modal.Section>
       </Modal>
