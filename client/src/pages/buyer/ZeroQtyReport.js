@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Page, Layout, Card, Button, BlockStack, InlineStack,
-  Select, Text, DataTable, Checkbox, Banner, Badge, Spinner
+  Text, DataTable, Checkbox, Banner, Badge, Spinner
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import MultiSelectDropdown from '../../components/MultiSelectDropdown';
@@ -12,6 +12,21 @@ const LOCATIONS = [
   'EDM01','EDM02','CAL01','OTT01','OTT02','OTT03','QC01'
 ];
 
+// 改动一：9个 Type
+const TYPE_OPTIONS = [
+  'Braid', 'Hair', 'Hair & Skin Care', 'Hera Beauty',
+  'Jewelry', 'K-Beauty', 'Makeup', 'Tools & Accessories', 'Wig',
+];
+
+const TYPE_LABEL_MAP = {
+  'Hair & Skin Care': 'Care',
+  'Tools & Accessories': 'Tools + Acc.',
+};
+
+function typeDisplay(type) {
+  return TYPE_LABEL_MAP[type] || type;
+}
+
 function formatDate(dateStr) {
   if (!dateStr) return '';
   const d = new Date(dateStr);
@@ -21,17 +36,18 @@ function formatDate(dateStr) {
 
 function ZeroQtyReport() {
   const navigate = useNavigate();
-  const [reports, setReports] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [committing, setCommitting] = useState(false);
-  const [department, setDepartment] = useState('ALL');
+  const [reports, setReports]                   = useState([]);
+  const [loading, setLoading]                   = useState(false);
+  const [error, setError]                       = useState('');
+  const [committing, setCommitting]             = useState(false);
+  const [selectedTypes, setSelectedTypes]       = useState([]);
   const [selectedLocations, setSelectedLocations] = useState([]);
   const [selectedStatuses, setSelectedStatuses] = useState([]);
-  const [date, setDate] = useState('ALL');
-  const [selectedIds, setSelectedIds] = useState([]);
-  // 0 = no sort, 1 = A→Z, 2 = Z→A
-  const [sortMode, setSortMode] = useState(0);
+  const [date, setDate]                         = useState('ALL');
+  const [selectedIds, setSelectedIds]           = useState([]);
+  const [sortMode, setSortMode]                 = useState(0);
+  // 改动五.3：每行的 adjustment 编辑值，key = report.id
+  const [adjustments, setAdjustments]           = useState({});
 
   const handleSort = () => setSortMode(prev => (prev + 1) % 3);
 
@@ -40,7 +56,7 @@ function ZeroQtyReport() {
     setError('');
     try {
       const params = new URLSearchParams();
-      if (department !== 'ALL') params.append('department', department);
+      if (selectedTypes.length > 0) params.append('type', selectedTypes.join(','));
       if (selectedLocations.length > 0) params.append('location', selectedLocations.join(','));
       if (selectedStatuses.length > 0) params.append('status', selectedStatuses.join(','));
       if (date !== 'ALL') params.append('date', date);
@@ -48,20 +64,33 @@ function ZeroQtyReport() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       setReports(data);
+      // 初始化 adjustment 值
+      const initAdj = {};
+      data.forEach(r => {
+        if (r.status === 'reviewing') {
+          const adj = (r.poh ?? 0) - (r.soh ?? 0);
+          initAdj[r.id] = String(adj);
+        }
+      });
+      setAdjustments(initAdj);
     } catch (e) {
       setError('Failed to load reports');
     } finally {
       setLoading(false);
     }
-  }, [department, selectedLocations, selectedStatuses, date]);
+  }, [selectedTypes, selectedLocations, selectedStatuses, date]);
 
   useEffect(() => { fetchReports(); }, [fetchReports]);
 
+  // 改动五.3：commit 时使用 adjustments 中的值
   const handleCommitOne = async (id) => {
+    // 改动五.2：只有 committed 状态的可以 archive，reviewing 状态不能，这里是 commit reviewing
     try {
+      const adjVal = adjustments[id] !== undefined ? parseInt(adjustments[id]) : undefined;
       const res = await fetch(`/api/reports/${id}/commit`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(adjVal !== undefined && !isNaN(adjVal) ? { adjustment: adjVal } : {}),
       });
       if (!res.ok) throw new Error('Failed to commit');
       fetchReports();
@@ -75,9 +104,11 @@ function ZeroQtyReport() {
     setCommitting(true);
     try {
       for (const id of selectedIds) {
+        const adjVal = adjustments[id] !== undefined ? parseInt(adjustments[id]) : undefined;
         await fetch(`/api/reports/${id}/commit`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(adjVal !== undefined && !isNaN(adjVal) ? { adjustment: adjVal } : {}),
         });
       }
       setSelectedIds([]);
@@ -94,9 +125,11 @@ function ZeroQtyReport() {
     try {
       const ids = reports.filter(r => r.status === 'reviewing').map(r => r.id);
       for (const id of ids) {
+        const adjVal = adjustments[id] !== undefined ? parseInt(adjustments[id]) : undefined;
         await fetch(`/api/reports/${id}/commit`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(adjVal !== undefined && !isNaN(adjVal) ? { adjustment: adjVal } : {}),
         });
       }
       setSelectedIds([]);
@@ -122,10 +155,22 @@ function ZeroQtyReport() {
 
   const handleArchive = async () => {
     if (selectedIds.length === 0) return;
+    // 改动五.2：只 archive committed 状态，过滤掉 reviewing
+    const committedIds = selectedIds.filter(id => {
+      const r = reports.find(r => r.id === id);
+      return r && r.status === 'committed';
+    });
+    if (committedIds.length === 0) {
+      setError('Only committed reports can be archived.');
+      return;
+    }
+    if (committedIds.length < selectedIds.length) {
+      setError(`${selectedIds.length - committedIds.length} reviewing report(s) skipped — only committed reports can be archived.`);
+    }
     await fetch('/api/reports/archive', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids: selectedIds }),
+      body: JSON.stringify({ ids: committedIds }),
     });
     setSelectedIds([]);
     fetchReports();
@@ -134,12 +179,10 @@ function ZeroQtyReport() {
   const toggleSelectOne = (id) => {
     setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   };
-
   const toggleSelectAll = () => {
     setSelectedIds(selectedIds.length === reports.length ? [] : reports.map(r => r.id));
   };
 
-  // Apply sort
   const sortedReports = (() => {
     if (sortMode === 0) return reports;
     const sorted = [...reports].sort((a, b) =>
@@ -150,19 +193,50 @@ function ZeroQtyReport() {
 
   const sortLabel = sortMode === 0 ? 'Sort' : sortMode === 1 ? 'Sort A→Z ✓' : 'Sort Z→A ✓';
 
-  const rows = sortedReports.map(report => [
-    <Checkbox checked={selectedIds.includes(report.id)} onChange={() => toggleSelectOne(report.id)} />,
-    report.department || '-',
-    report.location || '-',
-    formatDate(report.submitted_at),
-    <div style={{ maxWidth: '200px', wordBreak: 'break-word', whiteSpace: 'normal' }}>{report.name || '-'}</div>,
-    report.barcode || '-',
-    report.soh ?? '-',
-    report.poh ?? '-',
-    report.status === 'reviewing'
-      ? <Button size="slim" onClick={() => handleCommitOne(report.id)}>Commit</Button>
-      : <Badge tone="success">committed</Badge>,
-  ]);
+  const rows = sortedReports.map(report => {
+    // 改动五.1：archived 状态显示 archived
+    const statusCell = (() => {
+      if (report.status === 'reviewing') return <Badge tone="warning">reviewing</Badge>;
+      if (report.status === 'committed') return <Badge tone="success">committed</Badge>;
+      if (report.status === 'archived')  return <Badge>archived</Badge>;
+      return <Badge>{report.status}</Badge>;
+    })();
+
+    // 改动五.3：reviewing 状态显示 adjustment 输入框 + commit 按钮
+    const actionCell = (() => {
+      if (report.status !== 'reviewing') return statusCell;
+      const adj = adjustments[report.id] ?? '';
+      const defaultAdj = (report.poh ?? 0) - (report.soh ?? 0);
+      return (
+        <InlineStack gap="100" align="start">
+          <input
+            type="number"
+            value={adj}
+            onChange={e => setAdjustments(prev => ({ ...prev, [report.id]: e.target.value }))}
+            placeholder={String(defaultAdj)}
+            style={{
+              width: '64px', padding: '4px 6px', border: '1px solid #c9cccf',
+              borderRadius: '6px', fontSize: '13px', textAlign: 'center',
+            }}
+          />
+          <Button size="slim" onClick={() => handleCommitOne(report.id)}>Commit</Button>
+        </InlineStack>
+      );
+    })();
+
+    return [
+      <Checkbox checked={selectedIds.includes(report.id)} onChange={() => toggleSelectOne(report.id)} />,
+      // 改动一：显示 type 而非 department
+      typeDisplay(report.type) || '-',
+      report.location || '-',
+      formatDate(report.submitted_at),
+      <div style={{ maxWidth: '200px', wordBreak: 'break-word', whiteSpace: 'normal' }}>{report.name || '-'}</div>,
+      report.barcode || '-',
+      report.soh ?? '-',
+      report.poh ?? '-',
+      actionCell,
+    ];
+  });
 
   return (
     <Page title="Zero/Low Inventory Count" backAction={{ onAction: () => navigate('/buyer') }}>
@@ -173,20 +247,14 @@ function ZeroQtyReport() {
 
             <Card>
               <InlineStack gap="400" wrap>
-                <BlockStack gap="100">
-                  <Text variant="bodySm" tone="subdued">Department</Text>
-                  <Select
-                    label="" labelHidden
-                    options={[
-                      { label: 'ALL', value: 'ALL' },
-                      { label: 'CARE', value: 'CARE' },
-                      { label: 'HAIR', value: 'HAIR' },
-                      { label: 'GENM', value: 'GENM' },
-                    ]}
-                    value={department}
-                    onChange={setDepartment}
-                  />
-                </BlockStack>
+                {/* 改动一：Types 多选，替换 Department */}
+                <MultiSelectDropdown
+                  label="Types"
+                  options={TYPE_OPTIONS}
+                  selected={selectedTypes}
+                  onChange={setSelectedTypes}
+                  labelMap={TYPE_LABEL_MAP}
+                />
                 <MultiSelectDropdown
                   label="Location"
                   options={LOCATIONS}
@@ -201,17 +269,16 @@ function ZeroQtyReport() {
                 />
                 <BlockStack gap="100">
                   <Text variant="bodySm" tone="subdued">Date</Text>
-                  <Select
-                    label="" labelHidden
-                    options={[
-                      { label: 'ALL', value: 'ALL' },
-                      { label: 'Today', value: 'today' },
-                      { label: '7 days', value: '7days' },
-                      { label: '30 days', value: '30days' },
-                    ]}
+                  <select
                     value={date}
-                    onChange={setDate}
-                  />
+                    onChange={e => setDate(e.target.value)}
+                    style={{ padding: '6px 10px', border: '1px solid #c9cccf', borderRadius: '6px', fontSize: '14px' }}
+                  >
+                    <option value="ALL">ALL</option>
+                    <option value="today">Today</option>
+                    <option value="7days">7 days</option>
+                    <option value="30days">30 days</option>
+                  </select>
                 </BlockStack>
               </InlineStack>
             </Card>
@@ -219,7 +286,6 @@ function ZeroQtyReport() {
             <Card>
               <BlockStack gap="300">
                 <InlineStack align="space-between" gap="200">
-                  {/* Sort button — left side */}
                   <button
                     onClick={handleSort}
                     style={{
@@ -232,8 +298,6 @@ function ZeroQtyReport() {
                   >
                     {sortLabel}
                   </button>
-
-                  {/* Action buttons — right side */}
                   <InlineStack gap="200">
                     <Button disabled={selectedIds.length === 0 || committing} onClick={handleCommitSelected} loading={committing}>
                       Commit selected
@@ -254,7 +318,7 @@ function ZeroQtyReport() {
                           indeterminate={selectedIds.length > 0 && selectedIds.length < reports.length}
                           onChange={toggleSelectAll}
                         />,
-                        'Dept.', 'Location', 'Date', 'Name', 'SKU', 'System', 'Actual', '',
+                        'Type', 'Location', 'Date', 'Name', 'SKU', 'System', 'Actual', '',
                       ]}
                       rows={rows}
                     />

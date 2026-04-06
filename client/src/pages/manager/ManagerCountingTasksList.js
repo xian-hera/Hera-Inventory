@@ -1,9 +1,25 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Page, Layout, Card, Button, BlockStack, InlineStack,
-  Select, Text, DataTable, Banner, Spinner
+  Page, Layout, Card, BlockStack, InlineStack,
+  Text, DataTable, Banner, Spinner, Button
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
+import MultiSelectDropdown from '../../components/MultiSelectDropdown';
+
+// 改动一：9个 Type
+const TYPE_OPTIONS = [
+  'Braid', 'Hair', 'Hair & Skin Care', 'Hera Beauty',
+  'Jewelry', 'K-Beauty', 'Makeup', 'Tools & Accessories', 'Wig',
+];
+
+const TYPE_LABEL_MAP = {
+  'Hair & Skin Care': 'Care',
+  'Tools & Accessories': 'Tools + Acc.',
+};
+
+function typeDisplay(type) {
+  return TYPE_LABEL_MAP[type] || type;
+}
 
 function formatDate(dateStr) {
   if (!dateStr) return '';
@@ -13,11 +29,11 @@ function formatDate(dateStr) {
 
 function ManagerCountingTasksList() {
   const navigate = useNavigate();
-  const [tasks, setTasks] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [department, setDepartment] = useState('ALL');
-  const [date, setDate] = useState('ALL');
+  const [tasks, setTasks]                 = useState([]);
+  const [loading, setLoading]             = useState(false);
+  const [error, setError]                 = useState('');
+  const [selectedTypes, setSelectedTypes] = useState([]);
+  const [date, setDate]                   = useState('ALL');
 
   const location = localStorage.getItem('managerLocation') || '';
 
@@ -29,7 +45,7 @@ function ManagerCountingTasksList() {
       const params = new URLSearchParams();
       params.append('status', 'counting');
       params.append('location', location);
-      if (department !== 'ALL') params.append('department', department);
+      if (selectedTypes.length > 0) params.append('types', selectedTypes.join(','));
       if (date !== 'ALL') params.append('date', date);
 
       const res = await fetch(`/api/tasks?${params.toString()}`);
@@ -41,21 +57,26 @@ function ManagerCountingTasksList() {
     } finally {
       setLoading(false);
     }
-  }, [location, department, date]);
+  }, [location, selectedTypes, date]);
 
-  useEffect(() => {
-    fetchTasks();
-  }, [fetchTasks]);
+  useEffect(() => { fetchTasks(); }, [fetchTasks]);
 
-  const rows = tasks.map(task => [
-    <Button variant="plain" onClick={() => navigate(`/manager/counting-tasks/${task.id}`)}>
-      {task.task_no}
-    </Button>,
-    task.department,
-    task.inaccurate_count > 0 ? `${task.inaccurate_count} off qty` : '',
-    formatDate(task.created_at),
-    `${task.processed_count || 0}/${task.total_count || 0}`,
-  ]);
+  const rows = tasks.map(task => {
+    const typesDisplay = Array.isArray(task.types) && task.types.length > 0
+      ? task.types.map(typeDisplay).join(', ')
+      : '-';
+
+    return [
+      <Button variant="plain" onClick={() => navigate(`/manager/counting-tasks/${task.id}`)}>
+        {task.task_no}
+      </Button>,
+      // 改动一：显示 types，允许换行
+      <div style={{ whiteSpace: 'normal', wordBreak: 'break-word', maxWidth: '160px' }}>{typesDisplay}</div>,
+      task.inaccurate_count > 0 ? `${task.inaccurate_count} off qty` : '',
+      formatDate(task.created_at),
+      `${task.processed_count || 0}/${task.total_count || 0}`,
+    ];
+  });
 
   return (
     <Page
@@ -69,34 +90,26 @@ function ManagerCountingTasksList() {
 
             <Card>
               <InlineStack gap="400" wrap>
-                <BlockStack gap="100">
-                  <Text variant="bodySm" tone="subdued">Department</Text>
-                  <Select
-                    label="" labelHidden
-                    options={[
-                      { label: 'ALL', value: 'ALL' },
-                      { label: 'CARE', value: 'CARE' },
-                      { label: 'HAIR', value: 'HAIR' },
-                      { label: 'GENM', value: 'GENM' },
-                    ]}
-                    value={department}
-                    onChange={setDepartment}
-                  />
-                </BlockStack>
-
+                {/* 改动一：Types 多选，替换 Department */}
+                <MultiSelectDropdown
+                  label="Types"
+                  options={TYPE_OPTIONS}
+                  selected={selectedTypes}
+                  onChange={setSelectedTypes}
+                  labelMap={TYPE_LABEL_MAP}
+                />
                 <BlockStack gap="100">
                   <Text variant="bodySm" tone="subdued">Date</Text>
-                  <Select
-                    label="" labelHidden
-                    options={[
-                      { label: 'ALL', value: 'ALL' },
-                      { label: 'Today', value: 'today' },
-                      { label: '7 days', value: '7days' },
-                      { label: '30 days', value: '30days' },
-                    ]}
+                  <select
                     value={date}
-                    onChange={setDate}
-                  />
+                    onChange={e => setDate(e.target.value)}
+                    style={{ padding: '6px 10px', border: '1px solid #c9cccf', borderRadius: '6px', fontSize: '14px' }}
+                  >
+                    <option value="ALL">ALL</option>
+                    <option value="today">Today</option>
+                    <option value="7days">7 days</option>
+                    <option value="30days">30 days</option>
+                  </select>
                 </BlockStack>
               </InlineStack>
             </Card>
@@ -106,7 +119,7 @@ function ManagerCountingTasksList() {
                 <div style={{ overflowX: 'hidden' }}>
                   <DataTable
                     columnContentTypes={['text','text','text','text','text']}
-                    headings={['No.', 'Department', '', 'Date', 'Progress']}
+                    headings={['No.', 'Types', '', 'Date', 'Progress']}
                     rows={rows}
                   />
                 </div>

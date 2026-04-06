@@ -5,15 +5,18 @@ const { pool } = require('../database/init');
 // GET /api/tasks - get all tasks with filters
 router.get('/', async (req, res) => {
   try {
-    const { department, location, status, date } = req.query;
+    const { types, location, status, date } = req.query;
 
     let conditions = [];
     let params = [];
     let paramIndex = 1;
 
-    if (department && department !== 'ALL') {
-      conditions.push(`department = $${paramIndex++}`);
-      params.push(department);
+    // types filter: task must contain ALL of the selected types (or ANY — here we use overlap &&)
+    // Logic: if any selected type is in the task's types array, it matches
+    if (types && types !== 'ALL') {
+      const typeList = types.split(',').map(t => t.trim());
+      conditions.push(`types && $${paramIndex++}`);
+      params.push(typeList);
     }
 
     if (location && location !== 'ALL') {
@@ -94,12 +97,15 @@ router.patch('/archive', async (req, res) => {
   }
 });
 
-// PATCH /api/tasks/negative-inventory - must be before /:id routes
+// POST /api/tasks/negative-inventory
 router.post('/negative-inventory', async (req, res) => {
   try {
-    const { locations, department } = req.body;
+    const { locations, types } = req.body;
     if (!locations || locations.length === 0) {
       return res.status(400).json({ error: 'No locations provided' });
+    }
+    if (!types || types.length === 0) {
+      return res.status(400).json({ error: 'No types provided' });
     }
 
     const { getShopify, getSession } = require('../shopify');
@@ -113,6 +119,9 @@ router.post('/negative-inventory', async (req, res) => {
     );
     const locationIdMap = {};
     locMap.rows.forEach(r => { locationIdMap[r.location_name] = r.shopify_location_id; });
+
+    // Normalize types to uppercase for comparison
+    const normalizedTypes = types.map(t => t.toUpperCase().trim());
 
     const result = {};
 
@@ -149,11 +158,13 @@ router.post('/negative-inventory', async (req, res) => {
       const response = await client.request(gqlQuery, { variables: { locationId: shopifyLocationId } });
       const levels = response.data?.location?.inventoryLevels?.edges || [];
 
-      const { getDepartment } = require('./shopify');
       const items = levels
         .filter(e => {
           const qty = e.node.quantities.find(q => q.name === 'available')?.quantity ?? 0;
-          return qty < 0;
+          if (qty >= 0) return false;
+          // Filter by selected types
+          const productType = (e.node.item?.variant?.product?.productType || '').toUpperCase().trim();
+          return normalizedTypes.includes(productType);
         })
         .map(e => {
           const variant = e.node.item?.variant;
@@ -196,8 +207,8 @@ async function generateTaskNo(client) {
 router.post('/', async (req, res) => {
   const client = await pool.connect();
   try {
-    const { department, locations, filterSummary, items, notes, publish, negativeItems, excludedBarcodes } = req.body;
-    if (!department || !locations || locations.length === 0) {
+    const { types, locations, filterSummary, items, notes, publish, negativeItems, excludedBarcodes } = req.body;
+    if (!types || types.length === 0 || !locations || locations.length === 0) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
@@ -215,14 +226,13 @@ router.post('/', async (req, res) => {
       const taskNo = await generateTaskNo(client);
 
       const taskResult = await client.query(
-        `INSERT INTO tasks (task_no, department, location, shopify_location_id, status, filter_summary, notes)
+        `INSERT INTO tasks (task_no, types, location, shopify_location_id, status, filter_summary, notes)
          VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-        [taskNo, department, location, shopifyLocationId, status, filterSummary, JSON.stringify(notes || [])]
+        [taskNo, types, location, shopifyLocationId, status, filterSummary, JSON.stringify(notes || [])]
       );
 
       const task = taskResult.rows[0];
 
-      // Insert regular items, skipping excluded zero-SOH for this location
       const locationExcluded = (excludedBarcodes && excludedBarcodes[location]) || [];
       for (const item of items) {
         if (locationExcluded.includes(item.barcode)) continue;
@@ -232,7 +242,6 @@ router.post('/', async (req, res) => {
         );
       }
 
-      // Insert negative items for this location (appended at end)
       const locationNegativeItems = (negativeItems && negativeItems[location]) || [];
       for (const item of locationNegativeItems) {
         const alreadyExists = items.some(i => i.barcode === item.barcode);
@@ -314,7 +323,6 @@ router.patch('/:id/commit', async (req, res) => {
 
     const shopifyLocationId = task.rows[0].shopify_location_id;
 
-    // Helper: call Shopify with up to 2 retries on timeout
     const shopifyRequest = async (fn, retries = 2) => {
       for (let attempt = 0; attempt <= retries; attempt++) {
         try {
@@ -323,7 +331,6 @@ router.patch('/:id/commit', async (req, res) => {
           const isTimeout = e.code === 'ETIMEDOUT' || e.code === 'ECONNRESET' ||
             (e.message && (e.message.includes('ETIMEDOUT') || e.message.includes('ECONNRESET')));
           if (isTimeout && attempt < retries) {
-            console.log(`Shopify timeout, retrying (${attempt + 1}/${retries})...`);
             await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
             continue;
           }
@@ -339,17 +346,12 @@ router.patch('/:id/commit', async (req, res) => {
 
       const delta = item.poh - item.soh;
 
-      // delta = 0: SOH and POH match — no Shopify call needed, just mark committed
       if (delta === 0) {
-        await pool.query(
-          'UPDATE task_items SET is_committed = TRUE WHERE id = $1',
-          [item.id]
-        );
+        await pool.query('UPDATE task_items SET is_committed = TRUE WHERE id = $1', [item.id]);
         continue;
       }
 
       try {
-        // Fetch inventory item ID with retry
         const variantRes = await shopifyRequest(() =>
           client.query({
             data: `{
@@ -365,7 +367,6 @@ router.patch('/:id/commit', async (req, res) => {
           continue;
         }
 
-        // Set on_hand inventory (cycle count — adjust absolute on_hand value)
         const newOnHand = item.soh + delta;
         await shopifyRequest(() =>
           client.query({
@@ -386,35 +387,43 @@ router.patch('/:id/commit', async (req, res) => {
           })
         );
 
-        await pool.query(
-          'UPDATE task_items SET is_committed = TRUE WHERE id = $1',
-          [item.id]
-        );
+        await pool.query('UPDATE task_items SET is_committed = TRUE WHERE id = $1', [item.id]);
       } catch (e) {
-        // Log but continue with other items — don't abort the whole commit
         console.error(`Commit failed for item ${item.id} (barcode: ${item.barcode}):`, e.message);
         errors.push(`Barcode ${item.barcode}: ${e.message}`);
       }
     }
 
-    // Update task status if all inaccurate items are now committed
+    // Check if all inaccurate items are committed
     const remaining = await pool.query(
       `SELECT COUNT(*) FROM task_items 
        WHERE task_id = $1 AND is_correct = FALSE AND poh IS NOT NULL AND is_committed = FALSE`,
       [id]
     );
+
     if (parseInt(remaining.rows[0].count) === 0) {
-      await pool.query(
-        "UPDATE tasks SET status = 'committed', updated_at = NOW() WHERE id = $1",
-        [id]
-      );
+      // 改动四：检查是否所有 result 都是绿色对钩（全部 is_correct 或 is_committed）
+      const allItems = await pool.query('SELECT * FROM task_items WHERE task_id = $1', [id]);
+      const allGreen = allItems.rows.every(i => i.is_correct || (i.poh !== null && i.is_committed));
+
+      if (allGreen) {
+        // 自动 archived + 添加 note
+        const currentNotes = (await pool.query('SELECT notes FROM tasks WHERE id = $1', [id])).rows[0]?.notes || [];
+        const autoNote = { text: 'Automatically committed and archived', created_at: new Date().toISOString() };
+        const updatedNotes = [...currentNotes, autoNote];
+        await pool.query(
+          "UPDATE tasks SET status = 'archived', notes = $1, updated_at = NOW() WHERE id = $2",
+          [JSON.stringify(updatedNotes), id]
+        );
+      } else {
+        await pool.query(
+          "UPDATE tasks SET status = 'committed', updated_at = NOW() WHERE id = $1",
+          [id]
+        );
+      }
     }
 
-    if (errors.length > 0) {
-      // Partial success — some items committed, some failed
-      return res.json({ success: true, warnings: errors });
-    }
-
+    if (errors.length > 0) return res.json({ success: true, warnings: errors });
     res.json({ success: true });
   } catch (e) {
     console.error('PATCH /api/tasks/:id/commit error:', e);
@@ -437,7 +446,7 @@ router.patch('/:id/submit', async (req, res) => {
   }
 });
 
-// PATCH /api/tasks/:taskId/items/:itemId/poh — buyer overrides POH for a single item
+// PATCH /api/tasks/:taskId/items/:itemId/poh
 router.patch('/:taskId/items/:itemId/poh', async (req, res) => {
   try {
     const { taskId, itemId } = req.params;
@@ -447,7 +456,6 @@ router.patch('/:taskId/items/:itemId/poh', async (req, res) => {
     const pohVal = parseInt(poh);
     if (isNaN(pohVal)) return res.status(400).json({ error: 'poh must be a number' });
 
-    // Fetch current item to recalculate is_correct
     const itemRes = await pool.query(
       'SELECT * FROM task_items WHERE id = $1 AND task_id = $2',
       [itemId, taskId]

@@ -28,10 +28,7 @@ function PreviewTask() {
 
   const handleAddNote = () => {
     if (!noteInput.trim()) return;
-    setNotes(prev => [...prev, {
-      text: noteInput.trim(),
-      created_at: new Date().toISOString(),
-    }]);
+    setNotes(prev => [...prev, { text: noteInput.trim(), created_at: new Date().toISOString() }]);
     setNoteInput('');
     setShowNoteInput(false);
   };
@@ -74,7 +71,7 @@ function PreviewTask() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          department: taskData.department,
+          types: taskData.types,           // 改动一：发送 types 数组
           locations: taskData.locations,
           filterSummary: taskData.filterSummary,
           items: taskData.items,
@@ -100,6 +97,12 @@ function PreviewTask() {
     return `${d.getFullYear()}.${['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][d.getMonth()]}.${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
   };
 
+  // 改动五：title 显示 Types + Locations
+  const typesLabel = Array.isArray(taskData.types) && taskData.types.length > 0
+    ? taskData.types.join(', ')
+    : 'No types';
+  const pageTitle = `Preview task — ${typesLabel} | ${taskData.locations.join(', ')}`;
+
   const rows = taskData.items.map(p => [
     <Checkbox
       checked={selectedBarcodes.includes(p.barcode)}
@@ -111,7 +114,7 @@ function PreviewTask() {
 
   return (
     <Page
-      title={`Preview task — ${taskData.department} ${taskData.locations.join(', ')}`}
+      title={pageTitle}
       secondaryActions={[{
         content: 'Back to creating',
         onAction: () => navigate('/buyer/counting-tasks/new'),
@@ -128,20 +131,11 @@ function PreviewTask() {
               <BlockStack gap="300">
                 <InlineStack gap="200" wrap>
                   <Button onClick={() => setShowNoteInput(true)}>Add note</Button>
-                  <Button
-                    disabled={selectedBarcodes.length === 0}
-                    onClick={handleRemoveSelected}
-                  >
+                  <Button disabled={selectedBarcodes.length === 0} onClick={handleRemoveSelected}>
                     Remove selected
                   </Button>
-                  <Button onClick={() => handleSave(false)} loading={saving}>
-                    Save as draft
-                  </Button>
-                  <Button
-                    variant="primary"
-                    onClick={() => handleSave(true)}
-                    loading={saving}
-                  >
+                  <Button onClick={() => handleSave(false)} loading={saving}>Save as draft</Button>
+                  <Button variant="primary" onClick={() => handleSave(true)} loading={saving}>
                     Save and publish
                   </Button>
                 </InlineStack>
@@ -150,8 +144,7 @@ function PreviewTask() {
                   <InlineStack gap="200" align="start">
                     <div style={{ flex: 1 }}>
                       <TextField
-                        label=""
-                        labelHidden
+                        label="" labelHidden
                         placeholder="Enter note..."
                         value={noteInput}
                         onChange={setNoteInput}
@@ -159,9 +152,7 @@ function PreviewTask() {
                       />
                     </div>
                     <Button onClick={handleAddNote}>Save note</Button>
-                    <Button onClick={() => { setShowNoteInput(false); setNoteInput(''); }}>
-                      Cancel
-                    </Button>
+                    <Button onClick={() => { setShowNoteInput(false); setNoteInput(''); }}>Cancel</Button>
                   </InlineStack>
                 )}
 
@@ -190,8 +181,7 @@ function PreviewTask() {
                     indeterminate={selectedBarcodes.length > 0 && selectedBarcodes.length < taskData.items.length}
                     onChange={toggleSelectAll}
                   />,
-                  'Name',
-                  'SKU',
+                  'Name', 'SKU',
                 ]}
                 rows={rows}
               />

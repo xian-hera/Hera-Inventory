@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   Page, Layout, Card, Button, BlockStack, InlineStack,
-  Select, Text, DataTable, Checkbox, Badge, Banner, Spinner
+  Text, DataTable, Checkbox, Badge, Banner, Spinner, Select
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import MultiSelectDropdown from '../../components/MultiSelectDropdown';
@@ -13,48 +13,59 @@ const LOCATIONS = [
   'EDM01','EDM02','CAL01','OTT01','OTT02','OTT03','QC01','HQ'
 ];
 
+// 改动一：9个 Type 列表
+const TYPE_OPTIONS = [
+  'Braid',
+  'Hair',
+  'Hair & Skin Care',
+  'Hera Beauty',
+  'Jewelry',
+  'K-Beauty',
+  'Makeup',
+  'Tools & Accessories',
+  'Wig',
+];
+
+const METAFIELD_CONDITIONS = [
+  { label: 'value matches exactly',       value: 'value matches exactly' },
+  { label: "value doesn't match exactly", value: "value doesn't match exactly" },
+  { label: 'value contains',              value: 'value contains' },
+  { label: "value doesn't contain",       value: "value doesn't contain" },
+  { label: 'exists with',                 value: 'exists with' },
+  { label: "doesn't exist with",          value: "doesn't exist with" },
+];
+
+// 改动二：单条 metafield 行的默认值
+function newMetafieldRow() {
+  return { id: Date.now() + Math.random(), level: 'product', condition: 'value matches exactly', key: '', value: '' };
+}
+
 function CreatingTask() {
   const navigate = useNavigate();
-  const [department, setDepartment] = useState('CARE');
+
+  // 改动一：selectedTypes 替代 department
+  const [selectedTypes, setSelectedTypes]       = useState([]);
   const [selectedLocations, setSelectedLocations] = useState([]);
-  const [typeCondition, setTypeCondition] = useState('is');
-  const [selectedTypes, setSelectedTypes] = useState([]);
-  const [allTypes, setAllTypes] = useState([]);
-  const [metafieldCondition, setMetafieldCondition] = useState('value matches exactly');
-  const [metafieldKey, setMetafieldKey] = useState('');
-  const [metafieldValue, setMetafieldValue] = useState('');
-  const [products, setProducts] = useState([]);
-  const [taskItems, setTaskItems] = useState([]);
-  const [negativeItems, setNegativeItems] = useState({});
+
+  // 改动二：metafield 列表 + 逻辑
+  const [metafieldRows, setMetafieldRows]       = useState([]);
+  const [metafieldLogic, setMetafieldLogic]     = useState('all'); // 'all' | 'any'
+
+  const [products, setProducts]                 = useState([]);
+  const [taskItems, setTaskItems]               = useState([]);
+  const [negativeItems, setNegativeItems]       = useState({});
   const [excludedBarcodes, setExcludedBarcodes] = useState({});
   const [selectedProductBarcodes, setSelectedProductBarcodes] = useState([]);
-  const [loadingProducts, setLoadingProducts] = useState(false);
-  const [loadingTypes, setLoadingTypes] = useState(false);
-  const [loadingNegative, setLoadingNegative] = useState(false);
-  const [loadingExclude, setLoadingExclude] = useState(false);
-  const [negativeSuccess, setNegativeSuccess] = useState(false);
-  const [excludeSuccess, setExcludeSuccess] = useState(false);
-  const [csvImported, setCsvImported] = useState(false);
-  const [error, setError] = useState('');
-  const [resultFilter, setResultFilter] = useState('');
+  const [loadingProducts, setLoadingProducts]   = useState(false);
+  const [loadingNegative, setLoadingNegative]   = useState(false);
+  const [loadingExclude, setLoadingExclude]     = useState(false);
+  const [negativeSuccess, setNegativeSuccess]   = useState(false);
+  const [excludeSuccess, setExcludeSuccess]     = useState(false);
+  const [csvImported, setCsvImported]           = useState(false);
+  const [error, setError]                       = useState('');
+  const [resultFilter, setResultFilter]         = useState('');
 
   const csvInputRef = useRef(null);
-
-  useEffect(() => {
-    const fetchTypes = async () => {
-      setLoadingTypes(true);
-      try {
-        const res = await fetch('/api/shopify/product-types');
-        const data = await res.json();
-        setAllTypes(data);
-      } catch (e) {
-        console.error('Failed to fetch product types');
-      } finally {
-        setLoadingTypes(false);
-      }
-    };
-    fetchTypes();
-  }, []);
 
   const handleShowResult = async () => {
     setLoadingProducts(true);
@@ -64,12 +75,14 @@ function CreatingTask() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          department,
           types: selectedTypes,
-          typeCondition,
-          metafieldKey,
-          metafieldCondition,
-          metafieldValue,
+          metafields: metafieldRows.map(r => ({
+            level: r.level,
+            condition: r.condition,
+            key: r.key,
+            value: r.value,
+          })),
+          metafieldLogic,
         }),
       });
       const data = await res.json();
@@ -85,9 +98,14 @@ function CreatingTask() {
     }
   };
 
+  // 改动一：Add negative 需要 types 和 location 都选了
   const handleAddNegative = async () => {
     if (selectedLocations.length === 0) {
       setError('Please select at least one location first.');
+      return;
+    }
+    if (selectedTypes.length === 0) {
+      setError('Please select at least one type first.');
       return;
     }
     setLoadingNegative(true);
@@ -97,7 +115,7 @@ function CreatingTask() {
       const res = await fetch('/api/tasks/negative-inventory', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ locations: selectedLocations, department }),
+        body: JSON.stringify({ locations: selectedLocations, types: selectedTypes }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
@@ -196,6 +214,13 @@ function CreatingTask() {
     e.target.value = '';
   };
 
+  // 改动二：metafield 行操作
+  const addMetafieldRow = () => setMetafieldRows(prev => [...prev, newMetafieldRow()]);
+  const removeMetafieldRow = (id) => setMetafieldRows(prev => prev.filter(r => r.id !== id));
+  const updateMetafieldRow = (id, field, val) => {
+    setMetafieldRows(prev => prev.map(r => r.id === id ? { ...r, [field]: val } : r));
+  };
+
   const handlePreview = () => {
     if (taskItems.length === 0 && Object.keys(negativeItems).length === 0) {
       setError('Please add at least one product to the task.');
@@ -205,29 +230,24 @@ function CreatingTask() {
       setError('Please select at least one location.');
       return;
     }
+    if (selectedTypes.length === 0) {
+      setError('Please select at least one type.');
+      return;
+    }
 
     const summaryParts = [];
-
-    if (selectedTypes.length > 0) {
-      summaryParts.push(`type ${typeCondition} ${selectedTypes.join(', ')}`);
+    if (selectedTypes.length > 0) summaryParts.push(`types: ${selectedTypes.join(', ')}`);
+    if (metafieldRows.length > 0) {
+      summaryParts.push(`metafield (${metafieldLogic}): ${metafieldRows.map(r => `${r.key} ${r.condition} ${r.value}`).join('; ')}`);
     }
-    if (metafieldKey && metafieldValue) {
-      summaryParts.push(`metafield ${metafieldKey} ${metafieldCondition} ${metafieldValue}`);
-    }
-    if (csvImported) {
-      summaryParts.push('CSV imported');
-    }
-    if (Object.values(negativeItems).some(arr => arr.length > 0)) {
-      summaryParts.push('negative added');
-    }
-    if (Object.values(excludedBarcodes).some(arr => arr.length > 0)) {
-      summaryParts.push('0 excluded');
-    }
+    if (csvImported) summaryParts.push('CSV imported');
+    if (Object.values(negativeItems).some(arr => arr.length > 0)) summaryParts.push('negative added');
+    if (Object.values(excludedBarcodes).some(arr => arr.length > 0)) summaryParts.push('0 excluded');
 
     const filterSummary = summaryParts.length > 0 ? summaryParts.join(' | ') : 'All products';
 
     const taskData = {
-      department,
+      types: selectedTypes,
       locations: selectedLocations,
       filterSummary,
       items: products.filter(p => taskItems.includes(p.barcode)),
@@ -266,23 +286,17 @@ function CreatingTask() {
           <BlockStack gap="400">
             {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
 
-            {/* Department + Location */}
+            {/* 改动一：Types + Location */}
             <Card>
               <BlockStack gap="300">
                 <InlineStack gap="400" wrap align="start">
-                  <BlockStack gap="100">
-                    <Text variant="bodySm" tone="subdued">Department</Text>
-                    <Select
-                      label="" labelHidden
-                      options={[
-                        { label: 'CARE', value: 'CARE' },
-                        { label: 'HAIR', value: 'HAIR' },
-                        { label: 'GENM', value: 'GENM' },
-                      ]}
-                      value={department}
-                      onChange={setDepartment}
-                    />
-                  </BlockStack>
+                  <MultiSelectDropdown
+                    label="Types"
+                    options={TYPE_OPTIONS}
+                    selected={selectedTypes}
+                    onChange={setSelectedTypes}
+                    placeholder="Select types"
+                  />
                   <MultiSelectDropdown
                     label="Location"
                     options={LOCATIONS}
@@ -294,10 +308,11 @@ function CreatingTask() {
                 </InlineStack>
 
                 <InlineStack gap="200" align="start">
+                  {/* 改动一：需要 types 和 location 都选了才能点 */}
                   <Button
                     onClick={handleAddNegative}
                     loading={loadingNegative}
-                    disabled={selectedLocations.length === 0}
+                    disabled={selectedLocations.length === 0 || selectedTypes.length === 0}
                   >
                     Add negative
                   </Button>
@@ -327,63 +342,89 @@ function CreatingTask() {
               </BlockStack>
             </Card>
 
-            {/* Filters */}
+            {/* 改动二：Filters card — 移除 Type condition，新增 metafield 动态行 */}
             <Card>
               <BlockStack gap="400">
-                <InlineStack gap="200" align="start" wrap>
-                  <BlockStack gap="100">
-                    <Text variant="bodySm" tone="subdued">Type condition</Text>
-                    <Select
-                      label="" labelHidden
-                      options={[
-                        { label: 'is', value: 'is' },
-                        { label: 'is not', value: 'is not' },
-                      ]}
-                      value={typeCondition}
-                      onChange={setTypeCondition}
-                    />
-                  </BlockStack>
-                  {loadingTypes ? <Spinner size="small" /> : (
-                    <MultiSelectDropdown
-                      label="Product type"
-                      options={allTypes}
-                      selected={selectedTypes}
-                      onChange={setSelectedTypes}
-                      placeholder="Select types"
-                    />
-                  )}
-                </InlineStack>
 
-                <InlineStack gap="200" align="start" wrap>
-                  <Text variant="bodySm" tone="subdued">Product metafield</Text>
-                  <Select
-                    label="" labelHidden
-                    options={[
-                      { label: 'value matches exactly', value: 'value matches exactly' },
-                      { label: "value doesn't match exactly", value: "value doesn't match exactly" },
-                      { label: 'value contains', value: 'value contains' },
-                      { label: "value doesn't contain", value: "value doesn't contain" },
-                      { label: 'exists with', value: 'exists with' },
-                      { label: "doesn't exist with", value: "doesn't exist with" },
-                    ]}
-                    value={metafieldCondition}
-                    onChange={setMetafieldCondition}
-                  />
-                  <input
-                    type="text"
-                    placeholder="namespace.key"
-                    value={metafieldKey}
-                    onChange={e => setMetafieldKey(e.target.value)}
-                    style={{ padding: '6px', border: '1px solid #ccc', borderRadius: '4px', width: '160px' }}
-                  />
-                  <input
-                    type="text"
-                    placeholder="value"
-                    value={metafieldValue}
-                    onChange={e => setMetafieldValue(e.target.value)}
-                    style={{ padding: '6px', border: '1px solid #ccc', borderRadius: '4px', width: '120px' }}
-                  />
-                </InlineStack>
+                {/* Metafield section */}
+                <BlockStack gap="300">
+                  <InlineStack gap="300" align="start">
+                    <Button onClick={addMetafieldRow}>Add metafield</Button>
+                    {/* Meet all / any 切换 */}
+                    <InlineStack gap="200">
+                      {['all', 'any'].map(opt => (
+                        <button
+                          key={opt}
+                          onClick={() => setMetafieldLogic(opt)}
+                          style={{
+                            padding: '6px 14px', borderRadius: '20px',
+                            border: `1px solid ${metafieldLogic === opt ? '#005bd3' : '#c9cccf'}`,
+                            background: metafieldLogic === opt ? '#f0f5ff' : 'white',
+                            color: metafieldLogic === opt ? '#005bd3' : '#6d7175',
+                            cursor: 'pointer', fontSize: '13px', fontWeight: metafieldLogic === opt ? '600' : '400',
+                          }}
+                        >
+                          {opt === 'all' ? 'Meet all conditions' : 'Meet any condition'}
+                        </button>
+                      ))}
+                    </InlineStack>
+                  </InlineStack>
+
+                  {metafieldRows.map(row => (
+                    <InlineStack key={row.id} gap="200" align="start" wrap>
+                      {/* Product / Variant 选择 */}
+                      <select
+                        value={row.level}
+                        onChange={e => updateMetafieldRow(row.id, 'level', e.target.value)}
+                        style={{ padding: '6px 10px', border: '1px solid #c9cccf', borderRadius: '6px', fontSize: '14px' }}
+                      >
+                        <option value="product">Product</option>
+                        <option value="variant">Variant</option>
+                      </select>
+
+                      {/* Match 条件 */}
+                      <select
+                        value={row.condition}
+                        onChange={e => updateMetafieldRow(row.id, 'condition', e.target.value)}
+                        style={{ padding: '6px 10px', border: '1px solid #c9cccf', borderRadius: '6px', fontSize: '14px' }}
+                      >
+                        {METAFIELD_CONDITIONS.map(c => (
+                          <option key={c.value} value={c.value}>{c.label}</option>
+                        ))}
+                      </select>
+
+                      {/* namespace.key */}
+                      <input
+                        type="text"
+                        placeholder="namespace.key"
+                        value={row.key}
+                        onChange={e => updateMetafieldRow(row.id, 'key', e.target.value)}
+                        style={{ padding: '6px 10px', border: '1px solid #c9cccf', borderRadius: '6px', fontSize: '14px', width: '160px' }}
+                      />
+
+                      {/* value */}
+                      <input
+                        type="text"
+                        placeholder="value"
+                        value={row.value}
+                        onChange={e => updateMetafieldRow(row.id, 'value', e.target.value)}
+                        style={{ padding: '6px 10px', border: '1px solid #c9cccf', borderRadius: '6px', fontSize: '14px', width: '120px' }}
+                      />
+
+                      {/* 删除 */}
+                      <button
+                        onClick={() => removeMetafieldRow(row.id)}
+                        style={{
+                          background: 'none', border: 'none', cursor: 'pointer',
+                          color: '#d72c0d', fontSize: '18px', lineHeight: 1, padding: '4px',
+                        }}
+                        title="Remove"
+                      >
+                        ✕
+                      </button>
+                    </InlineStack>
+                  ))}
+                </BlockStack>
 
                 <InlineStack align="space-between">
                   <InlineStack gap="200">

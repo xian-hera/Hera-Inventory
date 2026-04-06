@@ -10,7 +10,6 @@ const initDatabase = async () => {
   try {
     await client.query('BEGIN');
 
-    // Location map table
     await client.query(`
       CREATE TABLE IF NOT EXISTS location_map (
         location_name TEXT PRIMARY KEY,
@@ -19,12 +18,11 @@ const initDatabase = async () => {
       )
     `);
 
-    // Tasks table
     await client.query(`
       CREATE TABLE IF NOT EXISTS tasks (
         id SERIAL PRIMARY KEY,
         task_no TEXT UNIQUE NOT NULL,
-        department TEXT NOT NULL,
+        types TEXT[] NOT NULL DEFAULT '{}',
         location TEXT NOT NULL,
         shopify_location_id TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'draft',
@@ -35,7 +33,9 @@ const initDatabase = async () => {
       )
     `);
 
-    // Task items table
+    // Migration: add types column if upgrading from old schema with department
+    await client.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS types TEXT[] NOT NULL DEFAULT '{}'`).catch(() => {});
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS task_items (
         id SERIAL PRIMARY KEY,
@@ -50,13 +50,12 @@ const initDatabase = async () => {
       )
     `);
 
-    // Zero quantity reports table
     await client.query(`
       CREATE TABLE IF NOT EXISTS zero_qty_reports (
         id SERIAL PRIMARY KEY,
         barcode TEXT NOT NULL,
         name TEXT,
-        department TEXT,
+        type TEXT,
         location TEXT NOT NULL,
         shopify_location_id TEXT NOT NULL,
         soh INTEGER,
@@ -67,7 +66,9 @@ const initDatabase = async () => {
       )
     `);
 
-    // Task number counter table
+    // Migration: add type column if upgrading from old schema with department
+    await client.query(`ALTER TABLE zero_qty_reports ADD COLUMN IF NOT EXISTS type TEXT`).catch(() => {});
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS task_counter (
         id INTEGER PRIMARY KEY DEFAULT 1,
@@ -75,6 +76,7 @@ const initDatabase = async () => {
         last_letter TEXT NOT NULL DEFAULT 'A'
       )
     `);
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
@@ -87,7 +89,7 @@ const initDatabase = async () => {
         updated_at TIMESTAMPTZ DEFAULT NOW()
       )
     `);
-    // Insert initial counter if not exists
+
     await client.query(`
       INSERT INTO task_counter (id, last_number, last_letter)
       VALUES (1, 0, 'A')

@@ -5,6 +5,15 @@ import {
 } from '@shopify/polaris';
 import { useNavigate, useParams } from 'react-router-dom';
 
+const TYPE_LABEL_MAP = {
+  'Hair & Skin Care': 'Care',
+  'Tools & Accessories': 'Tools + Acc.',
+};
+
+function typeDisplay(type) {
+  return TYPE_LABEL_MAP[type] || type;
+}
+
 function formatDate(dateStr) {
   if (!dateStr) return '';
   const d = new Date(dateStr);
@@ -59,27 +68,22 @@ function ManagerTaskDetail() {
   const [noteInput, setNoteInput]     = useState('');
   const [showNoteInput, setShowNoteInput] = useState(false);
   const [submitting, setSubmitting]   = useState(false);
-  const [submitWarning, setSubmitWarning] = useState(false);
 
-  // Popup
+  // 改动三：阻止提交时的提示 banner
+  const [submitBlockedMsg, setSubmitBlockedMsg] = useState('');
+
   const [popupItem, setPopupItem]           = useState(null);
   const [popupSoh, setPopupSoh]             = useState(null);
   const [popupCommitted, setPopupCommitted] = useState(0);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [countInput, setCountInput]         = useState('');
   const [loadingSoh, setLoadingSoh]         = useState(false);
-
-  // Reset confirm
   const [showResetConfirm, setShowResetConfirm] = useState(false);
-
-  // Type in SKU
   const [showSkuInput, setShowSkuInput]   = useState(false);
   const [skuInput, setSkuInput]           = useState('');
   const [skuError, setSkuError]           = useState('');
   const showSkuInputRef                   = useRef(false);
-
-  // Error popup
-  const [errorPopup, setErrorPopup] = useState('');
+  const [errorPopup, setErrorPopup]       = useState('');
 
   const barcodeBuffer = useRef('');
   const barcodeTimer  = useRef(null);
@@ -91,7 +95,6 @@ function ManagerTaskDetail() {
   useEffect(() => { taskRef.current = task; }, [task]);
   useEffect(() => { showSkuInputRef.current = showSkuInput; }, [showSkuInput]);
 
-  // Lock body scroll when popup is open
   useEffect(() => {
     const anyOpen = !!(popupItem || loadingSoh || showSkuInput);
     document.body.style.overflow = anyOpen ? 'hidden' : '';
@@ -243,31 +246,24 @@ function ManagerTaskDetail() {
     }));
   };
 
-  // Reset: clears scan_history, poh, is_correct — keeps soh intact
   const handleResetConfirmed = async () => {
     if (!popupItem) return;
-    const currentSoh = popupSoh; // keep the already-fetched soh
-
+    const currentSoh = popupSoh;
     await fetch(`/api/tasks/${taskId}/items/${popupItem.id}/scan`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ scan_history: [], poh: null, soh: currentSoh, is_correct: false }),
     });
-
-    // Update local task state
     const resetItem = { ...popupItem, scan_history: [], poh: null, is_correct: false, soh: currentSoh };
     setTask(prev => ({
       ...prev,
       items: prev.items.map(i => i.id === popupItem.id ? resetItem : i),
     }));
-
-    // Reopen popup with the reset item (fresh state, no history)
     setPopupItem(resetItem);
     setCountInput('');
     setShowResetConfirm(false);
   };
 
-  // Type in SKU: find item in task and open popup
   const handleSkuSearch = () => {
     const sku = skuInput.trim();
     if (!sku || !taskRef.current) return;
@@ -305,10 +301,16 @@ function ManagerTaskDetail() {
     });
   };
 
+  // 改动三：检查 Not Scanned 数量，若不为 0 则阻止提交并切换筛选
   const handleSubmit = async () => {
     if (!task) return;
-    const hasUnscanned = task.items.some(i => i.soh === null);
-    if (hasUnscanned) setSubmitWarning(true);
+    const notScannedCount = task.items.filter(i => i.soh === null).length;
+    if (notScannedCount > 0) {
+      setSubmitBlockedMsg(`You have not finished, these are not scanned yet.`);
+      setFilter('not_scanned');
+      return;
+    }
+    setSubmitBlockedMsg('');
     setSubmitting(true);
     try {
       await fetch(`/api/tasks/${taskId}/submit`, {
@@ -339,6 +341,11 @@ function ManagerTaskDetail() {
   const processedCount   = task.items.filter(i => i.soh !== null).length;
   const unprocessedCount = totalCount - processedCount;
   const qtyOffCount      = task.items.filter(i => i.soh !== null && !i.is_correct && i.poh !== null).length;
+
+  // 改动一：types 显示
+  const typesLabel = Array.isArray(task.types) && task.types.length > 0
+    ? task.types.map(typeDisplay).join(', ')
+    : '';
 
   const filteredItems = task.items.filter(item => {
     if (filter === 'not_scanned') return item.soh === null;
@@ -398,7 +405,8 @@ function ManagerTaskDetail() {
     <div style={{ padding: '0 5px' }}>
       <Page
         title={task.task_no}
-        subtitle={task.department}
+        // 改动一：subtitle 显示 types
+        subtitle={typesLabel}
         backAction={{ onAction: () => navigate('/manager/counting-tasks') }}
       >
         <Layout>
@@ -410,7 +418,13 @@ function ManagerTaskDetail() {
 
               {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
 
-              {/* Stats */}
+              {/* 改动三：阻止提交时的提示 */}
+              {submitBlockedMsg && (
+                <Banner tone="critical" onDismiss={() => setSubmitBlockedMsg('')}>
+                  {submitBlockedMsg}
+                </Banner>
+              )}
+
               <Card>
                 <InlineStack gap="400" wrap>
                   <BlockStack gap="050">
@@ -434,7 +448,6 @@ function ManagerTaskDetail() {
                 </InlineStack>
               </Card>
 
-              {/* Actions + Notes */}
               <Card>
                 <BlockStack gap="300">
                   <InlineStack gap="200" wrap align="end">
@@ -444,10 +457,6 @@ function ManagerTaskDetail() {
                     <Button onClick={() => setShowNoteInput(true)}>Add note</Button>
                     <Button variant="primary" onClick={handleSubmit} loading={submitting}>Submit</Button>
                   </InlineStack>
-
-                  {submitWarning && (
-                    <Text tone="critical" fontWeight="bold">Warning: there are unscanned items!</Text>
-                  )}
 
                   {showNoteInput && (
                     <InlineStack gap="200">
@@ -484,7 +493,6 @@ function ManagerTaskDetail() {
                 </BlockStack>
               </Card>
 
-              {/* Filter tabs + Sort button */}
               <InlineStack align="space-between" gap="200">
                 <InlineStack gap="200">
                   {['all', 'not_scanned', 'qty_off'].map(f => (
@@ -521,7 +529,6 @@ function ManagerTaskDetail() {
                 </button>
               </InlineStack>
 
-              {/* Items table */}
               <Card>
                 <DataTable
                   columnContentTypes={['text', 'numeric', 'text', 'text']}
@@ -547,9 +554,7 @@ function ManagerTaskDetail() {
             }}>
               <div style={{ fontSize: '32px', marginBottom: '12px' }}>⚠️</div>
               <Text variant="bodyLg" fontWeight="bold">{errorPopup}</Text>
-              <div style={{ marginTop: '12px', fontSize: '13px', color: '#6d7175' }}>
-                Tap anywhere to dismiss
-              </div>
+              <div style={{ marginTop: '12px', fontSize: '13px', color: '#6d7175' }}>Tap anywhere to dismiss</div>
             </div>
           </div>
         )}
@@ -587,8 +592,7 @@ function ManagerTaskDetail() {
                       value={skuInput}
                       onChange={e => { setSkuInput(e.target.value); setSkuError(''); }}
                       onKeyDown={e => { if (e.key === 'Enter') handleSkuSearch(); }}
-                      autoComplete="off"
-                      autoFocus
+                      autoComplete="off" autoFocus
                       placeholder="Enter exact SKU"
                       style={{
                         width: '100%', padding: '10px 12px', fontSize: '16px',
@@ -636,7 +640,6 @@ function ManagerTaskDetail() {
               }}>✕</button>
 
               <BlockStack gap="400">
-                {/* Popup header */}
                 <div style={{ paddingRight: '28px' }}>
                   <div style={{ fontSize: '16px', fontWeight: '700', lineHeight: '1.4', wordBreak: 'break-word' }}>
                     {popupItem.name}
@@ -685,7 +688,6 @@ function ManagerTaskDetail() {
                   </div>
                 ) : (
                   <>
-                    {/* Correct button row — with Reset on the left when there's history */}
                     <div style={{ display: 'flex', gap: '10px', alignItems: 'stretch' }}>
                       {hasHistory && (
                         <button
@@ -701,8 +703,7 @@ function ManagerTaskDetail() {
                         </button>
                       )}
                       <button onClick={handleCorrect} style={{
-                        flex: 1,
-                        background: '#008060', color: 'white', border: 'none',
+                        flex: 1, background: '#008060', color: 'white', border: 'none',
                         borderRadius: '12px', padding: '20px', fontSize: '22px',
                         fontWeight: 'bold', cursor: 'pointer',
                       }}>
@@ -734,17 +735,14 @@ function ManagerTaskDetail() {
           </div>
         )}
 
-        {/* Reset confirm dialog */}
+        {/* Reset confirm */}
         {showResetConfirm && (
           <div style={{
             position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
             background: 'rgba(0,0,0,0.5)', zIndex: 2000,
             display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 16px',
           }}>
-            <div style={{
-              background: 'white', borderRadius: '12px', padding: '24px',
-              width: '100%', maxWidth: '360px',
-            }}>
+            <div style={{ background: 'white', borderRadius: '12px', padding: '24px', width: '100%', maxWidth: '360px' }}>
               <BlockStack gap="300">
                 <Text variant="headingMd" fontWeight="bold">Confirm to reset the count?</Text>
                 <Text variant="bodyMd" tone="subdued">
@@ -780,12 +778,6 @@ function ManagerTaskDetail() {
       </Page>
     </div>
   );
-}
-
-function formatDelta(delta, qty) {
-  if (delta === null || delta === undefined) return qty ?? '—';
-  const sign = delta > 0 ? '+' : '';
-  return `(${sign}${delta}) ${qty ?? ''}`;
 }
 
 export default ManagerTaskDetail;

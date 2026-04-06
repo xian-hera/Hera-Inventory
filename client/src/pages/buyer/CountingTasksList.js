@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Page, Layout, Card, Button, BlockStack, InlineStack,
-  Select, DataTable, Checkbox, Badge, Text, Banner
+  DataTable, Checkbox, Badge, Text, Banner
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import MultiSelectDropdown from '../../components/MultiSelectDropdown';
@@ -13,6 +13,28 @@ const LOCATIONS = [
 ];
 
 const STATUS_OPTIONS = ['counting','reviewing','committed','auto_committed','draft','archived'];
+
+// 改动一：9个 Type，含缩写显示
+const TYPE_OPTIONS = [
+  'Braid',
+  'Hair',
+  'Hair & Skin Care',
+  'Hera Beauty',
+  'Jewelry',
+  'K-Beauty',
+  'Makeup',
+  'Tools & Accessories',
+  'Wig',
+];
+
+const TYPE_LABEL_MAP = {
+  'Hair & Skin Care': 'Care',
+  'Tools & Accessories': 'Tools + Acc.',
+};
+
+function typeDisplay(type) {
+  return TYPE_LABEL_MAP[type] || type;
+}
 
 function formatDate(dateStr) {
   if (!dateStr) return '';
@@ -29,9 +51,7 @@ function getStatusBadge(status) {
   return <Badge tone={toneMap[status] || ''}>{status}</Badge>;
 }
 
-// Sort order cycles: null → 'desc' (newest first) → 'asc' (oldest first) → null
 const SORT_CYCLE = [null, 'desc', 'asc'];
-
 function sortLabel(order) {
   if (order === 'desc') return 'Sort ↓';
   if (order === 'asc')  return 'Sort ↑';
@@ -40,22 +60,22 @@ function sortLabel(order) {
 
 function CountingTasksList() {
   const navigate = useNavigate();
-  const [tasks, setTasks]                     = useState([]);
-  const [loading, setLoading]                 = useState(false);
-  const [error, setError]                     = useState('');
-  const [department, setDepartment]           = useState('ALL');
+  const [tasks, setTasks]                         = useState([]);
+  const [loading, setLoading]                     = useState(false);
+  const [error, setError]                         = useState('');
+  const [selectedTypes, setSelectedTypes]         = useState([]);
   const [selectedLocations, setSelectedLocations] = useState([]);
   const [selectedStatuses, setSelectedStatuses]   = useState(['counting','reviewing','committed','auto_committed','draft']);
-  const [date, setDate]                       = useState('ALL');
-  const [selectedIds, setSelectedIds]         = useState([]);
-  const [sortOrder, setSortOrder]             = useState(null); // null | 'desc' | 'asc'
+  const [date, setDate]                           = useState('ALL');
+  const [selectedIds, setSelectedIds]             = useState([]);
+  const [sortOrder, setSortOrder]                 = useState(null);
 
   const fetchTasks = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
       const params = new URLSearchParams();
-      if (department !== 'ALL') params.append('department', department);
+      if (selectedTypes.length > 0) params.append('types', selectedTypes.join(','));
       if (selectedLocations.length > 0) params.append('location', selectedLocations.join(','));
       if (selectedStatuses.length > 0) params.append('status', selectedStatuses.join(','));
       if (date !== 'ALL') params.append('date', date);
@@ -67,11 +87,10 @@ function CountingTasksList() {
     } finally {
       setLoading(false);
     }
-  }, [department, selectedLocations, selectedStatuses, date]);
+  }, [selectedTypes, selectedLocations, selectedStatuses, date]);
 
   useEffect(() => { fetchTasks(); }, [fetchTasks]);
 
-  // ── Sort ────────────────────────────────────────────────────────────────
   const handleSort = () => {
     setSortOrder(prev => {
       const idx = SORT_CYCLE.indexOf(prev);
@@ -87,16 +106,13 @@ function CountingTasksList() {
     });
   }, [tasks, sortOrder]);
 
-  // ── Selection ───────────────────────────────────────────────────────────
   const toggleSelectAll = () => {
     setSelectedIds(selectedIds.length === tasks.length ? [] : tasks.map(t => t.id));
   };
-
   const toggleSelectOne = (id) => {
     setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   };
 
-  // ── Bulk actions ─────────────────────────────────────────────────────────
   const handleDelete = async () => {
     if (selectedIds.length === 0) return;
     if (!window.confirm(`Delete ${selectedIds.length} task(s)?`)) return;
@@ -120,16 +136,22 @@ function CountingTasksList() {
     fetchTasks();
   };
 
-  // ── Rows (based on sorted list) ──────────────────────────────────────────
-  const rows = displayedTasks.map(task => [
-    <Checkbox checked={selectedIds.includes(task.id)} onChange={() => toggleSelectOne(task.id)} />,
-    <Button variant="plain" onClick={() => navigate(`/buyer/counting-tasks/${task.id}`)}>{task.task_no}</Button>,
-    task.department,
-    task.location,
-    task.inaccurate_count > 0 ? String(task.inaccurate_count) : '',
-    formatDate(task.created_at),
-    getStatusBadge(task.status),
-  ]);
+  const rows = displayedTasks.map(task => {
+    // 显示 task 的 types，多个用 , 分隔，使用缩写
+    const typesDisplay = Array.isArray(task.types) && task.types.length > 0
+      ? task.types.map(typeDisplay).join(', ')
+      : '-';
+
+    return [
+      <Checkbox checked={selectedIds.includes(task.id)} onChange={() => toggleSelectOne(task.id)} />,
+      <Button variant="plain" onClick={() => navigate(`/buyer/counting-tasks/${task.id}`)}>{task.task_no}</Button>,
+      <div style={{ whiteSpace: 'normal', wordBreak: 'break-word', maxWidth: '160px' }}>{typesDisplay}</div>,
+      task.location,
+      task.inaccurate_count > 0 ? String(task.inaccurate_count) : '',
+      formatDate(task.created_at),
+      getStatusBadge(task.status),
+    ];
+  });
 
   return (
     <Page
@@ -142,23 +164,16 @@ function CountingTasksList() {
           <BlockStack gap="400">
             {error && <Banner tone="critical">{error}</Banner>}
 
-            {/* Filters */}
             <Card>
               <InlineStack gap="400" wrap>
-                <BlockStack gap="100">
-                  <Text variant="bodySm" tone="subdued">Department</Text>
-                  <Select
-                    label="" labelHidden
-                    options={[
-                      { label: 'ALL',  value: 'ALL'  },
-                      { label: 'CARE', value: 'CARE' },
-                      { label: 'HAIR', value: 'HAIR' },
-                      { label: 'GENM', value: 'GENM' },
-                    ]}
-                    value={department}
-                    onChange={setDepartment}
-                  />
-                </BlockStack>
+                {/* 改动一：Types 多选，替换 Department 单选 */}
+                <MultiSelectDropdown
+                  label="Types"
+                  options={TYPE_OPTIONS}
+                  selected={selectedTypes}
+                  onChange={setSelectedTypes}
+                  labelMap={TYPE_LABEL_MAP}
+                />
                 <MultiSelectDropdown
                   label="Location"
                   options={LOCATIONS}
@@ -173,25 +188,22 @@ function CountingTasksList() {
                 />
                 <BlockStack gap="100">
                   <Text variant="bodySm" tone="subdued">Date</Text>
-                  <Select
-                    label="" labelHidden
-                    options={[
-                      { label: 'ALL',     value: 'ALL'    },
-                      { label: 'Today',   value: 'today'  },
-                      { label: '7 days',  value: '7days'  },
-                      { label: '30 days', value: '30days' },
-                    ]}
+                  <select
                     value={date}
-                    onChange={setDate}
-                  />
+                    onChange={e => setDate(e.target.value)}
+                    style={{ padding: '6px 10px', border: '1px solid #c9cccf', borderRadius: '6px', fontSize: '14px' }}
+                  >
+                    <option value="ALL">ALL</option>
+                    <option value="today">Today</option>
+                    <option value="7days">7 days</option>
+                    <option value="30days">30 days</option>
+                  </select>
                 </BlockStack>
               </InlineStack>
             </Card>
 
-            {/* Table + action bar */}
             <Card>
               <BlockStack gap="300">
-                {/* Button row: Sort on the left, Delete/Archive on the right */}
                 <InlineStack align="space-between" gap="200">
                   <Button
                     onClick={handleSort}
@@ -201,17 +213,10 @@ function CountingTasksList() {
                     {sortLabel(sortOrder)}
                   </Button>
                   <InlineStack gap="200">
-                    <Button
-                      tone="critical"
-                      disabled={selectedIds.length === 0}
-                      onClick={handleDelete}
-                    >
+                    <Button tone="critical" disabled={selectedIds.length === 0} onClick={handleDelete}>
                       Delete selected
                     </Button>
-                    <Button
-                      disabled={selectedIds.length === 0}
-                      onClick={handleArchive}
-                    >
+                    <Button disabled={selectedIds.length === 0} onClick={handleArchive}>
                       Archive selected
                     </Button>
                   </InlineStack>
@@ -225,7 +230,7 @@ function CountingTasksList() {
                       indeterminate={selectedIds.length > 0 && selectedIds.length < tasks.length}
                       onChange={toggleSelectAll}
                     />,
-                    'No.', 'Department', 'Location', 'Inaccurate', 'Date', 'Status',
+                    'No.', 'Types', 'Location', 'Inaccurate', 'Date', 'Status',
                   ]}
                   rows={rows}
                   loading={loading}

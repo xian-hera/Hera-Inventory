@@ -3,23 +3,23 @@ const router = express.Router();
 const { pool } = require('../database/init');
 const { getShopify, getSession } = require('../shopify');
 
-
-
 // ═══════════════════════════════════════════════════════════════════════════
-// ZERO QTY REPORTS  (buyer-side, submitted data)
+// ZERO QTY REPORTS  (buyer-side)
 // ═══════════════════════════════════════════════════════════════════════════
 
 // GET /api/reports
 router.get('/', async (req, res) => {
   try {
-    const { department, location, status, date } = req.query;
+    // 改动一：department → type
+    const { type, location, status, date } = req.query;
     let conditions = [];
     let params = [];
     let paramIndex = 1;
 
-    if (department && department !== 'ALL') {
-      conditions.push(`department = $${paramIndex++}`);
-      params.push(department);
+    if (type && type !== 'ALL') {
+      const types = type.split(',');
+      conditions.push(`type = ANY($${paramIndex++})`);
+      params.push(types);
     }
     if (location && location !== 'ALL') {
       const locations = location.split(',');
@@ -67,12 +67,13 @@ router.patch('/commit', async (req, res) => {
 });
 
 // PATCH /api/reports/archive
+// 改动五.2：只允许 committed 状态的条目被 archive
 router.patch('/archive', async (req, res) => {
   try {
     const { ids } = req.body;
     if (!ids || ids.length === 0) return res.status(400).json({ error: 'No ids' });
     await pool.query(
-      "UPDATE zero_qty_reports SET status = 'archived' WHERE id = ANY($1)",
+      "UPDATE zero_qty_reports SET status = 'archived' WHERE id = ANY($1) AND status = 'committed'",
       [ids]
     );
     res.json({ success: true });
@@ -88,10 +89,7 @@ router.post('/submit', async (req, res) => {
     if (!items || items.length === 0) return res.status(400).json({ error: 'No items' });
 
     for (const item of items) {
-      // shopify_location_id may come in as item.shopify_location_id (from draft)
-      // or item.locationId (legacy). Fall back to location_map lookup if both are null.
       let shopifyLocationId = item.shopify_location_id || item.locationId || null;
-
       if (!shopifyLocationId && item.location) {
         const mapRow = await pool.query(
           'SELECT shopify_location_id FROM location_map WHERE location_name = $1',
@@ -100,15 +98,15 @@ router.post('/submit', async (req, res) => {
         if (mapRow.rows.length > 0) shopifyLocationId = mapRow.rows[0].shopify_location_id;
       }
 
+      // 改动一：存 type（productType）而非 department
       await pool.query(
         `INSERT INTO zero_qty_reports
-         (barcode, name, department, location, shopify_location_id, soh, poh, status)
+         (barcode, name, type, location, shopify_location_id, soh, poh, status)
          VALUES ($1, $2, $3, $4, $5, $6, $7, 'reviewing')`,
-        [item.barcode, item.name, item.department, item.location, shopifyLocationId, item.soh, item.poh]
+        [item.barcode, item.name, item.type || item.productType || null, item.location, shopifyLocationId, item.soh, item.poh]
       );
     }
 
-    // Remove submitted barcodes from drafts for this location
     const location = items[0]?.location;
     if (location) {
       const barcodes = items.map(i => i.barcode);
@@ -138,9 +136,11 @@ router.delete('/', async (req, res) => {
 });
 
 // PATCH /api/reports/:id/commit
+// 改动五.3：支持前端传入自定义 adjustment 值
 router.patch('/:id/commit', async (req, res) => {
   try {
-    await commitReport(req.params.id);
+    const { adjustment } = req.body;
+    await commitReport(req.params.id, adjustment);
     res.json({ success: true });
   } catch (e) {
     console.error('PATCH /api/reports/:id/commit error:', e);
@@ -149,13 +149,18 @@ router.patch('/:id/commit', async (req, res) => {
 });
 
 // Shared commit helper
-async function commitReport(id) {
+// 改动五.3：接受可选的 adjustment 参数，覆盖默认的 poh - soh
+async function commitReport(id, customAdjustment) {
   const report = await pool.query('SELECT * FROM zero_qty_reports WHERE id = $1', [id]);
   if (report.rows.length === 0) throw new Error('Report not found');
   const r = report.rows[0];
   if (r.status !== 'reviewing') return;
 
-  const delta = r.poh - r.soh;
+  // 如果前端传入了自定义 adjustment，则使用它；否则用 poh - soh
+  const delta = customAdjustment !== undefined && customAdjustment !== null
+    ? Number(customAdjustment)
+    : (r.poh - r.soh);
+
   if (delta !== 0) {
     const session = await getSession();
     const shopify = getShopify();
@@ -191,7 +196,7 @@ async function commitReport(id) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ZERO QTY DRAFTS  (manager-side, unsumitted, persistent per location)
+// ZERO QTY DRAFTS  (manager-side)
 // ═══════════════════════════════════════════════════════════════════════════
 
 // GET /api/reports/drafts?location=MTL01
@@ -199,10 +204,7 @@ router.get('/drafts', async (req, res) => {
   try {
     const { location } = req.query;
     if (!location) return res.status(400).json({ error: 'location required' });
-
-    // Clean up expired rows first
     await pool.query('DELETE FROM zero_qty_drafts WHERE expires_at < NOW()');
-
     const result = await pool.query(
       'SELECT * FROM zero_qty_drafts WHERE location = $1 ORDER BY created_at ASC',
       [location]
@@ -214,19 +216,19 @@ router.get('/drafts', async (req, res) => {
   }
 });
 
-// PUT /api/reports/drafts  — upsert a single draft entry
+// PUT /api/reports/drafts
 router.put('/drafts', async (req, res) => {
   try {
-    const { barcode, name, department, location, shopify_location_id, soh, poh, scan_history } = req.body;
+    const { barcode, name, type, location, shopify_location_id, soh, poh, scan_history } = req.body;
     if (!barcode || !location) return res.status(400).json({ error: 'barcode and location required' });
 
     const result = await pool.query(
       `INSERT INTO zero_qty_drafts
-         (barcode, name, department, location, shopify_location_id, soh, poh, scan_history, expires_at, updated_at)
+         (barcode, name, type, location, shopify_location_id, soh, poh, scan_history, expires_at, updated_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW() + INTERVAL '15 days', NOW())
        ON CONFLICT (barcode, location) DO UPDATE SET
          name                = EXCLUDED.name,
-         department          = EXCLUDED.department,
+         type                = EXCLUDED.type,
          shopify_location_id = EXCLUDED.shopify_location_id,
          soh                 = EXCLUDED.soh,
          poh                 = EXCLUDED.poh,
@@ -234,7 +236,7 @@ router.put('/drafts', async (req, res) => {
          expires_at          = NOW() + INTERVAL '15 days',
          updated_at          = NOW()
        RETURNING *`,
-      [barcode, name, department, location, shopify_location_id, soh, poh, JSON.stringify(scan_history || [])]
+      [barcode, name, type || null, location, shopify_location_id, soh, poh, JSON.stringify(scan_history || [])]
     );
     res.json(result.rows[0]);
   } catch (e) {
@@ -243,7 +245,7 @@ router.put('/drafts', async (req, res) => {
   }
 });
 
-// DELETE /api/reports/drafts  — delete by ids or all for a location
+// DELETE /api/reports/drafts
 router.delete('/drafts', async (req, res) => {
   try {
     const { ids, location, all } = req.body;
@@ -261,7 +263,7 @@ router.delete('/drafts', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// RESTOCK PLANS  (manager-side, persistent per location)
+// RESTOCK PLANS  (manager-side)
 // ═══════════════════════════════════════════════════════════════════════════
 
 // GET /api/reports/restock?location=MTL01
@@ -269,9 +271,7 @@ router.get('/restock', async (req, res) => {
   try {
     const { location } = req.query;
     if (!location) return res.status(400).json({ error: 'location required' });
-
     await pool.query('DELETE FROM restock_plans WHERE expires_at < NOW()');
-
     const result = await pool.query(
       'SELECT * FROM restock_plans WHERE location = $1 ORDER BY created_at ASC',
       [location]
@@ -283,7 +283,7 @@ router.get('/restock', async (req, res) => {
   }
 });
 
-// PUT /api/reports/restock  — upsert a single restock entry
+// PUT /api/reports/restock
 router.put('/restock', async (req, res) => {
   try {
     const { barcode, name, location, shopify_location_id, soh, restock_qty, product_type } = req.body;
@@ -311,7 +311,7 @@ router.put('/restock', async (req, res) => {
   }
 });
 
-// PATCH /api/reports/restock/:id/done  — toggle is_done
+// PATCH /api/reports/restock/:id/done
 router.patch('/restock/:id/done', async (req, res) => {
   try {
     const { id } = req.params;
@@ -327,7 +327,7 @@ router.patch('/restock/:id/done', async (req, res) => {
   }
 });
 
-// DELETE /api/reports/restock  — delete by ids or all for a location
+// DELETE /api/reports/restock
 router.delete('/restock', async (req, res) => {
   try {
     const { ids, location, all } = req.body;

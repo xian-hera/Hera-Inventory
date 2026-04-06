@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { getShopify, getSession } = require('../shopify');
 
+// 保留 getDepartment 供其他地方兼容调用，但新逻辑不再依赖它
 const DEPARTMENT_MAP = {
   'BRAID': 'HAIR',
   'HAIR': 'HAIR',
@@ -58,9 +59,7 @@ router.get('/product-types', async (req, res) => {
 
     const query = `{
       productTypes(first: 50) {
-        edges {
-          node
-        }
+        edges { node }
       }
     }`;
 
@@ -74,36 +73,57 @@ router.get('/product-types', async (req, res) => {
 });
 
 // POST /api/shopify/products
+// 改动二：支持多条 metafield 筛选规则（metafields 数组 + metafieldLogic）
 router.post('/products', async (req, res) => {
   try {
     const session = await getSession();
     if (!session) return res.status(401).json({ error: 'No session' });
 
-    const { department, types, typeCondition, metafieldKey, metafieldCondition, metafieldValue } = req.body;
+    const {
+      types,           // string[] — 选中的 type（原 department 逻辑已移除）
+      metafields,      // 改动二新增：[{ level, condition, key, value }]
+      metafieldLogic,  // 改动二新增：'all' | 'any'
+    } = req.body;
+
     const shopify = getShopify();
     const client = new shopify.clients.Graphql({ session });
 
-    const hasMetafilter = metafieldKey && metafieldKey.trim() && metafieldValue && metafieldValue.trim();
-
+    // 构建 Shopify query string（按 type 筛选）
     let queryParts = [];
     if (types && types.length > 0) {
-      if (typeCondition === 'is') {
-        queryParts.push(`(${types.map(t => `product_type:${t}`).join(' OR ')})`);
-      } else {
-        queryParts.push(`NOT (${types.map(t => `product_type:${t}`).join(' OR ')})`);
-      }
+      queryParts.push(`(${types.map(t => `product_type:"${t}"`).join(' OR ')})`);
     }
     const queryString = queryParts.join(' AND ') || 'status:active';
 
-    let mfNamespace = null;
-    let mfKey = null;
-    if (hasMetafilter) {
-      const parts = metafieldKey.trim().split('.');
-      if (parts.length >= 2) {
-        mfNamespace = parts[0];
-        mfKey = parts.slice(1).join('.');
-      }
-    }
+    // 解析所有 metafield 筛选规则
+    const parsedMeta = (metafields || [])
+      .map(mf => {
+        if (!mf.key || !mf.key.trim()) return null;
+        const parts = mf.key.trim().split('.');
+        if (parts.length < 2) return null;
+        return {
+          level: mf.level || 'product', // 'product' | 'variant'
+          namespace: parts[0],
+          key: parts.slice(1).join('.'),
+          condition: mf.condition,
+          value: mf.value || '',
+        };
+      })
+      .filter(Boolean);
+
+    const hasMetafilter = parsedMeta.length > 0;
+    const logic = metafieldLogic === 'any' ? 'any' : 'all';
+
+    // 构建 GQL query — 动态注入 metafield 查询
+    const productMetaFields = parsedMeta
+      .filter(m => m.level === 'product')
+      .map((m, i) => `pMf${i}: metafield(namespace: "${m.namespace}", key: "${m.key}") { value }`)
+      .join('\n');
+
+    const variantMetaFields = parsedMeta
+      .filter(m => m.level === 'variant')
+      .map((m, i) => `vMf${i}: metafield(namespace: "${m.namespace}", key: "${m.key}") { value }`)
+      .join('\n');
 
     const gqlQuery = `
       query getProducts($queryString: String!, $cursor: String) {
@@ -114,23 +134,15 @@ router.post('/products', async (req, res) => {
               id
               title
               productType
-              ${hasMetafilter && mfNamespace && mfKey ? `
-              metafield(namespace: "${mfNamespace}", key: "${mfKey}") {
-                value
-              }` : ''}
+              ${productMetaFields}
               variants(first: 100) {
                 edges {
                   node {
                     id
                     sku
                     barcode
-                    metafield(namespace: "custom", key: "name") {
-                      value
-                    }
-                    ${hasMetafilter && mfNamespace && mfKey ? `
-                    filterMetafield: metafield(namespace: "${mfNamespace}", key: "${mfKey}") {
-                      value
-                    }` : ''}
+                    metafield(namespace: "custom", key: "name") { value }
+                    ${variantMetaFields}
                   }
                 }
               }
@@ -152,42 +164,48 @@ router.post('/products', async (req, res) => {
       cursor = page.pageInfo.endCursor;
     }
 
-    const matchesMetafield = (mfValue) => {
-      if (!hasMetafilter) return true;
+    // Metafield match 函数
+    const matchesCondition = (mfValue, condition, target) => {
       const val = (mfValue || '').toLowerCase().trim();
-      const target = metafieldValue.trim().toLowerCase();
-
-      switch (metafieldCondition) {
-        case 'value matches exactly':
-          return val === target;
-        case "value doesn't match exactly":
-          return val !== target;
-        case 'value contains':
-          return val.includes(target);
-        case "value doesn't contain":
-          return !val.includes(target);
-        case 'exists with':
-          return val === target;
-        case "doesn't exist with":
-          return !mfValue || val !== target;
-        default:
-          return true;
+      const tgt = (target || '').trim().toLowerCase();
+      switch (condition) {
+        case 'value matches exactly':       return val === tgt;
+        case "value doesn't match exactly": return val !== tgt;
+        case 'value contains':              return val.includes(tgt);
+        case "value doesn't contain":       return !val.includes(tgt);
+        case 'exists with':                 return val === tgt;
+        case "doesn't exist with":          return !mfValue || val !== tgt;
+        default:                            return true;
       }
+    };
+
+    const variantPassesMeta = (product, variant) => {
+      if (!hasMetafilter) return true;
+
+      const productMetaNodes = parsedMeta.filter(m => m.level === 'product');
+      const variantMetaNodes = parsedMeta.filter(m => m.level === 'variant');
+
+      const results = parsedMeta.map((mf, i) => {
+        if (mf.level === 'product') {
+          const idx = productMetaNodes.indexOf(mf);
+          const fieldKey = `pMf${idx}`;
+          const val = product[fieldKey]?.value || null;
+          return matchesCondition(val, mf.condition, mf.value);
+        } else {
+          const idx = variantMetaNodes.indexOf(mf);
+          const fieldKey = `vMf${idx}`;
+          const val = variant[fieldKey]?.value || null;
+          return matchesCondition(val, mf.condition, mf.value);
+        }
+      });
+
+      return logic === 'any' ? results.some(Boolean) : results.every(Boolean);
     };
 
     let variants = [];
     for (const { node: product } of allProducts) {
-      const dept = getDepartment(product.productType);
-      if (department && department !== 'ALL' && dept !== department) continue;
-
       for (const { node: variant } of product.variants.edges) {
-        if (hasMetafilter) {
-          const productMfValue = product.metafield?.value || null;
-          const variantMfValue = variant.filterMetafield?.value || null;
-          const productMatches = matchesMetafield(productMfValue);
-          const variantMatches = matchesMetafield(variantMfValue);
-          if (!productMatches && !variantMatches) continue;
-        }
+        if (!variantPassesMeta(product, variant)) continue;
 
         const name = variant.metafield?.value || product.title;
         variants.push({
@@ -195,7 +213,6 @@ router.post('/products', async (req, res) => {
           variantId: variant.id,
           name,
           barcode: variant.barcode || variant.sku,
-          department: dept,
           productType: product.productType,
         });
       }
@@ -219,20 +236,12 @@ router.get('/locations', async (req, res) => {
 
     const query = `{
       locations(first: 50) {
-        edges {
-          node {
-            id
-            name
-          }
-        }
+        edges { node { id name } }
       }
     }`;
 
     const response = await shopifyRequest(client, query);
-    const locations = response.data.locations.edges.map(e => ({
-      id: e.node.id,
-      name: e.node.name,
-    }));
+    const locations = response.data.locations.edges.map(e => ({ id: e.node.id, name: e.node.name }));
     res.json(locations);
   } catch (e) {
     console.error('GET /api/shopify/locations error:', e);
@@ -255,32 +264,20 @@ router.get('/inventory/:barcode/:locationId', async (req, res) => {
         productVariants(first: 5, query: $barcode) {
           edges {
             node {
-              id
-              sku
-              barcode
+              id sku barcode
               inventoryItem {
                 id
                 inventoryLevels(first: 20) {
                   edges {
                     node {
-                      location {
-                        id
-                      }
-                      quantities(names: ["available"]) {
-                        name
-                        quantity
-                      }
+                      location { id }
+                      quantities(names: ["available"]) { name quantity }
                     }
                   }
                 }
               }
-              metafield(namespace: "custom", key: "name") {
-                value
-              }
-              product {
-                title
-                productType
-              }
+              metafield(namespace: "custom", key: "name") { value }
+              product { title productType }
             }
           }
         }
@@ -289,26 +286,19 @@ router.get('/inventory/:barcode/:locationId', async (req, res) => {
 
     const response = await shopifyRequest(client, variantQuery, { barcode: `barcode:${barcode}` });
     const variants = response.data.productVariants.edges;
-
-    if (variants.length === 0) {
-      return res.status(404).json({ error: 'Product not found' });
-    }
+    if (variants.length === 0) return res.status(404).json({ error: 'Product not found' });
 
     const variant = variants[0].node;
     const decodedLocationId = decodeURIComponent(locationId);
-
     const levels = variant.inventoryItem.inventoryLevels.edges;
     const level = levels.find(e => e.node.location.id === decodedLocationId);
     const soh = level?.node.quantities.find(q => q.name === 'available')?.quantity ?? 0;
-
     const name = variant.metafield?.value || variant.product.title;
-    const department = getDepartment(variant.product.productType);
 
     res.json({
       barcode: variant.barcode || variant.sku,
       name,
       soh,
-      department,
       productType: variant.product.productType,
       variantId: variant.id,
       inventoryItemId: variant.inventoryItem.id,
@@ -331,20 +321,12 @@ router.post('/sync-locations', async (req, res) => {
 
     const query = `{
       locations(first: 50) {
-        edges {
-          node {
-            id
-            name
-          }
-        }
+        edges { node { id name } }
       }
     }`;
 
     const response = await shopifyRequest(client, query);
-    const locations = response.data.locations.edges.map(e => ({
-      id: e.node.id,
-      name: e.node.name,
-    }));
+    const locations = response.data.locations.edges.map(e => ({ id: e.node.id, name: e.node.name }));
 
     for (const loc of locations) {
       await pool.query(
@@ -369,7 +351,6 @@ router.get('/search', async (req, res) => {
     if (!session) return res.status(401).json({ error: 'No session' });
 
     const { q, vendors, tag } = req.query;
-
     let queryParts = [];
     if (q && q.trim().length >= 2) queryParts.push(`(title:*${q}* OR sku:*${q}*)`);
     if (vendors) {
@@ -378,7 +359,6 @@ router.get('/search', async (req, res) => {
       queryParts.push(`(${escapedVendors.join(' OR ')})`);
     }
     if (tag) queryParts.push(`tag:"${tag.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`);
-
     if (queryParts.length === 0) return res.json([]);
 
     const queryString = queryParts.join(' AND ');
@@ -390,18 +370,12 @@ router.get('/search', async (req, res) => {
         products(first: 20, query: $queryString) {
           edges {
             node {
-              id
-              title
-              productType
+              id title productType
               variants(first: 10) {
                 edges {
                   node {
-                    id
-                    sku
-                    barcode
-                    metafield(namespace: "custom", key: "name") {
-                      value
-                    }
+                    id sku barcode
+                    metafield(namespace: "custom", key: "name") { value }
                   }
                 }
               }
@@ -423,7 +397,6 @@ router.get('/search', async (req, res) => {
           variantId: variant.id,
           name,
           barcode: variant.barcode || variant.sku,
-          department: getDepartment(product.productType),
           productType: product.productType,
         });
       }
@@ -445,42 +418,24 @@ router.get('/vendors-tags', async (req, res) => {
     const shopify = getShopify();
     const client = new shopify.clients.Graphql({ session });
 
-    const vendorQuery = `{
-      shop {
-        productVendors(first: 250) {
-          edges { node }
-        }
-      }
-    }`;
+    const vendorQuery = `{ shop { productVendors(first: 250) { edges { node } } } }`;
     const vendorResponse = await shopifyRequest(client, vendorQuery);
-    const vendors = vendorResponse.data.shop.productVendors.edges
-      .map(e => e.node).filter(Boolean).sort();
+    const vendors = vendorResponse.data.shop.productVendors.edges.map(e => e.node).filter(Boolean).sort();
 
-    let allTags = [];
-    let tagCursor = null;
-    let hasMoreTags = true;
-
+    let allTags = [], tagCursor = null, hasMoreTags = true;
     while (hasMoreTags) {
       const afterClause = tagCursor ? `, after: "${tagCursor}"` : '';
       const tagQuery = `{
         productTags(first: 250${afterClause}) {
-          edges {
-            node
-            cursor
-          }
-          pageInfo {
-            hasNextPage
-          }
+          edges { node cursor }
+          pageInfo { hasNextPage }
         }
       }`;
-
       const tagResponse = await shopifyRequest(client, tagQuery);
       const edges = tagResponse.data.productTags.edges;
       allTags = [...allTags, ...edges.map(e => e.node).filter(Boolean)];
       hasMoreTags = tagResponse.data.productTags.pageInfo.hasNextPage;
-      if (hasMoreTags && edges.length > 0) {
-        tagCursor = edges[edges.length - 1].cursor;
-      }
+      if (hasMoreTags && edges.length > 0) tagCursor = edges[edges.length - 1].cursor;
     }
 
     res.json({ vendors, tags: allTags.sort() });
@@ -497,9 +452,7 @@ router.post('/soh-check', async (req, res) => {
     if (!session) return res.status(401).json({ error: 'No session' });
 
     const { barcodes, locations } = req.body;
-    if (!barcodes || !locations || barcodes.length === 0 || locations.length === 0) {
-      return res.json({});
-    }
+    if (!barcodes || !locations || barcodes.length === 0 || locations.length === 0) return res.json({});
 
     const { pool } = require('../database/init');
     const shopify = getShopify();
@@ -513,9 +466,7 @@ router.post('/soh-check', async (req, res) => {
     locMap.rows.forEach(r => { locationIdMap[r.location_name] = r.shopify_location_id; });
 
     const result = {};
-    for (const location of locations) {
-      result[location] = [];
-    }
+    for (const location of locations) result[location] = [];
 
     for (const barcode of barcodes) {
       const variantQuery = `
@@ -523,17 +474,13 @@ router.post('/soh-check', async (req, res) => {
           productVariants(first: 5, query: $barcode) {
             edges {
               node {
-                barcode
-                sku
+                barcode sku
                 inventoryItem {
                   inventoryLevels(first: 30) {
                     edges {
                       node {
                         location { id }
-                        quantities(names: ["available"]) {
-                          name
-                          quantity
-                        }
+                        quantities(names: ["available"]) { name quantity }
                       }
                     }
                   }
@@ -543,7 +490,6 @@ router.post('/soh-check', async (req, res) => {
           }
         }
       `;
-
       const response = await shopifyRequest(client, variantQuery, { barcode: `barcode:${barcode}` });
       const variants = response.data?.productVariants?.edges || [];
       if (variants.length === 0) continue;
@@ -556,9 +502,7 @@ router.post('/soh-check', async (req, res) => {
         if (!shopifyLocationId) continue;
         const level = levels.find(e => e.node.location.id === shopifyLocationId);
         const soh = level?.node.quantities.find(q => q.name === 'available')?.quantity ?? 0;
-        if (soh === 0) {
-          result[location].push(barcode);
-        }
+        if (soh === 0) result[location].push(barcode);
       }
     }
 
@@ -569,7 +513,7 @@ router.post('/soh-check', async (req, res) => {
   }
 });
 
-// GET /api/shopify/variant-by-sku?sku=XXX
+// GET /api/shopify/variant-by-sku
 router.get('/variant-by-sku', async (req, res) => {
   try {
     const { sku } = req.query;
@@ -585,36 +529,12 @@ router.get('/variant-by-sku', async (req, res) => {
       productVariants(first: 1, query: "sku:${sku.replace(/"/g, '')}") {
         edges {
           node {
-            id
-            title
-            sku
-            price
-            compareAtPrice
-            barcode
+            id title sku price compareAtPrice barcode
             product {
-              id
-              title
-              vendor
-              productType
-              metafields(first: 20) {
-                edges {
-                  node {
-                    namespace
-                    key
-                    value
-                  }
-                }
-              }
+              id title vendor productType
+              metafields(first: 20) { edges { node { namespace key value } } }
             }
-            metafields(first: 20) {
-              edges {
-                node {
-                  namespace
-                  key
-                  value
-                }
-              }
-            }
+            metafields(first: 20) { edges { node { namespace key value } } }
           }
         }
       }
@@ -627,18 +547,12 @@ router.get('/variant-by-sku', async (req, res) => {
     const v = edge.node;
     res.json({
       variant: {
-        id: v.id,
-        title: v.title,
-        sku: v.sku,
-        price: v.price,
-        compare_at_price: v.compareAtPrice,
-        barcode: v.barcode,
+        id: v.id, title: v.title, sku: v.sku, price: v.price,
+        compare_at_price: v.compareAtPrice, barcode: v.barcode,
         metafields: (v.metafields?.edges || []).map(e => e.node),
       },
       product: {
-        id: v.product.id,
-        title: v.product.title,
-        vendor: v.product.vendor,
+        id: v.product.id, title: v.product.title, vendor: v.product.vendor,
         product_type: v.product.productType,
         metafields: (v.product.metafields?.edges || []).map(e => e.node),
       },
