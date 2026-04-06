@@ -211,10 +211,10 @@ function TaskDetail() {
     </Page>
   );
 
-  // 改动一：subtitle 显示 types + location
+  // subtitle 显示 types + location，types 为空时不显示类型部分
   const typesLabel = Array.isArray(task.types) && task.types.length > 0
     ? task.types.map(typeDisplay).join(', ')
-    : (task.department || '');
+    : '';
 
   // 编辑行渲染（抽出来避免重复）
   const renderEditingCell = (itemId) => (
@@ -330,7 +330,7 @@ function TaskDetail() {
   return (
     <Page
       title={task.task_no}
-      subtitle={`${typesLabel}  ${task.location}`}
+      subtitle={[typesLabel, task.location].filter(Boolean).join('  ')}
       backAction={{ onAction: () => navigate('/buyer/counting-tasks') }}
     >
       <Layout>

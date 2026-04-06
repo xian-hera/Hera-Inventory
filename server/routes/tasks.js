@@ -402,9 +402,14 @@ router.patch('/:id/commit', async (req, res) => {
     );
 
     if (parseInt(remaining.rows[0].count) === 0) {
-      // 改动四：检查是否所有 result 都是绿色对钩（全部 is_correct 或 is_committed）
-      const allItems = await pool.query('SELECT * FROM task_items WHERE task_id = $1', [id]);
-      const allGreen = allItems.rows.every(i => i.is_correct || (i.poh !== null && i.is_committed));
+      // 改动四：检查是否所有 item 都是绿色对钩（没有任何 inaccurate 条目）
+      // 即：不存在 is_correct=false 且 poh 不为 null 的 item（无论是否 committed）
+      const inaccurateTotal = await pool.query(
+        `SELECT COUNT(*) FROM task_items
+         WHERE task_id = $1 AND is_correct = FALSE AND poh IS NOT NULL`,
+        [id]
+      );
+      const allGreen = parseInt(inaccurateTotal.rows[0].count) === 0;
 
       if (allGreen) {
         // 自动 archived + 添加 note
