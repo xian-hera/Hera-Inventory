@@ -5,6 +5,15 @@ import {
 } from '@shopify/polaris';
 import { useNavigate, useParams } from 'react-router-dom';
 
+const TYPE_LABEL_MAP = {
+  'Hair & Skin Care': 'Care',
+  'Tools & Accessories': 'Tools + Acc.',
+};
+
+function typeDisplay(type) {
+  return TYPE_LABEL_MAP[type] || type;
+}
+
 function formatDate(dateStr) {
   if (!dateStr) return '';
   const d = new Date(dateStr);
@@ -36,9 +45,8 @@ function TaskDetail() {
   const [committing, setCommitting] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [publishing, setPublishing] = useState(false);
-  // inline POH editing in result column
   const [editingItemId, setEditingItemId] = useState(null);
-  const [editingValue, setEditingValue]   = useState('');
+  const [editingValue, setEditingValue] = useState('');
 
   const fetchTask = useCallback(async () => {
     setLoading(true);
@@ -55,9 +63,7 @@ function TaskDetail() {
     }
   }, [taskId]);
 
-  useEffect(() => {
-    fetchTask();
-  }, [fetchTask]);
+  useEffect(() => { fetchTask(); }, [fetchTask]);
 
   const handleAddNote = async () => {
     if (!noteInput.trim()) return;
@@ -114,7 +120,7 @@ function TaskDetail() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       if (data.warnings && data.warnings.length > 0) {
-        setError(`Some items could not be committed and may need to be retried:\n${data.warnings.join('\n')}`);
+        setError(`Some items could not be committed:\n${data.warnings.join('\n')}`);
       }
       setSelectedItemIds([]);
       fetchTask();
@@ -157,7 +163,10 @@ function TaskDetail() {
 
   const handleSavePoh = async (itemId) => {
     const val = parseInt(editingValue);
-    if (isNaN(val)) { setEditingItemId(null); return; }
+    if (isNaN(val)) {
+      setEditingItemId(null);
+      return;
+    }
     try {
       const res = await fetch(`/api/tasks/${taskId}/items/${itemId}/poh`, {
         method: 'PATCH',
@@ -202,6 +211,56 @@ function TaskDetail() {
     </Page>
   );
 
+  // 改动一：subtitle 显示 types + location
+  const typesLabel = Array.isArray(task.types) && task.types.length > 0
+    ? task.types.map(typeDisplay).join(', ')
+    : (task.department || '');
+
+  // 编辑行渲染（抽出来避免重复）
+  const renderEditingCell = (itemId) => (
+    <InlineStack gap="100">
+      <div style={{ width: '70px' }}>
+        <TextField
+          label="" labelHidden
+          type="number"
+          value={editingValue}
+          onChange={setEditingValue}
+          autoComplete="off"
+          autoFocus
+          onKeyDown={e => {
+            if (e.key === 'Enter') handleSavePoh(itemId);
+            if (e.key === 'Escape') setEditingItemId(null);
+          }}
+          // 无 onBlur — 避免与 Save 按钮点击冲突
+        />
+      </div>
+      {/* 使用原生 button 确保 mousedown 不会触发输入框 blur */}
+      <button
+        onMouseDown={e => e.preventDefault()}
+        onClick={() => handleSavePoh(itemId)}
+        style={{
+          padding: '6px 12px', borderRadius: '6px', border: 'none',
+          background: '#008060', color: 'white',
+          cursor: 'pointer', fontSize: '13px', fontWeight: '600',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        Save
+      </button>
+      <button
+        onMouseDown={e => e.preventDefault()}
+        onClick={() => setEditingItemId(null)}
+        style={{
+          padding: '6px 10px', borderRadius: '6px',
+          border: '1px solid #c9cccf', background: 'white',
+          cursor: 'pointer', fontSize: '13px',
+        }}
+      >
+        ✕
+      </button>
+    </InlineStack>
+  );
+
   const rows = task.items.map(item => {
     let detail = '';
     let result = '';
@@ -216,31 +275,15 @@ function TaskDetail() {
       if (item.is_correct || isZeroDelta) {
         detail = '';
         if (canEdit) {
-          result = isEditing ? (
-            <InlineStack gap="100">
-              <div style={{ width: '70px' }}>
-                <TextField
-                  label="" labelHidden type="number"
-                  value={editingValue}
-                  onChange={setEditingValue}
-                  autoComplete="off"
-                  autoFocus
-                  onBlur={() => setEditingItemId(null)}
-                />
-              </div>
-              <Button size="slim" variant="primary"
-                onMouseDown={e => e.preventDefault()}
-                onClick={() => handleSavePoh(item.id)}>
-                Save
-              </Button>
-            </InlineStack>
-          ) : (
-            <span
-              onClick={() => { setEditingItemId(item.id); setEditingValue('0'); }}
-              style={{ color: 'green', fontSize: '18px', cursor: 'pointer' }}
-              title="Click to edit"
-            >✓</span>
-          );
+          result = isEditing
+            ? renderEditingCell(item.id)
+            : (
+              <span
+                onClick={() => { setEditingItemId(item.id); setEditingValue('0'); }}
+                style={{ color: 'green', fontSize: '18px', cursor: 'pointer' }}
+                title="Click to edit"
+              >✓</span>
+            );
         } else {
           result = <span style={{ color: 'green', fontSize: '18px' }}>✓</span>;
         }
@@ -248,34 +291,20 @@ function TaskDetail() {
         detail = `System ${item.soh}  Actual ${item.poh}`;
         const displayDelta = delta > 0 ? `+${delta}` : `${delta}`;
         if (canEdit) {
-          result = isEditing ? (
-            <InlineStack gap="100">
-              <div style={{ width: '70px' }}>
-                <TextField
-                  label="" labelHidden type="number"
-                  value={editingValue}
-                  onChange={setEditingValue}
-                  autoComplete="off"
-                  autoFocus
-                  onBlur={() => setEditingItemId(null)}
-                />
-              </div>
-              <Button size="slim" variant="primary"
-                onMouseDown={e => e.preventDefault()}
-                onClick={() => handleSavePoh(item.id)}>
-                Save
-              </Button>
-            </InlineStack>
-          ) : (
-            <span
-              onClick={() => { setEditingItemId(item.id); setEditingValue(String(item.poh)); }}
-              style={{ cursor: 'pointer', fontWeight: 'bold',
-                color: delta > 0 ? '#008060' : '#d72c0d' }}
-              title="Click to edit"
-            >
-              {displayDelta}
-            </span>
-          );
+          result = isEditing
+            ? renderEditingCell(item.id)
+            : (
+              <span
+                onClick={() => { setEditingItemId(item.id); setEditingValue(String(item.poh)); }}
+                style={{
+                  cursor: 'pointer', fontWeight: 'bold',
+                  color: delta > 0 ? '#008060' : '#d72c0d',
+                }}
+                title="Click to edit"
+              >
+                {displayDelta}
+              </span>
+            );
         } else {
           result = (
             <Text tone={delta > 0 ? 'success' : 'critical'} fontWeight="bold">
@@ -300,8 +329,8 @@ function TaskDetail() {
 
   return (
     <Page
-      title={`${task.task_no}`}
-      subtitle={`${task.department}  ${task.location}`}
+      title={task.task_no}
+      subtitle={`${typesLabel}  ${task.location}`}
       backAction={{ onAction: () => navigate('/buyer/counting-tasks') }}
     >
       <Layout>
@@ -327,18 +356,10 @@ function TaskDetail() {
                   <Button onClick={() => setShowNoteInput(true)}>Add note</Button>
                   {task.status === 'draft' && (
                     <>
-                      <Button
-                        variant="primary"
-                        onClick={handlePublish}
-                        loading={publishing}
-                      >
+                      <Button variant="primary" onClick={handlePublish} loading={publishing}>
                         Publish
                       </Button>
-                      <Button
-                        tone="critical"
-                        onClick={handleDelete}
-                        loading={deleting}
-                      >
+                      <Button tone="critical" onClick={handleDelete} loading={deleting}>
                         Delete
                       </Button>
                     </>
@@ -363,8 +384,7 @@ function TaskDetail() {
                   <InlineStack gap="200" align="start">
                     <div style={{ flex: 1 }}>
                       <TextField
-                        label=""
-                        labelHidden
+                        label="" labelHidden
                         placeholder="Enter note..."
                         value={noteInput}
                         onChange={setNoteInput}
@@ -387,11 +407,7 @@ function TaskDetail() {
                           <Text variant="bodyMd">{note.text}</Text>
                           <InlineStack gap="200">
                             <Text variant="bodySm" tone="subdued">{formatDate(note.created_at)}</Text>
-                            <Button
-                              variant="plain"
-                              tone="critical"
-                              onClick={() => handleDeleteNote(i)}
-                            >
+                            <Button variant="plain" tone="critical" onClick={() => handleDeleteNote(i)}>
                               ✕
                             </Button>
                           </InlineStack>
@@ -412,10 +428,7 @@ function TaskDetail() {
                     indeterminate={selectedItemIds.length > 0 && selectedItemIds.length < task.items.length}
                     onChange={toggleSelectAll}
                   />,
-                  'Name',
-                  'SKU',
-                  'Detail',
-                  'Result',
+                  'Name', 'SKU', 'Detail', 'Result',
                 ]}
                 rows={rows}
               />
