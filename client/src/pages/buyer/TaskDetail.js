@@ -106,7 +106,9 @@ function TaskDetail() {
             .map(i => i.id)
         : selectedItemIds;
 
-      if (itemIds.length === 0) {
+      // itemIds 为空时：若是 commit all，仍发请求让后端判断是否 auto-archive
+      // 若是 commit selected 且无选中，则提示
+      if (itemIds.length === 0 && !all) {
         setError('No items to commit.');
         setCommitting(false);
         return;
@@ -343,10 +345,6 @@ function TaskDetail() {
               </InlineStack>
               <Text variant="bodySm" tone="subdued">{formatDate(task.created_at)}</Text>
             </InlineStack>
-
-            {task.filter_summary && (
-              <Text variant="bodySm" tone="subdued">{task.filter_summary}</Text>
-            )}
 
             {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
 
