@@ -5,7 +5,6 @@ import {
   DataTable,
 } from '@shopify/polaris';
 import { useParams, useNavigate } from 'react-router-dom';
-import CameraScanner from '../../components/CameraScanner';
 
 const CUSTOM_NAME_NAMESPACE = 'custom';
 const CUSTOM_NAME_KEY = 'name';
@@ -48,9 +47,6 @@ function ManagerLabelPrintTaskDetail() {
   const [typeInValue, setTypeInValue] = useState('');
   const [typeInError, setTypeInError] = useState('');
 
-  // 摄像头
-  const [showCamera, setShowCamera] = useState(false);
-
   const [showPrint, setShowPrint]           = useState(false);
   const [templates, setTemplates]           = useState([]);
   const [templatesLoading, setTemplatesLoading] = useState(false);
@@ -65,11 +61,9 @@ function ManagerLabelPrintTaskDetail() {
   const barcodeTimer  = useRef(null);
   const itemsRef      = useRef(items);
   const showTypeInRef = useRef(false);
-  const showCameraRef = useRef(false);
 
   useEffect(() => { itemsRef.current = items; }, [items]);
   useEffect(() => { showTypeInRef.current = showTypeIn; }, [showTypeIn]);
-  useEffect(() => { showCameraRef.current = showCamera; }, [showCamera]);
 
   const fetchTask = useCallback(async () => {
     setLoading(true);
@@ -95,8 +89,7 @@ function ManagerLabelPrintTaskDetail() {
   // 全局扫码枪监听 — 与其他 manager 页面逻辑一致
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (showTypeInRef.current) return; // 手动输入弹窗打开时不响应
-      if (showCameraRef.current) return; // 摄像头打开时不响应
+      if (showTypeInRef.current) return;
       const activeTag = document.activeElement?.tagName;
       if (['INPUT', 'TEXTAREA'].includes(activeTag)) return;
 
@@ -187,10 +180,7 @@ function ManagerLabelPrintTaskDetail() {
     }
   };
 
-  // 摄像头扫描回调 — 直接添加，窗口保持开启
-  const handleCameraScan = (barcode) => {
-    addBySku(barcode);
-  };
+
 
   const handleQtyChange = async (itemId, newQty) => {
     const qty = Math.max(1, parseInt(newQty) || 1);
@@ -403,23 +393,9 @@ ${barcodeScript}</head><body>${allLabels}</body></html>`;
             <BlockStack gap="200">
               <Text variant="headingSm">Scan or enter SKU</Text>
               <InlineStack gap="200" blockAlign="center">
-                {/* 手动输入按钮 */}
                 <Button onClick={() => { setTypeInValue(''); setTypeInError(''); setShowTypeIn(true); }}>
                   Type in SKU
                 </Button>
-                {/* 摄像头按钮 */}
-                <button
-                  onClick={() => setShowCamera(v => !v)}
-                  style={{
-                    padding: '8px 12px', borderRadius: '8px',
-                    border: `1px solid ${showCamera ? '#008060' : '#c9cccf'}`,
-                    background: showCamera ? '#f1f8f5' : 'white',
-                    cursor: 'pointer',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  }}
-                >
-                  <img src="/camera.svg" alt="camera" style={{ width: '20px', height: '20px' }} />
-                </button>
                 {scanLoading && <Spinner size="small" />}
               </InlineStack>
 
@@ -471,14 +447,6 @@ ${barcodeScript}</head><body>${allLabels}</body></html>`;
           </Card>
         </Layout.Section>
       </Layout>
-
-      {/* 摄像头扫描窗口 */}
-      {showCamera && (
-        <CameraScanner
-          onScan={handleCameraScan}
-          onClose={() => setShowCamera(false)}
-        />
-      )}
 
       {/* 手动输入 SKU 弹窗 */}
       {showTypeIn && (

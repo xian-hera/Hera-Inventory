@@ -4,7 +4,6 @@ import {
   Text, DataTable, Banner, TextField, Spinner
 } from '@shopify/polaris';
 import { useNavigate, useParams } from 'react-router-dom';
-import CameraScanner from '../../components/CameraScanner';
 
 const TYPE_LABEL_MAP = {
   'Hair & Skin Care': 'Care',
@@ -81,8 +80,6 @@ function ManagerTaskDetail() {
   const [loadingSoh, setLoadingSoh]         = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showSkuInput, setShowSkuInput]   = useState(false);
-  const [showCamera, setShowCamera]       = useState(false);
-  const cameraPauseRef                    = useRef(false);
   const [skuInput, setSkuInput]           = useState('');
   const [skuError, setSkuError]           = useState('');
   const showSkuInputRef                   = useRef(false);
@@ -304,23 +301,6 @@ function ManagerTaskDetail() {
     });
   };
 
-  // 摄像头扫描回调：与扫码枪逻辑相同
-  const handleCameraScan = (barcode) => {
-    if (!taskRef.current) return;
-    const matched = taskRef.current.items.find(i => i.barcode === barcode);
-    if (matched) {
-      cameraPauseRef.current = true;
-      openPopup(matched);
-    } else {
-      setErrorPopup(`Barcode "${barcode}" not found in this task.`);
-    }
-  };
-
-  const handleCameraPopupClose = () => {
-    closePopup();
-    cameraPauseRef.current = false;
-  };
-
   // 改动三：检查 Not Scanned 数量，若不为 0 则阻止提交并切换筛选
   const handleSubmit = async () => {
     if (!task) return;
@@ -474,9 +454,6 @@ function ManagerTaskDetail() {
                     <Button onClick={() => { setSkuInput(''); setSkuError(''); setShowSkuInput(true); }}>
                       Type in SKU
                     </Button>
-                    <Button onClick={() => setShowCamera(true)}>
-                      <img src="/camera.svg" alt="camera" style={{ width: '20px', height: '20px', display: 'block' }} />
-                    </Button>
                     <Button onClick={() => setShowNoteInput(true)}>Add note</Button>
                     <Button variant="primary" onClick={handleSubmit} loading={submitting}>Submit</Button>
                   </InlineStack>
@@ -562,15 +539,6 @@ function ManagerTaskDetail() {
             </BlockStack>
           </Layout.Section>
         </Layout>
-
-        {/* Camera Scanner */}
-        {showCamera && (
-          <CameraScanner
-            onScan={handleCameraScan}
-            onClose={() => { setShowCamera(false); cameraPauseRef.current = false; }}
-            pauseRef={cameraPauseRef}
-          />
-        )}
 
         {/* Error popup */}
         {errorPopup && (
@@ -666,7 +634,7 @@ function ManagerTaskDetail() {
               background: 'white', borderRadius: '12px', padding: '24px',
               maxWidth: '480px', margin: '0 auto', zIndex: 1001,
             }}>
-              <button onClick={showCamera ? handleCameraPopupClose : closePopup} style={{
+              <button onClick={closePopup} style={{
                 position: 'absolute', top: '12px', right: '12px',
                 background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', zIndex: 1,
               }}>✕</button>
