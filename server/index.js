@@ -27,6 +27,7 @@ app.use('/api/tasks', require('./routes/tasks'));
 app.use('/api/shopify', require('./routes/shopify').router);
 app.use('/api/label-templates', require('./routes/labelTemplates'));
 app.use('/api/label-print-tasks', require('./routes/labelPrintTasks'));
+app.use('/api/price-change-tasks', require('./routes/priceChangeTasks'));
 
 // Serve static files in production
 if (process.env.NODE_ENV === 'production') {

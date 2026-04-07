@@ -4,16 +4,15 @@ import {
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 
-const PIN_CONFIG_KEY  = 'buyer_pin_config';   // { pin, hint }
-const PIN_VERIFIED_KEY = 'buyer_pin_verified'; // cleared on PIN change
+const PIN_CONFIG_KEY  = 'buyer_pin_config';
+const PIN_VERIFIED_KEY = 'buyer_pin_verified';
 const DEFAULT_PIN     = '3591';
 
 function BuyerHome() {
   const navigate = useNavigate();
 
-  // Set-PIN modal state
   const [showModal, setShowModal]       = useState(false);
-  const [step, setStep]                 = useState('verify');   // 'verify' | 'set'
+  const [step, setStep]                 = useState('verify');
   const [currentInput, setCurrentInput] = useState('');
   const [newPin, setNewPin]             = useState('');
   const [newHint, setNewHint]           = useState('');
@@ -28,7 +27,6 @@ function BuyerHome() {
     } catch (e) {}
   }, []);
 
-  // ── Open modal ──────────────────────────────────────────────────────────
   const openModal = () => {
     setStep('verify');
     setCurrentInput('');
@@ -39,17 +37,13 @@ function BuyerHome() {
     setShowModal(true);
   };
 
-  const closeModal = () => {
-    setShowModal(false);
-  };
+  const closeModal = () => setShowModal(false);
 
-  // ── Log out — clear device trust and return to Home ─────────────────────
   const handleLogout = () => {
     localStorage.removeItem(PIN_VERIFIED_KEY);
     navigate('/');
   };
 
-  // ── Step 1: verify current PIN ──────────────────────────────────────────
   const handleVerify = () => {
     if (currentInput === pinConfig.pin) {
       setStep('set');
@@ -61,7 +55,6 @@ function BuyerHome() {
     }
   };
 
-  // ── Step 2: save new PIN ────────────────────────────────────────────────
   const handleSave = () => {
     if (!/^\d{4}$/.test(newPin)) {
       setModalError('PIN must be exactly 4 digits.');
@@ -69,14 +62,12 @@ function BuyerHome() {
     }
     const updated = { pin: newPin, hint: newHint.trim() };
     localStorage.setItem(PIN_CONFIG_KEY, JSON.stringify(updated));
-    // Invalidate device trust so new PIN is required next time
     localStorage.removeItem(PIN_VERIFIED_KEY);
     setPinConfig(updated);
     setSuccess(true);
     setTimeout(() => closeModal(), 1400);
   };
 
-  // ── Primary action per step ─────────────────────────────────────────────
   const primaryAction = step === 'verify'
     ? { content: 'Verify', onAction: handleVerify, disabled: currentInput.length !== 4 }
     : { content: 'Save PIN', onAction: handleSave, disabled: newPin.length !== 4 };
@@ -91,6 +82,9 @@ function BuyerHome() {
             </Button>
             <Button size="large" fullWidth onClick={() => navigate('/buyer/zero-qty-report')}>
               Zero/Low Inventory Count
+            </Button>
+            <Button size="large" fullWidth onClick={() => navigate('/buyer/price-change')}>
+              Price Change Task
             </Button>
             <Button size="large" fullWidth onClick={() => navigate('/buyer/label-templates')}>
               Label templates
@@ -114,17 +108,12 @@ function BuyerHome() {
       >
         <Modal.Section>
           <BlockStack gap="300">
-            {/* Error / success banners */}
             {modalError && (
-              <Banner tone="critical" onDismiss={() => setModalError('')}>
-                {modalError}
-              </Banner>
+              <Banner tone="critical" onDismiss={() => setModalError('')}>{modalError}</Banner>
             )}
             {success && (
               <Banner tone="success">PIN updated successfully.</Banner>
             )}
-
-            {/* Step 1 — verify current PIN */}
             {step === 'verify' && !success && (
               <TextField
                 label="Current PIN"
@@ -141,12 +130,9 @@ function BuyerHome() {
                 helpText="Default PIN is 3591 if it has never been changed."
               />
             )}
-
-            {/* Step 2 — set new PIN + hint */}
             {step === 'set' && !success && (
               <>
                 <TextField
-
                   label="New PIN (4 digits)"
                   type="password"
                   value={newPin}

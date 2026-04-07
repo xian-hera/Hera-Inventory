@@ -18,7 +18,9 @@ import ManagerTaskDetail from './pages/manager/ManagerTaskDetail';
 import ManagerZeroQtyReport from './pages/manager/ManagerZeroQtyReport';
 import ManagerLabelPrintTasks from './pages/manager/ManagerLabelPrintTasks';
 import ManagerLabelPrintTaskDetail from './pages/manager/ManagerLabelPrintTaskDetail';
-import CameraTest from './pages/CameraTest';
+import BuyerPriceChange from './pages/buyer/BuyerPriceChange';
+import BuyerPriceChangePublished from './pages/buyer/BuyerPriceChangePublished';
+import ManagerPriceChangeDetail from './pages/manager/ManagerPriceChangeDetail';
 
 function App() {
   return (
@@ -36,6 +38,8 @@ function App() {
           <Route path="/buyer/zero-qty-report" element={<ZeroQtyReport />} />
           <Route path="/buyer/label-templates" element={<BuyerLabelTemplates />} />
           <Route path="/buyer/label-templates/:id" element={<BuyerLabelEditor />} />
+          <Route path="/buyer/price-change" element={<BuyerPriceChange />} />
+          <Route path="/buyer/price-change/published" element={<BuyerPriceChangePublished />} />
 
           {/* Manager */}
           <Route path="/manager" element={<ManagerHome />} />
@@ -45,7 +49,7 @@ function App() {
           <Route path="/manager/restock-plan" element={<ManagerRestockPlan />} />
           <Route path="/manager/label-print" element={<ManagerLabelPrintTasks />} />
           <Route path="/manager/label-print/:taskId" element={<ManagerLabelPrintTaskDetail />} />
-          <Route path="/camera-test" element={<CameraTest />} />
+          <Route path="/manager/price-change/:taskId" element={<ManagerPriceChangeDetail />} />
         </Routes>
       </BrowserRouter>
     </AppProvider>

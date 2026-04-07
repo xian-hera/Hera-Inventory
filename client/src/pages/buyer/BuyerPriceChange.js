@@ -1,0 +1,331 @@
+import React, { useState, useRef } from 'react';
+import {
+  Page, Layout, Card, Button, BlockStack, InlineStack,
+  Text, Banner, Spinner, DataTable, Checkbox, TextField
+} from '@shopify/polaris';
+import { useNavigate } from 'react-router-dom';
+import MultiSelectDropdown from '../../components/MultiSelectDropdown';
+
+const LOCATIONS = [
+  'MTL01','MTL02','MTL03','MTL04','MTL05','MTL06',
+  'MTL07','MTL08','MTL09','MTL10','MTL11',
+  'EDM01','EDM02','CAL01','OTT01','OTT02','OTT03','QC01','HQ'
+];
+
+function BuyerPriceChange() {
+  const navigate = useNavigate();
+  const csvInputRef = useRef(null);
+
+  const [selectedLocations, setSelectedLocations] = useState([...LOCATIONS]); // 默认全选
+  const [items, setItems]           = useState([]);
+  const [selectedSkus, setSelectedSkus] = useState([]);
+  const [loading, setLoading]       = useState(false);
+  const [error, setError]           = useState('');
+  const [publishing, setPublishing] = useState(false);
+
+  // Note 弹窗
+  const [showNoteInput, setShowNoteInput] = useState(false);
+  const [noteInput, setNoteInput]         = useState('');
+  const [pendingPublishAll, setPendingPublishAll] = useState(false);
+
+  // 自动识别 SKU 列（纯数字列 = barcode，另一列 = SKU 或 Name）
+  // 对于 price change，CSV 只需要 SKU 列
+  const detectSkuCol = (sampleLines) => {
+    // 检测哪列全是数字（barcode），另一列是 SKU
+    const col0AllNumeric = sampleLines.every(l => {
+      const val = l.split(',')[0]?.trim().replace(/"/g, '') || '';
+      return /^\d+$/.test(val);
+    });
+    // 如果 col0 全是数字，则 SKU 可能在 col1；否则 col0 是 SKU
+    // 但对于 price change，我们直接用识别逻辑：找 header 为 SKU/sku 的列，或取非全数字列
+    return col0AllNumeric ? 1 : 0;
+  };
+
+  const handleCSVUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    e.target.value = '';
+
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      const lines = evt.target.result.split('\n').filter(l => l.trim());
+
+      // 检测 header
+      let dataLines = lines;
+      let skuColIndex = -1;
+
+      const firstLine = lines[0]?.split(',').map(c => c.trim().replace(/"/g, '').toLowerCase()) || [];
+      // 查找 header 中有无 sku 列
+      const headerSkuIdx = firstLine.findIndex(h => h === 'sku' || h === 'barcode');
+      if (headerSkuIdx >= 0) {
+        skuColIndex = headerSkuIdx;
+        dataLines = lines.slice(1); // 跳过 header
+      } else {
+        // 没有 header，自动检测
+        const sample = lines.slice(0, 20);
+        skuColIndex = detectSkuCol(sample);
+        dataLines = lines;
+      }
+
+      // 提取 SKU 列表
+      const skus = [];
+      for (const line of dataLines) {
+        const cols = line.split(',');
+        const val = cols[skuColIndex]?.trim().replace(/"/g, '') || '';
+        if (val && val.toLowerCase() !== 'sku' && val.toLowerCase() !== 'barcode') {
+          skus.push(val);
+        }
+      }
+
+      if (skus.length === 0) {
+        setError('No SKUs found in CSV.');
+        return;
+      }
+
+      // 从 Shopify 查询 name 和 price
+      setLoading(true);
+      setError('');
+      setItems([]);
+      setSelectedSkus([]);
+
+      const results = [];
+      const failed = [];
+
+      for (const sku of skus) {
+        try {
+          const res = await fetch(`/api/shopify/variant-by-sku?sku=${encodeURIComponent(sku)}`);
+          if (!res.ok) { failed.push(sku); continue; }
+          const { variant, product } = await res.json();
+          const customName = variant.metafields?.find(
+            m => m.namespace === 'custom' && m.key === 'name'
+          )?.value || product.title || '';
+          results.push({
+            sku: variant.sku || sku,
+            name: customName,
+            price: variant.price || '',
+            barcode: variant.barcode || '',
+            compare_at_price: variant.compare_at_price || '',
+          });
+        } catch {
+          failed.push(sku);
+        }
+      }
+
+      setItems(results);
+      if (failed.length > 0) {
+        setError(`${failed.length} SKU(s) not found in Shopify: ${failed.join(', ')}`);
+      }
+      setLoading(false);
+    };
+    reader.readAsText(file);
+  };
+
+  const toggleSelectOne = (sku) => {
+    setSelectedSkus(prev =>
+      prev.includes(sku) ? prev.filter(x => x !== sku) : [...prev, sku]
+    );
+  };
+  const toggleSelectAll = () => {
+    setSelectedSkus(selectedSkus.length === items.length ? [] : items.map(i => i.sku));
+  };
+
+  const doPublish = async (skusToPublish, note) => {
+    if (selectedLocations.length === 0) {
+      setError('Please select at least one location.');
+      return;
+    }
+    const itemsToPublish = items.filter(i => skusToPublish.includes(i.sku));
+    if (itemsToPublish.length === 0) return;
+
+    setPublishing(true);
+    setError('');
+    try {
+      const res = await fetch('/api/price-change-tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          locations: selectedLocations,
+          items: itemsToPublish,
+          note: note || null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      // 清除已发布的 items
+      setItems(prev => prev.filter(i => !skusToPublish.includes(i.sku)));
+      setSelectedSkus([]);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setPublishing(false);
+    }
+  };
+
+  const handlePublishSelected = () => {
+    if (selectedSkus.length === 0) return;
+    setPendingPublishAll(false);
+    setNoteInput('');
+    setShowNoteInput(true);
+  };
+
+  const handlePublishAll = () => {
+    if (items.length === 0) return;
+    setPendingPublishAll(true);
+    setNoteInput('');
+    setShowNoteInput(true);
+  };
+
+  const handleConfirmPublish = async () => {
+    const skus = pendingPublishAll ? items.map(i => i.sku) : selectedSkus;
+    setShowNoteInput(false);
+    await doPublish(skus, noteInput);
+  };
+
+  const rows = items.map(item => [
+    <Checkbox
+      checked={selectedSkus.includes(item.sku)}
+      onChange={() => toggleSelectOne(item.sku)}
+    />,
+    item.sku,
+    item.name || '-',
+    item.price ? `$${item.price}` : '-',
+  ]);
+
+  return (
+    <Page
+      title="Price Change Task"
+      backAction={{ onAction: () => navigate('/buyer') }}
+      secondaryActions={[{
+        content: 'Published Tasks',
+        onAction: () => navigate('/buyer/price-change/published'),
+      }]}
+    >
+      <Layout>
+        <Layout.Section>
+          <BlockStack gap="400">
+            {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
+
+            {/* Location + CSV */}
+            <Card>
+              <InlineStack gap="400" wrap align="start">
+                <MultiSelectDropdown
+                  label="Location"
+                  options={LOCATIONS}
+                  selected={selectedLocations}
+                  onChange={setSelectedLocations}
+                  showSelectAll={true}
+                />
+                <BlockStack gap="100">
+                  <Text variant="bodySm" tone="subdued"> </Text>
+                  <input
+                    type="file"
+                    accept=".csv"
+                    ref={csvInputRef}
+                    style={{ display: 'none' }}
+                    onChange={handleCSVUpload}
+                  />
+                  <Button onClick={() => csvInputRef.current.click()} loading={loading}>
+                    Upload CSV
+                  </Button>
+                </BlockStack>
+              </InlineStack>
+            </Card>
+
+            {/* Loading */}
+            {loading && (
+              <Card>
+                <BlockStack gap="200">
+                  <InlineStack gap="200" align="center">
+                    <Spinner size="small" />
+                    <Text tone="subdued">Fetching product info from Shopify...</Text>
+                  </InlineStack>
+                </BlockStack>
+              </Card>
+            )}
+
+            {/* Items list */}
+            {!loading && items.length > 0 && (
+              <Card>
+                <BlockStack gap="300">
+                  {/* Action bar */}
+                  <InlineStack gap="200">
+                    <Button onClick={() => { setNoteInput(''); setShowNoteInput(true); setPendingPublishAll(false); }}>
+                      Add task note
+                    </Button>
+                    <Button
+                      disabled={selectedSkus.length === 0 || publishing}
+                      onClick={handlePublishSelected}
+                      loading={publishing}
+                    >
+                      Publish selected ({selectedSkus.length})
+                    </Button>
+                    <Button
+                      variant="primary"
+                      disabled={items.length === 0 || publishing}
+                      onClick={handlePublishAll}
+                      loading={publishing}
+                    >
+                      Publish all
+                    </Button>
+                  </InlineStack>
+
+                  <DataTable
+                    columnContentTypes={['text','text','text','text']}
+                    headings={[
+                      <Checkbox
+                        checked={selectedSkus.length === items.length && items.length > 0}
+                        indeterminate={selectedSkus.length > 0 && selectedSkus.length < items.length}
+                        onChange={toggleSelectAll}
+                      />,
+                      'SKU', 'Name', 'Price',
+                    ]}
+                    rows={rows}
+                  />
+                </BlockStack>
+              </Card>
+            )}
+          </BlockStack>
+        </Layout.Section>
+      </Layout>
+
+      {/* Note + publish confirm */}
+      {showNoteInput && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.5)', zIndex: 1000,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 16px',
+        }}>
+          <div style={{
+            background: 'white', borderRadius: '12px', padding: '24px',
+            width: '100%', maxWidth: '480px',
+          }}>
+            <BlockStack gap="300">
+              <Text variant="headingMd" fontWeight="bold">
+                {pendingPublishAll ? `Publish all ${items.length} items` : `Publish ${selectedSkus.length} selected items`}
+              </Text>
+              <Text variant="bodySm" tone="subdued">
+                To: {selectedLocations.join(', ')}
+              </Text>
+              <TextField
+                label="Task note (optional)"
+                value={noteInput}
+                onChange={setNoteInput}
+                multiline={2}
+                autoComplete="off"
+                placeholder="Add a note for managers..."
+              />
+              <InlineStack gap="200" align="end">
+                <Button onClick={() => setShowNoteInput(false)}>Cancel</Button>
+                <Button variant="primary" onClick={handleConfirmPublish} loading={publishing}>
+                  Publish
+                </Button>
+              </InlineStack>
+            </BlockStack>
+          </div>
+        </div>
+      )}
+    </Page>
+  );
+}
+
+export default BuyerPriceChange;

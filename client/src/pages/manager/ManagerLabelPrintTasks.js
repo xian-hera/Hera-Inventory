@@ -15,19 +15,23 @@ function formatDate(str) {
 
 function ManagerLabelPrintTasks() {
   const navigate = useNavigate();
-  const [tasks, setTasks] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [showNew, setShowNew] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [creating, setCreating] = useState(false);
-  const [selectedIds, setSelectedIds] = useState([]);
-  const [deleteLoading, setDeleteLoading] = useState(false);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [deleteAll, setDeleteAll] = useState(false);
-
-  // Read location from localStorage (set by ManagerHome)
   const location = localStorage.getItem('managerLocation') || '';
+
+  // ── Label print tasks (manager-created) ──────────────────────────────────
+  const [tasks, setTasks]           = useState([]);
+  const [loading, setLoading]       = useState(true);
+  const [error, setError]           = useState('');
+  const [showNew, setShowNew]       = useState(false);
+  const [newName, setNewName]       = useState('');
+  const [creating, setCreating]     = useState(false);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [deleteLoading, setDeleteLoading]     = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteAll, setDeleteAll]   = useState(false);
+
+  // ── Price change tasks (from buyer) ──────────────────────────────────────
+  const [priceTasks, setPriceTasks]       = useState([]);
+  const [priceLoading, setPriceLoading]   = useState(true);
 
   const fetchTasks = useCallback(async () => {
     setLoading(true);
@@ -44,7 +48,21 @@ function ManagerLabelPrintTasks() {
     }
   }, [location]);
 
-  useEffect(() => { fetchTasks(); }, [fetchTasks]);
+  const fetchPriceTasks = useCallback(async () => {
+    if (!location) { setPriceLoading(false); return; }
+    setPriceLoading(true);
+    try {
+      const res = await fetch(`/api/price-change-tasks/manager?location=${encodeURIComponent(location)}`);
+      if (!res.ok) throw new Error('Failed to load price change tasks');
+      setPriceTasks(await res.json());
+    } catch (e) {
+      // 静默失败，不影响主列表
+    } finally {
+      setPriceLoading(false);
+    }
+  }, [location]);
+
+  useEffect(() => { fetchTasks(); fetchPriceTasks(); }, [fetchTasks, fetchPriceTasks]);
 
   const handleCreate = async () => {
     if (!newName.trim()) return;
@@ -118,6 +136,7 @@ function ManagerLabelPrintTasks() {
         <Layout.Section>
           {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
 
+          {/* ── Manager-created label print tasks ── */}
           {loading ? (
             <div style={{ display: 'flex', justifyContent: 'center', padding: 60 }}>
               <Spinner />
@@ -136,9 +155,7 @@ function ManagerLabelPrintTasks() {
                 columnContentTypes={['text', 'text', 'text', 'text']}
                 headings={[
                   <Checkbox label="" labelHidden checked={allSelected} onChange={toggleAll} />,
-                  'Task name',
-                  'Items',
-                  'Created',
+                  'Task name', 'Items', 'Created',
                 ]}
                 rows={tasks.map(t => [
                   <Checkbox
@@ -155,6 +172,42 @@ function ManagerLabelPrintTasks() {
               />
             </Card>
           )}
+
+          {/* ── Price change tasks (from buyer) ── */}
+          <div style={{ marginTop: '24px' }}>
+            <BlockStack gap="300">
+              <Text variant="headingSm">Price Change Tasks</Text>
+              {priceLoading ? (
+                <Card>
+                  <div style={{ display: 'flex', justifyContent: 'center', padding: '24px' }}>
+                    <Spinner size="small" />
+                  </div>
+                </Card>
+              ) : priceTasks.length === 0 ? (
+                <Card>
+                  <Text tone="subdued" alignment="center">No price change tasks assigned to this location.</Text>
+                </Card>
+              ) : (
+                <Card padding="0">
+                  <DataTable
+                    columnContentTypes={['text', 'text', 'text', 'text']}
+                    headings={['Task', 'Items', 'Published', 'Note']}
+                    rows={priceTasks.map(t => [
+                      <Button
+                        variant="plain"
+                        onClick={() => navigate(`/manager/price-change/${t.id}`)}
+                      >
+                        {t.task_no}
+                      </Button>,
+                      String(t.item_count || 0),
+                      formatDate(t.created_at),
+                      t.note || '-',
+                    ])}
+                  />
+                </Card>
+              )}
+            </BlockStack>
+          </div>
         </Layout.Section>
       </Layout>
 
