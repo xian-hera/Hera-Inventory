@@ -46,7 +46,6 @@ function ManagerZeroQtyReport() {
   const [submitting, setSubmitting]     = useState(false);
   const [loadingItems, setLoadingItems] = useState(true);
 
-  // Popup
   const [popupData, setPopupData]               = useState(null);
   const [popupSoh, setPopupSoh]                 = useState(null);
   const [popupScanHistory, setPopupScanHistory] = useState([]);
@@ -55,7 +54,6 @@ function ManagerZeroQtyReport() {
   const [popupCommitted, setPopupCommitted]     = useState(0);
   const [historyLoading, setHistoryLoading]     = useState(false);
 
-  // Type in SKU
   const [showTypeIn, setShowTypeIn]     = useState(false);
   const [skuInput, setSkuInput]         = useState('');
   const [skuSearching, setSkuSearching] = useState(false);
@@ -70,14 +68,6 @@ function ManagerZeroQtyReport() {
   useEffect(() => { popupRef.current = popupData; }, [popupData]);
   useEffect(() => { typeInRef.current = showTypeIn; }, [showTypeIn]);
 
-  // Lock body scroll when any popup is open
-  useEffect(() => {
-    const anyOpen = !!(popupData || loadingSoh || showTypeIn);
-    document.body.style.overflow = anyOpen ? 'hidden' : '';
-    return () => { document.body.style.overflow = ''; };
-  }, [popupData, loadingSoh, showTypeIn]);
-
-  // Lock body scroll when any popup is open
   useEffect(() => {
     const anyOpen = !!(popupData || loadingSoh || showTypeIn);
     document.body.style.overflow = anyOpen ? 'hidden' : '';
@@ -129,6 +119,7 @@ function ManagerZeroQtyReport() {
     };
   }, []);
 
+  // 修复：使用 query string 格式，避免 barcode 含特殊字符导致 404
   const openPopupByBarcode = async (barcode) => {
     setLoadingSoh(true);
     setError('');
@@ -137,7 +128,7 @@ function ManagerZeroQtyReport() {
       const locData = await locRes.json();
       const loc     = locData.find(l => l.name === location);
       if (!loc) throw new Error('Location not found');
-      const res  = await fetch(`/api/shopify/inventory/${encodeURIComponent(barcode)}/${encodeURIComponent(loc.id)}`);
+      const res  = await fetch(`/api/shopify/inventory?barcode=${encodeURIComponent(barcode)}&locationId=${encodeURIComponent(loc.id)}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Product not found');
       const existing = items.find(i => i.barcode === barcode);
@@ -190,7 +181,7 @@ function ManagerZeroQtyReport() {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           barcode: popupData.barcode, name: popupData.name,
-          department: popupData.department, location,
+          type: popupData.productType || null, location,
           shopify_location_id: popupData.locationId,
           soh: popupSoh, poh, scan_history: newHistory,
         }),
@@ -204,6 +195,7 @@ function ManagerZeroQtyReport() {
     closePopup();
   };
 
+  // 修复：使用 query string 格式
   const handleSkuSearch = async () => {
     if (!skuInput.trim()) return;
     setSkuSearching(true); setSkuError('');
@@ -212,7 +204,7 @@ function ManagerZeroQtyReport() {
       const locData = await locRes.json();
       const loc     = locData.find(l => l.name === location);
       if (!loc) throw new Error('Location not found');
-      const res  = await fetch(`/api/shopify/inventory/${encodeURIComponent(skuInput.trim())}/${encodeURIComponent(loc.id)}`);
+      const res  = await fetch(`/api/shopify/inventory?barcode=${encodeURIComponent(skuInput.trim())}&locationId=${encodeURIComponent(loc.id)}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'SKU not found');
       setShowTypeIn(false); setSkuInput('');
@@ -284,7 +276,6 @@ function ManagerZeroQtyReport() {
     </div>,
   ]);
 
-  // Shared styles — popup is positioned directly with left/right to avoid 100vw issues on iOS
   const overlayStyle = {
     position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
     background: 'rgba(0,0,0,0.6)', zIndex: 1000,
@@ -294,8 +285,7 @@ function ManagerZeroQtyReport() {
     top: '50%', left: '16px', right: '16px',
     transform: 'translateY(-50%)',
     background: 'white', borderRadius: '12px', padding: '24px',
-    maxWidth: '480px', margin: '0 auto',
-    zIndex: 1001,
+    maxWidth: '480px', margin: '0 auto', zIndex: 1001,
   };
 
   return (

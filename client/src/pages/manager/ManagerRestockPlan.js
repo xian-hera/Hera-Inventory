@@ -34,12 +34,12 @@ function ManagerRestockPlan() {
   const [loadingItems, setLoadingItems] = useState(true);
   const [error, setError]               = useState('');
 
-  const [popupData, setPopupData]         = useState(null);
-  const [popupSoh, setPopupSoh]           = useState(null);
+  const [popupData, setPopupData]           = useState(null);
+  const [popupSoh, setPopupSoh]             = useState(null);
   const [popupCommitted, setPopupCommitted] = useState(0);
   const [historyLoading, setHistoryLoading] = useState(false);
-  const [restockInput, setRestockInput]   = useState('');
-  const [loadingSoh, setLoadingSoh]       = useState(false);
+  const [restockInput, setRestockInput]     = useState('');
+  const [loadingSoh, setLoadingSoh]         = useState(false);
   const [editingBarcode, setEditingBarcode] = useState(null);
 
   const [showAddByTyping, setShowAddByTyping] = useState(false);
@@ -50,10 +50,7 @@ function ManagerRestockPlan() {
   const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId]           = useState(null);
 
-  // Type filter — null means "all selected" (initial state before any items load)
   const [activeTypes, setActiveTypes] = useState(null);
-
-
 
   const longPressTimer = useRef(null);
   const barcodeBuffer  = useRef('');
@@ -70,7 +67,6 @@ function ManagerRestockPlan() {
       const res  = await fetch(`/api/reports/restock?location=${encodeURIComponent(location)}`);
       const data = await res.json();
       setItems(data);
-      // Initialise filter to all types present
       const types = [...new Set(data.map(i => i.product_type).filter(Boolean))];
       setActiveTypes(types.length > 0 ? types : null);
     } catch (e) {
@@ -112,6 +108,7 @@ function ManagerRestockPlan() {
     };
   }, []);
 
+  // 修复：使用 query string 格式，避免 barcode 含特殊字符导致 404
   const openPopupByBarcode = async (barcode, isEdit) => {
     setLoadingSoh(true);
     setError('');
@@ -121,7 +118,7 @@ function ManagerRestockPlan() {
       const locData = await locRes.json();
       const loc     = locData.find(l => l.name === location);
       if (!loc) throw new Error('Location not found');
-      const res  = await fetch(`/api/shopify/inventory/${encodeURIComponent(barcode)}/${encodeURIComponent(loc.id)}`);
+      const res  = await fetch(`/api/shopify/inventory?barcode=${encodeURIComponent(barcode)}&locationId=${encodeURIComponent(loc.id)}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Product not found');
       const existing = items.find(i => i.barcode === barcode);
@@ -159,8 +156,6 @@ function ManagerRestockPlan() {
     setRestockInput(''); setEditingBarcode(null);
   };
 
-
-
   const handleSave = async () => {
     if (!popupData || restockInput === '') return;
     const qty = parseInt(restockInput);
@@ -180,7 +175,6 @@ function ManagerRestockPlan() {
         const exists = prev.find(i => i.barcode === saved.barcode);
         return exists ? prev.map(i => i.barcode === saved.barcode ? saved : i) : [...prev, saved];
       });
-      // Add new type to activeTypes if not already present
       if (saved.product_type) {
         setActiveTypes(prev => {
           if (!prev) return [saved.product_type];
@@ -236,6 +230,7 @@ function ManagerRestockPlan() {
     setShowDeleteAllConfirm(false);
   };
 
+  // 修复：使用 query string 格式
   const handleSkuSearch = async () => {
     if (!skuInput.trim()) return;
     setSkuSearching(true); setSkuError('');
@@ -244,19 +239,18 @@ function ManagerRestockPlan() {
       const locData = await locRes.json();
       const loc     = locData.find(l => l.name === location);
       if (!loc) throw new Error('Location not found');
-      const res  = await fetch(`/api/shopify/inventory/${encodeURIComponent(skuInput.trim())}/${encodeURIComponent(loc.id)}`);
+      const res  = await fetch(`/api/shopify/inventory?barcode=${encodeURIComponent(skuInput.trim())}&locationId=${encodeURIComponent(loc.id)}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'SKU not found');
       setShowAddByTyping(false); setSkuInput('');
       setPopupData({ ...data, barcode: skuInput.trim(), locationId: loc.id });
-      setPopupSoh(data.soh ?? null); setPopupCommitted(data.committed ?? 0); setRestockInput(''); setEditingBarcode(null);
+      setPopupSoh(data.soh ?? null); setPopupCommitted(data.committed ?? 0);
+      setRestockInput(''); setEditingBarcode(null);
     } catch (e) { setSkuError(e.message || 'SKU not found'); }
     finally { setSkuSearching(false); }
   };
 
-  // Derived: all unique types in current items
   const allTypes = [...new Set(items.map(i => i.product_type).filter(Boolean))];
-  // Derived: filtered items (null activeTypes = show all)
   const filteredItems = activeTypes === null
     ? items
     : items.filter(i => !i.product_type || activeTypes.includes(i.product_type));
@@ -322,20 +316,16 @@ function ManagerRestockPlan() {
                   </button>
                 </InlineStack>
 
-                {/* Type filter — only shown when 2+ types present */}
                 {allTypes.length >= 1 && (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                     {allTypes.map(type => {
                       const selected = activeTypes === null || activeTypes.includes(type);
                       return (
-                        <button
-                          key={type}
+                        <button key={type}
                           onClick={() => {
                             setActiveTypes(prev => {
-                              const all = prev === null
-                                ? allTypes
-                                : prev;
-                              if (all.includes(type) && all.length === 1) return all; // keep at least one
+                              const all = prev === null ? allTypes : prev;
+                              if (all.includes(type) && all.length === 1) return all;
                               const next = all.includes(type)
                                 ? all.filter(t => t !== type)
                                 : [...all, type];
@@ -392,29 +382,19 @@ function ManagerRestockPlan() {
 
       {/* Scan / Edit Popup */}
       {(popupData || loadingSoh) && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          background: 'rgba(0,0,0,0.6)', zIndex: 1000,
-        }}>
-          <div style={{
-            position: 'fixed', top: '50%', left: '16px', right: '16px',
-            transform: 'translateY(-50%)',
-            background: 'white', borderRadius: '12px', padding: '24px',
-            maxWidth: '480px', margin: '0 auto', zIndex: 1001,
-          }}>
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.6)', zIndex: 1000 }}>
+          <div style={{ position: 'fixed', top: '50%', left: '16px', right: '16px',
+            transform: 'translateY(-50%)', background: 'white', borderRadius: '12px', padding: '24px',
+            maxWidth: '480px', margin: '0 auto', zIndex: 1001 }}>
             {loadingSoh ? <InlineStack align="center"><Spinner /></InlineStack> : (
               <>
                 <button onClick={closePopup} style={{ position: 'absolute', top: '12px', right: '12px',
                   background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', zIndex: 1 }}>✕</button>
                 <BlockStack gap="300">
-                  {/* Popup header */}
                   <div style={{ paddingRight: '28px', wordBreak: 'break-word' }}>
                     <div style={{ fontSize: '16px', fontWeight: '700', lineHeight: '1.4' }}>
                       {popupData.name}
-                    </div>
-                    {/* DEBUG — remove after testing */}
-                    <div style={{ fontSize: '11px', color: '#8c9196', marginTop: '2px' }}>
-                      type: {popupData.productType || '(none)'}
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
@@ -426,11 +406,9 @@ function ManagerRestockPlan() {
                         value={restockInput}
                         onChange={e => setRestockInput(e.target.value)}
                         autoComplete="off" autoFocus
-                        style={{
-                          width: '100%', padding: '10px 12px', fontSize: '16px',
+                        style={{ width: '100%', padding: '10px 12px', fontSize: '16px',
                           border: '1px solid #c9cccf', borderRadius: '8px',
-                          outline: 'none', boxSizing: 'border-box', display: 'block',
-                        }}
+                          outline: 'none', boxSizing: 'border-box', display: 'block' }}
                         onFocus={e => { e.target.style.borderColor = '#005bd3'; }}
                         onBlur={e => { e.target.style.borderColor = '#c9cccf'; }}
                       />
@@ -449,16 +427,11 @@ function ManagerRestockPlan() {
                       {popupCommitted} committed
                     </div>
                   )}
-                  <button
-                    onClick={() => openHistory(popupData.barcode)}
-                    disabled={historyLoading}
-                    style={{
-                      padding: '8px 16px', borderRadius: '8px',
-                      border: '1px solid #c9cccf', background: 'white',
-                      color: historyLoading ? '#8c9196' : '#202223',
+                  <button onClick={() => openHistory(popupData.barcode)} disabled={historyLoading}
+                    style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid #c9cccf',
+                      background: 'white', color: historyLoading ? '#8c9196' : '#202223',
                       cursor: historyLoading ? 'not-allowed' : 'pointer',
-                      fontSize: '14px', fontWeight: '500',
-                    }}>
+                      fontSize: '14px', fontWeight: '500' }}>
                     {historyLoading ? '...' : 'Check History ↗'}
                   </button>
                 </BlockStack>
@@ -471,14 +444,10 @@ function ManagerRestockPlan() {
       {/* Add by typing */}
       {showAddByTyping && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          background: 'rgba(0,0,0,0.6)', zIndex: 1000,
-        }}>
-          <div style={{
-            position: 'fixed', top: '50%', left: '16px', right: '16px',
-            transform: 'translateY(-50%)',
-            background: 'white', borderRadius: '12px', padding: '24px',
-            maxWidth: '400px', margin: '0 auto', zIndex: 1001,
-          }}>
+          background: 'rgba(0,0,0,0.6)', zIndex: 1000 }}>
+          <div style={{ position: 'fixed', top: '50%', left: '16px', right: '16px',
+            transform: 'translateY(-50%)', background: 'white', borderRadius: '12px', padding: '24px',
+            maxWidth: '400px', margin: '0 auto', zIndex: 1001 }}>
             <button onClick={() => setShowAddByTyping(false)} style={{ position: 'absolute',
               top: '12px', right: '12px', background: 'none', border: 'none',
               fontSize: '20px', cursor: 'pointer' }}>✕</button>
@@ -488,17 +457,13 @@ function ManagerRestockPlan() {
               <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: '14px', color: '#202223', fontWeight: '500', marginBottom: '4px' }}>SKU</div>
-                  <input
-                    inputMode="numeric"
-                    value={skuInput}
+                  <input inputMode="numeric" value={skuInput}
                     onChange={e => { setSkuInput(e.target.value); setSkuError(''); }}
                     onKeyDown={e => { if (e.key === 'Enter') handleSkuSearch(); }}
                     autoComplete="off" autoFocus placeholder="Enter exact SKU"
-                    style={{
-                      width: '100%', padding: '10px 12px', fontSize: '16px',
+                    style={{ width: '100%', padding: '10px 12px', fontSize: '16px',
                       border: '1px solid #c9cccf', borderRadius: '8px',
-                      outline: 'none', boxSizing: 'border-box', display: 'block',
-                    }}
+                      outline: 'none', boxSizing: 'border-box', display: 'block' }}
                     onFocus={e => { e.target.style.borderColor = '#005bd3'; }}
                     onBlur={e => { e.target.style.borderColor = '#c9cccf'; }}
                   />
@@ -555,7 +520,6 @@ function ManagerRestockPlan() {
           </div>
         </div>
       )}
-
     </Page>
   );
 }
