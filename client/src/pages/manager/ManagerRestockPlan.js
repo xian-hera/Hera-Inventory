@@ -332,8 +332,8 @@ function ManagerRestockPlan() {
                   <button onClick={() => setShowCamera(true)}
                     style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid #c9cccf',
                       background: 'white', color: '#202223', cursor: 'pointer',
-                      fontSize: '14px', fontWeight: '500' }}>
-                    📷
+                      fontSize: '14px', fontWeight: '500', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <img src="/camera.svg" alt="camera" style={{ width: '20px', height: '20px' }} />
                   </button>
                 </InlineStack>
 

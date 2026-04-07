@@ -414,10 +414,11 @@ ${barcodeScript}</head><body>${allLabels}</body></html>`;
                     padding: '8px 12px', borderRadius: '8px',
                     border: `1px solid ${showCamera ? '#008060' : '#c9cccf'}`,
                     background: showCamera ? '#f1f8f5' : 'white',
-                    cursor: 'pointer', fontSize: '18px',
+                    cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
                   }}
                 >
-                  📷
+                  <img src="/camera.svg" alt="camera" style={{ width: '20px', height: '20px' }} />
                 </button>
                 {scanLoading && <Spinner size="small" />}
               </InlineStack>

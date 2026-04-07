@@ -323,8 +323,9 @@ function ManagerZeroQtyReport() {
                   <button onClick={() => setShowCamera(true)}
                     style={{ padding: '10px 16px', borderRadius: '8px',
                       border: '1px solid #c9cccf', background: 'white', color: '#202223',
-                      cursor: 'pointer', fontSize: '14px', fontWeight: '500' }}>
-                    📷
+                      cursor: 'pointer', fontSize: '14px', fontWeight: '500',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <img src="/camera.svg" alt="camera" style={{ width: '20px', height: '20px' }} />
                   </button>
                 </div>
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>

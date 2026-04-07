@@ -474,7 +474,9 @@ function ManagerTaskDetail() {
                     <Button onClick={() => { setSkuInput(''); setSkuError(''); setShowSkuInput(true); }}>
                       Type in SKU
                     </Button>
-                    <Button onClick={() => setShowCamera(true)}>📷</Button>
+                    <Button onClick={() => setShowCamera(true)}>
+                      <img src="/camera.svg" alt="camera" style={{ width: '20px', height: '20px', display: 'block' }} />
+                    </Button>
                     <Button onClick={() => setShowNoteInput(true)}>Add note</Button>
                     <Button variant="primary" onClick={handleSubmit} loading={submitting}>Submit</Button>
                   </InlineStack>

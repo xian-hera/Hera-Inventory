@@ -44,19 +44,34 @@ function CameraScanner({ onScan, onClose, pauseRef }) {
             aspectRatio: 1.777,
           },
           (decodedText) => {
-            // 如果外部要求暂停（弹窗打开中），跳过
             if (pauseRef && pauseRef.current) return;
             if (cooldown.current) return;
             cooldown.current = true;
             onScan(decodedText);
-            // 1.5 秒后允许下一次扫描
             setTimeout(() => { cooldown.current = false; }, 1500);
           },
-          () => { /* 未识别，忽略 */ }
+          () => {}
         );
         setScannerReady(true);
       } catch (e) {
-        setInitError('Could not start camera: ' + e.message);
+        // 如果后置摄像头失败，尝试不指定 facingMode
+        try {
+          await scanner.start(
+            { facingMode: 'user' },
+            { fps: 10, qrbox: { width: 260, height: 90 }, aspectRatio: 1.777 },
+            (decodedText) => {
+              if (pauseRef && pauseRef.current) return;
+              if (cooldown.current) return;
+              cooldown.current = true;
+              onScan(decodedText);
+              setTimeout(() => { cooldown.current = false; }, 1500);
+            },
+            () => {}
+          );
+          setScannerReady(true);
+        } catch (e2) {
+          setInitError('Could not start camera: ' + (e2?.message || e?.message || 'Permission denied'));
+        }
       }
     };
 
