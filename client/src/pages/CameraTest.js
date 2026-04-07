@@ -1,106 +1,74 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { BrowserMultiFormatReader, NotFoundException } from '@zxing/library';
+import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
+
+const SCANNER_ID = 'html5qr-scanner';
+
+const FORMATS = [
+  Html5QrcodeSupportedFormats.EAN_13,
+  Html5QrcodeSupportedFormats.EAN_8,
+  Html5QrcodeSupportedFormats.UPC_A,
+  Html5QrcodeSupportedFormats.UPC_E,
+  Html5QrcodeSupportedFormats.CODE_128,
+  Html5QrcodeSupportedFormats.CODE_39,
+];
 
 function CameraTest() {
-  const [scanning, setScanning]     = useState(false);
-  const [result, setResult]         = useState('');
-  const [error, setError]           = useState('');
-  const [lastScans, setLastScans]   = useState([]);
-
-  const videoRef    = useRef(null);
-  const canvasRef   = useRef(null);
-  const readerRef   = useRef(null);
-  const rafRef      = useRef(null);
-  const streamRef   = useRef(null);
-  const scanningRef = useRef(false);
-
-  // 清理函数
-  const stopCamera = () => {
-    scanningRef.current = false;
-    if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(t => t.stop());
-      streamRef.current = null;
-    }
-    if (videoRef.current) videoRef.current.srcObject = null;
-    setScanning(false);
-  };
+  const [scanning, setScanning]   = useState(false);
+  const [result, setResult]       = useState('');
+  const [error, setError]         = useState('');
+  const [lastScans, setLastScans] = useState([]);
+  const scannerRef = useRef(null);
+  const cooldown   = useRef(false);
 
   useEffect(() => {
-    return () => stopCamera();
+    return () => { stopCamera(); };
   }, []);
 
   const startCamera = async () => {
     setError('');
     setResult('');
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
+      const scanner = new Html5Qrcode(SCANNER_ID, {
+        formatsToSupport: FORMATS,
+        verbose: false,
       });
-      streamRef.current = stream;
-      videoRef.current.srcObject = stream;
-      await videoRef.current.play();
+      scannerRef.current = scanner;
+
+      await scanner.start(
+        { facingMode: 'environment' },
+        {
+          fps: 10,
+          qrbox: { width: 280, height: 100 },
+          aspectRatio: 1.777,
+        },
+        (decodedText, decodedResult) => {
+          if (cooldown.current) return;
+          cooldown.current = true;
+          console.log('Scanned:', decodedText, decodedResult);
+          setResult(decodedText);
+          setLastScans(prev => [
+            { text: decodedText, time: new Date().toLocaleTimeString() },
+            ...prev.slice(0, 9),
+          ]);
+          setTimeout(() => { cooldown.current = false; }, 1500);
+        },
+        () => { /* 未识别到，忽略 */ }
+      );
       setScanning(true);
-      scanningRef.current = true;
-      readerRef.current = new BrowserMultiFormatReader();
-      scanFrame();
     } catch (e) {
       setError('Camera error: ' + e.message);
     }
   };
 
-  const scanFrame = () => {
-    if (!scanningRef.current) return;
-    const video  = videoRef.current;
-    const canvas = canvasRef.current;
-    if (!video || !canvas || video.readyState < 2) {
-      rafRef.current = requestAnimationFrame(scanFrame);
-      return;
+  const stopCamera = async () => {
+    if (scannerRef.current) {
+      try {
+        await scannerRef.current.stop();
+        scannerRef.current.clear();
+      } catch (e) { /* ignore */ }
+      scannerRef.current = null;
     }
-
-    const vw = video.videoWidth;
-    const vh = video.videoHeight;
-    canvas.width  = vw;
-    canvas.height = vh;
-
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(video, 0, 0, vw, vh);
-
-    // 诊断模式：扩大到全画面，确认 ZXing 能否识别
-    const roiW = vw;
-    const roiH = vh;
-    const roiX = 0;
-    const roiY = 0;
-
-    const roiCanvas = document.createElement('canvas');
-    roiCanvas.width  = roiW;
-    roiCanvas.height = roiH;
-    roiCanvas.getContext('2d').drawImage(canvas, roiX, roiY, roiW, roiH, 0, 0, roiW, roiH);
-
-    try {
-      const res = readerRef.current.decodeFromCanvas(roiCanvas);
-      const text = res.getText();
-      setResult(text);
-      setLastScans(prev => [
-        { text, time: new Date().toLocaleTimeString() },
-        ...prev.slice(0, 9),
-      ]);
-      // 成功后暂停 1.5 秒再继续，避免重复读取
-      setTimeout(() => {
-        if (scanningRef.current) rafRef.current = requestAnimationFrame(scanFrame);
-      }, 1500);
-    } catch (e) {
-      if (!(e instanceof NotFoundException)) {
-        console.warn('Scan error:', e);
-      }
-      rafRef.current = requestAnimationFrame(scanFrame);
-    }
-  };
-
-  // 计算取景框中央长条的位置（用于 UI overlay）
-  // 长条：宽 80%，高 20%，居中
-  const overlayStyle = {
-    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, pointerEvents: 'none',
+    setScanning(false);
   };
 
   return (
@@ -114,61 +82,8 @@ function CameraTest() {
         </div>
       )}
 
-      {/* 取景区域 */}
-      <div style={{ position: 'relative', width: '100%', aspectRatio: '16/9',
-        background: '#000', borderRadius: '12px', overflow: 'hidden', marginBottom: '12px' }}>
-        <video ref={videoRef} style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-          playsInline muted />
-        <canvas ref={canvasRef} style={{ display: 'none' }} />
+      <div id={SCANNER_ID} style={{ marginBottom: '12px', borderRadius: '12px', overflow: 'hidden' }} />
 
-        {/* Overlay：上下左右暗色遮罩 + 中央透明长条 */}
-        {scanning && (
-          <div style={overlayStyle}>
-            {/* 上方遮罩 */}
-            <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '40%',
-              background: 'rgba(0,0,0,0.5)' }} />
-            {/* 下方遮罩 */}
-            <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: '40%',
-              background: 'rgba(0,0,0,0.5)' }} />
-            {/* 左侧遮罩 */}
-            <div style={{ position: 'absolute', top: '40%', left: 0, width: '10%', height: '20%',
-              background: 'rgba(0,0,0,0.5)' }} />
-            {/* 右侧遮罩 */}
-            <div style={{ position: 'absolute', top: '40%', right: 0, width: '10%', height: '20%',
-              background: 'rgba(0,0,0,0.5)' }} />
-            {/* 中央识别框边框 */}
-            <div style={{
-              position: 'absolute', top: '40%', left: '10%', right: '10%', height: '20%',
-              border: '2px solid #00e676', borderRadius: '4px',
-              boxShadow: '0 0 0 1px rgba(0,230,118,0.3)',
-            }}>
-              {/* 扫描线动画 */}
-              <div style={{
-                position: 'absolute', left: 0, right: 0, height: '2px',
-                background: 'rgba(0,230,118,0.8)',
-                animation: 'scanline 1.5s ease-in-out infinite',
-              }} />
-            </div>
-            <style>{`
-              @keyframes scanline {
-                0%   { top: 0; }
-                50%  { top: calc(100% - 2px); }
-                100% { top: 0; }
-              }
-            `}</style>
-          </div>
-        )}
-
-        {/* 未开始时的提示 */}
-        {!scanning && (
-          <div style={{ position: 'absolute', inset: 0, display: 'flex',
-            alignItems: 'center', justifyContent: 'center', color: '#6d7175', fontSize: '14px' }}>
-            Press Start to open camera
-          </div>
-        )}
-      </div>
-
-      {/* 控制按钮 */}
       <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
         {!scanning ? (
           <button onClick={startCamera} style={{
@@ -189,7 +104,6 @@ function CameraTest() {
         )}
       </div>
 
-      {/* 最新扫描结果 */}
       {result && (
         <div style={{ background: '#f1f8f5', border: '1px solid #008060', borderRadius: '8px',
           padding: '12px', marginBottom: '16px' }}>
@@ -200,7 +114,6 @@ function CameraTest() {
         </div>
       )}
 
-      {/* 扫描历史 */}
       {lastScans.length > 0 && (
         <div>
           <div style={{ fontSize: '13px', color: '#6d7175', marginBottom: '8px' }}>Scan history</div>
