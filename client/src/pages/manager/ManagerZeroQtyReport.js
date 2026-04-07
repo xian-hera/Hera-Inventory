@@ -4,6 +4,7 @@ import {
   Text, DataTable, Checkbox, Banner, Spinner
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
+import CameraScanner from '../../components/CameraScanner';
 
 function computePOH(scanHistory, soh) {
   if (!scanHistory || scanHistory.length === 0) return null;
@@ -55,6 +56,8 @@ function ManagerZeroQtyReport() {
   const [historyLoading, setHistoryLoading]     = useState(false);
 
   const [showTypeIn, setShowTypeIn]     = useState(false);
+  const [showCamera, setShowCamera]     = useState(false);
+  const cameraPauseRef                  = useRef(false);
   const [skuInput, setSkuInput]         = useState('');
   const [skuSearching, setSkuSearching] = useState(false);
   const [skuError, setSkuError]         = useState('');
@@ -118,6 +121,17 @@ function ManagerZeroQtyReport() {
       clearTimeout(barcodeTimer.current);
     };
   }, []);
+
+  // 摄像头扫描回调
+  const handleCameraScan = (barcode) => {
+    cameraPauseRef.current = true;
+    openPopupByBarcode(barcode);
+  };
+
+  const handleCameraPopupClose = () => {
+    closePopup();
+    cameraPauseRef.current = false;
+  };
 
   // 修复：使用 query string 格式，避免 barcode 含特殊字符导致 404
   const openPopupByBarcode = async (barcode) => {
@@ -299,12 +313,20 @@ function ManagerZeroQtyReport() {
             </Text>
             <Card>
               <BlockStack gap="300">
-                <button onClick={() => { setSkuInput(''); setSkuError(''); setShowTypeIn(true); }}
-                  style={{ width: '100%', padding: '10px 16px', borderRadius: '8px',
-                    border: '1px solid #c9cccf', background: 'white', color: '#202223',
-                    cursor: 'pointer', fontSize: '14px', fontWeight: '500', textAlign: 'center' }}>
-                  Type in SKU
-                </button>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button onClick={() => { setSkuInput(''); setSkuError(''); setShowTypeIn(true); }}
+                    style={{ flex: 1, padding: '10px 16px', borderRadius: '8px',
+                      border: '1px solid #c9cccf', background: 'white', color: '#202223',
+                      cursor: 'pointer', fontSize: '14px', fontWeight: '500', textAlign: 'center' }}>
+                    Type in SKU
+                  </button>
+                  <button onClick={() => setShowCamera(true)}
+                    style={{ padding: '10px 16px', borderRadius: '8px',
+                      border: '1px solid #c9cccf', background: 'white', color: '#202223',
+                      cursor: 'pointer', fontSize: '14px', fontWeight: '500' }}>
+                    📷
+                  </button>
+                </div>
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                   <button disabled={selectedIds.length === 0 || submitting} onClick={handleDeleteSelected}
                     style={{ flex: '1 1 auto', padding: '8px 12px', borderRadius: '8px',
@@ -375,7 +397,7 @@ function ManagerZeroQtyReport() {
             {loadingSoh
               ? <InlineStack align="center"><Spinner /></InlineStack>
               : <>
-                  <button onClick={closePopup} style={{
+                  <button onClick={showCamera ? handleCameraPopupClose : closePopup} style={{
                     position: 'absolute', top: '12px', right: '12px',
                     background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', zIndex: 1,
                   }}>✕</button>
@@ -453,6 +475,15 @@ function ManagerZeroQtyReport() {
             }
           </div>
         </div>
+      )}
+
+      {/* Camera Scanner */}
+      {showCamera && (
+        <CameraScanner
+          onScan={handleCameraScan}
+          onClose={() => { setShowCamera(false); cameraPauseRef.current = false; }}
+          pauseRef={cameraPauseRef}
+        />
       )}
 
       {/* Type in SKU popup */}

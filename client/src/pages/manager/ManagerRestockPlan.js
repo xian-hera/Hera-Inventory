@@ -4,6 +4,7 @@ import {
   Text, Banner, Spinner
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
+import CameraScanner from '../../components/CameraScanner';
 
 function resolveKey(e) {
   if (e.key && e.key !== 'Unidentified' && e.key.length === 1) return e.key;
@@ -43,6 +44,8 @@ function ManagerRestockPlan() {
   const [editingBarcode, setEditingBarcode] = useState(null);
 
   const [showAddByTyping, setShowAddByTyping] = useState(false);
+  const [showCamera, setShowCamera]           = useState(false);
+  const cameraPauseRef                        = useRef(false);
   const [skuInput, setSkuInput]               = useState('');
   const [skuSearching, setSkuSearching]       = useState(false);
   const [skuError, setSkuError]               = useState('');
@@ -107,6 +110,18 @@ function ManagerRestockPlan() {
       clearTimeout(barcodeTimer.current);
     };
   }, []);
+
+  // 摄像头扫描回调：与扫码枪逻辑相同
+  const handleCameraScan = (barcode) => {
+    cameraPauseRef.current = true; // 暂停摄像头识别，等弹窗关闭
+    openPopupByBarcode(barcode, false);
+  };
+
+  // 弹窗关闭后恢复摄像头识别
+  const handlePopupClose = () => {
+    closePopup();
+    cameraPauseRef.current = false;
+  };
 
   // 修复：使用 query string 格式，避免 barcode 含特殊字符导致 404
   const openPopupByBarcode = async (barcode, isEdit) => {
@@ -314,6 +329,12 @@ function ManagerRestockPlan() {
                       fontSize: '14px', fontWeight: '500' }}>
                     Add by typing
                   </button>
+                  <button onClick={() => setShowCamera(true)}
+                    style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid #c9cccf',
+                      background: 'white', color: '#202223', cursor: 'pointer',
+                      fontSize: '14px', fontWeight: '500' }}>
+                    📷
+                  </button>
                 </InlineStack>
 
                 {allTypes.length >= 1 && (
@@ -389,7 +410,7 @@ function ManagerRestockPlan() {
             maxWidth: '480px', margin: '0 auto', zIndex: 1001 }}>
             {loadingSoh ? <InlineStack align="center"><Spinner /></InlineStack> : (
               <>
-                <button onClick={closePopup} style={{ position: 'absolute', top: '12px', right: '12px',
+                <button onClick={showCamera ? handlePopupClose : closePopup} style={{ position: 'absolute', top: '12px', right: '12px',
                   background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', zIndex: 1 }}>✕</button>
                 <BlockStack gap="300">
                   <div style={{ paddingRight: '28px', wordBreak: 'break-word' }}>
@@ -473,6 +494,15 @@ function ManagerRestockPlan() {
             </BlockStack>
           </div>
         </div>
+      )}
+
+      {/* Camera Scanner */}
+      {showCamera && (
+        <CameraScanner
+          onScan={handleCameraScan}
+          onClose={() => { setShowCamera(false); cameraPauseRef.current = false; }}
+          pauseRef={cameraPauseRef}
+        />
       )}
 
       {/* Delete-all confirm */}
