@@ -66,11 +66,11 @@ function CameraTest() {
     const ctx = canvas.getContext('2d');
     ctx.drawImage(video, 0, 0, vw, vh);
 
-    // 只取中央长条区域：宽度 80%，高度 20%
-    const roiW = Math.floor(vw * 0.8);
-    const roiH = Math.floor(vh * 0.2);
-    const roiX = Math.floor((vw - roiW) / 2);
-    const roiY = Math.floor((vh - roiH) / 2);
+    // 诊断模式：扩大到全画面，确认 ZXing 能否识别
+    const roiW = vw;
+    const roiH = vh;
+    const roiX = 0;
+    const roiY = 0;
 
     const roiCanvas = document.createElement('canvas');
     roiCanvas.width  = roiW;
