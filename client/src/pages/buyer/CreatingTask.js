@@ -190,17 +190,40 @@ function CreatingTask() {
     const reader = new FileReader();
     reader.onload = (evt) => {
       const lines = evt.target.result.split('\n').filter(l => l.trim());
+
+      // 跳过 header 行（如果有）
+      const dataLines = lines.filter(l => {
+        const cols = l.split(',').map(c => c.trim().replace(/"/g, '').toLowerCase());
+        return !(cols[0] === 'barcode' || cols[0] === 'name' || cols[1] === 'barcode' || cols[1] === 'name');
+      });
+
+      if (dataLines.length === 0) return;
+
+      // 自动识别哪列是 barcode：取前20行数据行，看哪列全部是纯数字
+      const sampleLines = dataLines.slice(0, 20);
+      const col0AllNumeric = sampleLines.every(l => {
+        const val = l.split(',')[0]?.trim().replace(/"/g, '') || '';
+        return /^\d+$/.test(val);
+      });
+      const col1AllNumeric = sampleLines.every(l => {
+        const val = l.split(',')[1]?.trim().replace(/"/g, '') || '';
+        return /^\d+$/.test(val);
+      });
+
+      // col0 全数字 → col0=barcode, col1=name；否则 col0=name, col1=barcode
+      const barcodeCol = col0AllNumeric ? 0 : col1AllNumeric ? 1 : 0;
+      const nameCol = barcodeCol === 0 ? 1 : 0;
+
       const newProducts = [];
-      for (const line of lines) {
+      for (const line of dataLines) {
         const cols = line.split(',');
         if (cols.length >= 2) {
-          const name = String(cols[0].trim().replace(/"/g, ''));
-          const barcode = String(cols[1].trim().replace(/"/g, ''));
-          if (barcode && barcode.toLowerCase() !== 'barcode' && name.toLowerCase() !== 'name') {
-            newProducts.push({ name, barcode });
-          }
+          const barcode = String(cols[barcodeCol]?.trim().replace(/"/g, '') || '');
+          const name = String(cols[nameCol]?.trim().replace(/"/g, '') || '');
+          if (barcode) newProducts.push({ name, barcode });
         }
       }
+
       if (newProducts.length === 0) return;
       setProducts(prev => {
         const existing = prev.map(p => p.barcode);

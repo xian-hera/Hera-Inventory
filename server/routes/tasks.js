@@ -311,10 +311,12 @@ router.patch('/:id/commit', async (req, res) => {
     const task = await pool.query('SELECT * FROM tasks WHERE id = $1', [id]);
     if (task.rows.length === 0) return res.status(404).json({ error: 'Task not found' });
 
-    const items = await pool.query(
-      'SELECT * FROM task_items WHERE id = ANY($1) AND task_id = $2',
-      [itemIds, id]
-    );
+    const items = itemIds && itemIds.length > 0
+      ? await pool.query(
+          'SELECT * FROM task_items WHERE id = ANY($1) AND task_id = $2',
+          [itemIds, id]
+        )
+      : { rows: [] };
 
     const { getShopify, getSession } = require('../shopify');
     const session = await getSession();
