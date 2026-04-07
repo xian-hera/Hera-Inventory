@@ -459,6 +459,7 @@ function CreatingTask() {
                       onChange={handleCSVUpload}
                     />
                     <Button onClick={() => csvInputRef.current.click()}>Upload CSV</Button>
+                    <Text variant="bodySm" tone="subdued">Name in column A, SKU in column B, no more columns</Text>
                     {taskItems.length > 0 && (
                       <Text variant="bodySm" tone="subdued">{taskItems.length} items added</Text>
                     )}
