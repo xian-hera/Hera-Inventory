@@ -565,4 +565,51 @@ router.get('/variant-by-sku', async (req, res) => {
   }
 });
 
+// GET /api/shopify/inventory-history/:barcode?locationId=gid://shopify/Location/xxx
+router.get('/inventory-history/:barcode', async (req, res) => {
+  try {
+    const session = await getSession();
+    if (!session) return res.status(401).json({ error: 'No session' });
+
+    const { barcode } = req.params;
+    const { locationId } = req.query;
+    const shopify = getShopify();
+    const client = new shopify.clients.Graphql({ session });
+
+    const variantQuery = `
+      query getVariant($barcode: String!) {
+        productVariants(first: 1, query: $barcode) {
+          edges {
+            node {
+              id
+              inventoryItem { id }
+            }
+          }
+        }
+      }
+    `;
+
+    const variantRes = await shopifyRequest(client, variantQuery, { barcode: `barcode:${barcode}` });
+    const variantEdges = variantRes.data?.productVariants?.edges || [];
+    if (variantEdges.length === 0) return res.status(404).json({ error: 'Product not found' });
+
+    const inventoryItemGid = variantEdges[0].node.inventoryItem?.id;
+    if (!inventoryItemGid) return res.status(404).json({ error: 'Inventory item not found' });
+
+    const inventoryItemId = inventoryItemGid.split('/').pop();
+    const storeName = session.shop.replace('.myshopify.com', '');
+    let url = `https://admin.shopify.com/store/${storeName}/products/inventory/${inventoryItemId}/inventory_history`;
+
+    if (locationId) {
+      const numericLocationId = locationId.split('/').pop();
+      url += `?location_id=${numericLocationId}`;
+    }
+
+    res.json({ url });
+  } catch (e) {
+    console.error('GET /api/shopify/inventory-history error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = { router, getDepartment };
