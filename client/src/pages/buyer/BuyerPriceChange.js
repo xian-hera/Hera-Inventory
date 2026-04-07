@@ -28,19 +28,6 @@ function BuyerPriceChange() {
   const [noteInput, setNoteInput]         = useState('');
   const [pendingPublishAll, setPendingPublishAll] = useState(false);
 
-  // 自动识别 SKU 列（纯数字列 = barcode，另一列 = SKU 或 Name）
-  // 对于 price change，CSV 只需要 SKU 列
-  const detectSkuCol = (sampleLines) => {
-    // 检测哪列全是数字（barcode），另一列是 SKU
-    const col0AllNumeric = sampleLines.every(l => {
-      const val = l.split(',')[0]?.trim().replace(/"/g, '') || '';
-      return /^\d+$/.test(val);
-    });
-    // 如果 col0 全是数字，则 SKU 可能在 col1；否则 col0 是 SKU
-    // 但对于 price change，我们直接用识别逻辑：找 header 为 SKU/sku 的列，或取非全数字列
-    return col0AllNumeric ? 1 : 0;
-  };
-
   const handleCSVUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -50,37 +37,29 @@ function BuyerPriceChange() {
     reader.onload = async (evt) => {
       const lines = evt.target.result.split('\n').filter(l => l.trim());
 
-      // 检测 header
-      let dataLines = lines;
-      let skuColIndex = -1;
+      // 跳过 header 行（含 sku/name/barcode 关键词）
+      const dataLines = lines.filter(l => {
+        const cols = l.split(',').map(c => c.trim().replace(/"/g, '').toLowerCase());
+        return !(cols[0] === 'sku' || cols[0] === 'name' || cols[0] === 'barcode' ||
+                 cols[1] === 'sku' || cols[1] === 'name' || cols[1] === 'barcode');
+      });
 
-      const firstLine = lines[0]?.split(',').map(c => c.trim().replace(/"/g, '').toLowerCase()) || [];
-      // 查找 header 中有无 sku 列
-      const headerSkuIdx = firstLine.findIndex(h => h === 'sku' || h === 'barcode');
-      if (headerSkuIdx >= 0) {
-        skuColIndex = headerSkuIdx;
-        dataLines = lines.slice(1); // 跳过 header
-      } else {
-        // 没有 header，自动检测
-        const sample = lines.slice(0, 20);
-        skuColIndex = detectSkuCol(sample);
-        dataLines = lines;
-      }
+      if (dataLines.length === 0) { setError('No data found in CSV.'); return; }
 
-      // 提取 SKU 列表
-      const skus = [];
-      for (const line of dataLines) {
-        const cols = line.split(',');
-        const val = cols[skuColIndex]?.trim().replace(/"/g, '') || '';
-        if (val && val.toLowerCase() !== 'sku' && val.toLowerCase() !== 'barcode') {
-          skus.push(val);
-        }
-      }
+      // 自动识别 SKU 列：取前 20 行，哪列全是纯数字就是 SKU
+      const sample = dataLines.slice(0, 20);
+      const col0AllNumeric = sample.every(l => /^\d+$/.test(l.split(',')[0]?.trim().replace(/"/g, '') || ''));
+      const col1AllNumeric = sample.every(l => /^\d+$/.test(l.split(',')[1]?.trim().replace(/"/g, '') || ''));
+      const skuCol = col0AllNumeric ? 0 : col1AllNumeric ? 1 : 0;
 
-      if (skus.length === 0) {
-        setError('No SKUs found in CSV.');
-        return;
-      }
+      // 提取 SKU 列表（去重）
+      const skus = [...new Set(
+        dataLines
+          .map(l => l.split(',')[skuCol]?.trim().replace(/"/g, '') || '')
+          .filter(Boolean)
+      )];
+
+      if (skus.length === 0) { setError('No SKUs found in CSV.'); return; }
 
       // 从 Shopify 查询 name 和 price
       setLoading(true);
