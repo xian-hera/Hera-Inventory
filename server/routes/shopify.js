@@ -249,13 +249,15 @@ router.get('/locations', async (req, res) => {
   }
 });
 
-// GET /api/shopify/inventory/:barcode/:locationId
-router.get('/inventory/:barcode/:locationId', async (req, res) => {
+// GET /api/shopify/inventory?barcode=XXX&locationId=YYY
+router.get('/inventory', async (req, res) => {
   try {
     const session = await getSession();
     if (!session) return res.status(401).json({ error: 'No session' });
 
-    const { barcode, locationId } = req.params;
+    const { barcode, locationId } = req.query;
+    if (!barcode || !locationId) return res.status(400).json({ error: 'barcode and locationId required' });
+
     const shopify = getShopify();
     const client = new shopify.clients.Graphql({ session });
 
@@ -304,7 +306,7 @@ router.get('/inventory/:barcode/:locationId', async (req, res) => {
       inventoryItemId: variant.inventoryItem.id,
     });
   } catch (e) {
-    console.error('GET /api/shopify/inventory error:', e);
+    console.error('[inventory] error:', e.message, e.stack);
     res.status(500).json({ error: e.message });
   }
 });

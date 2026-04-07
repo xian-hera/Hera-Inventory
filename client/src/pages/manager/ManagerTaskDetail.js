@@ -165,7 +165,7 @@ function ManagerTaskDetail() {
       const locData = await locRes.json();
       const loc     = locData.find(l => l.name === location);
       if (!loc) throw new Error('Location not found');
-      const res  = await fetch(`/api/shopify/inventory/${encodeURIComponent(item.barcode)}/${encodeURIComponent(loc.id)}`);
+      const res  = await fetch(`/api/shopify/inventory?barcode=${encodeURIComponent(item.barcode)}&locationId=${encodeURIComponent(loc.id)}`);
       const data = await res.json();
       setPopupSoh(data.soh ?? null);
       setPopupCommitted(data.committed ?? 0);
