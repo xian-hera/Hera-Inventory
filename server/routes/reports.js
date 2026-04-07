@@ -18,8 +18,8 @@ router.get('/', async (req, res) => {
 
     if (type && type !== 'ALL') {
       const types = type.split(',');
-      conditions.push(`type = ANY($${paramIndex++})`);
-      params.push(types);
+      conditions.push(`UPPER(type) = ANY(${paramIndex++})`);
+      params.push(types.map(t => t.toUpperCase()));
     }
     if (location && location !== 'ALL') {
       const locations = location.split(',');

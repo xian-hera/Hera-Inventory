@@ -20,7 +20,9 @@ const TYPE_OPTIONS = [
 
 const TYPE_LABEL_MAP = {
   'Hair & Skin Care': 'Care',
+  'HAIR & SKIN CARE': 'Care',
   'Tools & Accessories': 'Tools + Acc.',
+  'TOOLS & ACCESSORIES': 'Tools + Acc.',
 };
 
 function typeDisplay(type) {
