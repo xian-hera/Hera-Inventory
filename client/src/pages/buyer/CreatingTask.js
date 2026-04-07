@@ -230,7 +230,6 @@ function CreatingTask() {
         const toAdd = newProducts.filter(p => !existing.includes(p.barcode));
         return [...prev, ...toAdd];
       });
-      setTaskItems(prev => [...new Set([...prev, ...newProducts.map(p => p.barcode)])]);
       setCsvImported(true);
     };
     reader.readAsText(file);
