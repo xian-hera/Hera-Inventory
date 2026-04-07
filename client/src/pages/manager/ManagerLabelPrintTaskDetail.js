@@ -42,7 +42,6 @@ function ManagerLabelPrintTaskDetail() {
   const [scanError, setScanError]     = useState('');
   const [selectedIds, setSelectedIds] = useState([]);
 
-  // 手动输入 SKU 弹窗
   const [showTypeIn, setShowTypeIn] = useState(false);
   const [typeInValue, setTypeInValue] = useState('');
   const [typeInError, setTypeInError] = useState('');
@@ -86,7 +85,6 @@ function ManagerLabelPrintTaskDetail() {
 
   useEffect(() => { fetchTask(); }, [fetchTask]);
 
-  // 全局扫码枪监听 — 与其他 manager 页面逻辑一致
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (showTypeInRef.current) return;
@@ -116,7 +114,6 @@ function ManagerLabelPrintTaskDetail() {
     };
   }, []);
 
-  // 核心：通过 SKU/barcode 添加条目
   const addBySku = async (sku) => {
     if (!sku) return;
     setScanLoading(true);
@@ -166,7 +163,6 @@ function ManagerLabelPrintTaskDetail() {
     }
   };
 
-  // 手动输入 SKU 提交
   const handleTypeInSubmit = async () => {
     const sku = typeInValue.trim();
     if (!sku) return;
@@ -179,8 +175,6 @@ function ManagerLabelPrintTaskDetail() {
       setTypeInError(e.message);
     }
   };
-
-
 
   const handleQtyChange = async (itemId, newQty) => {
     const qty = Math.max(1, parseInt(newQty) || 1);
@@ -264,6 +258,7 @@ function ManagerLabelPrintTaskDetail() {
 
   function buildPrintHtml(tmpl, selectedItems, qty) {
     const MM_TO_PX = 3.7795275591;
+    const SEPARATOR = ' · ';
     const pw = tmpl.paper_width_mm;
     const ph = tmpl.paper_height_mm;
     const barcodeInits = [];
@@ -288,7 +283,18 @@ function ManagerLabelPrintTaskDetail() {
         const baseStyle = `position:absolute;left:${left}px;top:${top}px;width:${width}px;height:${height}px;overflow:hidden;box-sizing:border-box;`;
 
         if (el.type === 'text') {
-          const value = el.field_key === 'custom' ? (el.custom_value || '') : (fields[el.field_key] ?? '');
+          // 支持新格式 field_entries（多字段拼接）和旧格式 field_key（向后兼容）
+          const entries = el.field_entries && el.field_entries.length > 0
+            ? el.field_entries
+            : [{ fieldKey: el.field_key, customValue: el.custom_value || '' }];
+
+          const value = entries.map(fe => {
+            if (fe.fieldKey === 'custom') return fe.customValue || '';
+            if (fe.fieldKey === 'variant.metafield') return item.custom_name || '';
+            if (fe.fieldKey === 'product.metafield') return '';
+            return fields[fe.fieldKey] ?? '';
+          }).filter(v => v !== '').join(SEPARATOR);
+
           const displayValue = applyCase(value, el.convert_case);
           const fw = el.font_weight || '400';
           const fs = (el.font_size || 3) * MM_TO_PX;
@@ -296,6 +302,7 @@ function ManagerLabelPrintTaskDetail() {
           const decoration = el.underline ? 'underline' : el.linethrough ? 'line-through' : 'none';
           return `<div style="${baseStyle}font-size:${fs}px;font-weight:${fw};text-align:${align};font-family:sans-serif;text-decoration:${decoration};line-height:1.2;">${displayValue}</div>`;
         }
+
         if (el.type === 'barcode') {
           const barcodeValue = fields[el.field_key] || item.barcode || item.sku || '';
           if (!barcodeValue) return `<div style="${baseStyle}"></div>`;
@@ -304,19 +311,23 @@ function ManagerLabelPrintTaskDetail() {
           barcodeInits.push({ id: svgId, value: barcodeValue, type: barcodeType });
           return `<div style="${baseStyle}display:flex;align-items:center;justify-content:center;"><svg id="${svgId}" style="width:100%;height:100%;"></svg></div>`;
         }
+
         if (el.type === 'line') {
           const isH = el.orientation !== 'vertical';
           const sw = { thin: 0.5, medium: 1, thick: 2 }[el.stroke_key] || 0.5;
           return `<div style="${baseStyle}"><div style="position:absolute;${isH ? `top:50%;left:0;width:100%;border-top:${sw}mm solid #000;` : `left:50%;top:0;height:100%;border-left:${sw}mm solid #000;`}"></div></div>`;
         }
+
         if (el.type === 'frame') {
           const sw = { thin: 0.5, medium: 1, thick: 2 }[el.stroke_key] || 0.5;
           const br = el.border_radius || 0;
           return `<div style="${baseStyle}border:${sw}mm solid #000;border-radius:${br}px;"></div>`;
         }
+
         if (el.type === 'svg' && el.svg_data) {
           return `<div style="${baseStyle}">${el.svg_data}</div>`;
         }
+
         return '';
       }).join('');
 
@@ -398,7 +409,6 @@ ${barcodeScript}</head><body>${allLabels}</body></html>`;
                 </Button>
                 {scanLoading && <Spinner size="small" />}
               </InlineStack>
-
             </BlockStack>
           </Card>
         </Layout.Section>
