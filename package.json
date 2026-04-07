@@ -16,6 +16,8 @@
   },
   "dependencies": {
     "@shopify/shopify-api": "^9.0.0",
+    "@zxing/browser": "^0.1.5",
+    "@zxing/library": "^0.21.3",
     "concurrently": "^8.2.2",
     "cookie-session": "^2.1.0",
     "cors": "^2.8.5",

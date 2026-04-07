@@ -18,6 +18,7 @@ import ManagerTaskDetail from './pages/manager/ManagerTaskDetail';
 import ManagerZeroQtyReport from './pages/manager/ManagerZeroQtyReport';
 import ManagerLabelPrintTasks from './pages/manager/ManagerLabelPrintTasks';
 import ManagerLabelPrintTaskDetail from './pages/manager/ManagerLabelPrintTaskDetail';
+import CameraTest from './pages/CameraTest';
 
 function App() {
   return (
@@ -44,6 +45,7 @@ function App() {
           <Route path="/manager/restock-plan" element={<ManagerRestockPlan />} />
           <Route path="/manager/label-print" element={<ManagerLabelPrintTasks />} />
           <Route path="/manager/label-print/:taskId" element={<ManagerLabelPrintTaskDetail />} />
+          <Route path="/camera-test" element={<CameraTest />} />
         </Routes>
       </BrowserRouter>
     </AppProvider>
