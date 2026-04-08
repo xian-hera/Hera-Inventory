@@ -169,8 +169,19 @@ function BuyerPriceChangePublished() {
               }}>✕</button>
             </InlineStack>
 
+            {/* Assigned locations */}
+            {detailTask.locations && detailTask.locations.length > 0 && (
+              <div style={{ marginTop: '6px' }}>
+                <Text variant="bodySm" tone="subdued">
+                  {detailTask.locations.join(', ')}
+                </Text>
+              </div>
+            )}
+
             {detailTask.note && (
-              <Text tone="subdued" variant="bodySm">{detailTask.note}</Text>
+              <div style={{ marginTop: '6px' }}>
+                <Text tone="subdued" variant="bodySm">{detailTask.note}</Text>
+              </div>
             )}
 
             <div style={{ marginTop: '16px' }}>
