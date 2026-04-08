@@ -278,9 +278,16 @@ function ManagerLabelPrintTaskDetail() {
       };
 
       const elementsHtml = (tmpl.elements || []).map((el, elIndex) => {
-        const left = el.x * MM_TO_PX, top = el.y * MM_TO_PX;
-        const width = el.w * MM_TO_PX, height = el.h * MM_TO_PX;
-        const baseStyle = `position:absolute;left:${left}px;top:${top}px;width:${width}px;height:${height}px;overflow:hidden;box-sizing:border-box;`;
+        const left = el.x * MM_TO_PX;
+        const top  = el.y * MM_TO_PX;
+        const width  = el.w * MM_TO_PX;
+        const height = el.h * MM_TO_PX;
+        const angle  = el.angle || 0;
+        // Fabric saves x/y as the unrotated top-left origin.
+        // CSS transform-origin:50% 50% rotates around the element's own center,
+        // which matches Fabric's visual output when origin is top-left.
+        const rotateStyle = angle ? `transform:rotate(${angle}deg);transform-origin:50% 50%;` : '';
+        const baseStyle = `position:absolute;left:${left}px;top:${top}px;width:${width}px;height:${height}px;overflow:hidden;box-sizing:border-box;${rotateStyle}`;
 
         if (el.type === 'text') {
           // 支持新格式 field_entries（多字段拼接）和旧格式 field_key（向后兼容）
