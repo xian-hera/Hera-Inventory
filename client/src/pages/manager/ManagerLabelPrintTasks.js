@@ -17,7 +17,6 @@ function ManagerLabelPrintTasks() {
   const navigate = useNavigate();
   const location = localStorage.getItem('managerLocation') || '';
 
-  // ── Label print tasks (manager-created) ──────────────────────────────────
   const [tasks, setTasks]           = useState([]);
   const [loading, setLoading]       = useState(true);
   const [error, setError]           = useState('');
@@ -29,7 +28,6 @@ function ManagerLabelPrintTasks() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteAll, setDeleteAll]   = useState(false);
 
-  // ── Price change tasks (from buyer) ──────────────────────────────────────
   const [priceTasks, setPriceTasks]       = useState([]);
   const [priceLoading, setPriceLoading]   = useState(true);
 
@@ -56,7 +54,7 @@ function ManagerLabelPrintTasks() {
       if (!res.ok) throw new Error('Failed to load price change tasks');
       setPriceTasks(await res.json());
     } catch (e) {
-      // 静默失败，不影响主列表
+      // 静默失败
     } finally {
       setPriceLoading(false);
     }
@@ -190,8 +188,8 @@ function ManagerLabelPrintTasks() {
               ) : (
                 <Card padding="0">
                   <DataTable
-                    columnContentTypes={['text', 'text', 'text', 'text']}
-                    headings={['Task', 'Items', 'Published', 'Note']}
+                    columnContentTypes={['text', 'text', 'text', 'text', 'text']}
+                    headings={['Task', 'Type', 'Items', 'Published', 'Note']}
                     rows={priceTasks.map(t => [
                       <Button
                         variant="plain"
@@ -199,6 +197,7 @@ function ManagerLabelPrintTasks() {
                       >
                         {t.task_no}
                       </Button>,
+                      t.label_type || 'Regular price',
                       String(t.item_count || 0),
                       formatDate(t.created_at),
                       t.note || '-',

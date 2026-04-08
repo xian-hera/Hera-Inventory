@@ -2,7 +2,6 @@ const express = require('express');
 const router = express.Router();
 const { pool } = require('../database/init');
 
-// ── Helper: generate next task number ──────────────────────────────────────
 async function generateTaskNo(client) {
   const res = await client.query(
     'SELECT last_number FROM price_change_counter WHERE id = 1 FOR UPDATE'
@@ -15,7 +14,6 @@ async function generateTaskNo(client) {
   return String(next).padStart(6, '0');
 }
 
-// ── Helper: auto-delete expired location statuses ──────────────────────────
 async function cleanupExpired() {
   await pool.query(
     `DELETE FROM price_change_location_status
@@ -27,7 +25,7 @@ async function cleanupExpired() {
 // BUYER ROUTES
 // ═══════════════════════════════════════════════════════════════════════════
 
-// GET /api/price-change-tasks — list all tasks (buyer)
+// GET /api/price-change-tasks
 router.get('/', async (req, res) => {
   try {
     await cleanupExpired();
@@ -50,11 +48,11 @@ router.get('/', async (req, res) => {
   }
 });
 
-// POST /api/price-change-tasks — create task
+// POST /api/price-change-tasks
 router.post('/', async (req, res) => {
   const client = await pool.connect();
   try {
-    const { locations, items, note } = req.body;
+    const { locations, items, note, label_type } = req.body;
     if (!locations || locations.length === 0) {
       return res.status(400).json({ error: 'locations required' });
     }
@@ -66,13 +64,12 @@ router.post('/', async (req, res) => {
     const taskNo = await generateTaskNo(client);
 
     const taskRes = await client.query(
-      `INSERT INTO price_change_tasks (task_no, note, locations)
-       VALUES ($1, $2, $3) RETURNING *`,
-      [taskNo, note || null, locations]
+      `INSERT INTO price_change_tasks (task_no, note, locations, label_type)
+       VALUES ($1, $2, $3, $4) RETURNING *`,
+      [taskNo, note || null, locations, label_type || 'Regular price']
     );
     const task = taskRes.rows[0];
 
-    // Insert items
     for (const item of items) {
       await client.query(
         `INSERT INTO price_change_items (task_id, sku, name, price, barcode, compare_at_price)
@@ -81,7 +78,6 @@ router.post('/', async (req, res) => {
       );
     }
 
-    // Insert location statuses
     for (const loc of locations) {
       await client.query(
         `INSERT INTO price_change_location_status (task_id, location, status)
@@ -101,7 +97,7 @@ router.post('/', async (req, res) => {
   }
 });
 
-// DELETE /api/price-change-tasks — delete selected tasks
+// DELETE /api/price-change-tasks
 router.delete('/', async (req, res) => {
   try {
     const { ids } = req.body;
@@ -113,7 +109,7 @@ router.delete('/', async (req, res) => {
   }
 });
 
-// PATCH /api/price-change-tasks/archive — archive selected tasks
+// PATCH /api/price-change-tasks/archive
 router.patch('/archive', async (req, res) => {
   try {
     const { ids } = req.body;
@@ -128,7 +124,7 @@ router.patch('/archive', async (req, res) => {
   }
 });
 
-// GET /api/price-change-tasks/:id/items — get items for a task
+// GET /api/price-change-tasks/:id/items
 router.get('/:id/items', async (req, res) => {
   try {
     const result = await pool.query(
@@ -146,7 +142,6 @@ router.get('/:id/items', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 // GET /api/price-change-tasks/manager?location=MTL01
-// Returns tasks assigned to this location that are pending (not done/expired)
 router.get('/manager', async (req, res) => {
   try {
     await cleanupExpired();
@@ -155,7 +150,7 @@ router.get('/manager', async (req, res) => {
 
     const result = await pool.query(`
       SELECT
-        t.id, t.task_no, t.note, t.created_at,
+        t.id, t.task_no, t.note, t.created_at, t.label_type,
         COUNT(i.id) AS item_count,
         ls.status AS location_status,
         ls.printed_at,
@@ -177,14 +172,14 @@ router.get('/manager', async (req, res) => {
   }
 });
 
-// PATCH /api/price-change-tasks/:id/print — mark location as done after print
+// PATCH /api/price-change-tasks/:id/print
 router.patch('/:id/print', async (req, res) => {
   try {
     const { location } = req.body;
     if (!location) return res.status(400).json({ error: 'location required' });
 
     const printedAt = new Date();
-    const autoDeleteAt = new Date(printedAt.getTime() + 60 * 60 * 1000); // +1 hour
+    const autoDeleteAt = new Date(printedAt.getTime() + 60 * 60 * 1000);
 
     await pool.query(
       `UPDATE price_change_location_status

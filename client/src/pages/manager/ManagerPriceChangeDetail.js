@@ -81,14 +81,12 @@ function ManagerPriceChangeDetail() {
       win.focus();
       setTimeout(async () => {
         win.print();
-        // 标记该 location 为 done
         await fetch(`/api/price-change-tasks/${taskId}/print`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ location }),
         });
         setShowPrint(false);
-        // 返回列表，task 会在 1 小时后自动消失
         navigate('/manager/label-print');
       }, 800);
     } catch (e) {
@@ -120,7 +118,9 @@ function ManagerPriceChangeDetail() {
       const elementsHtml = (tmpl.elements || []).map((el, elIndex) => {
         const left = el.x * MM_TO_PX, top = el.y * MM_TO_PX;
         const width = el.w * MM_TO_PX, height = el.h * MM_TO_PX;
-        const baseStyle = `position:absolute;left:${left}px;top:${top}px;width:${width}px;height:${height}px;overflow:hidden;box-sizing:border-box;`;
+        const angle = el.angle || 0;
+        const rotateStyle = angle ? `transform:rotate(${angle}deg);transform-origin:50% 50%;` : '';
+        const baseStyle = `position:absolute;left:${left}px;top:${top}px;width:${width}px;height:${height}px;overflow:hidden;box-sizing:border-box;${rotateStyle}`;
 
         if (el.type === 'text') {
           const value = el.field_key === 'custom' ? (el.custom_value || '') : (fields[el.field_key] ?? '');
@@ -140,7 +140,8 @@ function ManagerPriceChangeDetail() {
         if (el.type === 'line') {
           const isH = el.orientation !== 'vertical';
           const sw = { thin: 0.5, medium: 1, thick: 2 }[el.stroke_key] || 0.5;
-          return `<div style="${baseStyle}"><div style="position:absolute;${isH ? `top:50%;left:0;width:100%;border-top:${sw}mm solid #000;` : `left:50%;top:0;height:100%;border-left:${sw}mm solid #000;`}"></div></div>`;
+          const lineOuter = `position:absolute;left:${left}px;top:${top}px;width:${Math.max(width, 1)}px;height:${Math.max(height, 1)}px;box-sizing:border-box;${rotateStyle}`;
+          return `<div style="${lineOuter}"><div style="position:absolute;${isH ? `top:50%;left:0;width:100%;border-top:${sw}mm solid #000;` : `left:50%;top:0;height:100%;border-left:${sw}mm solid #000;`}"></div></div>`;
         }
         if (el.type === 'frame') {
           const sw = { thin: 0.5, medium: 1, thick: 2 }[el.stroke_key] || 0.5;
@@ -199,6 +200,9 @@ ${barcodeScript}</head><body>${allLabels}</body></html>`;
     </Page>
   );
 
+  // Page title: "Price Change 000003 · Sale Price"
+  const pageTitle = `Price Change ${task.task_no}${task.label_type ? ` · ${task.label_type}` : ''}`;
+
   const templateOptions = templates.map(t => ({
     label: `${t.name} (${t.paper_width_mm}×${t.paper_height_mm}mm)`,
     value: String(t.id),
@@ -206,7 +210,7 @@ ${barcodeScript}</head><body>${allLabels}</body></html>`;
 
   return (
     <Page
-      title={`Price Change ${task.task_no}`}
+      title={pageTitle}
       backAction={{ onAction: () => navigate('/manager/label-print') }}
       primaryAction={{ content: 'Print', onAction: openPrintModal }}
     >
@@ -249,15 +253,12 @@ ${barcodeScript}</head><body>${allLabels}</body></html>`;
         </Layout.Section>
       </Layout>
 
-      {/* Print modal */}
       <Modal
         open={showPrint}
         onClose={() => setShowPrint(false)}
         title={`Print all ${items.length} items`}
         primaryAction={{
-          content: 'Print',
-          onAction: handlePrint,
-          loading: printing,
+          content: 'Print', onAction: handlePrint, loading: printing,
           disabled: !selectedTemplate || templatesLoading,
         }}
         secondaryActions={[{ content: 'Cancel', onAction: () => setShowPrint(false) }]}
@@ -273,8 +274,7 @@ ${barcodeScript}</head><body>${allLabels}</body></html>`;
               <Select label="Template" options={templateOptions} value={selectedTemplate} onChange={setSelectedTemplate} />
             )}
             <TextField
-              label="Copies per item"
-              type="number" min="1" max="999"
+              label="Copies per item" type="number" min="1" max="999"
               value={printQty} onChange={setPrintQty}
               helpText="Each item will be printed this many times"
             />

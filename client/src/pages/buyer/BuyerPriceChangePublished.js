@@ -19,7 +19,6 @@ function BuyerPriceChangePublished() {
   const [error, setError]           = useState('');
   const [selectedIds, setSelectedIds] = useState([]);
 
-  // Item detail popup
   const [detailTask, setDetailTask]   = useState(null);
   const [detailItems, setDetailItems] = useState([]);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -156,7 +155,15 @@ function BuyerPriceChangePublished() {
             width: '100%', maxWidth: '680px', maxHeight: '80vh', overflowY: 'auto',
           }}>
             <InlineStack align="space-between">
-              <Text variant="headingMd" fontWeight="bold">Task {detailTask.task_no}</Text>
+              {/* Task name · label type */}
+              <Text variant="headingMd" fontWeight="bold">
+                Task {detailTask.task_no}
+                {detailTask.label_type && (
+                  <span style={{ fontWeight: 400, color: '#6d7175' }}>
+                    {' · '}{detailTask.label_type}
+                  </span>
+                )}
+              </Text>
               <button onClick={() => setDetailTask(null)} style={{
                 background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer',
               }}>✕</button>

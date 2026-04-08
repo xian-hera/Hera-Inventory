@@ -12,20 +12,26 @@ const LOCATIONS = [
   'EDM01','EDM02','CAL01','OTT01','OTT02','OTT03','QC01','HQ'
 ];
 
+const LABEL_TYPE_OPTIONS = [
+  { value: 'Regular price', label: 'Regular price' },
+  { value: 'Sale price',    label: 'Sale price' },
+  { value: 'Wig',           label: 'Wig' },
+];
+
 function BuyerPriceChange() {
   const navigate = useNavigate();
   const csvInputRef = useRef(null);
 
-  const [selectedLocations, setSelectedLocations] = useState([...LOCATIONS]); // 默认全选
+  const [selectedLocations, setSelectedLocations] = useState([...LOCATIONS]);
   const [items, setItems]           = useState([]);
   const [selectedSkus, setSelectedSkus] = useState([]);
   const [loading, setLoading]       = useState(false);
   const [error, setError]           = useState('');
   const [publishing, setPublishing] = useState(false);
 
-  // Note 弹窗
   const [showNoteInput, setShowNoteInput] = useState(false);
   const [noteInput, setNoteInput]         = useState('');
+  const [labelType, setLabelType]         = useState('Regular price');
   const [pendingPublishAll, setPendingPublishAll] = useState(false);
 
   const handleCSVUpload = async (e) => {
@@ -37,7 +43,6 @@ function BuyerPriceChange() {
     reader.onload = async (evt) => {
       const lines = evt.target.result.split('\n').filter(l => l.trim());
 
-      // 跳过 header 行（含 sku/name/barcode 关键词）
       const dataLines = lines.filter(l => {
         const cols = l.split(',').map(c => c.trim().replace(/"/g, '').toLowerCase());
         return !(cols[0] === 'sku' || cols[0] === 'name' || cols[0] === 'barcode' ||
@@ -46,13 +51,11 @@ function BuyerPriceChange() {
 
       if (dataLines.length === 0) { setError('No data found in CSV.'); return; }
 
-      // 自动识别 SKU 列：取前 20 行，哪列全是纯数字就是 SKU
       const sample = dataLines.slice(0, 20);
       const col0AllNumeric = sample.every(l => /^\d+$/.test(l.split(',')[0]?.trim().replace(/"/g, '') || ''));
       const col1AllNumeric = sample.every(l => /^\d+$/.test(l.split(',')[1]?.trim().replace(/"/g, '') || ''));
       const skuCol = col0AllNumeric ? 0 : col1AllNumeric ? 1 : 0;
 
-      // 提取 SKU 列表（去重）
       const skus = [...new Set(
         dataLines
           .map(l => l.split(',')[skuCol]?.trim().replace(/"/g, '') || '')
@@ -61,7 +64,6 @@ function BuyerPriceChange() {
 
       if (skus.length === 0) { setError('No SKUs found in CSV.'); return; }
 
-      // 从 Shopify 查询 name 和 price
       setLoading(true);
       setError('');
       setItems([]);
@@ -108,7 +110,7 @@ function BuyerPriceChange() {
     setSelectedSkus(selectedSkus.length === items.length ? [] : items.map(i => i.sku));
   };
 
-  const doPublish = async (skusToPublish, note) => {
+  const doPublish = async (skusToPublish, note, type) => {
     if (selectedLocations.length === 0) {
       setError('Please select at least one location.');
       return;
@@ -126,11 +128,11 @@ function BuyerPriceChange() {
           locations: selectedLocations,
           items: itemsToPublish,
           note: note || null,
+          label_type: type || 'Regular price',
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      // 清除已发布的 items
       setItems(prev => prev.filter(i => !skusToPublish.includes(i.sku)));
       setSelectedSkus([]);
     } catch (e) {
@@ -144,6 +146,7 @@ function BuyerPriceChange() {
     if (selectedSkus.length === 0) return;
     setPendingPublishAll(false);
     setNoteInput('');
+    setLabelType('Regular price');
     setShowNoteInput(true);
   };
 
@@ -151,13 +154,14 @@ function BuyerPriceChange() {
     if (items.length === 0) return;
     setPendingPublishAll(true);
     setNoteInput('');
+    setLabelType('Regular price');
     setShowNoteInput(true);
   };
 
   const handleConfirmPublish = async () => {
     const skus = pendingPublishAll ? items.map(i => i.sku) : selectedSkus;
     setShowNoteInput(false);
-    await doPublish(skus, noteInput);
+    await doPublish(skus, noteInput, labelType);
   };
 
   const rows = items.map(item => [
@@ -184,7 +188,6 @@ function BuyerPriceChange() {
           <BlockStack gap="400">
             {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
 
-            {/* Location + CSV */}
             <Card>
               <InlineStack gap="400" wrap align="start">
                 <MultiSelectDropdown
@@ -197,11 +200,8 @@ function BuyerPriceChange() {
                 <BlockStack gap="100">
                   <Text variant="bodySm" tone="subdued"> </Text>
                   <input
-                    type="file"
-                    accept=".csv"
-                    ref={csvInputRef}
-                    style={{ display: 'none' }}
-                    onChange={handleCSVUpload}
+                    type="file" accept=".csv" ref={csvInputRef}
+                    style={{ display: 'none' }} onChange={handleCSVUpload}
                   />
                   <Button onClick={() => csvInputRef.current.click()} loading={loading}>
                     Upload CSV
@@ -210,7 +210,6 @@ function BuyerPriceChange() {
               </InlineStack>
             </Card>
 
-            {/* Loading */}
             {loading && (
               <Card>
                 <BlockStack gap="200">
@@ -222,11 +221,9 @@ function BuyerPriceChange() {
               </Card>
             )}
 
-            {/* Items list */}
             {!loading && items.length > 0 && (
               <Card>
                 <BlockStack gap="300">
-                  {/* Action bar */}
                   <InlineStack gap="200">
                     <Button onClick={() => { setNoteInput(''); setShowNoteInput(true); setPendingPublishAll(false); }}>
                       Add task note
@@ -276,8 +273,25 @@ function BuyerPriceChange() {
         }}>
           <div style={{
             background: 'white', borderRadius: '12px', padding: '24px',
-            width: '100%', maxWidth: '480px',
+            width: '100%', maxWidth: '480px', position: 'relative',
           }}>
+            {/* Label type selector — top right */}
+            <div style={{ position: 'absolute', top: 20, right: 24 }}>
+              <select
+                value={labelType}
+                onChange={e => setLabelType(e.target.value)}
+                style={{
+                  padding: '5px 10px', borderRadius: '8px',
+                  border: '1px solid #c9cccf', fontSize: '13px',
+                  background: '#fff', cursor: 'pointer', fontFamily: 'inherit',
+                }}
+              >
+                {LABEL_TYPE_OPTIONS.map(o => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+
             <BlockStack gap="300">
               <Text variant="headingMd" fontWeight="bold">
                 {pendingPublishAll ? `Publish all ${items.length} items` : `Publish ${selectedSkus.length} selected items`}
