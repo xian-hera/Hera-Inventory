@@ -128,21 +128,29 @@ function BuyerLabelEditor() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [template]);
 
-  // ── Fix 1: restore angle after adding each element ───────────────────────
   function restoreElement(canvas, el, paperLeft, paperTop) {
+    // x/y stored in mm relative to paper origin — convert back to canvas px
     const x = paperLeft + mmToPx(el.x);
     const y = paperTop + mmToPx(el.y);
     const w = mmToPx(el.w);
     const h = mmToPx(el.h);
     const angle = el.angle || 0;
-    let obj;
-    if (el.type === 'text') obj = addTextObject(canvas, x, y, w, h, el);
-    else if (el.type === 'barcode') obj = addBarcodeObject(canvas, x, y, w, h, el.field_key, el.barcode_type);
-    else if (el.type === 'line') obj = addLineObject(canvas, x, y, w, h, el.orientation, el.stroke_key);
-    else if (el.type === 'frame') obj = addFrameObject(canvas, x, y, w, h, el.stroke_key, el.border_radius);
-    else if (el.type === 'svg' && el.svg_data) obj = addSvgObject(canvas, x, y, w, h, el.svg_data);
-    // Apply saved angle (barcode and svg load async so we handle them inside their functions)
-    if (obj && angle) { obj.rotate(angle); canvas.renderAll(); }
+    if (el.type === 'text') {
+      const obj = addTextObject(canvas, x, y, w, h, el);
+      if (obj && angle) { obj.rotate(angle); canvas.renderAll(); }
+    } else if (el.type === 'barcode') {
+      // angle passed in so async onload can apply it
+      addBarcodeObject(canvas, x, y, w, h, el.field_key, el.barcode_type, angle);
+    } else if (el.type === 'line') {
+      const obj = addLineObject(canvas, x, y, w, h, el.orientation, el.stroke_key);
+      if (obj && angle) { obj.rotate(angle); canvas.renderAll(); }
+    } else if (el.type === 'frame') {
+      const obj = addFrameObject(canvas, x, y, w, h, el.stroke_key, el.border_radius);
+      if (obj && angle) { obj.rotate(angle); canvas.renderAll(); }
+    } else if (el.type === 'svg' && el.svg_data) {
+      // angle passed in so async loadSVGFromString can apply it
+      addSvgObject(canvas, x, y, w, h, el.svg_data, angle);
+    }
   }
 
   function addTextObject(canvas, x, y, w, h, props = {}) {
@@ -408,11 +416,20 @@ function BuyerLabelEditor() {
       const elements = fabricRef.current.getObjects()
         .filter(obj => obj.customType)
         .map(obj => {
+          // Use the unrotated bounding box top-left to get stable x/y regardless of angle.
+          // Temporarily zero the angle, read left/top, then restore.
+          const savedAngle = obj.angle || 0;
+          obj.rotate(0);
+          obj.setCoords();
+          const stableLeft = obj.left;
+          const stableTop  = obj.top;
+          obj.rotate(savedAngle);
+          obj.setCoords();
           const base = {
             type: obj.customType,
-            x: pxToMm(obj.left - pl), y: pxToMm(obj.top - pt),
+            x: pxToMm(stableLeft - pl), y: pxToMm(stableTop - pt),
             w: pxToMm(obj.getScaledWidth()), h: pxToMm(obj.getScaledHeight()),
-            angle: obj.angle || 0,
+            angle: savedAngle,
           };
           if (obj.customType === 'text') {
             return {
