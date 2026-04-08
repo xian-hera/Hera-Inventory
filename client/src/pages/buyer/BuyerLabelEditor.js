@@ -48,7 +48,6 @@ function pxToMm(px) { return px / MM_TO_PX; }
 
 const SEPARATOR = ' · ';
 
-// 默认的单个 field entry
 function newFieldEntry(fieldKey = 'custom') {
   return { fieldKey, customValue: '', metafieldNamespace: '', metafieldKey: '' };
 }
@@ -68,6 +67,7 @@ function BuyerLabelEditor() {
   const canvasRef = useRef(null);
   const fabricRef = useRef(null);
   const paperOffsetRef = useRef({ left: 100, top: 100 });
+  const paperSizeRef = useRef({ w: 0, h: 0 });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -100,6 +100,7 @@ function BuyerLabelEditor() {
     const paperLeft = Math.max(80, (canvasW - paperW) / 2);
     const paperTop = Math.max(80, (canvasH - paperH) / 2);
     paperOffsetRef.current = { left: paperLeft, top: paperTop };
+    paperSizeRef.current = { w: paperW, h: paperH };
 
     const canvas = new fabric.Canvas(canvasRef.current, {
       width: canvasW, height: canvasH, backgroundColor: '#e5e5e5', selection: true,
@@ -127,20 +128,24 @@ function BuyerLabelEditor() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [template]);
 
+  // ── Fix 1: restore angle after adding each element ───────────────────────
   function restoreElement(canvas, el, paperLeft, paperTop) {
     const x = paperLeft + mmToPx(el.x);
     const y = paperTop + mmToPx(el.y);
     const w = mmToPx(el.w);
     const h = mmToPx(el.h);
-    if (el.type === 'text') addTextObject(canvas, x, y, w, h, el);
-    else if (el.type === 'barcode') addBarcodeObject(canvas, x, y, w, h, el.field_key, el.barcode_type);
-    else if (el.type === 'line') addLineObject(canvas, x, y, w, h, el.orientation, el.stroke_key);
-    else if (el.type === 'frame') addFrameObject(canvas, x, y, w, h, el.stroke_key, el.border_radius);
-    else if (el.type === 'svg' && el.svg_data) addSvgObject(canvas, x, y, w, h, el.svg_data);
+    const angle = el.angle || 0;
+    let obj;
+    if (el.type === 'text') obj = addTextObject(canvas, x, y, w, h, el);
+    else if (el.type === 'barcode') obj = addBarcodeObject(canvas, x, y, w, h, el.field_key, el.barcode_type);
+    else if (el.type === 'line') obj = addLineObject(canvas, x, y, w, h, el.orientation, el.stroke_key);
+    else if (el.type === 'frame') obj = addFrameObject(canvas, x, y, w, h, el.stroke_key, el.border_radius);
+    else if (el.type === 'svg' && el.svg_data) obj = addSvgObject(canvas, x, y, w, h, el.svg_data);
+    // Apply saved angle (barcode and svg load async so we handle them inside their functions)
+    if (obj && angle) { obj.rotate(angle); canvas.renderAll(); }
   }
 
   function addTextObject(canvas, x, y, w, h, props = {}) {
-    // 兼容旧格式（单 field_key）和新格式（field_entries 数组）
     let fieldEntries;
     if (props.field_entries && Array.isArray(props.field_entries)) {
       fieldEntries = props.field_entries;
@@ -151,7 +156,6 @@ function BuyerLabelEditor() {
       if (props.metafield_key) fieldEntries[0].metafieldKey = props.metafield_key;
     }
 
-    // 显示文字：拼接所有字段的 label
     const displayText = fieldEntries.map(fe =>
       fe.fieldKey === 'custom' ? (fe.customValue || 'Custom') : fe.fieldKey.split('.').pop()
     ).join(SEPARATOR);
@@ -169,7 +173,6 @@ function BuyerLabelEditor() {
     });
     obj.customType = 'text';
     obj.fieldEntries = fieldEntries;
-    // 兼容旧属性（供 preview 等读取）
     obj.fieldKey = fieldEntries[0]?.fieldKey || 'custom';
     obj.customValue = fieldEntries[0]?.customValue || '';
     obj.metafieldNamespace = fieldEntries[0]?.metafieldNamespace || '';
@@ -182,7 +185,7 @@ function BuyerLabelEditor() {
     return obj;
   }
 
-  function addBarcodeObject(canvas, x, y, w, h, fieldKey = 'variant.barcode', barcodeType = 'CODE128') {
+  function addBarcodeObject(canvas, x, y, w, h, fieldKey = 'variant.barcode', barcodeType = 'CODE128', angle = 0) {
     const dataUrl = makeBarcodeDataUrl(barcodeType, '0123456789');
     const addImg = (imgEl) => {
       const img = new fabric.Image(imgEl, {
@@ -194,6 +197,7 @@ function BuyerLabelEditor() {
       img.customType = 'barcode';
       img.fieldKey = fieldKey;
       img.barcodeType = barcodeType;
+      if (angle) img.rotate(angle);
       canvas.add(img);
       canvas.setActiveObject(img);
       canvas.renderAll();
@@ -208,8 +212,11 @@ function BuyerLabelEditor() {
         fill: '#f0f0f0', stroke: '#999', strokeWidth: 1, rx: 0, lockUniScaling: false,
       });
       rect.customType = 'barcode'; rect.fieldKey = fieldKey; rect.barcodeType = barcodeType;
+      if (angle) rect.rotate(angle);
       canvas.add(rect); canvas.setActiveObject(rect); canvas.renderAll();
     }
+    // return null here since async; angle applied inside addImg
+    return null;
   }
 
   function addLineObject(canvas, x, y, w, h, orientation = 'horizontal', strokeKey = 'thin') {
@@ -236,15 +243,22 @@ function BuyerLabelEditor() {
     return rect;
   }
 
-  function addSvgObject(canvas, x, y, w, h, svgData) {
+  // ── Fix 3: SVG — maintain aspect ratio (contain) ─────────────────────────
+  function addSvgObject(canvas, x, y, w, h, svgData, angle = 0) {
     fabric.loadSVGFromString(svgData, (objects, options) => {
       const group = fabric.util.groupSVGElements(objects, options);
-      group.set({ left: x, top: y,
-        scaleX: (w || 80) / (group.width || 80),
-        scaleY: (h || 80) / (group.height || 80), lockUniScaling: false });
+      const targetW = w || 80;
+      const targetH = h || 80;
+      const srcW = group.width || 80;
+      const srcH = group.height || 80;
+      // Contain: scale by the smaller ratio to preserve aspect ratio
+      const scale = Math.min(targetW / srcW, targetH / srcH);
+      group.set({ left: x, top: y, scaleX: scale, scaleY: scale, lockUniScaling: true });
+      if (angle) group.rotate(angle);
       group.customType = 'svg'; group.svgData = svgData;
       canvas.add(group); canvas.setActiveObject(group); canvas.renderAll();
     });
+    return null;
   }
 
   const addElement = (type) => {
@@ -306,22 +320,84 @@ function BuyerLabelEditor() {
     fabricRef.current.renderAll(); forceUpdate(n => n + 1);
   };
 
-  // 更新 fieldEntries 并刷新画布上的显示文字
   const updateFieldEntries = (newEntries) => {
     const obj = fabricRef.current?.getActiveObject();
     if (!obj || obj.customType !== 'text') return;
     obj.fieldEntries = newEntries;
-    // 同步旧属性
     obj.fieldKey = newEntries[0]?.fieldKey || 'custom';
     obj.customValue = newEntries[0]?.customValue || '';
     obj.metafieldNamespace = newEntries[0]?.metafieldNamespace || '';
     obj.metafieldKey = newEntries[0]?.metafieldKey || '';
-    // 更新画布显示文字
     const displayText = newEntries.map(fe =>
       fe.fieldKey === 'custom' ? (fe.customValue || 'Custom') : fe.fieldKey.split('.').pop()
     ).join(SEPARATOR);
     obj.set('text', displayText);
     fabricRef.current.renderAll();
+    forceUpdate(n => n + 1);
+  };
+
+  // ── Fix 2: Alignment ──────────────────────────────────────────────────────
+  const alignObjects = (direction) => {
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+    const objs = canvas.getActiveObjects();
+    if (!objs || objs.length === 0) return;
+
+    const { left: pl, top: pt } = paperOffsetRef.current;
+    const { w: pw, h: ph } = paperSizeRef.current;
+
+    if (objs.length === 1) {
+      // Align to paper
+      const obj = objs[0];
+      const ow = obj.getScaledWidth();
+      const oh = obj.getScaledHeight();
+      switch (direction) {
+        case 'left':   obj.set('left', pl); break;
+        case 'right':  obj.set('left', pl + pw - ow); break;
+        case 'top':    obj.set('top', pt); break;
+        case 'bottom': obj.set('top', pt + ph - oh); break;
+        case 'center':
+          obj.set('left', pl + (pw - ow) / 2);
+          obj.set('top',  pt + (ph - oh) / 2);
+          break;
+        default: break;
+      }
+    } else {
+      // Align objects relative to each other
+      switch (direction) {
+        case 'left': {
+          const minLeft = Math.min(...objs.map(o => o.left));
+          objs.forEach(o => o.set('left', minLeft));
+          break;
+        }
+        case 'right': {
+          const maxRight = Math.max(...objs.map(o => o.left + o.getScaledWidth()));
+          objs.forEach(o => o.set('left', maxRight - o.getScaledWidth()));
+          break;
+        }
+        case 'top': {
+          const minTop = Math.min(...objs.map(o => o.top));
+          objs.forEach(o => o.set('top', minTop));
+          break;
+        }
+        case 'bottom': {
+          const maxBottom = Math.max(...objs.map(o => o.top + o.getScaledHeight()));
+          objs.forEach(o => o.set('top', maxBottom - o.getScaledHeight()));
+          break;
+        }
+        case 'center': {
+          const avgCX = objs.reduce((s, o) => s + o.left + o.getScaledWidth() / 2, 0) / objs.length;
+          const avgCY = objs.reduce((s, o) => s + o.top + o.getScaledHeight() / 2, 0) / objs.length;
+          objs.forEach(o => {
+            o.set('left', avgCX - o.getScaledWidth() / 2);
+            o.set('top',  avgCY - o.getScaledHeight() / 2);
+          });
+          break;
+        }
+        default: break;
+      }
+    }
+    canvas.requestRenderAll();
     forceUpdate(n => n + 1);
   };
 
@@ -341,9 +417,7 @@ function BuyerLabelEditor() {
           if (obj.customType === 'text') {
             return {
               ...base,
-              // 新格式：存 field_entries 数组
               field_entries: obj.fieldEntries || [newFieldEntry('custom')],
-              // 兼容旧格式：同时存第一个字段的 field_key
               field_key: obj.fieldEntries?.[0]?.fieldKey || obj.fieldKey || 'custom',
               custom_value: obj.fieldEntries?.[0]?.customValue || obj.customValue || '',
               metafield_namespace: obj.fieldEntries?.[0]?.metafieldNamespace || obj.metafieldNamespace || '',
@@ -448,6 +522,16 @@ function BuyerLabelEditor() {
   const sel = selected;
   const selType = sel?.customType;
   const fieldEntries = sel?.fieldEntries || [newFieldEntry('custom')];
+  const multiSelected = (fabricRef.current?.getActiveObjects()?.length || 0) > 1;
+
+  // Alignment button definitions
+  const alignBtns = [
+    { dir: 'left',   title: multiSelected ? 'Align left edges' : 'Align to paper left',   icon: '⇤' },
+    { dir: 'center', title: multiSelected ? 'Align centers'    : 'Center on paper',        icon: '⊙' },
+    { dir: 'right',  title: multiSelected ? 'Align right edges': 'Align to paper right',   icon: '⇥' },
+    { dir: 'top',    title: multiSelected ? 'Align top edges'  : 'Align to paper top',     icon: '⤒' },
+    { dir: 'bottom', title: multiSelected ? 'Align bottom edges': 'Align to paper bottom', icon: '⤓' },
+  ];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', fontFamily: FONT_FAMILY }}>
@@ -470,7 +554,14 @@ function BuyerLabelEditor() {
             <ToolBtn title="Rotate right 90°" onClick={() => rotateSelected(90)}>↻</ToolBtn>
             <ToolBtn title="Delete" onClick={deleteSelected} danger>✕</ToolBtn>
             <div style={{ width: 1, height: 24, background: '#e1e3e5', margin: '0 4px' }} />
-            {selType === 'text' && <>
+
+            {/* Alignment buttons */}
+            {alignBtns.map(({ dir, title, icon }) => (
+              <ToolBtn key={dir} title={title} onClick={() => alignObjects(dir)}>{icon}</ToolBtn>
+            ))}
+            <div style={{ width: 1, height: 24, background: '#e1e3e5', margin: '0 4px' }} />
+
+            {selType === 'text' && !multiSelected && <>
               {['left','center','right'].map(a => (
                 <ToolBtn key={a} title={`Align ${a}`} active={sel.textAlign === a}
                   onClick={() => updateSelected({ align: a })}>
@@ -491,8 +582,9 @@ function BuyerLabelEditor() {
                   borderRadius: 6, fontSize: 13, textAlign: 'center' }}
                 title="Font size (px)"
               />
+              <div style={{ width: 1, height: 24, background: '#e1e3e5', margin: '0 4px' }} />
             </>}
-            <div style={{ width: 1, height: 24, background: '#e1e3e5', margin: '0 4px' }} />
+
             <ToolBtn title="Bring forward" onClick={bringForward}>⬆</ToolBtn>
             <ToolBtn title="Send backward" onClick={sendBackward}>⬇</ToolBtn>
           </div>
@@ -545,16 +637,14 @@ function BuyerLabelEditor() {
             </>
           )}
 
-          {sel && (
+          {sel && !multiSelected && (
             <BlockStack gap="300">
               <p style={{ fontSize: 12, color: '#666', fontWeight: 500, margin: 0 }}>
                 {selType ? selType.charAt(0).toUpperCase() + selType.slice(1) : ''} properties
               </p>
 
-              {/* ── TEXT props ── */}
               {selType === 'text' && (
                 <>
-                  {/* 多字段列表 */}
                   {fieldEntries.map((fe, idx) => (
                     <div key={idx} style={{ border: '1px solid #e1e3e5', borderRadius: 8, padding: 8, background: '#fff' }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
@@ -563,17 +653,11 @@ function BuyerLabelEditor() {
                         </p>
                         {idx > 0 && (
                           <button
-                            onClick={() => {
-                              const updated = fieldEntries.filter((_, i) => i !== idx);
-                              updateFieldEntries(updated);
-                            }}
+                            onClick={() => updateFieldEntries(fieldEntries.filter((_, i) => i !== idx))}
                             style={{ background: 'none', border: 'none', cursor: 'pointer',
-                              color: '#d72c0d', fontSize: 16, lineHeight: 1, padding: '0 2px' }}
-                          >✕</button>
+                              color: '#d72c0d', fontSize: 16, lineHeight: 1, padding: '0 2px' }}>✕</button>
                         )}
                       </div>
-
-                      {/* Field selector */}
                       <select
                         value={fe.fieldKey}
                         onChange={e => {
@@ -588,12 +672,8 @@ function BuyerLabelEditor() {
                         {FIELD_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                       </select>
 
-                      {/* Custom text value */}
                       {fe.fieldKey === 'custom' && (
-                        <input
-                          type="text"
-                          value={fe.customValue || ''}
-                          placeholder="Text value"
+                        <input type="text" value={fe.customValue || ''} placeholder="Text value"
                           onChange={e => {
                             const updated = fieldEntries.map((f, i) =>
                               i === idx ? { ...f, customValue: e.target.value } : f
@@ -605,11 +685,9 @@ function BuyerLabelEditor() {
                         />
                       )}
 
-                      {/* Metafield inputs */}
                       {(fe.fieldKey === 'product.metafield' || fe.fieldKey === 'variant.metafield') && (
                         <>
-                          <input
-                            type="text" value={fe.metafieldNamespace || ''} placeholder="Namespace"
+                          <input type="text" value={fe.metafieldNamespace || ''} placeholder="Namespace"
                             onChange={e => {
                               const updated = fieldEntries.map((f, i) =>
                                 i === idx ? { ...f, metafieldNamespace: e.target.value } : f
@@ -620,8 +698,7 @@ function BuyerLabelEditor() {
                               borderRadius: 6, fontSize: 13, fontFamily: FONT_FAMILY,
                               boxSizing: 'border-box', marginBottom: 4 }}
                           />
-                          <input
-                            type="text" value={fe.metafieldKey || ''} placeholder="Key"
+                          <input type="text" value={fe.metafieldKey || ''} placeholder="Key"
                             onChange={e => {
                               const updated = fieldEntries.map((f, i) =>
                                 i === idx ? { ...f, metafieldKey: e.target.value } : f
@@ -636,7 +713,6 @@ function BuyerLabelEditor() {
                     </div>
                   ))}
 
-                  {/* + 按钮 */}
                   <button
                     onClick={() => updateFieldEntries([...fieldEntries, newFieldEntry('custom')])}
                     style={{ width: '100%', padding: '6px', border: '1px dashed #c9cccf',
@@ -645,17 +721,11 @@ function BuyerLabelEditor() {
                   >
                     + Add field
                   </button>
-
                   {fieldEntries.length > 1 && (
-                    <p style={{ fontSize: 11, color: '#6d7175', margin: 0 }}>
-                      Fields joined with " · "
-                    </p>
+                    <p style={{ fontSize: 11, color: '#6d7175', margin: 0 }}>Fields joined with " · "</p>
                   )}
 
-                  {/* 其他文字属性 */}
-                  <PanelSelect
-                    label="Weight"
-                    value={sel.fontWeight || '400'}
+                  <PanelSelect label="Weight" value={sel.fontWeight || '400'}
                     options={[
                       { label: 'Thin (400)', value: '400' },
                       { label: 'Regular (500)', value: '500' },
@@ -663,9 +733,7 @@ function BuyerLabelEditor() {
                     ]}
                     onChange={val => updateSelected({ font_weight: val })}
                   />
-                  <PanelSelect
-                    label="Convert case"
-                    value={sel.convertCase || 'none'}
+                  <PanelSelect label="Convert case" value={sel.convertCase || 'none'}
                     options={[
                       { label: 'None', value: 'none' },
                       { label: 'UPPERCASE', value: 'upper' },
@@ -682,7 +750,6 @@ function BuyerLabelEditor() {
                 </>
               )}
 
-              {/* ── BARCODE props ── */}
               {selType === 'barcode' && (
                 <>
                   <PanelSelect label="Content" value={sel.fieldKey || 'variant.barcode'}
@@ -696,7 +763,6 @@ function BuyerLabelEditor() {
                 </>
               )}
 
-              {/* ── LINE props ── */}
               {selType === 'line' && (
                 <>
                   <PanelSelect label="Orientation" value={sel.orientation || 'horizontal'}
@@ -709,7 +775,6 @@ function BuyerLabelEditor() {
                 </>
               )}
 
-              {/* ── FRAME props ── */}
               {selType === 'frame' && (
                 <>
                   <PanelSelect label="Thickness" value={sel.strokeKey || 'thin'} options={STROKE_LABEL}
@@ -717,8 +782,7 @@ function BuyerLabelEditor() {
                   />
                   <div>
                     <p style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>Corner radius (px)</p>
-                    <input type="number" min="0" max="100" step="1"
-                      value={sel.borderRadius || 0}
+                    <input type="number" min="0" max="100" step="1" value={sel.borderRadius || 0}
                       onChange={e => { const v = parseInt(e.target.value) || 0; sel.borderRadius = v; updateSelected({ border_radius: v }); }}
                       style={{ width: '100%', padding: '6px 8px', border: '1px solid #c9cccf', borderRadius: 6, fontSize: 13 }}
                     />
@@ -726,7 +790,6 @@ function BuyerLabelEditor() {
                 </>
               )}
 
-              {/* ── SVG props ── */}
               {selType === 'svg' && (
                 <div>
                   <p style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>Upload SVG file</p>
@@ -734,6 +797,13 @@ function BuyerLabelEditor() {
                 </div>
               )}
             </BlockStack>
+          )}
+
+          {sel && multiSelected && (
+            <p style={{ fontSize: 12, color: '#6d7175', margin: 0 }}>
+              {fabricRef.current?.getActiveObjects()?.length} elements selected.
+              Use the alignment buttons above.
+            </p>
           )}
         </div>
 
