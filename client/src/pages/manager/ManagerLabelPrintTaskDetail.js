@@ -241,7 +241,27 @@ function ManagerLabelPrintTaskDetail() {
       if (!tmplRes.ok) throw new Error('Failed to load template');
       const tmpl = await tmplRes.json();
       const selectedItems = items.filter(i => selectedIds.includes(i.id));
-      const printContent = buildPrintHtml(tmpl, selectedItems, qty);
+
+      // Collect all metafield keys used in this template
+      const metafieldKeys = (tmpl.elements || [])
+        .filter(el => el.type === 'text')
+        .flatMap(el => el.field_entries || (el.field_key ? [{ fieldKey: el.field_key, metafieldNamespace: el.metafield_namespace, metafieldKey: el.metafield_key }] : []))
+        .filter(fe => fe.fieldKey === 'product.metafield' || fe.fieldKey === 'variant.metafield');
+
+      // If template uses metafields, fetch full variant data for each item
+      let metafieldMap = {}; // sku -> { product: {metafields:[]}, variant: {metafields:[]} }
+      if (metafieldKeys.length > 0) {
+        await Promise.all(selectedItems.map(async (item) => {
+          try {
+            const res = await fetch(`/api/shopify/variant-by-sku?sku=${encodeURIComponent(item.sku)}`);
+            if (!res.ok) return;
+            const data = await res.json();
+            metafieldMap[item.sku] = data;
+          } catch { /* skip, will show empty */ }
+        }));
+      }
+
+      const printContent = buildPrintHtml(tmpl, selectedItems, qty, metafieldMap);
       const win = window.open('', '_blank');
       if (!win) throw new Error('Pop-up blocked. Please allow pop-ups for this site.');
       win.document.write(printContent);
@@ -256,7 +276,7 @@ function ManagerLabelPrintTaskDetail() {
     }
   };
 
-  function buildPrintHtml(tmpl, selectedItems, qty) {
+  function buildPrintHtml(tmpl, selectedItems, qty, metafieldMap = {}) {
     const MM_TO_PX = 3.7795275591;
     const SEPARATOR = ' · ';
     const pw = tmpl.paper_width_mm;
@@ -297,8 +317,20 @@ function ManagerLabelPrintTaskDetail() {
 
           const value = entries.map(fe => {
             if (fe.fieldKey === 'custom') return fe.customValue || '';
-            if (fe.fieldKey === 'variant.metafield') return item.custom_name || '';
-            if (fe.fieldKey === 'product.metafield') return '';
+            if (fe.fieldKey === 'variant.metafield') {
+              const ns = fe.metafieldNamespace || fe.metafield_namespace || '';
+              const key = fe.metafieldKey || fe.metafield_key || '';
+              if (!ns || !key) return item.custom_name || '';
+              const mfData = metafieldMap[item.sku];
+              return mfData?.variant?.metafields?.find(m => m.namespace === ns && m.key === key)?.value || '';
+            }
+            if (fe.fieldKey === 'product.metafield') {
+              const ns = fe.metafieldNamespace || fe.metafield_namespace || '';
+              const key = fe.metafieldKey || fe.metafield_key || '';
+              if (!ns || !key) return '';
+              const mfData = metafieldMap[item.sku];
+              return mfData?.product?.metafields?.find(m => m.namespace === ns && m.key === key)?.value || '';
+            }
             return fields[fe.fieldKey] ?? '';
           }).filter(v => v !== '').join(SEPARATOR);
 
@@ -322,7 +354,9 @@ function ManagerLabelPrintTaskDetail() {
         if (el.type === 'line') {
           const isH = el.orientation !== 'vertical';
           const sw = { thin: 0.5, medium: 1, thick: 2 }[el.stroke_key] || 0.5;
-          return `<div style="${baseStyle}"><div style="position:absolute;${isH ? `top:50%;left:0;width:100%;border-top:${sw}mm solid #000;` : `left:50%;top:0;height:100%;border-left:${sw}mm solid #000;`}"></div></div>`;
+          // Remove overflow:hidden and ensure min dimensions so the line is never clipped
+          const lineOuter = `position:absolute;left:${left}px;top:${top}px;width:${Math.max(width, 1)}px;height:${Math.max(height, 1)}px;box-sizing:border-box;${rotateStyle}`;
+          return `<div style="${lineOuter}"><div style="position:absolute;${isH ? `top:50%;left:0;width:100%;border-top:${sw}mm solid #000;` : `left:50%;top:0;height:100%;border-left:${sw}mm solid #000;`}"></div></div>`;
         }
 
         if (el.type === 'frame') {
