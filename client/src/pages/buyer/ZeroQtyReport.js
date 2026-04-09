@@ -44,7 +44,7 @@ function ZeroQtyReport() {
   const [committing, setCommitting]             = useState(false);
   const [selectedTypes, setSelectedTypes]       = useState([]);
   const [selectedLocations, setSelectedLocations] = useState([]);
-  const [selectedStatuses, setSelectedStatuses] = useState([]);
+  const [selectedStatuses, setSelectedStatuses] = useState(['reviewing', 'committed']);
   const [date, setDate]                         = useState('ALL');
   const [selectedIds, setSelectedIds]           = useState([]);
   const [sortMode, setSortMode]                 = useState(0);
