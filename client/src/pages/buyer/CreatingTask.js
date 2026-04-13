@@ -1,7 +1,8 @@
 import React, { useState, useRef } from 'react';
+import Papa from 'papaparse';
 import {
   Page, Layout, Card, Button, BlockStack, InlineStack,
-  Text, DataTable, Checkbox, Badge, Banner, Spinner, Select
+  Text, DataTable, Checkbox, Badge, Banner, Select
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import MultiSelectDropdown from '../../components/MultiSelectDropdown';
@@ -13,7 +14,6 @@ const LOCATIONS = [
   'EDM01','EDM02','CAL01','OTT01','OTT02','OTT03','QC01','HQ'
 ];
 
-// 改动一：9个 Type 列表
 const TYPE_OPTIONS = [
   'Braid',
   'Hair',
@@ -35,7 +35,6 @@ const METAFIELD_CONDITIONS = [
   { label: "doesn't exist with",          value: "doesn't exist with" },
 ];
 
-// 改动二：单条 metafield 行的默认值
 function newMetafieldRow() {
   return { id: Date.now() + Math.random(), level: 'product', condition: 'value matches exactly', key: '', value: '' };
 }
@@ -43,13 +42,11 @@ function newMetafieldRow() {
 function CreatingTask() {
   const navigate = useNavigate();
 
-  // 改动一：selectedTypes 替代 department
   const [selectedTypes, setSelectedTypes]       = useState([]);
   const [selectedLocations, setSelectedLocations] = useState([]);
 
-  // 改动二：metafield 列表 + 逻辑
   const [metafieldRows, setMetafieldRows]       = useState([]);
-  const [metafieldLogic, setMetafieldLogic]     = useState('all'); // 'all' | 'any'
+  const [metafieldLogic, setMetafieldLogic]     = useState('all');
 
   const [products, setProducts]                 = useState([]);
   const [taskItems, setTaskItems]               = useState([]);
@@ -98,7 +95,6 @@ function CreatingTask() {
     }
   };
 
-  // 改动一：Add negative 需要 types 和 location 都选了
   const handleAddNegative = async () => {
     if (selectedLocations.length === 0) {
       setError('Please select at least one location first.');
@@ -187,56 +183,52 @@ function CreatingTask() {
   const handleCSVUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      const lines = evt.target.result.split('\n').filter(l => l.trim());
 
-      // 跳过 header 行（如果有）
-      const dataLines = lines.filter(l => {
-        const cols = l.split(',').map(c => c.trim().replace(/"/g, '').toLowerCase());
-        return !(cols[0] === 'barcode' || cols[0] === 'name' || cols[1] === 'barcode' || cols[1] === 'name');
-      });
+    Papa.parse(file, {
+      skipEmptyLines: true,
+      complete: (result) => {
+        const rows = result.data;
+        if (rows.length === 0) return;
 
-      if (dataLines.length === 0) return;
+        // 跳过 header 行
+        const dataRows = rows.filter(cols => {
+          const c0 = (cols[0] || '').trim().toLowerCase();
+          const c1 = (cols[1] || '').trim().toLowerCase();
+          return !(c0 === 'barcode' || c0 === 'name' || c1 === 'barcode' || c1 === 'name');
+        });
 
-      // 自动识别哪列是 barcode：取前20行数据行，看哪列全部是纯数字
-      const sampleLines = dataLines.slice(0, 20);
-      const col0AllNumeric = sampleLines.every(l => {
-        const val = l.split(',')[0]?.trim().replace(/"/g, '') || '';
-        return /^\d+$/.test(val);
-      });
-      const col1AllNumeric = sampleLines.every(l => {
-        const val = l.split(',')[1]?.trim().replace(/"/g, '') || '';
-        return /^\d+$/.test(val);
-      });
+        if (dataRows.length === 0) return;
 
-      // col0 全数字 → col0=barcode, col1=name；否则 col0=name, col1=barcode
-      const barcodeCol = col0AllNumeric ? 0 : col1AllNumeric ? 1 : 0;
-      const nameCol = barcodeCol === 0 ? 1 : 0;
+        // 自动识别 barcode 列：取前20行，看哪列全部是纯数字
+        const sample = dataRows.slice(0, 20);
+        const col0AllNumeric = sample.every(cols => /^\d+$/.test((cols[0] || '').trim()));
+        const col1AllNumeric = sample.every(cols => /^\d+$/.test((cols[1] || '').trim()));
 
-      const newProducts = [];
-      for (const line of dataLines) {
-        const cols = line.split(',');
-        if (cols.length >= 2) {
-          const barcode = String(cols[barcodeCol]?.trim().replace(/"/g, '') || '');
-          const name = String(cols[nameCol]?.trim().replace(/"/g, '') || '');
-          if (barcode) newProducts.push({ name, barcode });
-        }
-      }
+        const barcodeCol = col0AllNumeric ? 0 : col1AllNumeric ? 1 : 0;
+        const nameCol = barcodeCol === 0 ? 1 : 0;
 
-      if (newProducts.length === 0) return;
-      setProducts(prev => {
-        const existing = prev.map(p => p.barcode);
-        const toAdd = newProducts.filter(p => !existing.includes(p.barcode));
-        return [...prev, ...toAdd];
-      });
-      setCsvImported(true);
-    };
-    reader.readAsText(file);
+        const newProducts = dataRows
+          .map(cols => ({
+            barcode: (cols[barcodeCol] || '').trim(),
+            name: (cols[nameCol] || '').trim(),
+          }))
+          .filter(p => p.barcode);
+
+        if (newProducts.length === 0) return;
+
+        setProducts(prev => {
+          const existing = new Set(prev.map(p => p.barcode));
+          const toAdd = newProducts.filter(p => !existing.has(p.barcode));
+          return [...prev, ...toAdd];
+        });
+        setCsvImported(true);
+      },
+      error: () => setError('Failed to parse CSV'),
+    });
+
     e.target.value = '';
   };
 
-  // 改动二：metafield 行操作
   const addMetafieldRow = () => setMetafieldRows(prev => [...prev, newMetafieldRow()]);
   const removeMetafieldRow = (id) => setMetafieldRows(prev => prev.filter(r => r.id !== id));
   const updateMetafieldRow = (id, field, val) => {
@@ -308,7 +300,7 @@ function CreatingTask() {
           <BlockStack gap="400">
             {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
 
-            {/* 改动一：Types + Location */}
+            {/* Types + Location */}
             <Card>
               <BlockStack gap="300">
                 <InlineStack gap="400" wrap align="start">
@@ -330,7 +322,6 @@ function CreatingTask() {
                 </InlineStack>
 
                 <InlineStack gap="200" align="start">
-                  {/* 改动一：需要 types 和 location 都选了才能点 */}
                   <Button
                     onClick={handleAddNegative}
                     loading={loadingNegative}
@@ -364,15 +355,13 @@ function CreatingTask() {
               </BlockStack>
             </Card>
 
-            {/* 改动二：Filters card — 移除 Type condition，新增 metafield 动态行 */}
+            {/* Filters card */}
             <Card>
               <BlockStack gap="400">
 
-                {/* Metafield section */}
                 <BlockStack gap="300">
                   <InlineStack gap="300" align="start">
                     <Button onClick={addMetafieldRow}>Add metafield</Button>
-                    {/* Meet all / any 切换 */}
                     <InlineStack gap="200">
                       {['all', 'any'].map(opt => (
                         <button
@@ -394,7 +383,6 @@ function CreatingTask() {
 
                   {metafieldRows.map(row => (
                     <InlineStack key={row.id} gap="200" align="start" wrap>
-                      {/* Product / Variant 选择 */}
                       <select
                         value={row.level}
                         onChange={e => updateMetafieldRow(row.id, 'level', e.target.value)}
@@ -404,7 +392,6 @@ function CreatingTask() {
                         <option value="variant">Variant</option>
                       </select>
 
-                      {/* Match 条件 */}
                       <select
                         value={row.condition}
                         onChange={e => updateMetafieldRow(row.id, 'condition', e.target.value)}
@@ -415,7 +402,6 @@ function CreatingTask() {
                         ))}
                       </select>
 
-                      {/* namespace.key */}
                       <input
                         type="text"
                         placeholder="namespace.key"
@@ -424,7 +410,6 @@ function CreatingTask() {
                         style={{ padding: '6px 10px', border: '1px solid #c9cccf', borderRadius: '6px', fontSize: '14px', width: '160px' }}
                       />
 
-                      {/* value */}
                       <input
                         type="text"
                         placeholder="value"
@@ -433,7 +418,6 @@ function CreatingTask() {
                         style={{ padding: '6px 10px', border: '1px solid #c9cccf', borderRadius: '6px', fontSize: '14px', width: '120px' }}
                       />
 
-                      {/* 删除 */}
                       <button
                         onClick={() => removeMetafieldRow(row.id)}
                         style={{
