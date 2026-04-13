@@ -503,6 +503,20 @@ router.patch('/:taskId/items/:itemId/scan', async (req, res) => {
   }
 });
 
+// DELETE /api/tasks/:taskId/items
+router.delete('/:taskId/items', async (req, res) => {
+  try {
+    const { taskId } = req.params;
+    const { itemIds } = req.body;
+    if (!itemIds || itemIds.length === 0) return res.status(400).json({ error: 'No itemIds provided' });
+    await pool.query('DELETE FROM task_items WHERE id = ANY($1) AND task_id = $2', [itemIds, taskId]);
+    res.json({ success: true });
+  } catch (e) {
+    console.error('DELETE /api/tasks/:taskId/items error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // PATCH /api/tasks/:id/publish
 router.patch('/:id/publish', async (req, res) => {
   try {

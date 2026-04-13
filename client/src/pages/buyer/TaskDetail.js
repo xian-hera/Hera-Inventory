@@ -45,6 +45,7 @@ function TaskDetail() {
   const [committing, setCommitting] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [deletingItems, setDeletingItems] = useState(false);
   const [editingItemId, setEditingItemId] = useState(null);
   const [editingValue, setEditingValue] = useState('');
 
@@ -106,8 +107,6 @@ function TaskDetail() {
             .map(i => i.id)
         : selectedItemIds;
 
-      // itemIds 为空时：若是 commit all，仍发请求让后端判断是否 auto-archive
-      // 若是 commit selected 且无选中，则提示
       if (itemIds.length === 0 && !all) {
         setError('No items to commit.');
         setCommitting(false);
@@ -163,6 +162,26 @@ function TaskDetail() {
     }
   };
 
+  const handleDeleteItems = async () => {
+    if (selectedItemIds.length === 0) return;
+    if (!window.confirm(`Delete ${selectedItemIds.length} selected item(s)? This cannot be undone.`)) return;
+    setDeletingItems(true);
+    try {
+      const res = await fetch(`/api/tasks/${taskId}/items`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itemIds: selectedItemIds }),
+      });
+      if (!res.ok) throw new Error('Delete items failed');
+      setSelectedItemIds([]);
+      fetchTask();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setDeletingItems(false);
+    }
+  };
+
   const handleSavePoh = async (itemId) => {
     const val = parseInt(editingValue);
     if (isNaN(val)) {
@@ -213,12 +232,10 @@ function TaskDetail() {
     </Page>
   );
 
-  // subtitle 显示 types + location，types 为空时不显示类型部分
   const typesLabel = Array.isArray(task.types) && task.types.length > 0
     ? task.types.map(typeDisplay).join(', ')
     : '';
 
-  // 编辑行渲染（抽出来避免重复）
   const renderEditingCell = (itemId) => (
     <InlineStack gap="100">
       <div style={{ width: '70px' }}>
@@ -233,10 +250,8 @@ function TaskDetail() {
             if (e.key === 'Enter') handleSavePoh(itemId);
             if (e.key === 'Escape') setEditingItemId(null);
           }}
-          // 无 onBlur — 避免与 Save 按钮点击冲突
         />
       </div>
-      {/* 使用原生 button 确保 mousedown 不会触发输入框 blur */}
       <button
         onMouseDown={e => e.preventDefault()}
         onClick={() => handleSavePoh(itemId)}
@@ -352,6 +367,14 @@ function TaskDetail() {
               <BlockStack gap="300">
                 <InlineStack gap="200" wrap>
                   <Button onClick={() => setShowNoteInput(true)}>Add note</Button>
+                  <Button
+                    tone="critical"
+                    disabled={selectedItemIds.length === 0 || deletingItems}
+                    loading={deletingItems}
+                    onClick={handleDeleteItems}
+                  >
+                    Delete selected
+                  </Button>
                   {task.status === 'draft' && (
                     <>
                       <Button variant="primary" onClick={handlePublish} loading={publishing}>
