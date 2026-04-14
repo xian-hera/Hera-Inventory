@@ -411,21 +411,20 @@ router.get('/vendors-tags', async (req, res) => {
 
     const shopify = getShopify();
     const client = new shopify.clients.Graphql({ session });
-
-    // Fetch all vendors with pagination
+    
+// Fetch all vendors with pagination
     let allVendors = [], vendorCursor = null, hasMoreVendors = true;
     while (hasMoreVendors) {
-      const vendorQuery = `
-        query getVendors($cursor: String) {
-          shop {
-            productVendors(first: 250, after: $cursor) {
-              edges { node }
-              pageInfo { hasNextPage endCursor }
-            }
+      const afterClause = vendorCursor ? `, after: "${vendorCursor}"` : '';
+      const vendorQuery = `{
+        shop {
+          productVendors(first: 250${afterClause}) {
+            edges { node }
+            pageInfo { hasNextPage endCursor }
           }
         }
-      `;
-      const vendorResponse = await shopifyRequest(client, vendorQuery, { cursor: vendorCursor });
+      }`;
+      const vendorResponse = await shopifyRequest(client, vendorQuery);
       const { edges, pageInfo } = vendorResponse.data.shop.productVendors;
       allVendors = [...allVendors, ...edges.map(e => e.node).filter(Boolean)];
       hasMoreVendors = pageInfo.hasNextPage;
