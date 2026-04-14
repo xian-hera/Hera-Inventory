@@ -415,21 +415,23 @@ router.get('/vendors-tags', async (req, res) => {
     // Fetch all vendors with pagination
     let allVendors = [], vendorCursor = null, hasMoreVendors = true;
     while (hasMoreVendors) {
-      const afterClause = vendorCursor ? `, after: "${vendorCursor}"` : '';
-      const vendorQuery = `{
-        shop {
-          productVendors(first: 250${afterClause}) {
-            edges { node cursor }
-            pageInfo { hasNextPage }
+      const vendorQuery = `
+        query getVendors($cursor: String) {
+          shop {
+            productVendors(first: 250, after: $cursor) {
+              edges { node }
+              pageInfo { hasNextPage endCursor }
+            }
           }
         }
-      }`;
-      const vendorResponse = await shopifyRequest(client, vendorQuery);
-      const edges = vendorResponse.data.shop.productVendors.edges;
+      `;
+      const vendorResponse = await shopifyRequest(client, vendorQuery, { cursor: vendorCursor });
+      const { edges, pageInfo } = vendorResponse.data.shop.productVendors;
       allVendors = [...allVendors, ...edges.map(e => e.node).filter(Boolean)];
-      hasMoreVendors = vendorResponse.data.shop.productVendors.pageInfo.hasNextPage;
-      if (hasMoreVendors && edges.length > 0) vendorCursor = edges[edges.length - 1].cursor;
+      hasMoreVendors = pageInfo.hasNextPage;
+      vendorCursor = pageInfo.endCursor;
     }
+    
 
     // Fetch all tags with pagination
     let allTags = [], tagCursor = null, hasMoreTags = true;
