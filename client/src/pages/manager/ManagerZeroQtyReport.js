@@ -289,7 +289,7 @@ function ManagerZeroQtyReport() {
   };
 
   return (
-    <Page title="Zero/Low Inventory Count" backAction={{ onAction: () => navigate('/manager') }}>
+    <Page title="Zero/Low Inventory Count" backAction={{ onAction: () => navigate('/manager/inventory-count') }}>
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">

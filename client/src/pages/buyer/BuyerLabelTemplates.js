@@ -193,7 +193,7 @@ function BuyerLabelTemplates() {
   return (
     <Page
       title="Label templates"
-      backAction={{ onAction: () => navigate('/buyer') }}
+      backAction={{ onAction: () => navigate('/buyer/settings') }}
       primaryAction={{ content: 'New template', onAction: () => setShowNew(true) }}
     >
       <Layout>

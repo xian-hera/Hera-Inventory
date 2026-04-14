@@ -73,36 +73,33 @@ router.get('/product-types', async (req, res) => {
 });
 
 // POST /api/shopify/products
-// 改动二：支持多条 metafield 筛选规则（metafields 数组 + metafieldLogic）
 router.post('/products', async (req, res) => {
   try {
     const session = await getSession();
     if (!session) return res.status(401).json({ error: 'No session' });
 
     const {
-      types,           // string[] — 选中的 type（原 department 逻辑已移除）
-      metafields,      // 改动二新增：[{ level, condition, key, value }]
-      metafieldLogic,  // 改动二新增：'all' | 'any'
+      types,
+      metafields,
+      metafieldLogic,
     } = req.body;
 
     const shopify = getShopify();
     const client = new shopify.clients.Graphql({ session });
 
-    // 构建 Shopify query string（按 type 筛选）
     let queryParts = [];
     if (types && types.length > 0) {
       queryParts.push(`(${types.map(t => `product_type:"${t}"`).join(' OR ')})`);
     }
     const queryString = queryParts.join(' AND ') || 'status:active';
 
-    // 解析所有 metafield 筛选规则
     const parsedMeta = (metafields || [])
       .map(mf => {
         if (!mf.key || !mf.key.trim()) return null;
         const parts = mf.key.trim().split('.');
         if (parts.length < 2) return null;
         return {
-          level: mf.level || 'product', // 'product' | 'variant'
+          level: mf.level || 'product',
           namespace: parts[0],
           key: parts.slice(1).join('.'),
           condition: mf.condition,
@@ -114,7 +111,6 @@ router.post('/products', async (req, res) => {
     const hasMetafilter = parsedMeta.length > 0;
     const logic = metafieldLogic === 'any' ? 'any' : 'all';
 
-    // 构建 GQL query — 动态注入 metafield 查询
     const productMetaFields = parsedMeta
       .filter(m => m.level === 'product')
       .map((m, i) => `pMf${i}: metafield(namespace: "${m.namespace}", key: "${m.key}") { value }`)
@@ -164,7 +160,6 @@ router.post('/products', async (req, res) => {
       cursor = page.pageInfo.endCursor;
     }
 
-    // Metafield match 函数
     const matchesCondition = (mfValue, condition, target) => {
       const val = (mfValue || '').toLowerCase().trim();
       const tgt = (target || '').trim().toLowerCase();
@@ -188,13 +183,11 @@ router.post('/products', async (req, res) => {
       const results = parsedMeta.map((mf, i) => {
         if (mf.level === 'product') {
           const idx = productMetaNodes.indexOf(mf);
-          const fieldKey = `pMf${idx}`;
-          const val = product[fieldKey]?.value || null;
+          const val = product[`pMf${idx}`]?.value || null;
           return matchesCondition(val, mf.condition, mf.value);
         } else {
           const idx = variantMetaNodes.indexOf(mf);
-          const fieldKey = `vMf${idx}`;
-          const val = variant[fieldKey]?.value || null;
+          const val = variant[`vMf${idx}`]?.value || null;
           return matchesCondition(val, mf.condition, mf.value);
         }
       });
@@ -206,7 +199,6 @@ router.post('/products', async (req, res) => {
     for (const { node: product } of allProducts) {
       for (const { node: variant } of product.variants.edges) {
         if (!variantPassesMeta(product, variant)) continue;
-
         const name = variant.metafield?.value || product.title;
         variants.push({
           productId: product.id,
@@ -420,10 +412,26 @@ router.get('/vendors-tags', async (req, res) => {
     const shopify = getShopify();
     const client = new shopify.clients.Graphql({ session });
 
-    const vendorQuery = `{ shop { productVendors(first: 250) { edges { node } } } }`;
-    const vendorResponse = await shopifyRequest(client, vendorQuery);
-    const vendors = vendorResponse.data.shop.productVendors.edges.map(e => e.node).filter(Boolean).sort();
+    // Fetch all vendors with pagination
+    let allVendors = [], vendorCursor = null, hasMoreVendors = true;
+    while (hasMoreVendors) {
+      const afterClause = vendorCursor ? `, after: "${vendorCursor}"` : '';
+      const vendorQuery = `{
+        shop {
+          productVendors(first: 250${afterClause}) {
+            edges { node cursor }
+            pageInfo { hasNextPage }
+          }
+        }
+      }`;
+      const vendorResponse = await shopifyRequest(client, vendorQuery);
+      const edges = vendorResponse.data.shop.productVendors.edges;
+      allVendors = [...allVendors, ...edges.map(e => e.node).filter(Boolean)];
+      hasMoreVendors = vendorResponse.data.shop.productVendors.pageInfo.hasNextPage;
+      if (hasMoreVendors && edges.length > 0) vendorCursor = edges[edges.length - 1].cursor;
+    }
 
+    // Fetch all tags with pagination
     let allTags = [], tagCursor = null, hasMoreTags = true;
     while (hasMoreTags) {
       const afterClause = tagCursor ? `, after: "${tagCursor}"` : '';
@@ -440,7 +448,7 @@ router.get('/vendors-tags', async (req, res) => {
       if (hasMoreTags && edges.length > 0) tagCursor = edges[edges.length - 1].cursor;
     }
 
-    res.json({ vendors, tags: allTags.sort() });
+    res.json({ vendors: allVendors.sort(), tags: allTags.sort() });
   } catch (e) {
     console.error('GET /api/shopify/vendors-tags error:', e);
     res.status(500).json({ error: e.message });
