@@ -11,11 +11,36 @@ const LOCATIONS = [
   'EDM01','EDM02','CAL01','OTT01','OTT02','OTT03','QC01','HQ'
 ];
 
+const BADGE_STYLE = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  minWidth: '20px',
+  height: '20px',
+  padding: '0 6px',
+  borderRadius: '10px',
+  background: '#E32A69',
+  color: 'white',
+  fontSize: '12px',
+  fontWeight: '700',
+  marginLeft: '8px',
+  lineHeight: 1,
+};
+
+function Badge({ count }) {
+  if (!count) return null;
+  return <span style={BADGE_STYLE}>{count}</span>;
+}
+
 function ManagerHome() {
   const navigate = useNavigate();
-  const [location, setLocation] = useState('');
-  const [confirmed, setConfirmed] = useState(false);
+  const [location, setLocation]     = useState('');
+  const [confirmed, setConfirmed]   = useState(false);
   const [showWarning, setShowWarning] = useState(false);
+  const [badges, setBadges]         = useState({
+    inventoryCount: 0,
+    labelPrint: 0,
+  });
 
   useEffect(() => {
     const saved = localStorage.getItem('managerLocation');
@@ -24,6 +49,19 @@ function ManagerHome() {
       setConfirmed(true);
     }
   }, []);
+
+  useEffect(() => {
+    if (!confirmed || !location) return;
+    fetch(`/api/badges/manager?location=${encodeURIComponent(location)}`)
+      .then(r => r.json())
+      .then(data => {
+        setBadges({
+          inventoryCount: data.weeklyCountingTasks || 0,
+          labelPrint: data.labelPrintTasks || 0,
+        });
+      })
+      .catch(() => {});
+  }, [confirmed, location]);
 
   const handleConfirmLocation = () => {
     if (!location) {
@@ -39,6 +77,7 @@ function ManagerHome() {
     setConfirmed(false);
     setLocation('');
     localStorage.removeItem('managerLocation');
+    setBadges({ inventoryCount: 0, labelPrint: 0 });
   };
 
   const handleNavigate = (path) => {
@@ -68,7 +107,6 @@ function ManagerHome() {
             <Card>
               <BlockStack gap="300">
                 <Text variant="headingSm">Location</Text>
-
                 {!confirmed ? (
                   <BlockStack gap="200">
                     <Select
@@ -93,33 +131,25 @@ function ManagerHome() {
               </BlockStack>
             </Card>
 
-            <Button
-              size="large"
-              fullWidth
-              onClick={() => handleNavigate('/manager/counting-tasks')}
-            >
-              Weekly Inventory Count
+            {/* Inventory Count */}
+            <Button size="large" fullWidth onClick={() => handleNavigate('/manager/inventory-count')}>
+              <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                Inventory Count
+                <Badge count={badges.inventoryCount} />
+              </span>
             </Button>
-            <Button
-              size="large"
-              fullWidth
-              onClick={() => handleNavigate('/manager/zero-qty-report')}
-            >
-              Zero/Low Inventory Count
-            </Button>
-            <Button
-              size="large"
-              fullWidth
-              onClick={() => handleNavigate('/manager/restock-plan')}
-            >
+
+            {/* Restock */}
+            <Button size="large" fullWidth onClick={() => handleNavigate('/manager/restock-plan')}>
               Restock
             </Button>
-            <Button
-              size="large"
-              fullWidth
-              onClick={() => handleNavigate('/manager/label-print')}
-            >
-              Label print
+
+            {/* Label Print */}
+            <Button size="large" fullWidth onClick={() => handleNavigate('/manager/label-print')}>
+              <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                Label Print
+                <Badge count={badges.labelPrint} />
+              </span>
             </Button>
           </BlockStack>
         </Layout.Section>

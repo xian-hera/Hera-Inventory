@@ -22,6 +22,7 @@ function ManagerPriceChangeDetail() {
   const [printQty, setPrintQty]             = useState('1');
   const [printing, setPrinting]             = useState(false);
   const [printError, setPrintError]         = useState('');
+  const [printSuccess, setPrintSuccess]     = useState(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -48,6 +49,7 @@ function ManagerPriceChangeDetail() {
   const openPrintModal = async () => {
     setShowPrint(true);
     setPrintError('');
+    setPrintSuccess(false);
     setPrintQty('1');
     setSelectedTemplate('');
     setTemplatesLoading(true);
@@ -81,13 +83,15 @@ function ManagerPriceChangeDetail() {
       win.focus();
       setTimeout(async () => {
         win.print();
+        // Record printed_at only — does NOT change status or remove from list
         await fetch(`/api/price-change-tasks/${taskId}/print`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ location }),
         });
+        // Stay on this page; just close modal and show success banner
         setShowPrint(false);
-        navigate('/manager/label-print');
+        setPrintSuccess(true);
       }, 800);
     } catch (e) {
       setPrintError(e.message);
@@ -200,7 +204,6 @@ ${barcodeScript}</head><body>${allLabels}</body></html>`;
     </Page>
   );
 
-  // Page title: "Price Change 000003 · Sale Price"
   const pageTitle = `Price Change ${task.task_no}${task.label_type ? ` · ${task.label_type}` : ''}`;
 
   const templateOptions = templates.map(t => ({
@@ -217,6 +220,13 @@ ${barcodeScript}</head><body>${allLabels}</body></html>`;
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">
+            {/* Print success banner — stays until user navigates away */}
+            {printSuccess && (
+              <Banner tone="success" onDismiss={() => setPrintSuccess(false)}>
+                Labels printed successfully.
+              </Banner>
+            )}
+
             {task.note && (
               <Card>
                 <Text variant="bodySm" tone="subdued">{task.note}</Text>
@@ -255,13 +265,13 @@ ${barcodeScript}</head><body>${allLabels}</body></html>`;
 
       <Modal
         open={showPrint}
-        onClose={() => setShowPrint(false)}
+        onClose={() => { setShowPrint(false); setPrinting(false); }}
         title={`Print all ${items.length} items`}
         primaryAction={{
           content: 'Print', onAction: handlePrint, loading: printing,
           disabled: !selectedTemplate || templatesLoading,
         }}
-        secondaryActions={[{ content: 'Cancel', onAction: () => setShowPrint(false) }]}
+        secondaryActions={[{ content: 'Cancel', onAction: () => { setShowPrint(false); setPrinting(false); } }]}
       >
         <Modal.Section>
           <BlockStack gap="400">

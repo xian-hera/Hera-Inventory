@@ -70,14 +70,6 @@ const initDatabase = async () => {
     await client.query(`ALTER TABLE zero_qty_reports ADD COLUMN IF NOT EXISTS type TEXT`).catch(() => {});
 
     await client.query(`
-      CREATE TABLE IF NOT EXISTS task_counter (
-        id INTEGER PRIMARY KEY DEFAULT 1,
-        last_number INTEGER NOT NULL DEFAULT 0,
-        last_letter TEXT NOT NULL DEFAULT 'A'
-      )
-    `);
-
-    await client.query(`
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
         shop TEXT NOT NULL,
@@ -87,6 +79,87 @@ const initDatabase = async () => {
         expires TIMESTAMPTZ,
         access_token TEXT,
         updated_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
+    // ─── Stock Losses ───────────────────────────────────────────────────────────
+
+    // Local supplier brand list (vendor names)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS local_supplier_brands (
+        id SERIAL PRIMARY KEY,
+        vendor TEXT NOT NULL UNIQUE,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
+    // Stock Losses settings matrix (type × reason → photo/instruction config)
+    // type_value: 'ALL' | any product type string | custom type label
+    // reason: 'damaged_delivery' | 'damaged_employee' | 'expired' | 'stolen' | 'tester' | 'other' | custom
+    // metafield_namespace, metafield_key, metafield_value: optional sub-condition for custom type rows
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS stock_losses_settings (
+        id SERIAL PRIMARY KEY,
+        type_value TEXT NOT NULL,
+        type_label TEXT NOT NULL,
+        metafield_level TEXT,
+        metafield_namespace TEXT,
+        metafield_key TEXT,
+        metafield_value TEXT,
+        reason TEXT NOT NULL,
+        reason_label TEXT NOT NULL,
+        photo_required BOOLEAN NOT NULL DEFAULT FALSE,
+        instruction_text TEXT,
+        local_supplier_instruction_text TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (type_value, reason)
+      )
+    `);
+
+    // Custom reasons added by buyer (beyond the 5 built-in ones)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS stock_losses_custom_reasons (
+        id SERIAL PRIMARY KEY,
+        reason_key TEXT NOT NULL UNIQUE,
+        reason_label TEXT NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
+    // Stock Losses entries submitted by managers
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS stock_losses (
+        id SERIAL PRIMARY KEY,
+        barcode TEXT NOT NULL,
+        name TEXT,
+        product_type TEXT,
+        vendor TEXT,
+        location TEXT NOT NULL,
+        shopify_location_id TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        reason_label TEXT NOT NULL,
+        reason_detail TEXT,
+        qty INTEGER NOT NULL,
+        adjustment INTEGER NOT NULL,
+        soh INTEGER,
+        photo_urls TEXT[] DEFAULT '{}',
+        shopify_file_gids TEXT[] DEFAULT '{}',
+        status TEXT NOT NULL DEFAULT 'reviewing',
+        submitted_at TIMESTAMPTZ DEFAULT NOW(),
+        committed_at TIMESTAMPTZ,
+        archived_at TIMESTAMPTZ
+      )
+    `);
+
+    // ────────────────────────────────────────────────────────────────────────────
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS task_counter (
+        id INTEGER PRIMARY KEY DEFAULT 1,
+        last_number INTEGER NOT NULL DEFAULT 0,
+        last_letter TEXT NOT NULL DEFAULT 'A'
       )
     `);
 

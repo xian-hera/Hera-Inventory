@@ -30,6 +30,8 @@ function ManagerLabelPrintTasks() {
 
   const [priceTasks, setPriceTasks]       = useState([]);
   const [priceLoading, setPriceLoading]   = useState(true);
+  // Track which price task IDs are currently being marked done (for loading state)
+  const [doneLoadingIds, setDoneLoadingIds] = useState([]);
 
   const fetchTasks = useCallback(async () => {
     setLoading(true);
@@ -54,7 +56,7 @@ function ManagerLabelPrintTasks() {
       if (!res.ok) throw new Error('Failed to load price change tasks');
       setPriceTasks(await res.json());
     } catch (e) {
-      // 静默失败
+      // silent fail
     } finally {
       setPriceLoading(false);
     }
@@ -100,6 +102,26 @@ function ManagerLabelPrintTasks() {
       setError('Failed to delete tasks.');
     } finally {
       setDeleteLoading(false);
+    }
+  };
+
+  const handleMarkDone = async (taskId) => {
+    setDoneLoadingIds(prev => [...prev, taskId]);
+    try {
+      const res = await fetch(`/api/price-change-tasks/${taskId}/done`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ location }),
+      });
+      if (!res.ok) throw new Error('Failed to mark as done');
+      // Update local state so button immediately becomes "Done" text
+      setPriceTasks(prev =>
+        prev.map(t => t.id === taskId ? { ...t, location_status: 'done' } : t)
+      );
+    } catch (e) {
+      setError('Failed to mark task as done.');
+    } finally {
+      setDoneLoadingIds(prev => prev.filter(id => id !== taskId));
     }
   };
 
@@ -188,20 +210,36 @@ function ManagerLabelPrintTasks() {
               ) : (
                 <Card padding="0">
                   <DataTable
-                    columnContentTypes={['text', 'text', 'text', 'text', 'text']}
-                    headings={['Task', 'Type', 'Items', 'Published', 'Note']}
-                    rows={priceTasks.map(t => [
-                      <Button
-                        variant="plain"
-                        onClick={() => navigate(`/manager/price-change/${t.id}`)}
-                      >
-                        {t.task_no}
-                      </Button>,
-                      t.label_type || 'Regular price',
-                      String(t.item_count || 0),
-                      formatDate(t.created_at),
-                      t.note || '-',
-                    ])}
+                    columnContentTypes={['text', 'text', 'text', 'text', 'text', 'text']}
+                    headings={['Task', 'Type', 'Items', 'Published', 'Note', '']}
+                    rows={priceTasks.map(t => {
+                      const isDone = t.location_status === 'done';
+                      const isLoadingDone = doneLoadingIds.includes(t.id);
+                      return [
+                        <Button
+                          variant="plain"
+                          onClick={() => navigate(`/manager/price-change/${t.id}`)}
+                        >
+                          {t.task_no}
+                        </Button>,
+                        t.label_type || 'Regular price',
+                        String(t.item_count || 0),
+                        formatDate(t.created_at),
+                        t.note || '-',
+                        isDone ? (
+                          <Text tone="success" fontWeight="medium">Done</Text>
+                        ) : (
+                          <Button
+                            size="slim"
+                            tone="success"
+                            loading={isLoadingDone}
+                            onClick={() => handleMarkDone(t.id)}
+                          >
+                            Done
+                          </Button>
+                        ),
+                      ];
+                    })}
                   />
                 </Card>
               )}

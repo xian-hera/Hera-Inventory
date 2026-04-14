@@ -160,7 +160,7 @@ router.get('/manager', async (req, res) => {
         ON ls.task_id = t.id AND ls.location = $1
       LEFT JOIN price_change_items i ON i.task_id = t.id
       WHERE t.status = 'active'
-        AND ls.status = 'pending'
+        AND (ls.status = 'pending' OR (ls.status = 'done' AND ls.auto_delete_at > NOW()))
       GROUP BY t.id, ls.status, ls.printed_at, ls.auto_delete_at
       ORDER BY t.created_at DESC
     `, [location]);
@@ -173,24 +173,45 @@ router.get('/manager', async (req, res) => {
 });
 
 // PATCH /api/price-change-tasks/:id/print
+// Records printed_at only — does NOT change status or trigger auto-deletion
 router.patch('/:id/print', async (req, res) => {
   try {
     const { location } = req.body;
     if (!location) return res.status(400).json({ error: 'location required' });
 
-    const printedAt = new Date();
-    const autoDeleteAt = new Date(printedAt.getTime() + 60 * 60 * 1000);
-
     await pool.query(
       `UPDATE price_change_location_status
-       SET status = 'done', printed_at = $1, auto_delete_at = $2
-       WHERE task_id = $3 AND location = $4`,
-      [printedAt, autoDeleteAt, req.params.id, location]
+       SET printed_at = NOW()
+       WHERE task_id = $1 AND location = $2`,
+      [req.params.id, location]
     );
 
     res.json({ success: true });
   } catch (e) {
     console.error('PATCH /api/price-change-tasks/:id/print error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PATCH /api/price-change-tasks/:id/done
+// Manager marks task as done — sets status to 'done', auto-deletes after 2 hours
+router.patch('/:id/done', async (req, res) => {
+  try {
+    const { location } = req.body;
+    if (!location) return res.status(400).json({ error: 'location required' });
+
+    const autoDeleteAt = new Date(Date.now() + 2 * 60 * 60 * 1000);
+
+    await pool.query(
+      `UPDATE price_change_location_status
+       SET status = 'done', auto_delete_at = $1
+       WHERE task_id = $2 AND location = $3`,
+      [autoDeleteAt, req.params.id, location]
+    );
+
+    res.json({ success: true });
+  } catch (e) {
+    console.error('PATCH /api/price-change-tasks/:id/done error:', e);
     res.status(500).json({ error: e.message });
   }
 });

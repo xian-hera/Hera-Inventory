@@ -23,6 +23,9 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+app.use('/api/stock-losses', require('./routes/stockLosses'));
+app.use('/api/stock-losses-settings', require('./routes/stockLossesSettings'));
+app.use('/api/badges', require('./routes/badges'));
 app.use('/api/tasks', require('./routes/tasks'));
 app.use('/api/shopify', require('./routes/shopify').router);
 app.use('/api/label-templates', require('./routes/labelTemplates'));
