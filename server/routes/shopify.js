@@ -430,7 +430,7 @@ router.get('/vendors-tags', async (req, res) => {
       hasMoreVendors = pageInfo.hasNextPage;
       vendorCursor = pageInfo.endCursor;
     }
-    
+    console.log(`vendors total: ${allVendors.length}, last: ${allVendors[allVendors.length-1]}`);
 
     // Fetch all tags with pagination
     let allTags = [], tagCursor = null, hasMoreTags = true;
