@@ -62,7 +62,7 @@ function BuyerHome() {
   }, []);
 
   return (
-    <Page title="Purchasing" backAction={{ onAction: () => navigate('/') }}>
+    <Page title="Task" backAction={{ onAction: () => navigate('/') }}>
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">

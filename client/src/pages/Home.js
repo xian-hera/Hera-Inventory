@@ -63,7 +63,7 @@ function Home() {
   };
 
   return (
-    <Page title="Inventory Count">
+    <Page title="User">
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">
