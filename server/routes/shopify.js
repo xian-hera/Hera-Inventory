@@ -412,25 +412,26 @@ router.get('/vendors-tags', async (req, res) => {
     const shopify = getShopify();
     const client = new shopify.clients.Graphql({ session });
     
-// Fetch all vendors with pagination
-    let allVendors = [], vendorCursor = null, hasMoreVendors = true;
-    while (hasMoreVendors) {
-      const afterClause = vendorCursor ? `, after: "${vendorCursor}"` : '';
-      const vendorQuery = `{
-        shop {
-          productVendors(first: 250${afterClause}) {
-            edges { node }
-            pageInfo { hasNextPage endCursor }
-          }
+// Vendors: traverse all products to collect unique vendors
+    const vendorSet = new Set();
+    let productCursor = null, hasMoreProducts = true;
+    while (hasMoreProducts) {
+      const afterClause = productCursor ? `, after: "${productCursor}"` : '';
+      const productQuery = `{
+        products(first: 250${afterClause}) {
+          pageInfo { hasNextPage endCursor }
+          edges { node { vendor } }
         }
       }`;
-      const vendorResponse = await shopifyRequest(client, vendorQuery);
-      const { edges, pageInfo } = vendorResponse.data.shop.productVendors;
-      allVendors = [...allVendors, ...edges.map(e => e.node).filter(Boolean)];
-      hasMoreVendors = pageInfo.hasNextPage;
-      vendorCursor = pageInfo.endCursor;
+      const productResponse = await shopifyRequest(client, productQuery);
+      const page = productResponse.data.products;
+      for (const { node } of page.edges) {
+        if (node.vendor) vendorSet.add(node.vendor);
+      }
+      hasMoreProducts = page.pageInfo.hasNextPage;
+      productCursor = page.pageInfo.endCursor;
     }
-    console.log(`vendors total: ${allVendors.length}, last: ${allVendors[allVendors.length-1]}`);
+    const allVendors = Array.from(vendorSet).sort();
 
     // Fetch all tags with pagination
     let allTags = [], tagCursor = null, hasMoreTags = true;
