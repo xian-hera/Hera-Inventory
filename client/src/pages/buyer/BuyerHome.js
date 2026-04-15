@@ -1,12 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Page, Layout, Button, BlockStack, TextField, Banner, Modal, Text
+  Page, Layout, Button, BlockStack, Banner
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
-// import BuyerNav from '../../components/BuyerNav';
-
-const PIN_CONFIG_KEY   = 'buyer_pin_config';
-const DEFAULT_PIN      = '3591';
 
 const BADGE_STYLE = {
   display: 'inline-flex',
@@ -36,25 +32,19 @@ function ExclamationBadge() {
 function BuyerHome() {
   const navigate = useNavigate();
 
-  const [pinConfig, setPinConfig] = useState({ pin: DEFAULT_PIN, hint: '' });
   const [badges, setBadges] = useState({
     inventoryCount: 0,
+    stockLosses: 0,
     priceChangeAlert: false,
   });
-
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem(PIN_CONFIG_KEY);
-      if (stored) setPinConfig(JSON.parse(stored));
-    } catch (e) {}
-  }, []);
 
   useEffect(() => {
     fetch('/api/badges/buyer')
       .then(r => r.json())
       .then(data => {
         setBadges({
-          inventoryCount: (data.weeklyReviewing || 0) + (data.zeroLowReviewing || 0) + (data.stockLossesReviewing || 0),
+          inventoryCount: (data.weeklyReviewing || 0) + (data.zeroLowReviewing || 0),
+          stockLosses: data.stockLossesReviewing || 0,
           priceChangeAlert: data.priceChangeAlert || false,
         });
       })
@@ -71,6 +61,14 @@ function BuyerHome() {
               <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 Inventory Count
                 <Badge count={badges.inventoryCount} />
+              </span>
+            </Button>
+
+            {/* Stock Losses */}
+            <Button size="large" fullWidth onClick={() => navigate('/buyer/stock-losses')}>
+              <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                Stock Losses
+                <Badge count={badges.stockLosses} />
               </span>
             </Button>
 

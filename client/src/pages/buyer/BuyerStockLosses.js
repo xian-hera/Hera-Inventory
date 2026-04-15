@@ -12,17 +12,11 @@ const LOCATIONS = [
   'EDM01','EDM02','CAL01','OTT01','OTT02','OTT03','QC01','HQ'
 ];
 
+// All uppercase, matching Shopify admin product types
 const TYPE_OPTIONS = [
-  'Braid', 'Hair', 'Hair & Skin Care', 'Hera Beauty',
-  'Jewelry', 'K-Beauty', 'Makeup', 'Tools & Accessories', 'Wig',
+  'BRAID', 'HAIR', 'HAIR & SKIN CARE',
+  'JEWELRY', 'K-BEAUTY', 'MAKEUP', 'TOOLS & ACCESSORIES', 'WIG',
 ];
-
-const TYPE_LABEL_MAP = {
-  'Hair & Skin Care':    'Care',
-  'HAIR & SKIN CARE':    'Care',
-  'Tools & Accessories': 'Tools + Acc.',
-  'TOOLS & ACCESSORIES': 'Tools + Acc.',
-};
 
 const BUILT_IN_REASONS = [
   { key: 'damaged_delivery',  label: 'Damaged',    sub: 'during delivery' },
@@ -33,10 +27,6 @@ const BUILT_IN_REASONS = [
   { key: 'other',             label: 'Other',      sub: null },
 ];
 
-function typeDisplay(type) {
-  return TYPE_LABEL_MAP[type] || type;
-}
-
 function formatDate(dateStr) {
   if (!dateStr) return '';
   const d = new Date(dateStr);
@@ -45,19 +35,15 @@ function formatDate(dateStr) {
 }
 
 function getReasonDisplay(reasonKey, reasonDetail, customReasons) {
-  // Find label from built-in or custom
   const builtin = BUILT_IN_REASONS.find(r => r.key === reasonKey);
   if (builtin) {
     return { label: builtin.label, sub: builtin.key === 'other' ? (reasonDetail || null) : builtin.sub };
   }
   const custom = customReasons.find(r => r.reason_key === reasonKey);
-  if (custom) {
-    return { label: custom.reason_label, sub: null };
-  }
+  if (custom) return { label: custom.reason_label, sub: null };
   return { label: reasonKey, sub: null };
 }
 
-// Reason cell renderer
 function ReasonCell({ reasonKey, reasonDetail, photoUrls, customReasons }) {
   const { label, sub } = getReasonDisplay(reasonKey, reasonDetail, customReasons);
   const hasPhotos = photoUrls && photoUrls.length > 0;
@@ -81,10 +67,7 @@ function ReasonCell({ reasonKey, reasonDetail, photoUrls, customReasons }) {
         {hasPhotos && (
           <span
             onClick={handleDownload}
-            style={{
-              fontSize: '12px', color: '#005bd3', textDecoration: 'underline',
-              cursor: 'pointer', whiteSpace: 'nowrap',
-            }}
+            style={{ fontSize: '12px', color: '#005bd3', textDecoration: 'underline', cursor: 'pointer', whiteSpace: 'nowrap' }}
           >
             {photoUrls.length} photo{photoUrls.length > 1 ? 's' : ''}
           </span>
@@ -92,10 +75,7 @@ function ReasonCell({ reasonKey, reasonDetail, photoUrls, customReasons }) {
       </div>
       {sub && (
         <div
-          style={{
-            fontSize: '12px', color: '#6d7175', maxWidth: '140px',
-            overflowX: 'auto', whiteSpace: 'nowrap', cursor: 'default',
-          }}
+          style={{ fontSize: '12px', color: '#6d7175', maxWidth: '140px', overflowX: 'auto', whiteSpace: 'nowrap', cursor: 'default' }}
           title={sub}
         >
           {sub}
@@ -113,7 +93,6 @@ function BuyerStockLosses() {
   const [error, setError]                       = useState('');
   const [committing, setCommitting]             = useState(false);
 
-  // Filters
   const [selectedTypes, setSelectedTypes]       = useState([]);
   const [selectedLocations, setSelectedLocations] = useState([]);
   const [selectedStatuses, setSelectedStatuses] = useState(['reviewing', 'committed']);
@@ -123,7 +102,6 @@ function BuyerStockLosses() {
   const [selectedIds, setSelectedIds]           = useState([]);
   const [customReasons, setCustomReasons]       = useState([]);
 
-  // Load custom reasons once
   useEffect(() => {
     fetch('/api/stock-losses-settings/custom-reasons')
       .then(r => r.json())
@@ -155,7 +133,6 @@ function BuyerStockLosses() {
 
   useEffect(() => { fetchEntries(); }, [fetchEntries]);
 
-  // Commit one
   const handleCommitOne = async (id) => {
     try {
       const res = await fetch(`/api/stock-losses/${id}/commit`, { method: 'PATCH' });
@@ -167,7 +144,6 @@ function BuyerStockLosses() {
     }
   };
 
-  // Commit selected
   const handleCommitSelected = async () => {
     if (selectedIds.length === 0) return;
     setCommitting(true);
@@ -189,7 +165,6 @@ function BuyerStockLosses() {
     }
   };
 
-  // Commit all reviewing
   const handleCommitAll = async () => {
     setCommitting(true);
     try {
@@ -212,7 +187,6 @@ function BuyerStockLosses() {
     }
   };
 
-  // Delete — also removes Shopify photos
   const handleDelete = async () => {
     if (selectedIds.length === 0) return;
     if (!window.confirm(`Delete ${selectedIds.length} entr${selectedIds.length > 1 ? 'ies' : 'y'}? Photos will also be deleted.`)) return;
@@ -230,7 +204,6 @@ function BuyerStockLosses() {
     }
   };
 
-  // Archive
   const handleArchive = async () => {
     if (selectedIds.length === 0) return;
     try {
@@ -252,7 +225,6 @@ function BuyerStockLosses() {
   const toggleSelectAll = () =>
     setSelectedIds(selectedIds.length === entries.length ? [] : entries.map(e => e.id));
 
-  // Reason filter options
   const reasonFilterOptions = [
     'ALL',
     ...BUILT_IN_REASONS.map(r => r.key),
@@ -285,17 +257,15 @@ function BuyerStockLosses() {
         checked={selectedIds.includes(entry.id)}
         onChange={() => toggleSelectOne(entry.id)}
       />,
-      typeDisplay(entry.product_type) || '-',
+      entry.product_type || '-',
       entry.location || '-',
       formatDate(entry.submitted_at),
-      // Name + SKU merged column
       <div>
         <div style={{ fontSize: '13px', fontWeight: '500', wordBreak: 'break-word' }}>
           {entry.name || '-'}
         </div>
         <div style={{ fontSize: '12px', color: '#6d7175' }}>{entry.barcode || '-'}</div>
       </div>,
-      // Reason column
       <ReasonCell
         reasonKey={entry.reason}
         reasonDetail={entry.reason_detail}
@@ -303,11 +273,7 @@ function BuyerStockLosses() {
         customReasons={customReasons}
       />,
       entry.soh ?? '-',
-      // Adjustment: read-only negative value
-      <Text
-        fontWeight="bold"
-        tone={entry.adjustment < 0 ? 'critical' : 'success'}
-      >
+      <Text fontWeight="bold" tone={entry.adjustment < 0 ? 'critical' : 'success'}>
         {entry.adjustment > 0 ? `+${entry.adjustment}` : entry.adjustment}
       </Text>,
       actionCell,
@@ -317,14 +283,13 @@ function BuyerStockLosses() {
   return (
     <Page
       title="Stock Losses"
-      backAction={{ onAction: () => navigate('/buyer/inventory-count') }}
+      backAction={{ onAction: () => navigate('/buyer') }}
     >
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">
             {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
 
-            {/* Filters */}
             <Card>
               <InlineStack gap="400" wrap>
                 <MultiSelectDropdown
@@ -332,7 +297,6 @@ function BuyerStockLosses() {
                   options={TYPE_OPTIONS}
                   selected={selectedTypes}
                   onChange={setSelectedTypes}
-                  labelMap={TYPE_LABEL_MAP}
                 />
                 <MultiSelectDropdown
                   label="Location"
@@ -346,7 +310,6 @@ function BuyerStockLosses() {
                   selected={selectedStatuses}
                   onChange={setSelectedStatuses}
                 />
-                {/* Reason filter */}
                 <BlockStack gap="100">
                   <Text variant="bodySm" tone="subdued">Reason</Text>
                   <select
@@ -359,7 +322,6 @@ function BuyerStockLosses() {
                     ))}
                   </select>
                 </BlockStack>
-                {/* Date filter */}
                 <BlockStack gap="100">
                   <Text variant="bodySm" tone="subdued">Date</Text>
                   <select
@@ -376,31 +338,19 @@ function BuyerStockLosses() {
               </InlineStack>
             </Card>
 
-            {/* Table */}
             <Card>
               <BlockStack gap="300">
                 <InlineStack align="end" gap="200">
-                  <Button
-                    disabled={selectedIds.length === 0 || committing}
-                    onClick={handleCommitSelected}
-                    loading={committing}
-                  >
+                  <Button disabled={selectedIds.length === 0 || committing} onClick={handleCommitSelected} loading={committing}>
                     Commit selected
                   </Button>
                   <Button onClick={handleCommitAll} loading={committing}>
                     Commit all
                   </Button>
-                  <Button
-                    tone="critical"
-                    disabled={selectedIds.length === 0}
-                    onClick={handleDelete}
-                  >
+                  <Button tone="critical" disabled={selectedIds.length === 0} onClick={handleDelete}>
                     Delete
                   </Button>
-                  <Button
-                    disabled={selectedIds.length === 0}
-                    onClick={handleArchive}
-                  >
+                  <Button disabled={selectedIds.length === 0} onClick={handleArchive}>
                     Archive
                   </Button>
                 </InlineStack>

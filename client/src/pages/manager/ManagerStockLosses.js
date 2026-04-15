@@ -674,7 +674,7 @@ function ManagerStockLosses() {
   return (
     <Page
       title="Stock Losses"
-      backAction={{ onAction: () => navigate('/manager/inventory-count') }}
+      backAction={{ onAction: () => navigate('/manager') }}
     >
       <Layout>
         <Layout.Section>

@@ -14,15 +14,16 @@ const BUILT_IN_REASONS = [
 ];
 const OTHER_REASON = { key: 'other', label: 'Other', sub: null };
 
-// ─── Built-in types (always present, cannot be deleted) ──────────────────────
-const BUILT_IN_TYPES = [ 
-  { value: 'Hair & Skin Care',   label: 'Hair & Skin Care',    metafield: null },
-  { value: 'Hair',               label: 'Hair',                metafield: null },
-  { value: 'Wig',                label: 'Wig',                 metafield: null },
-  { value: 'Braid',              label: 'Braid',               metafield: null },
-  { value: 'Makeup',             label: 'Makeup',              metafield: null },
-  { value: 'Tools & Accessories',label: 'Tools & Accessories', metafield: null },
-  { value: 'Jewelry',            label: 'Jewelry',             metafield: null },
+// ─── Built-in types — all uppercase to match Shopify admin ───────────────────
+const BUILT_IN_TYPES = [
+  { value: 'HAIR & SKIN CARE',   label: 'HAIR & SKIN CARE',   metafield: null },
+  { value: 'HAIR',               label: 'HAIR',               metafield: null },
+  { value: 'WIG',                label: 'WIG',                metafield: null },
+  { value: 'BRAID',              label: 'BRAID',              metafield: null },
+  { value: 'MAKEUP',             label: 'MAKEUP',             metafield: null },
+  { value: 'TOOLS & ACCESSORIES',label: 'TOOLS & ACCESSORIES',metafield: null },
+  { value: 'JEWELRY',            label: 'JEWELRY',            metafield: null },
+  { value: 'K-BEAUTY',           label: 'K-BEAUTY',           metafield: null },
 ];
 
 // ─── Instruction modal ───────────────────────────────────────────────────────
@@ -69,7 +70,9 @@ function AddTypeModal({ productTypes, onSave, onClose }) {
       const parts = mfNamespaceKey.trim().split('.');
       metafield = { level: mfLevel, namespace: parts[0] || '', key: parts.slice(1).join('.') || '', value: mfValue.trim() };
     }
-    onSave({ value: selectedType, label: selectedType, metafield });
+    // Store custom types in uppercase to match convention
+    const upperValue = selectedType.toUpperCase();
+    onSave({ value: upperValue, label: upperValue, metafield });
   };
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -85,7 +88,7 @@ function AddTypeModal({ productTypes, onSave, onClose }) {
               ))}
             </div>
           )}
-          {selectedType && <div style={{ marginTop: '6px', fontSize: '13px', color: '#008060' }}>Selected: <strong>{selectedType}</strong></div>}
+          {selectedType && <div style={{ marginTop: '6px', fontSize: '13px', color: '#008060' }}>Selected: <strong>{selectedType.toUpperCase()}</strong></div>}
         </div>
         <div style={{ marginTop: '16px' }}>
           <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '14px' }}>
@@ -186,7 +189,6 @@ function BuyerStockLossesSettings() {
   const [error, setError]                   = useState('');
   const [saving, setSaving]                 = useState('');
 
-  // Brands
   const [brands, setBrands]                 = useState([]);
   const [brandSearch, setBrandSearch]       = useState('');
   const [brandResults, setBrandResults]     = useState([]);
@@ -194,11 +196,9 @@ function BuyerStockLossesSettings() {
   const [allVendors, setAllVendors]         = useState([]);
   const [vendorsLoading, setVendorsLoading] = useState(false);
 
-  // Dropdown fixed positioning ref
   const brandInputRef                       = useRef(null);
   const [dropdownStyle, setDropdownStyle]   = useState({});
 
-  // Custom reasons / types / matrix
   const [customReasons, setCustomReasons]   = useState([]);
   const [customTypes, setCustomTypes]       = useState([]);
   const [matrix, setMatrix]                 = useState({});
@@ -212,7 +212,6 @@ function BuyerStockLossesSettings() {
   const [showAddReason, setShowAddReason]       = useState(false);
   const [deleteConfirm, setDeleteConfirm]       = useState(null);
 
-  // ── Load settings data ─────────────────────────────────────────────────────
   const loadAll = useCallback(async () => {
     setLoading(true);
     try {
@@ -235,7 +234,8 @@ function BuyerStockLossesSettings() {
           instruction_text: row.instruction_text,
           local_supplier_instruction_text: row.local_supplier_instruction_text,
         };
-        const isBuiltIn = BUILT_IN_TYPES.some(t => t.value === row.type_value);
+        // Case-insensitive check for built-in types
+        const isBuiltIn = BUILT_IN_TYPES.some(t => t.value.toUpperCase() === row.type_value.toUpperCase());
         if (!isBuiltIn) {
           customTypeMap[row.type_value] = {
             value: row.type_value, label: row.type_label,
@@ -254,7 +254,6 @@ function BuyerStockLossesSettings() {
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
-  // ── Load all vendors once at mount (cached for instant client-side search) ─
   useEffect(() => {
     setVendorsLoading(true);
     fetch('/api/shopify/vendors-tags')
@@ -264,7 +263,6 @@ function BuyerStockLossesSettings() {
       .finally(() => setVendorsLoading(false));
   }, []);
 
-  // ── Client-side vendor filter (instant) ───────────────────────────────────
   useEffect(() => {
     if (!brandSearch.trim()) { setBrandResults([]); return; }
     const q = brandSearch.toLowerCase();
@@ -272,21 +270,13 @@ function BuyerStockLossesSettings() {
     setBrandResults(filtered.slice(0, 20));
   }, [brandSearch, selectedBrands, allVendors]);
 
-  // ── Recalculate dropdown position whenever results appear ─────────────────
   useEffect(() => {
     if (brandResults.length > 0 && brandInputRef.current) {
       const rect = brandInputRef.current.getBoundingClientRect();
       setDropdownStyle({
-        position: 'fixed',
-        top: rect.bottom + 2,
-        left: rect.left,
-        width: rect.width,
-        background: 'white',
-        border: '1px solid #c9cccf',
-        borderRadius: '6px',
-        zIndex: 10000,
-        maxHeight: '200px',
-        overflowY: 'auto',
+        position: 'fixed', top: rect.bottom + 2, left: rect.left, width: rect.width,
+        background: 'white', border: '1px solid #c9cccf', borderRadius: '6px',
+        zIndex: 10000, maxHeight: '200px', overflowY: 'auto',
         boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
       });
     }
@@ -315,7 +305,6 @@ function BuyerStockLossesSettings() {
     } catch (e) { setError('Failed to remove brand'); }
   };
 
-  // ── Matrix helpers ─────────────────────────────────────────────────────────
   const getCellValue = (tv, rk, field) => matrix[tv]?.[rk]?.[field] || false;
   const getCellText  = (tv, rk, field) => matrix[tv]?.[rk]?.[field] || '';
 
@@ -363,7 +352,6 @@ function BuyerStockLossesSettings() {
     setInstructionModal(null);
   };
 
-  // ── Add / delete custom reason ─────────────────────────────────────────────
   const handleAddReason = async (label) => {
     try {
       const res  = await fetch('/api/stock-losses-settings/custom-reasons', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason_label: label }) });
@@ -391,9 +379,8 @@ function BuyerStockLossesSettings() {
     });
   };
 
-  // ── Add / delete custom type ───────────────────────────────────────────────
   const handleAddType = (typeObj) => {
-    const exists = allTypes.some(t => t.value === typeObj.value);
+    const exists = allTypes.some(t => t.value.toUpperCase() === typeObj.value.toUpperCase());
     if (exists) { setError('This type is already in the list.'); setShowAddType(false); return; }
     setCustomTypes(prev => [...prev, typeObj]);
     setShowAddType(false);
@@ -413,7 +400,6 @@ function BuyerStockLossesSettings() {
     });
   };
 
-  // ── Render matrix cell ─────────────────────────────────────────────────────
   const renderCell = (typeValue, typeLabel, reasonKey, reasonLabel) => {
     const isSaving       = saving === `${typeValue}_${reasonKey}`;
     const photo          = getCellValue(typeValue, reasonKey, 'photo_required');
@@ -460,12 +446,11 @@ function BuyerStockLossesSettings() {
 
   return (
     <>
-      {/* Modals */}
       {instructionModal && (
         <InstructionModal
           cell={{ instruction_text: getCellText(instructionModal.typeValue, instructionModal.reasonKey, 'instruction_text'), local_supplier_instruction_text: getCellText(instructionModal.typeValue, instructionModal.reasonKey, 'local_supplier_instruction_text') }}
           typeLabel={instructionModal.typeLabel} reasonLabel={instructionModal.reasonLabel}
-          isHairSkinCare={instructionModal.typeValue === 'Hair & Skin Care'}
+          isHairSkinCare={instructionModal.typeValue.toUpperCase() === 'HAIR & SKIN CARE'}
           onSave={handleInstructionSave} onClose={() => setInstructionModal(null)}
         />
       )}
@@ -473,13 +458,10 @@ function BuyerStockLossesSettings() {
       {showAddReason && <AddReasonModal onSave={handleAddReason} onClose={() => setShowAddReason(false)} />}
       {deleteConfirm && <DeleteConfirmModal message={deleteConfirm.message} onConfirm={deleteConfirm.onConfirm} onClose={() => setDeleteConfirm(null)} />}
 
-      {/* Vendor dropdown — rendered outside card to escape overflow:hidden */}
       {brandResults.length > 0 && (
         <div style={dropdownStyle}>
           {brandResults.map(v => (
-            <div
-              key={v}
-              onMouseDown={() => handleAddBrand(v)}
+            <div key={v} onMouseDown={() => handleAddBrand(v)}
               style={{ padding: '8px 12px', cursor: 'pointer', fontSize: '14px' }}
               onMouseEnter={e => e.currentTarget.style.background = '#f6f6f7'}
               onMouseLeave={e => e.currentTarget.style.background = 'white'}
@@ -496,7 +478,6 @@ function BuyerStockLossesSettings() {
             <BlockStack gap="600">
               {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
 
-              {/* ── Card 1: Local Supplier Brand List ── */}
               <Card>
                 <BlockStack gap="300">
                   <Text variant="headingSm">Local supplier brand list</Text>
@@ -523,32 +504,17 @@ function BuyerStockLossesSettings() {
                 </BlockStack>
               </Card>
 
-              {/* ── Card 2: Settings Matrix ── */}
               <Card padding="0">
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '580px' }}>
                     <thead>
                       <tr>
                         <th style={{ padding: '10px 12px', borderBottom: '2px solid #e1e3e5', textAlign: 'left', minWidth: '130px' }} />
-                        {/* "Damaged during delivery" — two-line */}
-                        <DamagedReasonHeader
-                          sub="during delivery"
-                          reasonKey="damaged_delivery"
-                          hoverReason={hoverReason}
-                          setHoverReason={setHoverReason}
-                        />
-                        {/* "Damaged by employee / customer" — two-line */}
-                        <DamagedReasonHeader
-                          sub="by employee / customer"
-                          reasonKey="damaged_employee"
-                          hoverReason={hoverReason}
-                          setHoverReason={setHoverReason}
-                        />
-                        {/* Remaining built-in reasons */}
+                        <DamagedReasonHeader sub="during delivery" reasonKey="damaged_delivery" hoverReason={hoverReason} setHoverReason={setHoverReason} />
+                        <DamagedReasonHeader sub="by employee / customer" reasonKey="damaged_employee" hoverReason={hoverReason} setHoverReason={setHoverReason} />
                         {BUILT_IN_REASONS.filter(r => !r.sub).map(r => (
                           <SimpleReasonHeader key={r.key} label={r.label} reasonKey={r.key} hoverReason={hoverReason} setHoverReason={setHoverReason} onDelete={null} />
                         ))}
-                        {/* Custom reasons */}
                         {customReasons.map(r => (
                           <SimpleReasonHeader
                             key={r.reason_key} label={r.reason_label} reasonKey={r.reason_key}

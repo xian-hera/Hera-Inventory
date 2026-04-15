@@ -34,13 +34,10 @@ function Badge({ count }) {
 
 function ManagerHome() {
   const navigate = useNavigate();
-  const [location, setLocation]     = useState('');
-  const [confirmed, setConfirmed]   = useState(false);
+  const [location, setLocation]       = useState('');
+  const [confirmed, setConfirmed]     = useState(false);
   const [showWarning, setShowWarning] = useState(false);
-  const [badges, setBadges]         = useState({
-    inventoryCount: 0,
-    labelPrint: 0,
-  });
+  const [badges, setBadges]           = useState({ inventoryCount: 0, labelPrint: 0 });
 
   useEffect(() => {
     const saved = localStorage.getItem('managerLocation');
@@ -64,10 +61,7 @@ function ManagerHome() {
   }, [confirmed, location]);
 
   const handleConfirmLocation = () => {
-    if (!location) {
-      setShowWarning(true);
-      return;
-    }
+    if (!location) { setShowWarning(true); return; }
     localStorage.setItem('managerLocation', location);
     setConfirmed(true);
     setShowWarning(false);
@@ -81,10 +75,7 @@ function ManagerHome() {
   };
 
   const handleNavigate = (path) => {
-    if (!confirmed) {
-      setShowWarning(true);
-      return;
-    }
+    if (!confirmed) { setShowWarning(true); return; }
     navigate(path);
   };
 
@@ -113,10 +104,7 @@ function ManagerHome() {
                       label="" labelHidden
                       options={locationOptions}
                       value={location}
-                      onChange={(val) => {
-                        setLocation(val);
-                        setShowWarning(false);
-                      }}
+                      onChange={(val) => { setLocation(val); setShowWarning(false); }}
                     />
                     <Button variant="primary" onClick={handleConfirmLocation}>
                       Confirm
@@ -137,6 +125,11 @@ function ManagerHome() {
                 Inventory Count
                 <Badge count={badges.inventoryCount} />
               </span>
+            </Button>
+
+            {/* Stock Losses */}
+            <Button size="large" fullWidth onClick={() => handleNavigate('/manager/stock-losses')}>
+              Stock Losses
             </Button>
 
             {/* Restock */}

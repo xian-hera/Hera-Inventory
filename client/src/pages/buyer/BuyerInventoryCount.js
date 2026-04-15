@@ -25,11 +25,7 @@ function Badge({ count }) {
 
 function BuyerInventoryCount() {
   const navigate = useNavigate();
-  const [badges, setBadges] = useState({
-    weekly: 0,
-    zeroLow: 0,
-    stockLosses: 0,
-  });
+  const [badges, setBadges] = useState({ weekly: 0, zeroLow: 0 });
 
   useEffect(() => {
     fetch('/api/badges/buyer')
@@ -38,7 +34,6 @@ function BuyerInventoryCount() {
         setBadges({
           weekly: data.weeklyReviewing || 0,
           zeroLow: data.zeroLowReviewing || 0,
-          stockLosses: data.stockLossesReviewing || 0,
         });
       })
       .catch(() => {});
@@ -59,12 +54,6 @@ function BuyerInventoryCount() {
               <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 Zero/Low Inventory Count
                 <Badge count={badges.zeroLow} />
-              </span>
-            </Button>
-            <Button size="large" fullWidth onClick={() => navigate('/buyer/stock-losses')}>
-              <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                Stock Losses
-                <Badge count={badges.stockLosses} />
               </span>
             </Button>
           </BlockStack>
