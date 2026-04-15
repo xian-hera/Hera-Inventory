@@ -15,8 +15,7 @@ const BUILT_IN_REASONS = [
 const OTHER_REASON = { key: 'other', label: 'Other', sub: null };
 
 // ─── Built-in types (always present, cannot be deleted) ──────────────────────
-const BUILT_IN_TYPES = [
-  { value: 'ALL',                label: 'All types',           metafield: null },
+const BUILT_IN_TYPES = [ 
   { value: 'Hair & Skin Care',   label: 'Hair & Skin Care',    metafield: null },
   { value: 'Hair',               label: 'Hair',                metafield: null },
   { value: 'Wig',                label: 'Wig',                 metafield: null },

@@ -245,7 +245,6 @@ router.patch('/archive', async (req, res) => {
 });
 
 // DELETE /api/stock-losses
-// Deletes entries and their Shopify Files photos (one by one per API spec)
 router.delete('/', async (req, res) => {
   try {
     const { ids } = req.body;
@@ -258,7 +257,7 @@ router.delete('/', async (req, res) => {
     );
     const allGids = entries.rows.flatMap(r => r.shopify_file_gids || []).filter(Boolean);
 
-    // Delete from Shopify Files one by one (API accepts single ID per call)
+    // Delete from Shopify Files in a single batch call
     if (allGids.length > 0) {
       try {
         const { getShopify, getSession } = require('../shopify');
@@ -266,22 +265,17 @@ router.delete('/', async (req, res) => {
         const shopify = getShopify();
         const client = new shopify.clients.Graphql({ session });
 
-        for (const gid of allGids) {
-          try {
-            await client.request(`
-              mutation {
-                fileDelete(fileId: "${gid}") {
-                  deletedFileId
-                  userErrors { field message }
-                }
-              }
-            `);
-          } catch (e) {
-            console.error(`fileDelete failed for ${gid} (non-fatal):`, e.message);
+        const gidList = allGids.map(g => `"${g}"`).join(', ');
+        await client.request(`
+          mutation {
+            fileDelete(fileIds: [${gidList}]) {
+              deletedFileIds
+              userErrors { field message }
+            }
           }
-        }
+        `);
       } catch (e) {
-        console.error('Shopify fileDelete setup error (non-fatal):', e.message);
+        console.error('Shopify fileDelete error (non-fatal):', e.message);
       }
     }
 

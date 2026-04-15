@@ -237,11 +237,21 @@ function PhotoPopup({ sku, onSubmit, onClose }) {
   const [uploading, setUploading] = useState(false);
   const [error, setError]         = useState('');
   const fileRef = useRef(null);
+  const addFileRef = useRef(null);
 
   const handleFileChange = (e) => {
+    const files = Array.from(e.target.files);
+    const remaining = 4 - photos.length;
+    const newFiles = files.slice(0, remaining).map(f => ({ file: f, preview: URL.createObjectURL(f) }));
+    setPhotos(prev => [...prev, ...newFiles]);
+    e.target.value = '';
+  };
+
+  const handleInitialFileChange = (e) => {
     const files = Array.from(e.target.files).slice(0, 4);
     const previews = files.map(f => ({ file: f, preview: URL.createObjectURL(f) }));
     setPhotos(previews);
+    e.target.value = '';
   };
 
   const handleUndo = () => {
@@ -279,29 +289,77 @@ function PhotoPopup({ sku, onSubmit, onClose }) {
     }
   };
 
+  const canAddMore = photos.length > 0 && photos.length < 4 && !uploading;
+
   return (
     <div style={{
       position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000,
       display: 'flex', alignItems: 'center', justifyContent: 'center',
     }}>
+      {/* Close button — outside popup, top-right */}
+      <button
+        onClick={onClose}
+        style={{
+          position: 'fixed', top: '16px', right: '16px', zIndex: 1001,
+          width: '36px', height: '36px', borderRadius: '50%',
+          background: 'rgba(255,255,255,0.9)', border: 'none',
+          fontSize: '20px', lineHeight: 1, cursor: 'pointer',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+        }}>
+        ✕
+      </button>
+
       <div style={{
         background: 'white', borderRadius: '16px', padding: '24px',
         width: 'calc(100% - 32px)', maxWidth: '420px', position: 'relative',
       }}>
         <BlockStack gap="300">
           <Text variant="headingMd" fontWeight="bold">
-            {photos.length > 0 ? `${photos.length} photo${photos.length > 1 ? 's' : ''} uploaded` : 'Photo required'}
+            {photos.length > 0
+              ? `${photos.length} photo${photos.length > 1 ? 's' : ''} uploaded`
+              : 'Photo required'}
           </Text>
 
           {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
 
           {photos.length > 0 ? (
             <>
-              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              {/* Photo grid + add more button */}
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
                 {photos.map((p, i) => (
-                  <img key={i} src={p.preview} alt="" style={{ width: '72px', height: '72px', objectFit: 'cover', borderRadius: '8px' }} />
+                  <img
+                    key={i} src={p.preview} alt=""
+                    style={{ width: '72px', height: '72px', objectFit: 'cover', borderRadius: '8px' }}
+                  />
                 ))}
+                {/* Add more button — bordered + icon */}
+                {canAddMore && (
+                  <>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      ref={addFileRef}
+                      style={{ display: 'none' }}
+                      onChange={handleFileChange}
+                    />
+                    <button
+                      onClick={() => addFileRef.current?.click()}
+                      style={{
+                        width: '72px', height: '72px', borderRadius: '8px',
+                        border: '2px dashed #c9cccf', background: '#f6f6f7',
+                        cursor: 'pointer', display: 'flex', flexDirection: 'column',
+                        alignItems: 'center', justifyContent: 'center', gap: '4px',
+                        color: '#6d7175',
+                      }}>
+                      <span style={{ fontSize: '24px', lineHeight: 1 }}>+</span>
+                    </button>
+                  </>
+                )}
               </div>
+
+              {/* Undo (reset) */}
               <button onClick={handleUndo} style={{
                 padding: '10px', borderRadius: '8px', border: '1px solid #c9cccf',
                 background: 'white', cursor: 'pointer', fontSize: '14px',
@@ -315,7 +373,7 @@ function PhotoPopup({ sku, onSubmit, onClose }) {
                 multiple
                 ref={fileRef}
                 style={{ display: 'none' }}
-                onChange={handleFileChange}
+                onChange={handleInitialFileChange}
               />
               <button onClick={() => fileRef.current?.click()} style={{
                 padding: '12px', borderRadius: '8px', border: '1px dashed #c9cccf',
@@ -326,6 +384,7 @@ function PhotoPopup({ sku, onSubmit, onClose }) {
             </>
           )}
 
+          {/* Submit */}
           <button
             disabled={photos.length === 0 || uploading}
             onClick={handleSubmit}
@@ -343,7 +402,6 @@ function PhotoPopup({ sku, onSubmit, onClose }) {
     </div>
   );
 }
-
 // ─── Instruction popup (page 3 or page 2 without photo) ──────────────────────
 function InstructionPopup({ instruction, onClose }) {
   return (
