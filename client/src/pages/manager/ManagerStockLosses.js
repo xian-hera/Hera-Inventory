@@ -51,25 +51,16 @@ function cleanBarcode(raw) {
 }
 
 // ─── Scan popup (page 1) ──────────────────────────────────────────────────────
-function ScanPopup({
-  productData, soh, allReasons,
-  onClose, onSubmit,
-}) {
+function ScanPopup({ productData, soh, allReasons, onClose, onSubmit }) {
   const [selectedReason, setSelectedReason] = useState(null);
   const [otherText, setOtherText]           = useState('');
   const [otherSaved, setOtherSaved]         = useState(false);
   const [qtyInput, setQtyInput]             = useState('');
 
   const handleReasonClick = (reason) => {
-    if (reason.key === 'other') {
-      setSelectedReason(reason);
-      setOtherText('');
-      setOtherSaved(false);
-    } else {
-      setSelectedReason(reason);
-      setOtherText('');
-      setOtherSaved(false);
-    }
+    setSelectedReason(reason);
+    setOtherText('');
+    setOtherSaved(false);
   };
 
   const canSubmit = selectedReason && qtyInput && parseInt(qtyInput) > 0 &&
@@ -87,21 +78,16 @@ function ScanPopup({
   const placeholder = selectedReason ? getPlaceholder(selectedReason.key) : 'Choose reason first';
 
   const btnStyle = (active) => ({
-    padding: '12px 16px',
-    borderRadius: '8px',
-    border: 'none',
+    padding: '12px 16px', borderRadius: '8px', border: 'none',
     background: active ? '#005bd3' : '#f0f0f0',
     color: active ? 'white' : '#202223',
-    cursor: 'pointer',
-    fontSize: '14px',
+    cursor: 'pointer', fontSize: '14px',
     fontWeight: active ? '600' : '400',
-    textAlign: 'center',
-    width: '100%',
+    textAlign: 'center', width: '100%',
   });
 
-  // Group buttons: 2 full-width damage, then 3 in a row, then other
   const damageReasons = allReasons.filter(r => r.key === 'damaged_delivery' || r.key === 'damaged_employee');
-  const midReasons    = allReasons.filter(r => !['damaged_delivery','damaged_employee','other'].includes(r.key));
+  const midReasons    = allReasons.filter(r => !['damaged_delivery', 'damaged_employee', 'other'].includes(r.key));
 
   return (
     <div style={{
@@ -111,8 +97,7 @@ function ScanPopup({
       <div style={{
         background: 'white', borderRadius: '16px', padding: '24px',
         width: 'calc(100% - 32px)', maxWidth: '420px',
-        maxHeight: '90vh', overflowY: 'auto',
-        position: 'relative',
+        maxHeight: '90vh', overflowY: 'auto', position: 'relative',
       }}>
         <button onClick={onClose} style={{
           position: 'absolute', top: '12px', right: '12px',
@@ -120,15 +105,11 @@ function ScanPopup({
         }}>✕</button>
 
         <BlockStack gap="300">
-          {/* Product name */}
           <div style={{ paddingRight: '28px' }}>
             <Text variant="headingMd" fontWeight="bold">{productData.name}</Text>
           </div>
-
-          {/* SOH */}
           <Text variant="bodyMd" tone="subdued">System {soh ?? '—'}</Text>
 
-          {/* Damage reasons (full width) */}
           {damageReasons.map(r => (
             <button key={r.key} style={btnStyle(selectedReason?.key === r.key)}
               onClick={() => handleReasonClick(r)}>
@@ -136,7 +117,6 @@ function ScanPopup({
             </button>
           ))}
 
-          {/* Mid reasons (row) */}
           {midReasons.length > 0 && (
             <div style={{ display: 'flex', gap: '8px' }}>
               {midReasons.map(r => (
@@ -148,7 +128,6 @@ function ScanPopup({
             </div>
           )}
 
-          {/* Other (always last, full width) */}
           {selectedReason?.key === 'other' ? (
             <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
               {otherSaved ? (
@@ -158,18 +137,16 @@ function ScanPopup({
                     borderRadius: '8px', fontSize: '14px', background: '#f6f6f7',
                     color: '#202223', wordBreak: 'break-word',
                   }}>{otherText}</div>
-                  <button
-                    onClick={() => setOtherSaved(false)}
-                    style={{
-                      padding: '10px 14px', borderRadius: '8px', border: '1px solid #c9cccf',
-                      background: 'white', cursor: 'pointer', fontSize: '14px', fontWeight: '500', whiteSpace: 'nowrap',
-                    }}>Edit</button>
+                  <button onClick={() => setOtherSaved(false)} style={{
+                    padding: '10px 14px', borderRadius: '8px', border: '1px solid #c9cccf',
+                    background: 'white', cursor: 'pointer', fontSize: '14px',
+                    fontWeight: '500', whiteSpace: 'nowrap',
+                  }}>Edit</button>
                 </>
               ) : (
                 <>
                   <input
-                    autoFocus
-                    value={otherText}
+                    autoFocus value={otherText}
                     onChange={e => setOtherText(e.target.value)}
                     placeholder="Describe reason"
                     style={{
@@ -196,14 +173,11 @@ function ScanPopup({
             </button>
           )}
 
-          {/* Qty input + Submit */}
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             <input
-              inputMode="numeric"
-              value={qtyInput}
+              inputMode="numeric" value={qtyInput}
               onChange={e => setQtyInput(e.target.value)}
-              placeholder={placeholder}
-              disabled={!selectedReason}
+              placeholder={placeholder} disabled={!selectedReason}
               style={{
                 flex: 1, padding: '10px 12px', fontSize: '15px',
                 border: `1px solid ${selectedReason ? '#c9cccf' : '#e1e3e5'}`,
@@ -213,8 +187,7 @@ function ScanPopup({
               }}
             />
             <button
-              disabled={!canSubmit}
-              onClick={handleSubmit}
+              disabled={!canSubmit} onClick={handleSubmit}
               style={{
                 padding: '10px 20px', borderRadius: '8px', border: 'none',
                 background: canSubmit ? '#005bd3' : '#f0f0f0',
@@ -233,24 +206,23 @@ function ScanPopup({
 
 // ─── Photo upload popup (page 2) ──────────────────────────────────────────────
 function PhotoPopup({ sku, onSubmit, onClose }) {
-  const [photos, setPhotos]       = useState([]); // [{file, preview}]
+  const [photos, setPhotos]       = useState([]);
   const [uploading, setUploading] = useState(false);
   const [error, setError]         = useState('');
-  const fileRef = useRef(null);
+  const fileRef    = useRef(null);
   const addFileRef = useRef(null);
 
-  const handleFileChange = (e) => {
+  const handleInitialFileChange = (e) => {
+    const files = Array.from(e.target.files).slice(0, 4);
+    setPhotos(files.map(f => ({ file: f, preview: URL.createObjectURL(f) })));
+    e.target.value = '';
+  };
+
+  const handleAddMoreChange = (e) => {
     const files = Array.from(e.target.files);
     const remaining = 4 - photos.length;
     const newFiles = files.slice(0, remaining).map(f => ({ file: f, preview: URL.createObjectURL(f) }));
     setPhotos(prev => [...prev, ...newFiles]);
-    e.target.value = '';
-  };
-
-  const handleInitialFileChange = (e) => {
-    const files = Array.from(e.target.files).slice(0, 4);
-    const previews = files.map(f => ({ file: f, preview: URL.createObjectURL(f) }));
-    setPhotos(previews);
     e.target.value = '';
   };
 
@@ -296,19 +268,15 @@ function PhotoPopup({ sku, onSubmit, onClose }) {
       position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000,
       display: 'flex', alignItems: 'center', justifyContent: 'center',
     }}>
-      {/* Close button — outside popup, top-right */}
-      <button
-        onClick={onClose}
-        style={{
-          position: 'fixed', top: '16px', right: '16px', zIndex: 1001,
-          width: '36px', height: '36px', borderRadius: '50%',
-          background: 'rgba(255,255,255,0.9)', border: 'none',
-          fontSize: '20px', lineHeight: 1, cursor: 'pointer',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
-        }}>
-        ✕
-      </button>
+      {/* Close button outside popup */}
+      <button onClick={onClose} style={{
+        position: 'fixed', top: '16px', right: '16px', zIndex: 1001,
+        width: '36px', height: '36px', borderRadius: '50%',
+        background: 'rgba(255,255,255,0.9)', border: 'none',
+        fontSize: '20px', lineHeight: 1, cursor: 'pointer',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+      }}>✕</button>
 
       <div style={{
         background: 'white', borderRadius: '16px', padding: '24px',
@@ -325,41 +293,27 @@ function PhotoPopup({ sku, onSubmit, onClose }) {
 
           {photos.length > 0 ? (
             <>
-              {/* Photo grid + add more button */}
               <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
                 {photos.map((p, i) => (
-                  <img
-                    key={i} src={p.preview} alt=""
-                    style={{ width: '72px', height: '72px', objectFit: 'cover', borderRadius: '8px' }}
-                  />
+                  <img key={i} src={p.preview} alt=""
+                    style={{ width: '72px', height: '72px', objectFit: 'cover', borderRadius: '8px' }} />
                 ))}
-                {/* Add more button — bordered + icon */}
                 {canAddMore && (
                   <>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      multiple
-                      ref={addFileRef}
-                      style={{ display: 'none' }}
-                      onChange={handleFileChange}
-                    />
-                    <button
-                      onClick={() => addFileRef.current?.click()}
-                      style={{
-                        width: '72px', height: '72px', borderRadius: '8px',
-                        border: '2px dashed #c9cccf', background: '#f6f6f7',
-                        cursor: 'pointer', display: 'flex', flexDirection: 'column',
-                        alignItems: 'center', justifyContent: 'center', gap: '4px',
-                        color: '#6d7175',
-                      }}>
+                    <input type="file" accept="image/*" multiple ref={addFileRef}
+                      style={{ display: 'none' }} onChange={handleAddMoreChange} />
+                    <button onClick={() => addFileRef.current?.click()} style={{
+                      width: '72px', height: '72px', borderRadius: '8px',
+                      border: '2px dashed #c9cccf', background: '#f6f6f7',
+                      cursor: 'pointer', display: 'flex', flexDirection: 'column',
+                      alignItems: 'center', justifyContent: 'center',
+                      color: '#6d7175',
+                    }}>
                       <span style={{ fontSize: '24px', lineHeight: 1 }}>+</span>
                     </button>
                   </>
                 )}
               </div>
-
-              {/* Undo (reset) */}
               <button onClick={handleUndo} style={{
                 padding: '10px', borderRadius: '8px', border: '1px solid #c9cccf',
                 background: 'white', cursor: 'pointer', fontSize: '14px',
@@ -367,14 +321,8 @@ function PhotoPopup({ sku, onSubmit, onClose }) {
             </>
           ) : (
             <>
-              <input
-                type="file"
-                accept="image/*"
-                multiple
-                ref={fileRef}
-                style={{ display: 'none' }}
-                onChange={handleInitialFileChange}
-              />
+              <input type="file" accept="image/*" multiple ref={fileRef}
+                style={{ display: 'none' }} onChange={handleInitialFileChange} />
               <button onClick={() => fileRef.current?.click()} style={{
                 padding: '12px', borderRadius: '8px', border: '1px dashed #c9cccf',
                 background: '#f6f6f7', cursor: 'pointer', fontSize: '14px', width: '100%',
@@ -384,7 +332,6 @@ function PhotoPopup({ sku, onSubmit, onClose }) {
             </>
           )}
 
-          {/* Submit */}
           <button
             disabled={photos.length === 0 || uploading}
             onClick={handleSubmit}
@@ -402,7 +349,8 @@ function PhotoPopup({ sku, onSubmit, onClose }) {
     </div>
   );
 }
-// ─── Instruction popup (page 3 or page 2 without photo) ──────────────────────
+
+// ─── Instruction popup ────────────────────────────────────────────────────────
 function InstructionPopup({ instruction, onClose }) {
   return (
     <div style={{
@@ -428,8 +376,8 @@ function InstructionPopup({ instruction, onClose }) {
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 function ManagerStockLosses() {
-  const navigate  = useNavigate();
-  const location  = localStorage.getItem('managerLocation') || '';
+  const navigate = useNavigate();
+  const location = localStorage.getItem('managerLocation') || '';
 
   const [items, setItems]             = useState([]);
   const [selectedIds, setSelectedIds] = useState([]);
@@ -437,27 +385,23 @@ function ManagerStockLosses() {
   const [error, setError]             = useState('');
   const [submitting, setSubmitting]   = useState(false);
 
-  // Scanner
   const barcodeBuffer = useRef('');
   const barcodeTimer  = useRef(null);
 
-  // Type-in SKU popup
   const [showTypeIn, setShowTypeIn]     = useState(false);
   const [skuInput, setSkuInput]         = useState('');
   const [skuSearching, setSkuSearching] = useState(false);
   const [skuError, setSkuError]         = useState('');
 
-  // Scan flow state
-  const [popupStage, setPopupStage]     = useState(null); // null | 'scan' | 'photo' | 'instruction'
-  const [productData, setProductData]   = useState(null);
-  const [productSoh, setProductSoh]     = useState(null);
-  const [loadingSoh, setLoadingSoh]     = useState(false);
-  const [pendingSubmit, setPendingSubmit] = useState(null); // { reason, qty, reasonDetail }
-  const [pendingPhotos, setPendingPhotos] = useState([]);   // [{gid, url}]
+  const [popupStage, setPopupStage]         = useState(null);
+  const [productData, setProductData]       = useState(null);
+  const [productSoh, setProductSoh]         = useState(null);
+  const [loadingSoh, setLoadingSoh]         = useState(false);
+  const [pendingSubmit, setPendingSubmit]   = useState(null);
   const [pendingInstruction, setPendingInstruction] = useState(null);
-  const [settings, setSettings]         = useState([]);
-  const [customReasons, setCustomReasons] = useState([]);
-  const [localBrands, setLocalBrands]   = useState([]);
+  const [settings, setSettings]             = useState([]);
+  const [customReasons, setCustomReasons]   = useState([]);
+  const [localBrands, setLocalBrands]       = useState([]);
 
   const popupOpen = !!(popupStage || loadingSoh || showTypeIn);
 
@@ -466,7 +410,6 @@ function ManagerStockLosses() {
     return () => { document.body.style.overflow = ''; };
   }, [popupOpen]);
 
-  // Load items + settings
   const loadItems = useCallback(async () => {
     if (!location) { setLoading(false); return; }
     try {
@@ -476,7 +419,6 @@ function ManagerStockLosses() {
         fetch('/api/stock-losses-settings/custom-reasons').then(r => r.json()),
         fetch('/api/stock-losses-settings/brands').then(r => r.json()),
       ]);
-      // Filter: only show items submitted in last 15 days (backend already does this, but double-check)
       const fifteenDaysAgo = Date.now() - 15 * 24 * 60 * 60 * 1000;
       setItems((Array.isArray(itemsRes) ? itemsRes : []).filter(i =>
         new Date(i.submitted_at).getTime() > fifteenDaysAgo
@@ -493,30 +435,26 @@ function ManagerStockLosses() {
 
   useEffect(() => { loadItems(); }, [loadItems]);
 
-  // Build all reasons list for popup (custom inserted before Other)
   const allReasons = [
     ...BUILT_IN_REASONS,
     ...customReasons.map(r => ({ key: r.reason_key, label: r.reason_label })),
   ];
 
-  // Get settings for a type+reason combo
+  // Case-insensitive match between Shopify productType and settings type_value
   const getSetting = (productType, reasonKey, vendor) => {
-    // Priority: ALL overrides specific type (per spec)
-    const allRow = settings.find(s => s.type_value === 'ALL' && s.reason === reasonKey);
-    const typeRow = settings.find(s => s.type_value === productType && s.reason === reasonKey);
+    const normalizedType = (productType || '').toLowerCase().trim();
 
-    const photoRequired = allRow?.photo_required ?? typeRow?.photo_required ?? false;
+    const typeRow = settings.find(s =>
+      s.type_value.toLowerCase().trim() === normalizedType &&
+      s.reason === reasonKey
+    );
 
-    // Instruction: check local supplier brand
+    const photoRequired = typeRow?.photo_required ?? false;
+
     let instruction = null;
-    const isLocalBrand = vendor && localBrands.includes(vendor);
-    const isHSC = productType === 'Hair & Skin Care';
-
-    if (allRow?.instruction_text) {
-      instruction = (isLocalBrand && isHSC && allRow.local_supplier_instruction_text)
-        ? allRow.local_supplier_instruction_text
-        : allRow.instruction_text;
-    } else if (typeRow?.instruction_text) {
+    if (typeRow?.instruction_text) {
+      const isLocalBrand = vendor && localBrands.includes(vendor);
+      const isHSC = normalizedType === 'hair & skin care';
       instruction = (isLocalBrand && isHSC && typeRow.local_supplier_instruction_text)
         ? typeRow.local_supplier_instruction_text
         : typeRow.instruction_text;
@@ -525,7 +463,6 @@ function ManagerStockLosses() {
     return { photoRequired, instruction };
   };
 
-  // Scanner input
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (popupStage || loadingSoh || showTypeIn) return;
@@ -598,7 +535,6 @@ function ManagerStockLosses() {
     }
   };
 
-  // After page 1 submit, determine flow (A/B/C/D)
   const handleScanSubmit = ({ reason, qty, reasonDetail }) => {
     const { photoRequired, instruction } = getSetting(
       productData.productType, reason.key, productData.vendor
@@ -607,12 +543,12 @@ function ManagerStockLosses() {
 
     if (photoRequired && instruction) {
       // Flow B: photo → instruction
-      setPopupStage('photo');
       setPendingInstruction(instruction);
+      setPopupStage('photo');
     } else if (photoRequired && !instruction) {
       // Flow A: photo only
-      setPopupStage('photo');
       setPendingInstruction(null);
+      setPopupStage('photo');
     } else if (!photoRequired && instruction) {
       // Flow C: submit now, show instruction
       submitEntry({ reason, qty, reasonDetail }, []);
@@ -626,7 +562,6 @@ function ManagerStockLosses() {
   };
 
   const handlePhotoSubmit = (uploadedPhotos) => {
-    setPendingPhotos(uploadedPhotos);
     submitEntry(pendingSubmit, uploadedPhotos);
     if (pendingInstruction) {
       setPopupStage('instruction');
@@ -669,11 +604,9 @@ function ManagerStockLosses() {
     setProductData(null);
     setProductSoh(null);
     setPendingSubmit(null);
-    setPendingPhotos([]);
     setPendingInstruction(null);
   };
 
-  // Delete
   const handleDeleteSelected = async () => {
     if (selectedIds.length === 0) return;
     setSubmitting(true);
@@ -710,12 +643,7 @@ function ManagerStockLosses() {
     }
   };
 
-  // Submit to buyer
-  const handleSubmitItems = async (ids) => {
-    // Items are already in DB as 'reviewing' — nothing extra needed
-    // Just remove from local list to indicate "submitted"
-    // In this flow, items are submitted on creation, so this is a no-op
-    // If you want a separate "submit" step, add it here
+  const handleSubmitItems = (ids) => {
     setItems(prev => prev.filter(i => !ids.includes(i.id)));
     setSelectedIds([]);
   };
@@ -728,9 +656,8 @@ function ManagerStockLosses() {
   const overlayStyle = { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000 };
   const innerStyle   = {
     position: 'fixed', top: '50%', left: '16px', right: '16px',
-    transform: 'translateY(-50%)',
-    background: 'white', borderRadius: '12px', padding: '24px',
-    maxWidth: '480px', margin: '0 auto', zIndex: 1001,
+    transform: 'translateY(-50%)', background: 'white', borderRadius: '12px',
+    padding: '24px', maxWidth: '480px', margin: '0 auto', zIndex: 1001,
   };
 
   const btnBase = (disabled, danger, primary) => ({
@@ -758,7 +685,6 @@ function ManagerStockLosses() {
 
             <Card>
               <BlockStack gap="300">
-                {/* Type in SKU */}
                 <button
                   onClick={() => { setSkuInput(''); setSkuError(''); setShowTypeIn(true); }}
                   style={{
@@ -769,7 +695,6 @@ function ManagerStockLosses() {
                   Type in SKU
                 </button>
 
-                {/* Action buttons */}
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                   <button
                     disabled={selectedIds.length === 0 || submitting}
@@ -797,14 +722,12 @@ function ManagerStockLosses() {
                   </button>
                 </div>
 
-                {/* List */}
                 {loading ? (
                   <InlineStack align="center"><Spinner /></InlineStack>
                 ) : items.length === 0 ? (
                   <Text tone="subdued" alignment="center">No items yet. Scan a barcode to add.</Text>
                 ) : (
                   <div>
-                    {/* Header */}
                     <div style={{
                       display: 'grid', gridTemplateColumns: '32px 1fr 80px 80px',
                       gap: '8px', padding: '8px 0', borderBottom: '1px solid #e1e3e5',
@@ -853,7 +776,6 @@ function ManagerStockLosses() {
         </Layout.Section>
       </Layout>
 
-      {/* Loading SOH overlay */}
       {loadingSoh && (
         <div style={overlayStyle}>
           <div style={innerStyle}>
@@ -862,7 +784,6 @@ function ManagerStockLosses() {
         </div>
       )}
 
-      {/* Scan popup (page 1) */}
       {popupStage === 'scan' && productData && (
         <ScanPopup
           productData={productData}
@@ -873,7 +794,6 @@ function ManagerStockLosses() {
         />
       )}
 
-      {/* Photo popup (page 2) */}
       {popupStage === 'photo' && productData && (
         <PhotoPopup
           sku={productData.barcode}
@@ -882,7 +802,6 @@ function ManagerStockLosses() {
         />
       )}
 
-      {/* Instruction popup (page 2 or 3) */}
       {popupStage === 'instruction' && pendingInstruction && (
         <InstructionPopup
           instruction={pendingInstruction}
@@ -890,7 +809,6 @@ function ManagerStockLosses() {
         />
       )}
 
-      {/* Type in SKU popup */}
       {showTypeIn && (
         <div style={overlayStyle}>
           <div style={innerStyle}>
@@ -902,13 +820,10 @@ function ManagerStockLosses() {
               <Text variant="headingMd" fontWeight="bold">Type in SKU</Text>
               {skuError && <Banner tone="critical" onDismiss={() => setSkuError('')}>{skuError}</Banner>}
               <input
-                value={skuInput}
-                inputMode="numeric"
+                value={skuInput} inputMode="numeric"
                 onChange={e => { setSkuInput(e.target.value); setSkuError(''); }}
                 onKeyDown={e => { if (e.key === 'Enter') handleSkuSearch(); }}
-                autoComplete="off"
-                autoFocus
-                placeholder="Enter exact SKU"
+                autoComplete="off" autoFocus placeholder="Enter exact SKU"
                 style={{
                   width: '100%', padding: '10px 12px', fontSize: '16px',
                   border: '1px solid #c9cccf', borderRadius: '8px',
