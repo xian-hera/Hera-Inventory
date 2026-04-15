@@ -50,6 +50,14 @@ function cleanBarcode(raw) {
   return raw.replace(/^[^0-9]+/, '');
 }
 
+// Reset iOS viewport zoom (triggered by input focus on font-size < 16px)
+function resetViewportZoom() {
+  const viewport = document.querySelector('meta[name=viewport]');
+  if (viewport) {
+    viewport.setAttribute('content', 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no');
+  }
+}
+
 // ─── Scan popup (page 1) ──────────────────────────────────────────────────────
 function ScanPopup({ productData, soh, allReasons, onClose, onSubmit }) {
   const [selectedReason, setSelectedReason] = useState(null);
@@ -81,7 +89,7 @@ function ScanPopup({ productData, soh, allReasons, onClose, onSubmit }) {
     padding: '12px 16px', borderRadius: '8px', border: 'none',
     background: active ? '#005bd3' : '#f0f0f0',
     color: active ? 'white' : '#202223',
-    cursor: 'pointer', fontSize: '14px',
+    cursor: 'pointer', fontSize: '16px',
     fontWeight: active ? '600' : '400',
     textAlign: 'center', width: '100%',
   });
@@ -134,12 +142,12 @@ function ScanPopup({ productData, soh, allReasons, onClose, onSubmit }) {
                 <>
                   <div style={{
                     flex: 1, padding: '10px 12px', border: '1px solid #c9cccf',
-                    borderRadius: '8px', fontSize: '14px', background: '#f6f6f7',
+                    borderRadius: '8px', fontSize: '16px', background: '#f6f6f7',
                     color: '#202223', wordBreak: 'break-word',
                   }}>{otherText}</div>
                   <button onClick={() => setOtherSaved(false)} style={{
                     padding: '10px 14px', borderRadius: '8px', border: '1px solid #c9cccf',
-                    background: 'white', cursor: 'pointer', fontSize: '14px',
+                    background: 'white', cursor: 'pointer', fontSize: '16px',
                     fontWeight: '500', whiteSpace: 'nowrap',
                   }}>Edit</button>
                 </>
@@ -151,7 +159,7 @@ function ScanPopup({ productData, soh, allReasons, onClose, onSubmit }) {
                     placeholder="Describe reason"
                     style={{
                       flex: 1, padding: '10px 12px', border: '1px solid #005bd3',
-                      borderRadius: '8px', fontSize: '14px', outline: 'none',
+                      borderRadius: '8px', fontSize: '16px', outline: 'none',
                     }}
                   />
                   <button
@@ -162,7 +170,7 @@ function ScanPopup({ productData, soh, allReasons, onClose, onSubmit }) {
                       background: otherText.trim() ? '#005bd3' : '#f0f0f0',
                       color: otherText.trim() ? 'white' : '#8c9196',
                       cursor: otherText.trim() ? 'pointer' : 'not-allowed',
-                      fontSize: '14px', fontWeight: '500', whiteSpace: 'nowrap',
+                      fontSize: '16px', fontWeight: '500', whiteSpace: 'nowrap',
                     }}>Save</button>
                 </>
               )}
@@ -173,13 +181,14 @@ function ScanPopup({ productData, soh, allReasons, onClose, onSubmit }) {
             </button>
           )}
 
+          {/* Qty input — font-size 16px prevents iOS auto-zoom */}
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             <input
               inputMode="numeric" value={qtyInput}
               onChange={e => setQtyInput(e.target.value)}
               placeholder={placeholder} disabled={!selectedReason}
               style={{
-                flex: 1, padding: '10px 12px', fontSize: '15px',
+                flex: 1, padding: '10px 12px', fontSize: '16px',
                 border: `1px solid ${selectedReason ? '#c9cccf' : '#e1e3e5'}`,
                 borderRadius: '8px', outline: 'none',
                 background: selectedReason ? 'white' : '#f6f6f7',
@@ -193,7 +202,7 @@ function ScanPopup({ productData, soh, allReasons, onClose, onSubmit }) {
                 background: canSubmit ? '#005bd3' : '#f0f0f0',
                 color: canSubmit ? 'white' : '#8c9196',
                 cursor: canSubmit ? 'pointer' : 'not-allowed',
-                fontSize: '15px', fontWeight: '600', whiteSpace: 'nowrap',
+                fontSize: '16px', fontWeight: '600', whiteSpace: 'nowrap',
               }}>
               Submit
             </button>
@@ -316,7 +325,7 @@ function PhotoPopup({ sku, onSubmit, onClose }) {
               </div>
               <button onClick={handleUndo} style={{
                 padding: '10px', borderRadius: '8px', border: '1px solid #c9cccf',
-                background: 'white', cursor: 'pointer', fontSize: '14px',
+                background: 'white', cursor: 'pointer', fontSize: '16px',
               }}>Undo</button>
             </>
           ) : (
@@ -325,7 +334,7 @@ function PhotoPopup({ sku, onSubmit, onClose }) {
                 style={{ display: 'none' }} onChange={handleInitialFileChange} />
               <button onClick={() => fileRef.current?.click()} style={{
                 padding: '12px', borderRadius: '8px', border: '1px dashed #c9cccf',
-                background: '#f6f6f7', cursor: 'pointer', fontSize: '14px', width: '100%',
+                background: '#f6f6f7', cursor: 'pointer', fontSize: '16px', width: '100%',
               }}>
                 Upload photos (1–4)
               </button>
@@ -340,7 +349,7 @@ function PhotoPopup({ sku, onSubmit, onClose }) {
               background: photos.length > 0 && !uploading ? '#005bd3' : '#f0f0f0',
               color: photos.length > 0 && !uploading ? 'white' : '#8c9196',
               cursor: photos.length > 0 && !uploading ? 'pointer' : 'not-allowed',
-              fontSize: '15px', fontWeight: '600',
+              fontSize: '16px', fontWeight: '600',
             }}>
             {uploading ? 'Uploading...' : 'Submit'}
           </button>
@@ -366,7 +375,7 @@ function InstructionPopup({ instruction, onClose }) {
           <button onClick={onClose} style={{
             padding: '12px', borderRadius: '8px', border: 'none',
             background: '#005bd3', color: 'white',
-            cursor: 'pointer', fontSize: '15px', fontWeight: '600',
+            cursor: 'pointer', fontSize: '16px', fontWeight: '600',
           }}>Got it</button>
         </BlockStack>
       </div>
@@ -443,14 +452,11 @@ function ManagerStockLosses() {
   // Case-insensitive match between Shopify productType and settings type_value
   const getSetting = (productType, reasonKey, vendor) => {
     const normalizedType = (productType || '').toLowerCase().trim();
-
     const typeRow = settings.find(s =>
       s.type_value.toLowerCase().trim() === normalizedType &&
       s.reason === reasonKey
     );
-
     const photoRequired = typeRow?.photo_required ?? false;
-
     let instruction = null;
     if (typeRow?.instruction_text) {
       const isLocalBrand = vendor && localBrands.includes(vendor);
@@ -459,7 +465,6 @@ function ManagerStockLosses() {
         ? typeRow.local_supplier_instruction_text
         : typeRow.instruction_text;
     }
-
     return { photoRequired, instruction };
   };
 
@@ -468,7 +473,6 @@ function ManagerStockLosses() {
       if (popupStage || loadingSoh || showTypeIn) return;
       const activeTag = document.activeElement?.tagName;
       if (['INPUT', 'TEXTAREA'].includes(activeTag)) return;
-
       if (e.key === 'Enter') {
         clearTimeout(barcodeTimer.current);
         const barcode = cleanBarcode(barcodeBuffer.current.trim());
@@ -542,20 +546,16 @@ function ManagerStockLosses() {
     setPendingSubmit({ reason, qty, reasonDetail });
 
     if (photoRequired && instruction) {
-      // Flow B: photo → instruction
       setPendingInstruction(instruction);
       setPopupStage('photo');
     } else if (photoRequired && !instruction) {
-      // Flow A: photo only
       setPendingInstruction(null);
       setPopupStage('photo');
     } else if (!photoRequired && instruction) {
-      // Flow C: submit now, show instruction
       submitEntry({ reason, qty, reasonDetail }, []);
       setPendingInstruction(instruction);
       setPopupStage('instruction');
     } else {
-      // Flow D: submit now, close
       submitEntry({ reason, qty, reasonDetail }, []);
       closePopup();
     }
@@ -605,6 +605,8 @@ function ManagerStockLosses() {
     setProductSoh(null);
     setPendingSubmit(null);
     setPendingInstruction(null);
+    // Reset iOS viewport zoom caused by input focus
+    resetViewportZoom();
   };
 
   const handleDeleteSelected = async () => {
@@ -812,7 +814,7 @@ function ManagerStockLosses() {
       {showTypeIn && (
         <div style={overlayStyle}>
           <div style={innerStyle}>
-            <button onClick={() => setShowTypeIn(false)} style={{
+            <button onClick={() => { setShowTypeIn(false); resetViewportZoom(); }} style={{
               position: 'absolute', top: '12px', right: '12px',
               background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer',
             }}>✕</button>
@@ -838,7 +840,7 @@ function ManagerStockLosses() {
                   background: skuInput.trim() && !skuSearching ? '#005bd3' : '#f0f0f0',
                   color: skuInput.trim() && !skuSearching ? 'white' : '#8c9196',
                   cursor: skuInput.trim() && !skuSearching ? 'pointer' : 'not-allowed',
-                  fontSize: '15px', fontWeight: '600',
+                  fontSize: '16px', fontWeight: '600',
                 }}>
                 {skuSearching ? 'Searching...' : 'Search'}
               </button>
