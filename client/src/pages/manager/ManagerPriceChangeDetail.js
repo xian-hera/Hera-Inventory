@@ -54,7 +54,7 @@ function ManagerPriceChangeDetail() {
     setSelectedTemplate('');
     setTemplatesLoading(true);
     try {
-      const res = await fetch('/api/label-templates');
+      const res = await fetch('/api/label-templates/published');
       if (!res.ok) throw new Error('Failed to load templates');
       const data = await res.json();
       setTemplates(data);
@@ -121,7 +121,11 @@ function ManagerPriceChangeDetail() {
     const ph = tmpl.paper_height_mm;
     const barcodeInits = [];
 
+    // Calculate total label count to avoid blank trailing page on some Windows printers
+    const totalLabels = allItems.length * qty;
+
     const labelHtml = (item, labelIndex) => {
+      const isLast = labelIndex === totalLabels - 1;
       // Prefer live Shopify data; fall back to whatever is stored in the task item.
       const live = metafieldMap[item.sku];
       const fields = {
@@ -201,7 +205,8 @@ function ManagerPriceChangeDetail() {
         return '';
       }).join('');
 
-      return `<div style="position:relative;width:${pw}mm;height:${ph}mm;overflow:hidden;page-break-after:always;box-sizing:border-box;">${elementsHtml}</div>`;
+      const pageBreak = isLast ? '' : 'page-break-after:always;';
+      return `<div style="position:relative;width:${pw}mm;height:${ph}mm;overflow:hidden;${pageBreak}box-sizing:border-box;">${elementsHtml}</div>`;
     };
 
     let labelIndex = 0;

@@ -219,7 +219,7 @@ function ManagerLabelPrintTaskDetail() {
     setSelectedTemplate('');
     setTemplatesLoading(true);
     try {
-      const res = await fetch('/api/label-templates');
+      const res = await fetch('/api/label-templates/published');
       if (!res.ok) throw new Error('Failed to load templates');
       const data = await res.json();
       setTemplates(data);

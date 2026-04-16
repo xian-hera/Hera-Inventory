@@ -72,6 +72,7 @@ function BuyerLabelEditor() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [template, setTemplate] = useState(null);
+  const [isPublished, setIsPublished] = useState(false);
   const [selected, setSelected] = useState(null);
   const [, forceUpdate] = useState(0);
   const [saveModal, setSaveModal] = useState(false);
@@ -86,7 +87,7 @@ function BuyerLabelEditor() {
   useEffect(() => {
     fetch(`/api/label-templates/${id}`)
       .then(r => r.json())
-      .then(data => { setTemplate(data); setTemplateName(data.name); setLoading(false); })
+      .then(data => { setTemplate(data); setTemplateName(data.name); setIsPublished(!!data.is_published); setLoading(false); })
       .catch(() => { setError('Failed to load template.'); setLoading(false); });
   }, [id]);
 
@@ -410,6 +411,7 @@ function BuyerLabelEditor() {
   };
 
   const handleSave = async () => {
+    if (isPublished) { setError('This template is published and locked. Unpublish it first.'); return; }
     setSaving(true); setError('');
     try {
       const { left: pl, top: pt } = paperOffsetRef.current;
@@ -553,6 +555,17 @@ function BuyerLabelEditor() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', fontFamily: FONT_FAMILY }}>
 
+      {/* Published lock banner */}
+      {isPublished && (
+        <div style={{
+          background: '#fff3cd', borderBottom: '1px solid #ffc107',
+          padding: '8px 16px', fontSize: 13, color: '#856404',
+          display: 'flex', alignItems: 'center', gap: 8,
+        }}>
+          🔒 This template is published and locked. Unpublish it from the templates list to make changes.
+        </div>
+      )}
+
       {/* Top bar */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 8,
@@ -620,9 +633,10 @@ function BuyerLabelEditor() {
           <ToolBtn title="Zoom in" onClick={() => handleZoom(0.1)}>+</ToolBtn>
         </div>
         <button onClick={() => setSaveModal(true)}
-          style={{ marginLeft: 8, padding: '6px 18px', background: '#008060', color: '#fff',
-            border: 'none', borderRadius: 6, fontWeight: 600, cursor: 'pointer', fontSize: 14 }}>
-          Save
+          disabled={isPublished}
+          style={{ marginLeft: 8, padding: '6px 18px', background: isPublished ? '#f6f6f7' : '#008060', color: isPublished ? '#8c9196' : '#fff',
+            border: 'none', borderRadius: 6, fontWeight: 600, cursor: isPublished ? 'not-allowed' : 'pointer', fontSize: 14 }}>
+          {isPublished ? '🔒 Locked' : 'Save'}
         </button>
       </div>
 

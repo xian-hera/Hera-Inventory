@@ -15,18 +15,32 @@ async function ensureTables() {
       updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
+  await pool.query(`ALTER TABLE label_templates ADD COLUMN IF NOT EXISTS is_published BOOLEAN NOT NULL DEFAULT false;`).catch(() => {});
 }
 ensureTables().catch(e => console.error('label_templates table init error:', e));
 
-// GET /api/label-templates
+// GET /api/label-templates — buyer: all templates
 router.get('/', async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT id, name, paper_width_mm, paper_height_mm, created_at, updated_at FROM label_templates ORDER BY updated_at DESC'
+      'SELECT id, name, paper_width_mm, paper_height_mm, is_published, created_at, updated_at FROM label_templates ORDER BY updated_at DESC'
     );
     res.json(result.rows);
   } catch (e) {
     console.error('GET /api/label-templates error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/label-templates/published — manager: only published templates
+router.get('/published', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT id, name, paper_width_mm, paper_height_mm, is_published, created_at, updated_at FROM label_templates WHERE is_published = true ORDER BY updated_at DESC'
+    );
+    res.json(result.rows);
+  } catch (e) {
+    console.error('GET /api/label-templates/published error:', e);
     res.status(500).json({ error: e.message });
   }
 });
@@ -76,9 +90,10 @@ router.post('/:id/duplicate', async (req, res) => {
     );
     if (source.rows.length === 0) return res.status(404).json({ error: 'Not found' });
     const t = source.rows[0];
+    // Duplicated template is always unpublished
     const result = await pool.query(
-      `INSERT INTO label_templates (name, paper_width_mm, paper_height_mm, elements)
-       VALUES ($1, $2, $3, $4) RETURNING *`,
+      `INSERT INTO label_templates (name, paper_width_mm, paper_height_mm, elements, is_published)
+       VALUES ($1, $2, $3, $4, false) RETURNING *`,
       [
         `${t.name} (copy)`,
         t.paper_width_mm,
@@ -93,9 +108,44 @@ router.post('/:id/duplicate', async (req, res) => {
   }
 });
 
+// PATCH /api/label-templates/:id/publish
+router.patch('/:id/publish', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'UPDATE label_templates SET is_published = true, updated_at = NOW() WHERE id = $1 RETURNING *',
+      [req.params.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    res.json(result.rows[0]);
+  } catch (e) {
+    console.error('PATCH /api/label-templates/:id/publish error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PATCH /api/label-templates/:id/unpublish
+router.patch('/:id/unpublish', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'UPDATE label_templates SET is_published = false, updated_at = NOW() WHERE id = $1 RETURNING *',
+      [req.params.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    res.json(result.rows[0]);
+  } catch (e) {
+    console.error('PATCH /api/label-templates/:id/unpublish error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // PUT /api/label-templates/:id
 router.put('/:id', async (req, res) => {
   try {
+    // Block editing published templates
+    const check = await pool.query('SELECT is_published FROM label_templates WHERE id = $1', [req.params.id]);
+    if (check.rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    if (check.rows[0].is_published) return res.status(403).json({ error: 'Cannot edit a published template. Unpublish it first.' });
+
     const { name, paper_width_mm, paper_height_mm, elements } = req.body;
     const result = await pool.query(
       `UPDATE label_templates
@@ -113,7 +163,6 @@ router.put('/:id', async (req, res) => {
         req.params.id,
       ]
     );
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
     res.json(result.rows[0]);
   } catch (e) {
     console.error('PUT /api/label-templates/:id error:', e);

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   Page, Layout, Card, BlockStack, InlineStack, Button, Text,
   EmptyState, Spinner, Banner, Modal, TextField, Select,
-  ActionList, Popover,
+  ActionList, Popover, Badge,
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 
@@ -14,16 +14,29 @@ const PRESET_SIZES = [
   { label: 'Custom', width: null, height: null },
 ];
 
-function TemplateCard({ template, onEdit, onDuplicate, onDelete }) {
+function TemplateCard({ template, onEdit, onDuplicate, onPublish, onUnpublish, onDelete }) {
   const [popoverOpen, setPopoverOpen] = useState(false);
   const updatedDate = new Date(template.updated_at).toLocaleDateString();
+  const isPublished = template.is_published;
+
+  const actionItems = [
+    ...(!isPublished ? [{ content: 'Edit', onAction: () => { setPopoverOpen(false); onEdit(template); } }] : []),
+    { content: 'Duplicate', onAction: () => { setPopoverOpen(false); onDuplicate(template); } },
+    isPublished
+      ? { content: 'Unpublish', onAction: () => { setPopoverOpen(false); onUnpublish(template); } }
+      : { content: 'Publish', onAction: () => { setPopoverOpen(false); onPublish(template); } },
+    ...(!isPublished ? [{ content: 'Delete', destructive: true, onAction: () => { setPopoverOpen(false); onDelete(template); } }] : []),
+  ];
 
   return (
     <Card padding="400">
       <BlockStack gap="200">
         <InlineStack align="space-between" blockAlign="start">
           <BlockStack gap="100">
-            <Text variant="headingSm" fontWeight="semibold">{template.name}</Text>
+            <InlineStack gap="200" blockAlign="center">
+              <Text variant="headingSm" fontWeight="semibold">{template.name}</Text>
+              {isPublished && <Badge tone="success">Published</Badge>}
+            </InlineStack>
             <Text variant="bodySm" tone="subdued">
               {template.paper_width_mm} × {template.paper_height_mm} mm
             </Text>
@@ -31,27 +44,23 @@ function TemplateCard({ template, onEdit, onDuplicate, onDelete }) {
           <Popover
             active={popoverOpen}
             activator={
-              <Button
-                variant="plain"
-                onClick={() => setPopoverOpen(v => !v)}
-                accessibilityLabel="More actions"
-              >
+              <Button variant="plain" onClick={() => setPopoverOpen(v => !v)} accessibilityLabel="More actions">
                 ···
               </Button>
             }
             onClose={() => setPopoverOpen(false)}
           >
-            <ActionList
-              items={[
-                { content: 'Edit', onAction: () => { setPopoverOpen(false); onEdit(template); } },
-                { content: 'Duplicate', onAction: () => { setPopoverOpen(false); onDuplicate(template); } },
-                { content: 'Delete', destructive: true, onAction: () => { setPopoverOpen(false); onDelete(template); } },
-              ]}
-            />
+            <ActionList items={actionItems} />
           </Popover>
         </InlineStack>
         <Text variant="bodySm" tone="subdued">Updated {updatedDate}</Text>
-        <Button onClick={() => onEdit(template)} fullWidth>Open editor</Button>
+        {isPublished ? (
+          <Button onClick={() => onUnpublish(template)} fullWidth tone="critical" variant="plain">
+            🔒 Locked — Unpublish to edit
+          </Button>
+        ) : (
+          <Button onClick={() => onEdit(template)} fullWidth>Open editor</Button>
+        )}
       </BlockStack>
     </Card>
   );
@@ -97,19 +106,8 @@ function NewTemplateModal({ open, onClose, onCreate }) {
       <Modal.Section>
         <BlockStack gap="400">
           {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
-          <TextField
-            label="Template name"
-            value={name}
-            onChange={setName}
-            placeholder="e.g. Price tag 50×30"
-            autoComplete="off"
-          />
-          <Select
-            label="Paper size"
-            options={sizeSelectOptions}
-            value={sizeOption}
-            onChange={setSizeOption}
-          />
+          <TextField label="Template name" value={name} onChange={setName} placeholder="e.g. Price tag 50×30" autoComplete="off" />
+          <Select label="Paper size" options={sizeSelectOptions} value={sizeOption} onChange={setSizeOption} />
           {isCustom && (
             <InlineStack gap="300">
               <div style={{ flex: 1 }}>
@@ -177,6 +175,26 @@ function BuyerLabelTemplates() {
     }
   };
 
+  const handlePublish = async (template) => {
+    try {
+      const res = await fetch(`/api/label-templates/${template.id}/publish`, { method: 'PATCH' });
+      if (!res.ok) throw new Error('Failed to publish template');
+      setTemplates(prev => prev.map(t => t.id === template.id ? { ...t, is_published: true } : t));
+    } catch (e) {
+      setError('Failed to publish template.');
+    }
+  };
+
+  const handleUnpublish = async (template) => {
+    try {
+      const res = await fetch(`/api/label-templates/${template.id}/unpublish`, { method: 'PATCH' });
+      if (!res.ok) throw new Error('Failed to unpublish template');
+      setTemplates(prev => prev.map(t => t.id === template.id ? { ...t, is_published: false } : t));
+    } catch (e) {
+      setError('Failed to unpublish template.');
+    }
+  };
+
   const handleDelete = async () => {
     if (!deleteTarget) return;
     setDeleteLoading(true);
@@ -214,17 +232,15 @@ function BuyerLabelTemplates() {
               <p>Design a label template to use when printing product labels.</p>
             </EmptyState>
           ) : (
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))',
-              gap: '16px',
-            }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '16px' }}>
               {templates.map(t => (
                 <TemplateCard
                   key={t.id}
                   template={t}
                   onEdit={(tmpl) => navigate(`/buyer/label-templates/${tmpl.id}`)}
                   onDuplicate={handleDuplicate}
+                  onPublish={handlePublish}
+                  onUnpublish={handleUnpublish}
                   onDelete={setDeleteTarget}
                 />
               ))}
@@ -233,28 +249,17 @@ function BuyerLabelTemplates() {
         </Layout.Section>
       </Layout>
 
-      <NewTemplateModal
-        open={showNew}
-        onClose={() => setShowNew(false)}
-        onCreate={handleCreate}
-      />
+      <NewTemplateModal open={showNew} onClose={() => setShowNew(false)} onCreate={handleCreate} />
 
       <Modal
         open={!!deleteTarget}
         onClose={() => setDeleteTarget(null)}
         title="Delete template"
-        primaryAction={{
-          content: 'Delete',
-          destructive: true,
-          onAction: handleDelete,
-          loading: deleteLoading,
-        }}
+        primaryAction={{ content: 'Delete', destructive: true, onAction: handleDelete, loading: deleteLoading }}
         secondaryActions={[{ content: 'Cancel', onAction: () => setDeleteTarget(null) }]}
       >
         <Modal.Section>
-          <Text>
-            Are you sure you want to delete <strong>{deleteTarget?.name}</strong>? This cannot be undone.
-          </Text>
+          <Text>Are you sure you want to delete <strong>{deleteTarget?.name}</strong>? This cannot be undone.</Text>
         </Modal.Section>
       </Modal>
     </Page>
