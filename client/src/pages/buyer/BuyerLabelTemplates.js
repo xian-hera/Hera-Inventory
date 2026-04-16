@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Page, Layout, Card, BlockStack, InlineStack, Button, Text,
-  EmptyState, Spinner, Banner, Modal, TextField, Select, Badge,
+  EmptyState, Spinner, Banner, Modal, TextField, Select,
   ActionList, Popover,
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
@@ -14,7 +14,7 @@ const PRESET_SIZES = [
   { label: 'Custom', width: null, height: null },
 ];
 
-function TemplateCard({ template, onEdit, onDelete }) {
+function TemplateCard({ template, onEdit, onDuplicate, onDelete }) {
   const [popoverOpen, setPopoverOpen] = useState(false);
   const updatedDate = new Date(template.updated_at).toLocaleDateString();
 
@@ -44,6 +44,7 @@ function TemplateCard({ template, onEdit, onDelete }) {
             <ActionList
               items={[
                 { content: 'Edit', onAction: () => { setPopoverOpen(false); onEdit(template); } },
+                { content: 'Duplicate', onAction: () => { setPopoverOpen(false); onDuplicate(template); } },
                 { content: 'Delete', destructive: true, onAction: () => { setPopoverOpen(false); onDelete(template); } },
               ]}
             />
@@ -112,24 +113,10 @@ function NewTemplateModal({ open, onClose, onCreate }) {
           {isCustom && (
             <InlineStack gap="300">
               <div style={{ flex: 1 }}>
-                <TextField
-                  label="Width (mm)"
-                  type="number"
-                  value={customW}
-                  onChange={setCustomW}
-                  min="5"
-                  autoComplete="off"
-                />
+                <TextField label="Width (mm)" type="number" value={customW} onChange={setCustomW} min="5" autoComplete="off" />
               </div>
               <div style={{ flex: 1 }}>
-                <TextField
-                  label="Height (mm)"
-                  type="number"
-                  value={customH}
-                  onChange={setCustomH}
-                  min="5"
-                  autoComplete="off"
-                />
+                <TextField label="Height (mm)" type="number" value={customH} onChange={setCustomH} min="5" autoComplete="off" />
               </div>
             </InlineStack>
           )}
@@ -147,6 +134,7 @@ function BuyerLabelTemplates() {
   const [showNew, setShowNew] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const [duplicating, setDuplicating] = useState(false);
 
   const fetchTemplates = useCallback(async () => {
     setLoading(true);
@@ -176,6 +164,19 @@ function BuyerLabelTemplates() {
     navigate(`/buyer/label-templates/${created.id}`);
   };
 
+  const handleDuplicate = async (template) => {
+    setDuplicating(true);
+    try {
+      const res = await fetch(`/api/label-templates/${template.id}/duplicate`, { method: 'POST' });
+      if (!res.ok) throw new Error('Failed to duplicate template');
+      fetchTemplates();
+    } catch (e) {
+      setError('Failed to duplicate template.');
+    } finally {
+      setDuplicating(false);
+    }
+  };
+
   const handleDelete = async () => {
     if (!deleteTarget) return;
     setDeleteLoading(true);
@@ -198,9 +199,7 @@ function BuyerLabelTemplates() {
     >
       <Layout>
         <Layout.Section>
-          {error && (
-            <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>
-          )}
+          {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
 
           {loading ? (
             <div style={{ display: 'flex', justifyContent: 'center', padding: '60px 0' }}>
@@ -225,6 +224,7 @@ function BuyerLabelTemplates() {
                   key={t.id}
                   template={t}
                   onEdit={(tmpl) => navigate(`/buyer/label-templates/${tmpl.id}`)}
+                  onDuplicate={handleDuplicate}
                   onDelete={setDeleteTarget}
                 />
               ))}

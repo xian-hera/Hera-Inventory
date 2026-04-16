@@ -67,6 +67,32 @@ router.post('/', async (req, res) => {
   }
 });
 
+// POST /api/label-templates/:id/duplicate
+router.post('/:id/duplicate', async (req, res) => {
+  try {
+    const source = await pool.query(
+      'SELECT * FROM label_templates WHERE id = $1',
+      [req.params.id]
+    );
+    if (source.rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    const t = source.rows[0];
+    const result = await pool.query(
+      `INSERT INTO label_templates (name, paper_width_mm, paper_height_mm, elements)
+       VALUES ($1, $2, $3, $4) RETURNING *`,
+      [
+        `${t.name} (copy)`,
+        t.paper_width_mm,
+        t.paper_height_mm,
+        JSON.stringify(t.elements),
+      ]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (e) {
+    console.error('POST /api/label-templates/:id/duplicate error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // PUT /api/label-templates/:id
 router.put('/:id', async (req, res) => {
   try {

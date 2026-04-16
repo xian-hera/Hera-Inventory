@@ -249,7 +249,7 @@ function ManagerLabelPrintTaskDetail() {
         .filter(fe => fe.fieldKey === 'product.metafield' || fe.fieldKey === 'variant.metafield');
 
       // If template uses metafields, fetch full variant data for each item
-      let metafieldMap = {}; // sku -> { product: {metafields:[]}, variant: {metafields:[]} }
+      let metafieldMap = {};
       if (metafieldKeys.length > 0) {
         await Promise.all(selectedItems.map(async (item) => {
           try {
@@ -283,7 +283,12 @@ function ManagerLabelPrintTaskDetail() {
     const ph = tmpl.paper_height_mm;
     const barcodeInits = [];
 
+    // Calculate total label count upfront so we can skip page-break on the last label
+    const totalLabels = selectedItems.reduce((sum, item) => sum + item.qty_to_print * qty, 0);
+
     const labelHtml = (item, labelIndex) => {
+      const isLast = labelIndex === totalLabels - 1;
+
       const fields = {
         'product.title':            item.product_title || '',
         'variant.title':            item.variant_title || '',
@@ -303,14 +308,10 @@ function ManagerLabelPrintTaskDetail() {
         const width  = el.w * MM_TO_PX;
         const height = el.h * MM_TO_PX;
         const angle  = el.angle || 0;
-        // Fabric saves x/y as the unrotated top-left origin.
-        // CSS transform-origin:50% 50% rotates around the element's own center,
-        // which matches Fabric's visual output when origin is top-left.
         const rotateStyle = angle ? `transform:rotate(${angle}deg);transform-origin:50% 50%;` : '';
         const baseStyle = `position:absolute;left:${left}px;top:${top}px;width:${width}px;height:${height}px;overflow:hidden;box-sizing:border-box;${rotateStyle}`;
 
         if (el.type === 'text') {
-          // 支持新格式 field_entries（多字段拼接）和旧格式 field_key（向后兼容）
           const entries = el.field_entries && el.field_entries.length > 0
             ? el.field_entries
             : [{ fieldKey: el.field_key, customValue: el.custom_value || '' }];
@@ -354,7 +355,6 @@ function ManagerLabelPrintTaskDetail() {
         if (el.type === 'line') {
           const isH = el.orientation !== 'vertical';
           const sw = { thin: 0.5, medium: 1, thick: 2 }[el.stroke_key] || 0.5;
-          // Remove overflow:hidden and ensure min dimensions so the line is never clipped
           const lineOuter = `position:absolute;left:${left}px;top:${top}px;width:${Math.max(width, 1)}px;height:${Math.max(height, 1)}px;box-sizing:border-box;${rotateStyle}`;
           return `<div style="${lineOuter}"><div style="position:absolute;${isH ? `top:50%;left:0;width:100%;border-top:${sw}mm solid #000;` : `left:50%;top:0;height:100%;border-left:${sw}mm solid #000;`}"></div></div>`;
         }
@@ -372,7 +372,9 @@ function ManagerLabelPrintTaskDetail() {
         return '';
       }).join('');
 
-      return `<div style="position:relative;width:${pw}mm;height:${ph}mm;overflow:hidden;page-break-after:always;box-sizing:border-box;">${elementsHtml}</div>`;
+      // No page-break on the last label — prevents blank trailing page on some Windows printers
+      const pageBreak = isLast ? '' : 'page-break-after:always;';
+      return `<div style="position:relative;width:${pw}mm;height:${ph}mm;overflow:hidden;${pageBreak}box-sizing:border-box;">${elementsHtml}</div>`;
     };
 
     let labelIndex = 0;
