@@ -75,7 +75,22 @@ function ManagerPriceChangeDetail() {
       const tmplRes = await fetch(`/api/label-templates/${selectedTemplate}`);
       if (!tmplRes.ok) throw new Error('Failed to load template');
       const tmpl = await tmplRes.json();
-      const printContent = buildPrintHtml(tmpl, items, qty);
+
+      // Always fetch live Shopify data for every item using SKU.
+      // This ensures vendor, product metafields, and all fields are
+      // current regardless of what was stored in the task.
+      const metafieldMap = {}; // sku -> { variant: {..., metafields:[]}, product: {..., metafields:[]} }
+      await Promise.all(items.map(async (item) => {
+        if (!item.sku) return;
+        try {
+          const res = await fetch(`/api/shopify/variant-by-sku?sku=${encodeURIComponent(item.sku)}`);
+          if (!res.ok) return;
+          const data = await res.json();
+          metafieldMap[item.sku] = data;
+        } catch { /* skip, will fall back to stored values */ }
+      }));
+
+      const printContent = buildPrintHtml(tmpl, items, qty, metafieldMap);
       const win = window.open('', '_blank');
       if (!win) throw new Error('Pop-up blocked. Please allow pop-ups.');
       win.document.write(printContent);
@@ -99,23 +114,26 @@ function ManagerPriceChangeDetail() {
     }
   };
 
-  function buildPrintHtml(tmpl, allItems, qty) {
+  function buildPrintHtml(tmpl, allItems, qty, metafieldMap = {}) {
     const MM_TO_PX = 3.7795275591;
+    const SEPARATOR = ' · ';
     const pw = tmpl.paper_width_mm;
     const ph = tmpl.paper_height_mm;
     const barcodeInits = [];
 
     const labelHtml = (item, labelIndex) => {
+      // Prefer live Shopify data; fall back to whatever is stored in the task item.
+      const live = metafieldMap[item.sku];
       const fields = {
-        'variant.sku':              item.sku || '',
-        'variant.price':            item.price ? `$${item.price}` : '',
-        'variant.compare_at_price': item.compare_at_price ? `$${item.compare_at_price}` : '',
-        'variant.barcode':          item.barcode || '',
-        'variant.metafield':        item.name || '',
-        'product.title':            item.name || '',
-        'variant.title':            '',
-        'product.vendor':           '',
-        'product.product_type':     '',
+        'product.title':            live?.product?.title            || item.name              || '',
+        'variant.title':            live?.variant?.title            || '',
+        'variant.sku':              live?.variant?.sku              || item.sku               || '',
+        'variant.price':            live?.variant?.price            ? `$${live.variant.price}`            : (item.price            ? `$${item.price}`            : ''),
+        'variant.compare_at_price': live?.variant?.compare_at_price ? `$${live.variant.compare_at_price}` : (item.compare_at_price ? `$${item.compare_at_price}` : ''),
+        'variant.barcode':          live?.variant?.barcode          || item.barcode           || '',
+        'product.vendor':           live?.product?.vendor           || '',
+        'product.product_type':     live?.product?.product_type     || '',
+        'variant.metafield':        item.name                       || '',
         'product.metafield':        '',
       };
 
@@ -127,13 +145,38 @@ function ManagerPriceChangeDetail() {
         const baseStyle = `position:absolute;left:${left}px;top:${top}px;width:${width}px;height:${height}px;overflow:hidden;box-sizing:border-box;${rotateStyle}`;
 
         if (el.type === 'text') {
-          const value = el.field_key === 'custom' ? (el.custom_value || '') : (fields[el.field_key] ?? '');
+          // 支持新格式 field_entries（多字段拼接）和旧格式 field_key（向后兼容）
+          const entries = el.field_entries && el.field_entries.length > 0
+            ? el.field_entries
+            : [{ fieldKey: el.field_key, customValue: el.custom_value || '' }];
+
+          const value = entries.map(fe => {
+            if (fe.fieldKey === 'custom') return fe.customValue || '';
+            if (fe.fieldKey === 'variant.metafield') {
+              const ns = fe.metafieldNamespace || fe.metafield_namespace || '';
+              const key = fe.metafieldKey || fe.metafield_key || '';
+              if (!ns || !key) return item.name || '';
+              const mfData = metafieldMap[item.sku];
+              return mfData?.variant?.metafields?.find(m => m.namespace === ns && m.key === key)?.value || '';
+            }
+            if (fe.fieldKey === 'product.metafield') {
+              const ns = fe.metafieldNamespace || fe.metafield_namespace || '';
+              const key = fe.metafieldKey || fe.metafield_key || '';
+              if (!ns || !key) return '';
+              const mfData = metafieldMap[item.sku];
+              return mfData?.product?.metafields?.find(m => m.namespace === ns && m.key === key)?.value || '';
+            }
+            return fields[fe.fieldKey] ?? '';
+          }).filter(v => v !== '').join(SEPARATOR);
+
+          const displayValue = applyCase(value, el.convert_case);
           const fw = el.font_weight || '400';
           const fs = (el.font_size || 3) * MM_TO_PX;
           const align = el.align || 'left';
           const decoration = el.underline ? 'underline' : el.linethrough ? 'line-through' : 'none';
-          return `<div style="${baseStyle}font-size:${fs}px;font-weight:${fw};text-align:${align};font-family:sans-serif;text-decoration:${decoration};line-height:1.2;">${applyCase(value, el.convert_case)}</div>`;
+          return `<div style="${baseStyle}font-size:${fs}px;font-weight:${fw};text-align:${align};font-family:sans-serif;text-decoration:${decoration};line-height:1.2;">${displayValue}</div>`;
         }
+
         if (el.type === 'barcode') {
           const barcodeValue = fields[el.field_key] || item.barcode || item.sku || '';
           if (!barcodeValue) return `<div style="${baseStyle}"></div>`;
@@ -141,16 +184,19 @@ function ManagerPriceChangeDetail() {
           barcodeInits.push({ id: svgId, value: barcodeValue, type: el.barcode_type || 'CODE128' });
           return `<div style="${baseStyle}display:flex;align-items:center;justify-content:center;"><svg id="${svgId}" style="width:100%;height:100%;"></svg></div>`;
         }
+
         if (el.type === 'line') {
           const isH = el.orientation !== 'vertical';
           const sw = { thin: 0.5, medium: 1, thick: 2 }[el.stroke_key] || 0.5;
           const lineOuter = `position:absolute;left:${left}px;top:${top}px;width:${Math.max(width, 1)}px;height:${Math.max(height, 1)}px;box-sizing:border-box;${rotateStyle}`;
           return `<div style="${lineOuter}"><div style="position:absolute;${isH ? `top:50%;left:0;width:100%;border-top:${sw}mm solid #000;` : `left:50%;top:0;height:100%;border-left:${sw}mm solid #000;`}"></div></div>`;
         }
+
         if (el.type === 'frame') {
           const sw = { thin: 0.5, medium: 1, thick: 2 }[el.stroke_key] || 0.5;
           return `<div style="${baseStyle}border:${sw}mm solid #000;border-radius:${el.border_radius || 0}px;"></div>`;
         }
+
         if (el.type === 'svg' && el.svg_data) return `<div style="${baseStyle}">${el.svg_data}</div>`;
         return '';
       }).join('');

@@ -242,18 +242,24 @@ function ManagerLabelPrintTaskDetail() {
       const tmpl = await tmplRes.json();
       const selectedItems = items.filter(i => selectedIds.includes(i.id));
 
-      // Always fetch live Shopify data for every selected item.
-      // This ensures vendor, product metafields, and all other fields are
-      // always current regardless of what was stored in the task.
-      const metafieldMap = {}; // sku -> { variant: {..., metafields:[]}, product: {..., metafields:[]} }
-      await Promise.all(selectedItems.map(async (item) => {
-        try {
-          const res = await fetch(`/api/shopify/variant-by-sku?sku=${encodeURIComponent(item.sku)}`);
-          if (!res.ok) return;
-          const data = await res.json();
-          metafieldMap[item.sku] = data;
-        } catch { /* skip, will fall back to stored values */ }
-      }));
+      // Collect all metafield keys used in this template
+      const metafieldKeys = (tmpl.elements || [])
+        .filter(el => el.type === 'text')
+        .flatMap(el => el.field_entries || (el.field_key ? [{ fieldKey: el.field_key, metafieldNamespace: el.metafield_namespace, metafieldKey: el.metafield_key }] : []))
+        .filter(fe => fe.fieldKey === 'product.metafield' || fe.fieldKey === 'variant.metafield');
+
+      // If template uses metafields, fetch full variant data for each item
+      let metafieldMap = {}; // sku -> { product: {metafields:[]}, variant: {metafields:[]} }
+      if (metafieldKeys.length > 0) {
+        await Promise.all(selectedItems.map(async (item) => {
+          try {
+            const res = await fetch(`/api/shopify/variant-by-sku?sku=${encodeURIComponent(item.sku)}`);
+            if (!res.ok) return;
+            const data = await res.json();
+            metafieldMap[item.sku] = data;
+          } catch { /* skip, will show empty */ }
+        }));
+      }
 
       const printContent = buildPrintHtml(tmpl, selectedItems, qty, metafieldMap);
       const win = window.open('', '_blank');
@@ -278,17 +284,15 @@ function ManagerLabelPrintTaskDetail() {
     const barcodeInits = [];
 
     const labelHtml = (item, labelIndex) => {
-      // Prefer live Shopify data; fall back to whatever is stored in the task item.
-      const live = metafieldMap[item.sku];
       const fields = {
-        'product.title':            live?.product?.title            || item.product_title       || '',
-        'variant.title':            live?.variant?.title            || item.variant_title        || '',
-        'variant.sku':              live?.variant?.sku              || item.sku                 || '',
-        'variant.price':            live?.variant?.price            ? `$${live.variant.price}`            : (item.price            ? `$${item.price}`            : ''),
-        'variant.compare_at_price': live?.variant?.compare_at_price ? `$${live.variant.compare_at_price}` : (item.compare_at_price ? `$${item.compare_at_price}` : ''),
-        'variant.barcode':          live?.variant?.barcode          || item.barcode             || '',
-        'product.vendor':           live?.product?.vendor           || item.vendor              || '',
-        'product.product_type':     live?.product?.product_type     || item.product_type        || '',
+        'product.title':            item.product_title || '',
+        'variant.title':            item.variant_title || '',
+        'variant.sku':              item.sku || '',
+        'variant.price':            item.price ? `$${item.price}` : '',
+        'variant.compare_at_price': item.compare_at_price ? `$${item.compare_at_price}` : '',
+        'variant.barcode':          item.barcode || '',
+        'product.vendor':           item.vendor || '',
+        'product.product_type':     item.product_type || '',
         'variant.metafield':        item.custom_name || '',
         'product.metafield':        '',
       };
