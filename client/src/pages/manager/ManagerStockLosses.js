@@ -393,6 +393,7 @@ function ManagerStockLosses() {
   const [loading, setLoading]         = useState(true);
   const [error, setError]             = useState('');
   const [submitting, setSubmitting]   = useState(false);
+  const [submitSuccess, setSubmitSuccess] = useState(false);
 
   const barcodeBuffer = useRef('');
   const barcodeTimer  = useRef(null);
@@ -645,9 +646,26 @@ function ManagerStockLosses() {
     }
   };
 
-  const handleSubmitItems = (ids) => {
-    setItems(prev => prev.filter(i => !ids.includes(i.id)));
-    setSelectedIds([]);
+  const handleSubmitItems = async (ids) => {
+    if (ids.length === 0) return;
+    setSubmitting(true);
+    try {
+      const res = await fetch('/api/stock-losses/submit-many', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Submit failed');
+      setItems(prev => prev.filter(i => !ids.includes(i.id)));
+      setSelectedIds([]);
+      setSubmitSuccess(true);
+      setTimeout(() => setSubmitSuccess(false), 3000);
+    } catch (e) {
+      setError('Failed to submit: ' + e.message);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const toggleSelectOne = (id) => setSelectedIds(prev =>
@@ -680,6 +698,11 @@ function ManagerStockLosses() {
         <Layout.Section>
           <BlockStack gap="400">
             {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
+            {submitSuccess && (
+              <Banner tone="success" onDismiss={() => setSubmitSuccess(false)}>
+                Items submitted successfully.
+              </Banner>
+            )}
 
             <Text variant="bodySm" tone="subdued">
               Scan to add items · saved for 15 days · shared across this location

@@ -11,6 +11,7 @@ router.get('/', async (req, res) => {
     const result = await pool.query(
       `SELECT * FROM stock_losses
        WHERE location = $1
+         AND status = 'pending'
          AND submitted_at >= NOW() - INTERVAL '15 days'
        ORDER BY submitted_at DESC`,
       [location]
@@ -94,7 +95,7 @@ router.post('/', async (req, res) => {
         (barcode, name, product_type, vendor, location, shopify_location_id,
          reason, reason_label, reason_detail, qty, adjustment, soh,
          photo_urls, shopify_file_gids, status, submitted_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'reviewing',NOW())
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'pending',NOW())
        RETURNING *`,
       [
         barcode, name || '', product_type || null, vendor || null,
@@ -160,6 +161,23 @@ router.patch('/:id/commit', async (req, res) => {
     res.json({ success: true });
   } catch (e) {
     console.error('PATCH /api/stock-losses/:id/commit error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PATCH /api/stock-losses/submit-many — manager submits items to buyer (pending → reviewing)
+router.patch('/submit-many', async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!ids || ids.length === 0) return res.status(400).json({ error: 'No ids provided' });
+    await pool.query(
+      `UPDATE stock_losses SET status = 'reviewing', submitted_at = NOW()
+       WHERE id = ANY($1) AND status = 'pending'`,
+      [ids]
+    );
+    res.json({ success: true });
+  } catch (e) {
+    console.error('PATCH /api/stock-losses/submit-many error:', e);
     res.status(500).json({ error: e.message });
   }
 });
