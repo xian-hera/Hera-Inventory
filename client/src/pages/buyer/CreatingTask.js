@@ -260,13 +260,33 @@ function CreatingTask() {
 
     const filterSummary = summaryParts.length > 0 ? summaryParts.join(' | ') : 'All products';
 
+    // Build regular items (deduplicated)
+    const regularItems = products.filter(p => taskItems.includes(p.barcode));
+
+    // Collect all negative items across all locations, deduplicated by barcode
+    // These are shown in preview but will be re-applied per-location at save time
+    const allNegativeItems = [];
+    const negativeBarcodesSeen = new Set(regularItems.map(p => p.barcode));
+    for (const locItems of Object.values(negativeItems)) {
+      for (const item of locItems) {
+        if (!negativeBarcodesSeen.has(item.barcode)) {
+          allNegativeItems.push(item);
+          negativeBarcodesSeen.add(item.barcode);
+        }
+      }
+    }
+
+    // Total negative item count (sum across all locations, before dedup against regular items)
+    const totalNegativeCount = Object.values(negativeItems).reduce((sum, arr) => sum + arr.length, 0);
+
     const taskData = {
       types: selectedTypes,
       locations: selectedLocations,
       filterSummary,
-      items: products.filter(p => taskItems.includes(p.barcode)),
+      items: [...regularItems, ...allNegativeItems],
       negativeItems,
       excludedBarcodes,
+      totalNegativeCount: totalNegativeCount > 0 ? totalNegativeCount : null,
     };
     sessionStorage.setItem('pendingTask', JSON.stringify(taskData));
     navigate('/buyer/counting-tasks/new/preview');
