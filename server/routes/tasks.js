@@ -11,6 +11,8 @@ router.get('/', async (req, res) => {
     let params = [];
     let paramIndex = 1;
 
+    // types filter: task must contain ALL of the selected types (or ANY — here we use overlap &&)
+    // Logic: if any selected type is in the task's types array, it matches
     if (types && types !== 'ALL') {
       const typeList = types.split(',').map(t => t.trim());
       conditions.push(`types && $${paramIndex++}`);
@@ -111,6 +113,7 @@ router.post('/negative-inventory', async (req, res) => {
     const shopify = getShopify();
     const client = new shopify.clients.Graphql({ session });
 
+    // Step 1: fetch location ID mapping
     const locMap = await pool.query(
       'SELECT location_name, shopify_location_id FROM location_map WHERE location_name = ANY($1)',
       [locations]
@@ -118,68 +121,117 @@ router.post('/negative-inventory', async (req, res) => {
     const locationIdMap = {};
     locMap.rows.forEach(r => { locationIdMap[r.location_name] = r.shopify_location_id; });
 
-    // Normalize types to uppercase for comparison
-    const normalizedTypes = types.map(t => t.toUpperCase().trim());
+    // Only process locations that have a valid Shopify location ID
+    const validLocations = locations.filter(l => locationIdMap[l]);
 
-    console.log('[negative] locationIdMap:', locationIdMap);
-    console.log('[negative] normalizedTypes:', normalizedTypes);
+    // Step 2: fetch all active variant SKUs for the selected types (full pagination)
+    // status:active ensures draft and archived products are excluded
+    const typeQuery = types.map(t => `product_type:"${t}"`).join(' OR ');
+    const queryString = `(${typeQuery}) AND status:active`;
 
-    const result = {};
-
-    for (const location of locations) {
-      const shopifyLocationId = locationIdMap[location];
-      if (!shopifyLocationId) { result[location] = []; continue; }
-
-      const gqlQuery = `
-        query getNegativeInventory($locationId: ID!) {
-          location(id: $locationId) {
-            inventoryLevels(first: 250, query: "on_hand:<0") {
-              edges {
-                node {
-                  quantities(names: ["on_hand"]) {
-                    name
-                    quantity
-                  }
-                  item {
-                    id
+    const productGqlQuery = `
+      query getProducts($queryString: String!, $cursor: String) {
+        products(first: 250, query: $queryString, after: $cursor) {
+          pageInfo { hasNextPage endCursor }
+          edges {
+            node {
+              title
+              variants(first: 100) {
+                edges {
+                  node {
                     sku
-                    variant {
-                      barcode
-                      metafield(namespace: "custom", key: "name") { value }
-                      product { title productType }
-                    }
+                    metafield(namespace: "custom", key: "name") { value }
                   }
                 }
               }
             }
           }
         }
+      }
+    `;
+
+    let allVariants = [];
+    let cursor = null;
+    let hasNextPage = true;
+
+    while (hasNextPage) {
+      const response = await client.request(productGqlQuery, { variables: { queryString, cursor } });
+      const page = response.data.products;
+      for (const { node: product } of page.edges) {
+        for (const { node: variant } of product.variants.edges) {
+          if (!variant.sku) continue;
+          allVariants.push({
+            sku: variant.sku,
+            name: variant.metafield?.value || product.title,
+          });
+        }
+      }
+      hasNextPage = page.pageInfo.hasNextPage;
+      cursor = page.pageInfo.endCursor;
+    }
+
+    // Initialize result with empty arrays for all locations
+    const result = {};
+    locations.forEach(l => { result[l] = []; });
+
+    if (allVariants.length === 0 || validLocations.length === 0) {
+      return res.json(result);
+    }
+
+    // Step 3: batch query on_hand for all SKUs across all locations simultaneously
+    // Use GraphQL aliases to fetch multiple locations in a single request
+    // Batch size: 50 SKUs per request (keeps query string within safe limits)
+    const BATCH_SIZE = 50;
+
+    for (let i = 0; i < allVariants.length; i += BATCH_SIZE) {
+      const batch = allVariants.slice(i, i + BATCH_SIZE);
+      const skuQuery = batch.map(v => `sku:${v.sku}`).join(' OR ');
+
+      // Build alias fields for each location
+      const locationFields = validLocations.map((loc, idx) => {
+        const locId = locationIdMap[loc];
+        return `loc${idx}: inventoryLevel(locationId: "${locId}") {
+          quantities(names: ["on_hand"]) {
+            name
+            quantity
+          }
+        }`;
+      }).join('\n');
+
+      const invQuery = `
+        query getBatchInventory($skuQuery: String!) {
+          inventoryItems(first: 50, query: $skuQuery) {
+            edges {
+              node {
+                sku
+                ${locationFields}
+              }
+            }
+          }
+        }
       `;
 
-      const response = await client.request(gqlQuery, { variables: { locationId: shopifyLocationId } });
-      const levels = response.data?.location?.inventoryLevels?.edges || [];
+      try {
+        const invRes = await client.request(invQuery, { variables: { skuQuery } });
+        const edges = invRes.data?.inventoryItems?.edges || [];
 
-      console.log(`[negative] ${location}: raw levels count = ${levels.length}`);
-      console.log(`[negative] ${location}: response sample:`, JSON.stringify(levels.slice(0, 2)));
+        for (const { node: item } of edges) {
+          if (!item.sku) continue;
+          const variant = batch.find(v => v.sku === item.sku);
+          if (!variant) continue;
 
-      const items = levels
-        .filter(e => {
-          const qty = e.node.quantities.find(q => q.name === 'on_hand')?.quantity ?? 0;
-          if (qty >= 0) return false;
-          const productType = (e.node.item?.variant?.product?.productType || '').toUpperCase().trim();
-          return normalizedTypes.includes(productType);
-        })
-        .map(e => {
-          const variant = e.node.item?.variant;
-          const name = variant?.metafield?.value || variant?.product?.title || '';
-          const barcode = variant?.barcode || e.node.item?.sku || '';
-          return { barcode, name };
-        })
-        .filter(i => i.barcode);
-
-      console.log(`[negative] ${location}: after filter = ${items.length}`);
-
-      result[location] = items;
+          validLocations.forEach((loc, idx) => {
+            const levelData = item[`loc${idx}`];
+            const onHand = levelData?.quantities?.find(q => q.name === 'on_hand')?.quantity ?? 0;
+            if (onHand < 0) {
+              result[loc].push({ barcode: variant.sku, name: variant.name });
+            }
+          });
+        }
+      } catch (e) {
+        // skip batch errors silently and continue with next batch
+        console.error(`[negative-inventory] batch error at index ${i}:`, e.message);
+      }
     }
 
     res.json(result);
@@ -401,6 +453,7 @@ router.patch('/:id/commit', async (req, res) => {
       }
     }
 
+    // Check if all inaccurate items are committed
     const remaining = await pool.query(
       `SELECT COUNT(*) FROM task_items 
        WHERE task_id = $1 AND is_correct = FALSE AND poh IS NOT NULL AND is_committed = FALSE`,

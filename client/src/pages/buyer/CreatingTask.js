@@ -56,7 +56,7 @@ function CreatingTask() {
   const [loadingProducts, setLoadingProducts]   = useState(false);
   const [loadingNegative, setLoadingNegative]   = useState(false);
   const [loadingExclude, setLoadingExclude]     = useState(false);
-  const [negativeSuccess, setNegativeSuccess]   = useState(false);
+  const [negativeSuccess, setNegativeSuccess]   = useState(null); // null | number
   const [excludeSuccess, setExcludeSuccess]     = useState(false);
   const [csvImported, setCsvImported]           = useState(false);
   const [error, setError]                       = useState('');
@@ -105,7 +105,7 @@ function CreatingTask() {
       return;
     }
     setLoadingNegative(true);
-    setNegativeSuccess(false);
+    setNegativeSuccess(null);
     setError('');
     try {
       const res = await fetch('/api/tasks/negative-inventory', {
@@ -116,7 +116,8 @@ function CreatingTask() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       setNegativeItems(data);
-      setNegativeSuccess(true);
+      const totalCount = Object.values(data).reduce((sum, arr) => sum + arr.length, 0);
+      setNegativeSuccess(totalCount);
     } catch (e) {
       setError(e.message || 'Failed to fetch negative inventory');
     } finally {
@@ -349,8 +350,11 @@ function CreatingTask() {
                   >
                     Add negative
                   </Button>
-                  {negativeSuccess && (
-                    <Text variant="bodySm" tone="success">Added successfully</Text>
+                  {loadingNegative && (
+                    <Text variant="bodySm" tone="subdued">Inquiring, be patient.</Text>
+                  )}
+                  {!loadingNegative && negativeSuccess !== null && (
+                    <Text variant="bodySm" tone="success">{negativeSuccess} items added successfully</Text>
                   )}
                 </InlineStack>
               </BlockStack>
