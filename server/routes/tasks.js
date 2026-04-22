@@ -132,10 +132,10 @@ router.post('/negative-inventory', async (req, res) => {
       const gqlQuery = `
         query getNegativeInventory($locationId: ID!) {
           location(id: $locationId) {
-            inventoryLevels(first: 250, query: "available:<0") {
+            inventoryLevels(first: 250, query: "on_hand:<0") {
               edges {
                 node {
-                  quantities(names: ["available"]) {
+                  quantities(names: ["on_hand"]) {
                     name
                     quantity
                   }
@@ -160,7 +160,7 @@ router.post('/negative-inventory', async (req, res) => {
 
       const items = levels
         .filter(e => {
-          const qty = e.node.quantities.find(q => q.name === 'available')?.quantity ?? 0;
+          const qty = e.node.quantities.find(q => q.name === 'on_hand')?.quantity ?? 0;
           if (qty >= 0) return false;
           // Filter by selected types
           const productType = (e.node.item?.variant?.product?.productType || '').toUpperCase().trim();
@@ -404,8 +404,6 @@ router.patch('/:id/commit', async (req, res) => {
     );
 
     if (parseInt(remaining.rows[0].count) === 0) {
-      // 改动四：检查是否所有 item 都是绿色对钩（没有任何 inaccurate 条目）
-      // 即：不存在 is_correct=false 且 poh 不为 null 的 item（无论是否 committed）
       const inaccurateTotal = await pool.query(
         `SELECT COUNT(*) FROM task_items
          WHERE task_id = $1 AND is_correct = FALSE AND poh IS NOT NULL`,
@@ -414,7 +412,6 @@ router.patch('/:id/commit', async (req, res) => {
       const allGreen = parseInt(inaccurateTotal.rows[0].count) === 0;
 
       if (allGreen) {
-        // 自动 archived + 添加 note
         const currentNotes = (await pool.query('SELECT notes FROM tasks WHERE id = $1', [id])).rows[0]?.notes || [];
         const autoNote = { text: 'Automatically committed and archived', created_at: new Date().toISOString() };
         const updatedNotes = [...currentNotes, autoNote];

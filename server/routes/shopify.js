@@ -271,7 +271,10 @@ router.get('/inventory', async (req, res) => {
                 }
               }
               metafield(namespace: "custom", key: "name") { value }
-              product { title productType }
+              product {
+                title productType
+                mainSku: metafield(namespace: "custom", key: "main_sku") { value }
+              }
             }
           }
         }
@@ -282,8 +285,19 @@ router.get('/inventory', async (req, res) => {
     const variants = response.data.productVariants.edges;
     if (variants.length === 0) return res.status(404).json({ error: 'Product not found' });
 
-    const variant = variants[0].node;
+    let variant = variants[0].node;
     const decodedLocationId = decodeURIComponent(locationId);
+
+    // main_sku redirect: if the product has a main_sku metafield, re-query using that SKU
+    const mainSku = variant.product?.mainSku?.value;
+    if (mainSku) {
+      const redirectResponse = await shopifyRequest(client, variantQuery, { barcode: `sku:${mainSku}` });
+      const redirectVariants = redirectResponse.data.productVariants.edges;
+      if (redirectVariants.length > 0) {
+        variant = redirectVariants[0].node;
+      }
+    }
+
     const levels = variant.inventoryItem.inventoryLevels.edges;
     const level = levels.find(e => e.node.location.id === decodedLocationId);
     const soh = level?.node.quantities.find(q => q.name === 'available')?.quantity ?? 0;
@@ -544,6 +558,7 @@ router.get('/variant-by-sku', async (req, res) => {
             id title sku price compareAtPrice barcode
             product {
               id title vendor productType
+              mainSku: metafield(namespace: "custom", key: "main_sku") { value }
               metafields(first: 20) { edges { node { namespace key value } } }
             }
             metafields(first: 20) { edges { node { namespace key value } } }
@@ -553,8 +568,30 @@ router.get('/variant-by-sku', async (req, res) => {
     }`;
 
     const response = await shopifyRequest(client, query);
-    const edge = response?.data?.productVariants?.edges?.[0];
+    let edge = response?.data?.productVariants?.edges?.[0];
     if (!edge) return res.status(404).json({ error: 'SKU not found' });
+
+    // main_sku redirect: if the product has a main_sku metafield, re-query using that SKU
+    const mainSku = edge.node.product?.mainSku?.value;
+    if (mainSku) {
+      const redirectQuery = `{
+        productVariants(first: 1, query: "sku:${mainSku.replace(/"/g, '')}") {
+          edges {
+            node {
+              id title sku price compareAtPrice barcode
+              product {
+                id title vendor productType
+                metafields(first: 20) { edges { node { namespace key value } } }
+              }
+              metafields(first: 20) { edges { node { namespace key value } } }
+            }
+          }
+        }
+      }`;
+      const redirectResponse = await shopifyRequest(client, redirectQuery);
+      const redirectEdge = redirectResponse?.data?.productVariants?.edges?.[0];
+      if (redirectEdge) edge = redirectEdge;
+    }
 
     const v = edge.node;
     res.json({
