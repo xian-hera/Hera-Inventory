@@ -11,8 +11,6 @@ router.get('/', async (req, res) => {
     let params = [];
     let paramIndex = 1;
 
-    // types filter: task must contain ALL of the selected types (or ANY — here we use overlap &&)
-    // Logic: if any selected type is in the task's types array, it matches
     if (types && types !== 'ALL') {
       const typeList = types.split(',').map(t => t.trim());
       conditions.push(`types && $${paramIndex++}`);
@@ -123,6 +121,9 @@ router.post('/negative-inventory', async (req, res) => {
     // Normalize types to uppercase for comparison
     const normalizedTypes = types.map(t => t.toUpperCase().trim());
 
+    console.log('[negative] locationIdMap:', locationIdMap);
+    console.log('[negative] normalizedTypes:', normalizedTypes);
+
     const result = {};
 
     for (const location of locations) {
@@ -158,11 +159,13 @@ router.post('/negative-inventory', async (req, res) => {
       const response = await client.request(gqlQuery, { variables: { locationId: shopifyLocationId } });
       const levels = response.data?.location?.inventoryLevels?.edges || [];
 
+      console.log(`[negative] ${location}: raw levels count = ${levels.length}`);
+      console.log(`[negative] ${location}: response sample:`, JSON.stringify(levels.slice(0, 2)));
+
       const items = levels
         .filter(e => {
           const qty = e.node.quantities.find(q => q.name === 'on_hand')?.quantity ?? 0;
           if (qty >= 0) return false;
-          // Filter by selected types
           const productType = (e.node.item?.variant?.product?.productType || '').toUpperCase().trim();
           return normalizedTypes.includes(productType);
         })
@@ -173,6 +176,8 @@ router.post('/negative-inventory', async (req, res) => {
           return { barcode, name };
         })
         .filter(i => i.barcode);
+
+      console.log(`[negative] ${location}: after filter = ${items.length}`);
 
       result[location] = items;
     }
@@ -396,7 +401,6 @@ router.patch('/:id/commit', async (req, res) => {
       }
     }
 
-    // Check if all inaccurate items are committed
     const remaining = await pool.query(
       `SELECT COUNT(*) FROM task_items 
        WHERE task_id = $1 AND is_correct = FALSE AND poh IS NOT NULL AND is_committed = FALSE`,
