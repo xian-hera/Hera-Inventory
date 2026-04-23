@@ -211,6 +211,26 @@ function ManagerLabelPrintTaskDetail() {
   const allSelected = items.length > 0 && selectedIds.length === items.length;
   const toggleAll = () => setSelectedIds(allSelected ? [] : items.map(i => i.id));
 
+  const openPrintAllModal = async () => {
+    setSelectedIds(items.map(i => i.id));
+    setShowPrint(true);
+    setPrintError('');
+    setPrintQty('1');
+    setSelectedTemplate('');
+    setTemplatesLoading(true);
+    try {
+      const res = await fetch('/api/label-templates/published');
+      if (!res.ok) throw new Error('Failed to load templates');
+      const data = await res.json();
+      setTemplates(data);
+      if (data.length > 0) setSelectedTemplate(String(data[0].id));
+    } catch (e) {
+      setPrintError('Failed to load templates.');
+    } finally {
+      setTemplatesLoading(false);
+    }
+  };
+
   const openPrintModal = async () => {
     if (selectedIds.length === 0) return;
     setShowPrint(true);
@@ -434,10 +454,6 @@ ${barcodeScript}</head><body>${allLabels}</body></html>`;
     <Page
       title={task?.name || 'Print task'}
       backAction={{ onAction: () => navigate('/manager/label-print') }}
-      primaryAction={selectedIds.length > 0 ? {
-        content: `Print selected (${selectedIds.length})`,
-        onAction: openPrintModal,
-      } : null}
     >
       <Layout>
         <Layout.Section>
@@ -454,6 +470,24 @@ ${barcodeScript}</head><body>${allLabels}</body></html>`;
               </InlineStack>
             </BlockStack>
           </Card>
+        </Layout.Section>
+
+        <Layout.Section>
+          <InlineStack gap="300" align="end">
+            <Button
+              disabled={selectedIds.length === 0}
+              onClick={openPrintModal}
+            >
+              {selectedIds.length > 0 ? `Print selected (${selectedIds.length})` : 'Print selected'}
+            </Button>
+            <Button
+              variant="primary"
+              disabled={items.length === 0}
+              onClick={openPrintAllModal}
+            >
+              Print all
+            </Button>
+          </InlineStack>
         </Layout.Section>
 
         <Layout.Section>
@@ -552,7 +586,7 @@ ${barcodeScript}</head><body>${allLabels}</body></html>`;
 
       {/* Print modal */}
       <Modal open={showPrint} onClose={() => setShowPrint(false)}
-        title={`Print ${selectedIds.length} item${selectedIds.length > 1 ? 's' : ''}`}
+        title={`Print ${selectedIds.length} item${selectedIds.length !== 1 ? 's' : ''}`}
         primaryAction={{ content: 'Print', onAction: handlePrint, loading: printing, disabled: !selectedTemplate || templatesLoading }}
         secondaryActions={[{ content: 'Cancel', onAction: () => setShowPrint(false) }]}>
         <Modal.Section>
