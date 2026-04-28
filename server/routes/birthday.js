@@ -8,7 +8,7 @@
 const express = require('express');
 const router  = express.Router();
 const crypto  = require('crypto');
-const db      = require('../database/init'); // 复用现有 pg pool
+const { pool } = require('../database/init'); // 复用现有 pg pool
 
 const SHOPIFY_WEBHOOK_SECRET = process.env.SHOPIFY_WEBHOOK_SECRET;
 
@@ -58,9 +58,6 @@ function extractBirthDate(customer) {
 
 // ── Webhook 端点 ──────────────────────────────────────────────
 
-// Shopify 发来的是 raw JSON body，需要在此路由前保留原始 body 用于 HMAC 验证
-// 在 server/index.js 挂载此路由时，确保在 express.json() 之前挂载，
-// 并对此路径使用 express.raw({ type: 'application/json' })
 router.post(
   '/webhooks/customers-update',
   express.raw({ type: 'application/json' }),
@@ -83,8 +80,8 @@ router.post(
       return res.status(400).send('Bad Request');
     }
 
-    const customerId     = customer.admin_graphql_api_id; // "gid://shopify/Customer/123456"
-    const email          = customer.email;
+    const customerId      = customer.admin_graphql_api_id;
+    const email           = customer.email;
     const emailSubscribed = customer.email_marketing_consent?.state === 'subscribed';
 
     console.log(`[Birthday] Webhook 收到: customer ${customerId} | email_subscribed=${emailSubscribed}`);
@@ -97,7 +94,7 @@ router.post(
     try {
       if (emailSubscribed && birthDate) {
         // 两个条件都满足 → upsert
-        await db.query(
+        await pool.query(
           `INSERT INTO birthday_subscribers
              (customer_id, email, birth_month, birth_day, updated_at)
            VALUES ($1, $2, $3, $4, NOW())
@@ -111,7 +108,7 @@ router.post(
         console.log(`[Birthday] Upserted 订阅者: ${email} (生日: ${birthDate.month}月${birthDate.day}日)`);
       } else {
         // 任一条件不满足 → 移出（不存在则忽略）
-        const result = await db.query(
+        const result = await pool.query(
           `DELETE FROM birthday_subscribers WHERE customer_id = $1`,
           [customerId]
         );
