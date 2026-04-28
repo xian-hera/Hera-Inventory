@@ -4,12 +4,19 @@ const cors = require('cors');
 const path = require('path');
 const { setupShopify } = require('./shopify');
 const { initDatabase } = require('./database/init');
+const birthdayRoute = require('./routes/birthday');
+const { startBirthdayScheduler } = require('./jobs/birthdayScheduler');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
 // Middleware
 app.use(cors());
+
+// Birthday webhook must be registered before express.json()
+// because it needs raw body for HMAC verification
+app.use('/api/birthday', birthdayRoute);
+
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
@@ -50,6 +57,7 @@ app.use((err, req, res, next) => {
 const startServer = async () => {
   try {
     await initDatabase();
+    startBirthdayScheduler();
     app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
       console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
