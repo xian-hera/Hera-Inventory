@@ -75,11 +75,8 @@ router.post(
     let customer;
     try {
       customer = JSON.parse(rawBody.toString('utf8'));
-      console.log('[Birthday] Debug:', JSON.stringify({
-        email_marketing_consent: customer.email_marketing_consent,
-        accepts_marketing: customer.accepts_marketing,
-        metafields: customer.metafields,
-      }));
+      const raw = rawBody.toString('utf8');
+      console.log('[Birthday] Raw snippet:', raw.substring(0, 500));
     } catch (e) {
       console.error('[Birthday] Webhook payload 解析失败:', e.message);
       return res.status(400).send('Bad Request');
