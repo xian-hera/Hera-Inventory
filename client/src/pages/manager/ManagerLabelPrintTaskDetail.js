@@ -360,9 +360,8 @@ function ManagerLabelPrintTaskDetail() {
           const fs = (el.font_size || 3) * MM_TO_PX;
           const align = el.align || 'left';
           const decoration = el.underline ? 'underline' : el.linethrough ? 'line-through' : 'none';
-          // Use min-height (not height) + no overflow:hidden so long text wraps and is never clipped.
-          // Width is fixed — this enforces line-wrapping. Height grows with content.
-          const textStyle = `position:absolute;left:${left}px;top:${top}px;width:${width}px;min-height:${height}px;box-sizing:border-box;${rotateStyle}font-size:${fs}px;font-weight:${fw};text-align:${align};font-family:sans-serif;text-decoration:${decoration};line-height:1.2;word-wrap:break-word;overflow-wrap:break-word;white-space:normal;`;
+          // Fixed box position; text wraps within width, clamped to 2 lines, rest hidden.
+          const textStyle = `position:absolute;left:${left}px;top:${top}px;width:${width}px;height:${height}px;box-sizing:border-box;${rotateStyle}font-size:${fs}px;font-weight:${fw};text-align:${align};font-family:sans-serif;text-decoration:${decoration};line-height:1.2;word-wrap:break-word;overflow-wrap:break-word;white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;`;
           return `<div style="${textStyle}">${displayValue}</div>`;
         }
 
