@@ -216,45 +216,5 @@ router.post(
   }
 );
 
-// ── 临时路由：注册 customers/update webhook（含 facts namespace）
-// 访问一次后请删除此路由
-
-router.get('/setup-webhooks', async (req, res) => {
-  try {
-    const session = await getSession();
-    if (!session) return res.status(401).json({ error: '未找到 Shopify session' });
-
-    const shopify     = getShopify();
-    const client      = new shopify.clients.Graphql({ session });
-    const callbackUrl = `https://${process.env.HOST.replace(/https?:\/\//, '')}/api/birthday/webhooks/customers-update`;
-
-    const response = await client.request(
-      `mutation createWebhook($callbackUrl: URL!) {
-         webhookSubscriptionCreate(
-           topic: CUSTOMERS_UPDATE
-           webhookSubscription: {
-             format: JSON
-             callbackUrl: $callbackUrl
-             metafieldNamespaces: ["facts"]
-           }
-         ) {
-           webhookSubscription { id }
-           userErrors { field message }
-         }
-       }`,
-      { variables: { callbackUrl } }
-    );
-
-    const errors = response?.data?.webhookSubscriptionCreate?.userErrors || [];
-    if (errors.length) return res.json({ success: false, errors });
-
-    const webhookId = response?.data?.webhookSubscriptionCreate?.webhookSubscription?.id;
-    console.log(`[Birthday] customers/update webhook 注册成功: ${webhookId}`);
-    res.json({ success: true, webhookId, callbackUrl });
-  } catch (err) {
-    console.error('[Birthday] setup-webhooks 失败:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
 
 module.exports = router;
