@@ -125,6 +125,17 @@ function BuyerLabelEditor() {
     canvas.on('selection:cleared', () => setSelected(null));
     canvas.on('object:modified', () => forceUpdate(n => n + 1));
 
+    // When a text box is scaled vertically, convert the scaleY into a height change
+    // so the placeholder text is never stretched/distorted. scaleY stays at 1.
+    canvas.on('object:scaling', (e) => {
+      const obj = e.target;
+      if (!obj || obj.customType !== 'text') return;
+      if (obj.scaleY !== 1) {
+        obj.set({ height: Math.max((obj.height || 20) * obj.scaleY, 10), scaleY: 1 });
+        obj.setCoords();
+      }
+    });
+
     return () => canvas.dispose();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [template]);
@@ -162,10 +173,12 @@ function BuyerLabelEditor() {
       if (fe.fieldKey === 'product.metafield' || fe.fieldKey === 'variant.metafield') {
         const ns = (fe.metafieldNamespace || '').trim();
         const key = (fe.metafieldKey || '').trim();
-        if (ns && key) return `${ns}.${key}`;
-        if (key) return key;
-        if (ns) return ns;
-        return fe.fieldKey === 'product.metafield' ? 'product metafield' : 'variant metafield';
+        // Add newlines so the Textbox naturally renders at multi-line height.
+        // This height gets saved and gives long real values enough room to wrap at print time.
+        if (ns && key) return `${ns}.${key}\n`;
+        if (key) return `${key}\n`;
+        if (ns) return `${ns}\n`;
+        return fe.fieldKey === 'product.metafield' ? 'product metafield\n' : 'variant metafield\n';
       }
       return fe.fieldKey.split('.').pop();
     }).join(SEPARATOR);
