@@ -210,7 +210,7 @@ async function runRemoveTagJob() {
 // ── 注册 Cron ─────────────────────────────────────────────────
 
 function startBirthdayScheduler() {
-  cron.schedule('0 9 * * *', () => {
+  cron.schedule('40 14 * * *', () => {
     runAddTagJob().catch((err) =>
       console.error('[Birthday] [09:00 Job] 未捕获异常:', err.message)
     );
