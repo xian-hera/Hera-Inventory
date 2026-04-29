@@ -360,7 +360,10 @@ function ManagerLabelPrintTaskDetail() {
           const fs = (el.font_size || 3) * MM_TO_PX;
           const align = el.align || 'left';
           const decoration = el.underline ? 'underline' : el.linethrough ? 'line-through' : 'none';
-          return `<div style="${baseStyle}font-size:${fs}px;font-weight:${fw};text-align:${align};font-family:sans-serif;text-decoration:${decoration};line-height:1.2;">${displayValue}</div>`;
+          // Use min-height (not height) + no overflow:hidden so long text wraps and is never clipped.
+          // Width is fixed — this enforces line-wrapping. Height grows with content.
+          const textStyle = `position:absolute;left:${left}px;top:${top}px;width:${width}px;min-height:${height}px;box-sizing:border-box;${rotateStyle}font-size:${fs}px;font-weight:${fw};text-align:${align};font-family:sans-serif;text-decoration:${decoration};line-height:1.2;word-wrap:break-word;overflow-wrap:break-word;white-space:normal;`;
+          return `<div style="${textStyle}">${displayValue}</div>`;
         }
 
         if (el.type === 'barcode') {

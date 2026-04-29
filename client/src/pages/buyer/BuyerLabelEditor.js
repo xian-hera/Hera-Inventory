@@ -125,18 +125,6 @@ function BuyerLabelEditor() {
     canvas.on('selection:cleared', () => setSelected(null));
     canvas.on('object:modified', () => forceUpdate(n => n + 1));
 
-    // For text boxes: convert any scaleY drag into a height change so the
-    // placeholder text is never stretched/distorted. scaleY stays fixed at 1.
-    canvas.on('object:scaling', (e) => {
-      const obj = e.target;
-      if (!obj || obj.customType !== 'text') return;
-      if (obj.scaleY !== 1) {
-        const newH = (obj.height || 20) * obj.scaleY;
-        obj.set({ height: Math.max(newH, 10), scaleY: 1 });
-        obj.setCoords();
-      }
-    });
-
     return () => canvas.dispose();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [template]);
@@ -196,10 +184,8 @@ function BuyerLabelEditor() {
 
     const displayText = buildDisplayText(fieldEntries);
 
-    const textboxHeight = h || undefined;
     const obj = new fabric.Textbox(displayText, {
       left: x, top: y, width: w || 120,
-      ...(textboxHeight ? { height: textboxHeight, minHeight: textboxHeight } : {}),
       fontSize: props.font_size ? mmToPx(props.font_size) : 14,
       fontFamily: FONT_FAMILY,
       fontWeight: props.font_weight || '400',
@@ -457,10 +443,7 @@ function BuyerLabelEditor() {
           const base = {
             type: obj.customType,
             x: pxToMm(stableLeft - pl), y: pxToMm(stableTop - pt),
-            // For text objects scaleY is locked to 1 — use obj.height directly so the
-            // user-set box height is saved. For all other types use getScaledHeight().
-            w: pxToMm(obj.getScaledWidth()),
-            h: obj.customType === 'text' ? pxToMm(obj.height || obj.getScaledHeight()) : pxToMm(obj.getScaledHeight()),
+            w: pxToMm(obj.getScaledWidth()), h: pxToMm(obj.getScaledHeight()),
             angle: savedAngle,
           };
           if (obj.customType === 'text') {
