@@ -1,11 +1,11 @@
 // server/routes/birthday.js
 // ─────────────────────────────────────────────────────────────
 // 两个 Webhook 端点：
+//   POST /webhooks/customers-update — customers/update（含 facts namespace）
 //   POST /webhooks/consent-update   — customers/email_marketing_consent_update
-//   POST /webhooks/metafield-update — metafields/update
 //
 // 一个临时注册路由（用完即删）：
-//   GET  /setup-webhooks            — 注册 metafields/update webhook
+//   GET  /setup-webhooks            — 注册带 metafieldNamespaces 的 customers/update webhook
 // ─────────────────────────────────────────────────────────────
 
 const express = require('express');
@@ -40,6 +40,21 @@ function parseBirthDate(value) {
   return { month, day };
 }
 
+/**
+ * 从 webhook payload 的 metafields 数组中提取 facts.birth_date
+ * payload 里 metafields 格式: [{ namespace, key, value, type }, ...]
+ */
+function extractBirthDateFromPayload(payload) {
+  const metafields = payload.metafields || [];
+  const field = metafields.find(
+    (m) => m.namespace === 'facts' && m.key === 'birth_date'
+  );
+  return field ? field.value : null;
+}
+
+/**
+ * 主动查询顾客的 facts.birth_date metafield（用于 consent-update）
+ */
 async function fetchBirthDate(customerId) {
   const session = await getSession();
   if (!session) throw new Error('未找到 Shopify session');
@@ -57,6 +72,9 @@ async function fetchBirthDate(customerId) {
   return response?.data?.customer || null;
 }
 
+/**
+ * 主动查询顾客的 email marketing consent 状态（用于 customers-update）
+ */
 async function fetchConsentState(customerId) {
   const session = await getSession();
   if (!session) throw new Error('未找到 Shopify session');
@@ -74,6 +92,9 @@ async function fetchConsentState(customerId) {
   return response?.data?.customer || null;
 }
 
+/**
+ * 根据 emailSubscribed + rawBirthDate 决定加入或移出 birthday_subscribers 表
+ */
 async function syncSubscriber(customerId, email, emailSubscribed, rawBirthDate) {
   const birthDate = parseBirthDate(rawBirthDate);
   if (emailSubscribed && birthDate) {
@@ -100,7 +121,55 @@ async function syncSubscriber(customerId, email, emailSubscribed, rawBirthDate) 
   }
 }
 
-// ── Webhook 1：consent 变更 ───────────────────────────────────
+// ── Webhook 1：customers/update（含 facts metafield）─────────
+// 只处理 payload 里包含 facts.birth_date 的事件，其余直接忽略
+
+router.post(
+  '/webhooks/customers-update',
+  express.raw({ type: 'application/json' }),
+  async (req, res) => {
+    if (!verifyWebhookHmac(req.body, req.headers['x-shopify-hmac-sha256'])) {
+      console.warn('[Birthday] customers-update: HMAC 验证失败');
+      return res.status(401).send('Unauthorized');
+    }
+
+    let payload;
+    try {
+      payload = JSON.parse(req.body.toString('utf8'));
+    } catch (e) {
+      console.error('[Birthday] customers-update: payload 解析失败:', e.message);
+      return res.status(400).send('Bad Request');
+    }
+
+    // 先返回 200，再异步处理
+    res.status(200).send('OK');
+
+    try {
+      // payload 里没有 facts.birth_date 则直接忽略
+      const rawBirthDate = extractBirthDateFromPayload(payload);
+      if (!rawBirthDate) return;
+
+      const customerId = payload.admin_graphql_api_id;
+      const email      = payload.email;
+      console.log(`[Birthday] customers-update: ${customerId} | birth_date=${rawBirthDate}`);
+
+      // 主动查询订阅状态
+      const customerData = await fetchConsentState(customerId);
+      if (!customerData) {
+        console.warn(`[Birthday] customers-update: 找不到顾客 ${customerId}`);
+        return;
+      }
+
+      const emailSubscribed = customerData.emailMarketingConsent?.marketingState === 'SUBSCRIBED';
+      await syncSubscriber(customerId, email || customerData.email, emailSubscribed, rawBirthDate);
+    } catch (err) {
+      console.error('[Birthday] customers-update 处理失败:', err.message);
+    }
+  }
+);
+
+// ── Webhook 2：customers/email_marketing_consent_update ───────
+// payload 里直接有 consent 状态，主动查询生日
 
 router.post(
   '/webhooks/consent-update',
@@ -110,6 +179,7 @@ router.post(
       console.warn('[Birthday] consent-update: HMAC 验证失败');
       return res.status(401).send('Unauthorized');
     }
+
     let payload;
     try {
       payload = JSON.parse(req.body.toString('utf8'));
@@ -117,86 +187,69 @@ router.post(
       console.error('[Birthday] consent-update: payload 解析失败:', e.message);
       return res.status(400).send('Bad Request');
     }
+
+    // 先返回 200，再异步处理
     res.status(200).send('OK');
+
     try {
       const customerId      = payload.admin_graphql_api_id;
       const marketingState  = payload.email_marketing_consent?.state || '';
       const emailSubscribed = marketingState.toUpperCase() === 'SUBSCRIBED';
       console.log(`[Birthday] consent-update: ${customerId} | state=${marketingState}`);
+
+      // 主动查询生日
       const customerData = await fetchBirthDate(customerId);
       if (!customerData) {
         console.warn(`[Birthday] consent-update: 找不到顾客 ${customerId}`);
         return;
       }
-      await syncSubscriber(customerId, customerData.email, emailSubscribed, customerData.metafield?.value || null);
+
+      await syncSubscriber(
+        customerId,
+        customerData.email,
+        emailSubscribed,
+        customerData.metafield?.value || null
+      );
     } catch (err) {
       console.error('[Birthday] consent-update 处理失败:', err.message);
     }
   }
 );
 
-// ── Webhook 2：metafield 变更 ─────────────────────────────────
-
-router.post(
-  '/webhooks/metafield-update',
-  express.raw({ type: 'application/json' }),
-  async (req, res) => {
-    if (!verifyWebhookHmac(req.body, req.headers['x-shopify-hmac-sha256'])) {
-      console.warn('[Birthday] metafield-update: HMAC 验证失败');
-      return res.status(401).send('Unauthorized');
-    }
-    let payload;
-    try {
-      payload = JSON.parse(req.body.toString('utf8'));
-    } catch (e) {
-      console.error('[Birthday] metafield-update: payload 解析失败:', e.message);
-      return res.status(400).send('Bad Request');
-    }
-    res.status(200).send('OK');
-    try {
-      const { owner_resource, namespace, key, value, owner_id } = payload;
-      if (owner_resource !== 'customer' || namespace !== 'facts' || key !== 'birth_date') return;
-      const customerId = `gid://shopify/Customer/${owner_id}`;
-      console.log(`[Birthday] metafield-update: ${customerId} | birth_date=${value}`);
-      const customerData = await fetchConsentState(customerId);
-      if (!customerData) {
-        console.warn(`[Birthday] metafield-update: 找不到顾客 ${customerId}`);
-        return;
-      }
-      const emailSubscribed = customerData.emailMarketingConsent?.marketingState === 'SUBSCRIBED';
-      await syncSubscriber(customerId, customerData.email, emailSubscribed, value);
-    } catch (err) {
-      console.error('[Birthday] metafield-update 处理失败:', err.message);
-    }
-  }
-);
-
-// ── 临时路由：注册 metafields/update webhook ──────────────────
+// ── 临时路由：注册 customers/update webhook（含 facts namespace）
 // 访问一次后请删除此路由
 
 router.get('/setup-webhooks', async (req, res) => {
   try {
     const session = await getSession();
     if (!session) return res.status(401).json({ error: '未找到 Shopify session' });
-    const shopify    = getShopify();
-    const client     = new shopify.clients.Graphql({ session });
-    const callbackUrl = `https://${process.env.HOST.replace(/https?:\/\//, '')}/api/birthday/webhooks/metafield-update`;
+
+    const shopify     = getShopify();
+    const client      = new shopify.clients.Graphql({ session });
+    const callbackUrl = `https://${process.env.HOST.replace(/https?:\/\//, '')}/api/birthday/webhooks/customers-update`;
+
     const response = await client.request(
-      `mutation createWebhook($topic: WebhookSubscriptionTopic!, $callbackUrl: URL!) {
+      `mutation createWebhook($callbackUrl: URL!) {
          webhookSubscriptionCreate(
-           topic: $topic
-           webhookSubscription: { format: JSON, callbackUrl: $callbackUrl }
+           topic: CUSTOMERS_UPDATE
+           webhookSubscription: {
+             format: JSON
+             callbackUrl: $callbackUrl
+             metafieldNamespaces: ["facts"]
+           }
          ) {
            webhookSubscription { id }
            userErrors { field message }
          }
        }`,
-      { variables: { topic: 'METAFIELDS_UPDATE', callbackUrl } }
+      { variables: { callbackUrl } }
     );
+
     const errors = response?.data?.webhookSubscriptionCreate?.userErrors || [];
     if (errors.length) return res.json({ success: false, errors });
+
     const webhookId = response?.data?.webhookSubscriptionCreate?.webhookSubscription?.id;
-    console.log(`[Birthday] metafields/update webhook 注册成功: ${webhookId}`);
+    console.log(`[Birthday] customers/update webhook 注册成功: ${webhookId}`);
     res.json({ success: true, webhookId, callbackUrl });
   } catch (err) {
     console.error('[Birthday] setup-webhooks 失败:', err.message);
