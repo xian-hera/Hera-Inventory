@@ -1,11 +1,8 @@
 // server/routes/birthday.js
 // ─────────────────────────────────────────────────────────────
 // 两个 Webhook 端点：
-//   POST /webhooks/customers-update — customers/update（含 facts namespace）
-//   POST /webhooks/consent-update   — customers/email_marketing_consent_update
-//
-// 一个临时注册路由（用完即删）：
-//   GET  /setup-webhooks            — 注册带 metafieldNamespaces 的 customers/update webhook
+//   POST /webhooks/customers-update — customers/update（GraphQL API 注册，用 SHOPIFY_API_SECRET 验签）
+//   POST /webhooks/consent-update   — customers/email_marketing_consent_update（Admin UI 注册，用 SHOPIFY_WEBHOOK_SECRET 验签）
 // ─────────────────────────────────────────────────────────────
 
 const express = require('express');
@@ -14,20 +11,30 @@ const crypto  = require('crypto');
 const { pool } = require('../database/init');
 const { getSession, getShopify } = require('../shopify');
 
+// GraphQL API 注册的 webhook → 用 App client secret 验签
+const SHOPIFY_API_SECRET     = process.env.SHOPIFY_API_SECRET;
+// Admin UI 手动注册的 webhook → 用 Notifications 页面的 signing secret 验签
 const SHOPIFY_WEBHOOK_SECRET = process.env.SHOPIFY_WEBHOOK_SECRET;
 
 // ── 工具函数 ─────────────────────────────────────────────────
 
-function verifyWebhookHmac(rawBody, hmacHeader) {
-  if (!SHOPIFY_WEBHOOK_SECRET) {
-    console.warn('[Birthday] SHOPIFY_WEBHOOK_SECRET 未设置，跳过签名验证');
+function verifyHmac(rawBody, hmacHeader, secret) {
+  if (!secret) {
+    console.warn('[Birthday] 签名 secret 未设置，跳过验证');
     return true;
   }
-  const digest = crypto
-    .createHmac('sha256', SHOPIFY_WEBHOOK_SECRET)
-    .update(rawBody)
-    .digest('base64');
-  return crypto.timingSafeEqual(Buffer.from(digest), Buffer.from(hmacHeader || ''));
+  try {
+    const digest = crypto
+      .createHmac('sha256', secret)
+      .update(rawBody)
+      .digest('base64');
+    return crypto.timingSafeEqual(
+      Buffer.from(digest, 'base64'),
+      Buffer.from(hmacHeader || '', 'base64')
+    );
+  } catch {
+    return false;
+  }
 }
 
 function parseBirthDate(value) {
@@ -40,10 +47,6 @@ function parseBirthDate(value) {
   return { month, day };
 }
 
-/**
- * 从 webhook payload 的 metafields 数组中提取 facts.birth_date
- * payload 里 metafields 格式: [{ namespace, key, value, type }, ...]
- */
 function extractBirthDateFromPayload(payload) {
   const metafields = payload.metafields || [];
   const field = metafields.find(
@@ -52,9 +55,6 @@ function extractBirthDateFromPayload(payload) {
   return field ? field.value : null;
 }
 
-/**
- * 主动查询顾客的 facts.birth_date metafield（用于 consent-update）
- */
 async function fetchBirthDate(customerId) {
   const session = await getSession();
   if (!session) throw new Error('未找到 Shopify session');
@@ -72,9 +72,6 @@ async function fetchBirthDate(customerId) {
   return response?.data?.customer || null;
 }
 
-/**
- * 主动查询顾客的 email marketing consent 状态（用于 customers-update）
- */
 async function fetchConsentState(customerId) {
   const session = await getSession();
   if (!session) throw new Error('未找到 Shopify session');
@@ -92,9 +89,6 @@ async function fetchConsentState(customerId) {
   return response?.data?.customer || null;
 }
 
-/**
- * 根据 emailSubscribed + rawBirthDate 决定加入或移出 birthday_subscribers 表
- */
 async function syncSubscriber(customerId, email, emailSubscribed, rawBirthDate) {
   const birthDate = parseBirthDate(rawBirthDate);
   if (emailSubscribed && birthDate) {
@@ -121,14 +115,14 @@ async function syncSubscriber(customerId, email, emailSubscribed, rawBirthDate) 
   }
 }
 
-// ── Webhook 1：customers/update（含 facts metafield）─────────
-// 只处理 payload 里包含 facts.birth_date 的事件，其余直接忽略
+// ── Webhook 1：customers/update ───────────────────────────────
+// GraphQL API 注册 → 用 SHOPIFY_API_SECRET 验签
 
 router.post(
   '/webhooks/customers-update',
   express.raw({ type: 'application/json' }),
   async (req, res) => {
-    if (!verifyWebhookHmac(req.body, req.headers['x-shopify-hmac-sha256'])) {
+    if (!verifyHmac(req.body, req.headers['x-shopify-hmac-sha256'], SHOPIFY_API_SECRET)) {
       console.warn('[Birthday] customers-update: HMAC 验证失败');
       return res.status(401).send('Unauthorized');
     }
@@ -141,11 +135,9 @@ router.post(
       return res.status(400).send('Bad Request');
     }
 
-    // 先返回 200，再异步处理
     res.status(200).send('OK');
 
     try {
-      // payload 里没有 facts.birth_date 则直接忽略
       const rawBirthDate = extractBirthDateFromPayload(payload);
       if (!rawBirthDate) return;
 
@@ -153,7 +145,6 @@ router.post(
       const email      = payload.email;
       console.log(`[Birthday] customers-update: ${customerId} | birth_date=${rawBirthDate}`);
 
-      // 主动查询订阅状态
       const customerData = await fetchConsentState(customerId);
       if (!customerData) {
         console.warn(`[Birthday] customers-update: 找不到顾客 ${customerId}`);
@@ -169,13 +160,13 @@ router.post(
 );
 
 // ── Webhook 2：customers/email_marketing_consent_update ───────
-// payload 里直接有 consent 状态，主动查询生日
+// Admin UI 注册 → 用 SHOPIFY_WEBHOOK_SECRET 验签
 
 router.post(
   '/webhooks/consent-update',
   express.raw({ type: 'application/json' }),
   async (req, res) => {
-    if (!verifyWebhookHmac(req.body, req.headers['x-shopify-hmac-sha256'])) {
+    if (!verifyHmac(req.body, req.headers['x-shopify-hmac-sha256'], SHOPIFY_WEBHOOK_SECRET)) {
       console.warn('[Birthday] consent-update: HMAC 验证失败');
       return res.status(401).send('Unauthorized');
     }
@@ -188,7 +179,6 @@ router.post(
       return res.status(400).send('Bad Request');
     }
 
-    // 先返回 200，再异步处理
     res.status(200).send('OK');
 
     try {
@@ -197,7 +187,6 @@ router.post(
       const emailSubscribed = marketingState.toUpperCase() === 'SUBSCRIBED';
       console.log(`[Birthday] consent-update: ${customerId} | state=${marketingState}`);
 
-      // 主动查询生日
       const customerData = await fetchBirthDate(customerId);
       if (!customerData) {
         console.warn(`[Birthday] consent-update: 找不到顾客 ${customerId}`);
@@ -215,6 +204,5 @@ router.post(
     }
   }
 );
-
 
 module.exports = router;
