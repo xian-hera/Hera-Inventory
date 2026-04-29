@@ -125,6 +125,18 @@ function BuyerLabelEditor() {
     canvas.on('selection:cleared', () => setSelected(null));
     canvas.on('object:modified', () => forceUpdate(n => n + 1));
 
+    // For text boxes: convert any scaleY drag into a height change so the
+    // placeholder text is never stretched/distorted. scaleY stays fixed at 1.
+    canvas.on('object:scaling', (e) => {
+      const obj = e.target;
+      if (!obj || obj.customType !== 'text') return;
+      if (obj.scaleY !== 1) {
+        const newH = (obj.height || 20) * obj.scaleY;
+        obj.set({ height: Math.max(newH, 10), scaleY: 1 });
+        obj.setCoords();
+      }
+    });
+
     return () => canvas.dispose();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [template]);
@@ -154,6 +166,23 @@ function BuyerLabelEditor() {
     }
   }
 
+  // Build the placeholder text shown on canvas for a set of field entries.
+  // For metafield entries, show "namespace.key" (or just the placeholder if not yet filled in).
+  function buildDisplayText(entries) {
+    return entries.map(fe => {
+      if (fe.fieldKey === 'custom') return fe.customValue || 'Custom';
+      if (fe.fieldKey === 'product.metafield' || fe.fieldKey === 'variant.metafield') {
+        const ns = (fe.metafieldNamespace || '').trim();
+        const key = (fe.metafieldKey || '').trim();
+        if (ns && key) return `${ns}.${key}`;
+        if (key) return key;
+        if (ns) return ns;
+        return fe.fieldKey === 'product.metafield' ? 'product metafield' : 'variant metafield';
+      }
+      return fe.fieldKey.split('.').pop();
+    }).join(SEPARATOR);
+  }
+
   function addTextObject(canvas, x, y, w, h, props = {}) {
     let fieldEntries;
     if (props.field_entries && Array.isArray(props.field_entries)) {
@@ -165,12 +194,12 @@ function BuyerLabelEditor() {
       if (props.metafield_key) fieldEntries[0].metafieldKey = props.metafield_key;
     }
 
-    const displayText = fieldEntries.map(fe =>
-      fe.fieldKey === 'custom' ? (fe.customValue || 'Custom') : fe.fieldKey.split('.').pop()
-    ).join(SEPARATOR);
+    const displayText = buildDisplayText(fieldEntries);
 
+    const textboxHeight = h || undefined;
     const obj = new fabric.Textbox(displayText, {
       left: x, top: y, width: w || 120,
+      ...(textboxHeight ? { height: textboxHeight, minHeight: textboxHeight } : {}),
       fontSize: props.font_size ? mmToPx(props.font_size) : 14,
       fontFamily: FONT_FAMILY,
       fontWeight: props.font_weight || '400',
@@ -337,9 +366,7 @@ function BuyerLabelEditor() {
     obj.customValue = newEntries[0]?.customValue || '';
     obj.metafieldNamespace = newEntries[0]?.metafieldNamespace || '';
     obj.metafieldKey = newEntries[0]?.metafieldKey || '';
-    const displayText = newEntries.map(fe =>
-      fe.fieldKey === 'custom' ? (fe.customValue || 'Custom') : fe.fieldKey.split('.').pop()
-    ).join(SEPARATOR);
+    const displayText = buildDisplayText(newEntries);
     obj.set('text', displayText);
     fabricRef.current.renderAll();
     forceUpdate(n => n + 1);
@@ -430,7 +457,10 @@ function BuyerLabelEditor() {
           const base = {
             type: obj.customType,
             x: pxToMm(stableLeft - pl), y: pxToMm(stableTop - pt),
-            w: pxToMm(obj.getScaledWidth()), h: pxToMm(obj.getScaledHeight()),
+            // For text objects scaleY is locked to 1 — use obj.height directly so the
+            // user-set box height is saved. For all other types use getScaledHeight().
+            w: pxToMm(obj.getScaledWidth()),
+            h: obj.customType === 'text' ? pxToMm(obj.height || obj.getScaledHeight()) : pxToMm(obj.getScaledHeight()),
             angle: savedAngle,
           };
           if (obj.customType === 'text') {
