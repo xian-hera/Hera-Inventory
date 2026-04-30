@@ -11,22 +11,21 @@ const MINUTE_OPTIONS = Array.from({ length: 60 }, (_, i) => ({ label: `${String(
 function BirthdayReward() {
   const navigate = useNavigate();
 
-  const [config, setConfig]     = useState(null);
-  const [loading, setLoading]   = useState(true);
-  const [saving, setSaving]     = useState(false);
-  const [saved, setSaved]       = useState(false);
-  const [error, setError]       = useState('');
+  const [config, setConfig]   = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving]   = useState(false);
+  const [saved, setSaved]     = useState(false);
+  const [error, setError]     = useState('');
 
-  // Local form state
-  const [enabled,           setEnabled]           = useState(true);
-  const [addJobEnabled,     setAddJobEnabled]     = useState(true);
-  const [addJobHour,        setAddJobHour]        = useState('9');
-  const [addJobMinute,      setAddJobMinute]      = useState('0');
-  const [removeJobEnabled,  setRemoveJobEnabled]  = useState(true);
-  const [removeJobHour,     setRemoveJobHour]     = useState('23');
-  const [removeJobMinute,   setRemoveJobMinute]   = useState('50');
-  const [tagDelayHours,     setTagDelayHours]     = useState('48');
-  const [campaignTag,       setCampaignTag]       = useState('birthday_campaign');
+  const [enabled,          setEnabled]          = useState(true);
+  const [addJobEnabled,    setAddJobEnabled]    = useState(true);
+  const [addJobHour,       setAddJobHour]       = useState('9');
+  const [addJobMinute,     setAddJobMinute]     = useState('0');
+  const [removeJobEnabled, setRemoveJobEnabled] = useState(true);
+  const [removeJobHour,    setRemoveJobHour]    = useState('23');
+  const [removeJobMinute,  setRemoveJobMinute]  = useState('50');
+  const [tagDelayHours,    setTagDelayHours]    = useState('48');
+  const [campaignTag,      setCampaignTag]      = useState('birthday_campaign');
 
   const fetchConfig = useCallback(async () => {
     try {
@@ -132,13 +131,17 @@ function BirthdayReward() {
                     When disabled, all webhooks, jobs, and tag operations are paused.
                   </Text>
                 </BlockStack>
-                <Button
-                  variant={enabled ? 'primary' : 'secondary'}
-                  tone={enabled ? undefined : 'critical'}
-                  onClick={() => setEnabled((v) => !v)}
-                >
-                  {enabled ? 'Enabled' : 'Disabled'}
-                </Button>
+                <InlineStack gap="300" blockAlign="center">
+                  <Badge tone={enabled ? 'success' : 'critical'}>
+                    {enabled ? 'Active' : 'Inactive'}
+                  </Badge>
+                  <Button
+                    tone={enabled ? 'critical' : undefined}
+                    onClick={() => setEnabled((v) => !v)}
+                  >
+                    {enabled ? 'Disable' : 'Enable'}
+                  </Button>
+                </InlineStack>
               </InlineStack>
             </BlockStack>
           </Card>
@@ -198,7 +201,7 @@ function BirthdayReward() {
                   />
                 </Box>
                 <Button
-                  variant={addJobEnabled ? 'secondary' : 'primary'}
+                  tone={addJobEnabled ? 'critical' : undefined}
                   onClick={() => setAddJobEnabled((v) => !v)}
                 >
                   {addJobEnabled ? 'Disable Job' : 'Enable Job'}
@@ -248,7 +251,7 @@ function BirthdayReward() {
                   />
                 </Box>
                 <Button
-                  variant={removeJobEnabled ? 'secondary' : 'primary'}
+                  tone={removeJobEnabled ? 'critical' : undefined}
                   onClick={() => setRemoveJobEnabled((v) => !v)}
                 >
                   {removeJobEnabled ? 'Disable Job' : 'Enable Job'}
