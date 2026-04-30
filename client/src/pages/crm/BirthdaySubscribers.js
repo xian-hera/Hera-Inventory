@@ -1,18 +1,18 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Page, Layout, Card, IndexTable, Text, Badge, TextField,
-  InlineStack, Button, Spinner, Banner, Box,
+  InlineStack, Button, Spinner, Banner, Box, BlockStack,
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 
 function BirthdaySubscribers() {
   const navigate = useNavigate();
 
-  const [rows, setRows]         = useState([]);
-  const [loading, setLoading]   = useState(true);
-  const [error, setError]       = useState('');
-  const [search, setSearch]     = useState('');
-  const [filterTag, setFilterTag] = useState(false); // true = 只显示持有 tag 的
+  const [rows, setRows]           = useState([]);
+  const [loading, setLoading]     = useState(true);
+  const [error, setError]         = useState('');
+  const [search, setSearch]       = useState('');
+  const [filterTag, setFilterTag] = useState(false);
 
   const fetchSubscribers = useCallback(async () => {
     try {
@@ -30,10 +30,8 @@ function BirthdaySubscribers() {
   useEffect(() => { fetchSubscribers(); }, [fetchSubscribers]);
 
   const filtered = rows.filter((r) => {
-    const matchSearch =
-      !search ||
-      r.email.toLowerCase().includes(search.toLowerCase());
-    const matchTag = !filterTag || r.has_tag;
+    const matchSearch = !search || r.email.toLowerCase().includes(search.toLowerCase());
+    const matchTag    = !filterTag || r.has_tag;
     return matchSearch && matchTag;
   });
 
