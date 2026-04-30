@@ -31,6 +31,8 @@ import CRMHome from './pages/crm/CRMHome';
 import CRMSettings from './pages/crm/CRMSettings';
 import HairdresserList from './pages/crm/HairdresserList';
 import HairdresserDetail from './pages/crm/HairdresserDetail';
+import BirthdayReward from './pages/crm/BirthdayReward';
+import BirthdaySubscribers from './pages/crm/BirthdaySubscribers';
 
 function App() {
   return (
@@ -72,6 +74,8 @@ function App() {
           <Route path="/crm/settings" element={<CRMSettings />} />
           <Route path="/crm/hairdressers" element={<HairdresserList />} />
           <Route path="/crm/hairdressers/:id" element={<HairdresserDetail />} />
+          <Route path="/crm/birthday-reward" element={<BirthdayReward />} />
+          <Route path="/crm/birthday-reward/subscribers" element={<BirthdaySubscribers />} />
         </Routes>
       </BrowserRouter>
     </AppProvider>

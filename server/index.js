@@ -5,6 +5,7 @@ const path = require('path');
 const { setupShopify } = require('./shopify');
 const { initDatabase } = require('./database/init');
 const birthdayRoute = require('./routes/birthday');
+const { router: birthdayConfigRouter, registerRestartFn } = require('./routes/birthdayConfig');
 const { startBirthdayScheduler } = require('./jobs/birthdayScheduler');
 
 const app = express();
@@ -39,6 +40,7 @@ app.use('/api/label-templates', require('./routes/labelTemplates'));
 app.use('/api/label-print-tasks', require('./routes/labelPrintTasks'));
 app.use('/api/price-change-tasks', require('./routes/priceChangeTasks'));
 app.use('/api/hairdressers', require('./routes/hairdressers'));
+app.use('/api/birthday-config', birthdayConfigRouter);
 
 // Serve static files in production
 if (process.env.NODE_ENV === 'production') {
@@ -58,7 +60,9 @@ app.use((err, req, res, next) => {
 const startServer = async () => {
   try {
     await initDatabase();
-    startBirthdayScheduler();
+    await startBirthdayScheduler();
+    // 注册重启函数，让 birthdayConfig 路由可以触发 scheduler 重启
+    registerRestartFn(startBirthdayScheduler);
     app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
       console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);

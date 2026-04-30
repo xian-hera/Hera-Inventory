@@ -2,8 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Page, Layout, Button, BlockStack, Text, TextField, Banner, Modal } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 
-const CRM_PIN_VERIFIED_KEY = 'crm_pin_verified';  // { expiry: timestamp }
-const CRM_PIN_CONFIG_KEY   = 'crm_pin_config';    // { pin, hint }
+const CRM_PIN_VERIFIED_KEY = 'crm_pin_verified';
+const CRM_PIN_CONFIG_KEY   = 'crm_pin_config';
 const PIN_EXPIRY_DAYS      = 30;
 const DEFAULT_PIN          = '3591';
 
@@ -12,7 +12,7 @@ export { CRM_PIN_VERIFIED_KEY, CRM_PIN_CONFIG_KEY, PIN_EXPIRY_DAYS, DEFAULT_PIN 
 function CRMHome() {
   const navigate = useNavigate();
 
-  const [ready, setReady]         = useState(false); // true once PIN check is done
+  const [ready, setReady]         = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [pinInput, setPinInput]   = useState('');
   const [pinError, setPinError]   = useState('');
@@ -53,7 +53,6 @@ function CRMHome() {
     }
   };
 
-  // If user cancels PIN modal, send them back to home
   const handleClose = () => {
     navigate('/');
   };
@@ -70,6 +69,9 @@ function CRMHome() {
             <BlockStack gap="400">
               <Button size="large" fullWidth onClick={() => navigate('/crm/hairdressers')}>
                 Hairdresser Management
+              </Button>
+              <Button size="large" fullWidth onClick={() => navigate('/crm/birthday-reward')}>
+                Birthday Reward
               </Button>
             </BlockStack>
           </Layout.Section>
