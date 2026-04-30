@@ -69,11 +69,11 @@ function Home() {
             <Button size="large" fullWidth onClick={handleBuyerClick}>
               Purchasing
             </Button>
-            <Button size="large" fullWidth onClick={() => navigate('/manager')}>
-              Store
-            </Button>
             <Button size="large" fullWidth onClick={() => navigate('/crm')}>
               CRM / Growth
+            </Button>
+            <Button size="large" fullWidth onClick={() => navigate('/manager')}>
+              Store
             </Button>
           </BlockStack>
         </Layout.Section>
