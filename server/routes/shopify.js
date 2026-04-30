@@ -659,4 +659,50 @@ router.get('/inventory-history/:barcode', async (req, res) => {
   }
 });
 
+// GET /api/shopify/search-customers?q=xxx
+router.get('/search-customers', async (req, res) => {
+  try {
+    const session = await getSession();
+    if (!session) return res.status(401).json({ error: 'No session' });
+
+    const { q } = req.query;
+    if (!q || q.trim().length < 2) return res.json([]);
+
+    const shopify = getShopify();
+    const client = new shopify.clients.Graphql({ session });
+
+    const queryString = `${q.trim()}`;
+    const gqlQuery = `
+      query searchCustomers($query: String!) {
+        customers(first: 20, query: $query) {
+          edges {
+            node {
+              id
+              firstName
+              lastName
+              email
+              phone
+            }
+          }
+        }
+      }
+    `;
+
+    const response = await shopifyRequest(client, gqlQuery, { query: queryString });
+    const customers = response.data?.customers?.edges || [];
+
+    const result = customers.map(({ node }) => ({
+      id: node.id.replace('gid://shopify/Customer/', ''),
+      name: [node.firstName, node.lastName].filter(Boolean).join(' ') || node.email || 'Unknown',
+      email: node.email || null,
+      phone: node.phone || null,
+    }));
+
+    res.json(result);
+  } catch (e) {
+    console.error('GET /api/shopify/search-customers error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = { router, getDepartment };
