@@ -27,6 +27,10 @@ import ManagerLabelPrintTaskDetail from './pages/manager/ManagerLabelPrintTaskDe
 import BuyerPriceChange from './pages/buyer/BuyerPriceChange';
 import BuyerPriceChangePublished from './pages/buyer/BuyerPriceChangePublished';
 import ManagerPriceChangeDetail from './pages/manager/ManagerPriceChangeDetail';
+import CRMHome from './pages/crm/CRMHome';
+import CRMSettings from './pages/crm/CRMSettings';
+import HairdresserList from './pages/crm/HairdresserList';
+import HairdresserDetail from './pages/crm/HairdresserDetail';
 
 function App() {
   return (
@@ -62,6 +66,12 @@ function App() {
           <Route path="/manager/label-print" element={<ManagerLabelPrintTasks />} />
           <Route path="/manager/label-print/:taskId" element={<ManagerLabelPrintTaskDetail />} />
           <Route path="/manager/price-change/:taskId" element={<ManagerPriceChangeDetail />} />
+
+          {/* CRM */}
+          <Route path="/crm" element={<CRMHome />} />
+          <Route path="/crm/settings" element={<CRMSettings />} />
+          <Route path="/crm/hairdressers" element={<HairdresserList />} />
+          <Route path="/crm/hairdressers/:id" element={<HairdresserDetail />} />
         </Routes>
       </BrowserRouter>
     </AppProvider>

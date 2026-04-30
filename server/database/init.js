@@ -169,6 +169,55 @@ const initDatabase = async () => {
       ON CONFLICT (id) DO NOTHING
     `);
 
+    // ─── CRM / Hairdresser ──────────────────────────────────────────────────────
+
+    // Hairdressers enrolled in the referral programme
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS hairdressers (
+        id SERIAL PRIMARY KEY,
+        shopify_customer_id VARCHAR NOT NULL UNIQUE,
+        name VARCHAR NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
+    // Referral link history — one active link per hairdresser at a time
+    // is_active: only the most recently generated link is TRUE
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS referral_links (
+        id SERIAL PRIMARY KEY,
+        hairdresser_id INTEGER NOT NULL REFERENCES hairdressers(id) ON DELETE CASCADE,
+        url VARCHAR NOT NULL,
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+        generated_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
+    // Customer–hairdresser binding records (each bind / renew = new row, history preserved)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS customer_bindings (
+        id SERIAL PRIMARY KEY,
+        customer_shopify_id VARCHAR NOT NULL,
+        hairdresser_id INTEGER NOT NULL REFERENCES hairdressers(id) ON DELETE CASCADE,
+        bound_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
+    // Statistics cache — one row per hairdresser, replaced on each recalculation
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS statistics_cache (
+        id SERIAL PRIMARY KEY,
+        hairdresser_id INTEGER NOT NULL UNIQUE REFERENCES hairdressers(id) ON DELETE CASCADE,
+        date_from DATE NOT NULL,
+        date_to DATE NOT NULL,
+        total_customers INTEGER NOT NULL DEFAULT 0,
+        total_revenue DECIMAL(10,2) NOT NULL DEFAULT 0,
+        calculated_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
+    // ────────────────────────────────────────────────────────────────────────────
+
     await client.query('COMMIT');
     console.log('✓ Database initialized successfully');
   } catch (e) {

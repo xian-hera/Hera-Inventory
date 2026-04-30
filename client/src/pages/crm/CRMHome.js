@@ -2,87 +2,84 @@ import React, { useState, useEffect } from 'react';
 import { Page, Layout, Button, BlockStack, Text, TextField, Banner, Modal } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 
-const PIN_VERIFIED_KEY = 'buyer_pin_verified';   // { expiry: timestamp }
-const PIN_CONFIG_KEY   = 'buyer_pin_config';     // { pin, hint }
-const PIN_EXPIRY_DAYS  = 30;
-const DEFAULT_PIN      = '3591';
+const CRM_PIN_VERIFIED_KEY = 'crm_pin_verified';  // { expiry: timestamp }
+const CRM_PIN_CONFIG_KEY   = 'crm_pin_config';    // { pin, hint }
+const PIN_EXPIRY_DAYS      = 30;
+const DEFAULT_PIN          = '3591';
 
-function Home() {
+export { CRM_PIN_VERIFIED_KEY, CRM_PIN_CONFIG_KEY, PIN_EXPIRY_DAYS, DEFAULT_PIN };
+
+function CRMHome() {
   const navigate = useNavigate();
-  const [showModal, setShowModal]   = useState(false);
-  const [pinInput, setPinInput]     = useState('');
-  const [pinError, setPinError]     = useState('');
-  const [showHint, setShowHint]     = useState(false);
-  const [pinConfig, setPinConfig]   = useState({ pin: DEFAULT_PIN, hint: '' });
+
+  const [ready, setReady]         = useState(false); // true once PIN check is done
+  const [showModal, setShowModal] = useState(false);
+  const [pinInput, setPinInput]   = useState('');
+  const [pinError, setPinError]   = useState('');
+  const [showHint, setShowHint]   = useState(false);
+  const [pinConfig, setPinConfig] = useState({ pin: DEFAULT_PIN, hint: '' });
 
   useEffect(() => {
     try {
-      const stored = localStorage.getItem(PIN_CONFIG_KEY);
+      const stored = localStorage.getItem(CRM_PIN_CONFIG_KEY);
       if (stored) setPinConfig(JSON.parse(stored));
     } catch (e) {}
-  }, []);
+
+    if (isDeviceVerified()) {
+      setReady(true);
+    } else {
+      setShowModal(true);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const isDeviceVerified = () => {
     try {
-      const stored = localStorage.getItem(PIN_VERIFIED_KEY);
+      const stored = localStorage.getItem(CRM_PIN_VERIFIED_KEY);
       if (!stored) return false;
       const { expiry } = JSON.parse(stored);
       return Date.now() < expiry;
     } catch (e) { return false; }
   };
 
-  const handleBuyerClick = () => {
-    if (isDeviceVerified()) {
-      navigate('/buyer');
-    } else {
-      setPinInput('');
-      setPinError('');
-      setShowHint(false);
-      setShowModal(true);
-    }
-  };
-
   const handleConfirm = () => {
     if (pinInput === pinConfig.pin) {
       const expiry = Date.now() + PIN_EXPIRY_DAYS * 24 * 60 * 60 * 1000;
-      localStorage.setItem(PIN_VERIFIED_KEY, JSON.stringify({ expiry }));
+      localStorage.setItem(CRM_PIN_VERIFIED_KEY, JSON.stringify({ expiry }));
       setShowModal(false);
-      navigate('/buyer');
+      setReady(true);
     } else {
       setPinError('Incorrect PIN. Please try again.');
       setPinInput('');
     }
   };
 
+  // If user cancels PIN modal, send them back to home
   const handleClose = () => {
-    setShowModal(false);
-    setPinInput('');
-    setPinError('');
-    setShowHint(false);
+    navigate('/');
   };
 
   return (
-    <Page title="User">
-      <Layout>
-        <Layout.Section>
-          <BlockStack gap="400">
-            <Button size="large" fullWidth onClick={handleBuyerClick}>
-              Purchasing
-            </Button>
-            <Button size="large" fullWidth onClick={() => navigate('/manager')}>
-              Store
-            </Button>
-            <Button size="large" fullWidth onClick={() => navigate('/crm')}>
-              CRM / Growth
-            </Button>
-          </BlockStack>
-        </Layout.Section>
-      </Layout>
+    <Page
+      title="CRM / Growth"
+      backAction={{ onAction: () => navigate('/') }}
+      secondaryActions={ready ? [{ content: 'Settings', onAction: () => navigate('/crm/settings') }] : []}
+    >
+      {ready && (
+        <Layout>
+          <Layout.Section>
+            <BlockStack gap="400">
+              <Button size="large" fullWidth onClick={() => navigate('/crm/hairdressers')}>
+                Hairdresser Management
+              </Button>
+            </BlockStack>
+          </Layout.Section>
+        </Layout>
+      )}
 
       <Modal
         open={showModal}
         onClose={handleClose}
-        title="Buyer Access"
+        title="CRM Access"
         primaryAction={{
           content: 'Confirm',
           onAction: handleConfirm,
@@ -128,4 +125,4 @@ function Home() {
   );
 }
 
-export default Home;
+export default CRMHome;
