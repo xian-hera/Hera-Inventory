@@ -20,6 +20,10 @@ const DAYS_OPTIONS = [
 
 const EMPTY_PLATFORM = { label: '', url: '' };
 
+const EMPTY_BILLING = {
+  line1: '', line2: '', city: '', province: '', postal_code: '', country: '',
+};
+
 function fmt(date) {
   if (!date) return '—';
   return new Date(date).toLocaleString('en', { dateStyle: 'medium', timeStyle: 'short' });
@@ -53,7 +57,13 @@ export default function InfluencerDetail() {
   const [noteText, setNoteText] = useState('');
   const [noteLoading, setNoteLoading] = useState(false);
 
-  // Payment modal
+  // Payment info modal
+  const [payInfoOpen, setPayInfoOpen] = useState(false);
+  const [payInfoForm, setPayInfoForm] = useState({ payment_method: '', phone_number: '', billing_address: EMPTY_BILLING });
+  const [payInfoSaving, setPayInfoSaving] = useState(false);
+  const [payInfoError, setPayInfoError] = useState('');
+
+  // Payment record modal
   const [payModalOpen, setPayModalOpen] = useState(false);
   const [payForm, setPayForm] = useState({ payment_date: '', amount: '', method: '' });
   const [paySaving, setPaySaving] = useState(false);
@@ -157,6 +167,7 @@ export default function InfluencerDetail() {
         body: JSON.stringify({ days: parseInt(selectedDays) }),
       });
       const data = await r.json();
+      if (data.error) throw new Error(data.error);
       setOrders(data.orders || []);
       setInf(i => ({
         ...i,
@@ -168,7 +179,43 @@ export default function InfluencerDetail() {
     } finally { setStatsLoading(false); }
   };
 
-  // ── Payment ──
+  // ── Payment info edit ──
+  const openPayInfo = () => {
+    setPayInfoForm({
+      payment_method: inf.payment_method || '',
+      phone_number: inf.phone_number || '',
+      billing_address: {
+        line1:       inf.billing_address?.line1       || '',
+        line2:       inf.billing_address?.line2       || '',
+        city:        inf.billing_address?.city        || '',
+        province:    inf.billing_address?.province    || '',
+        postal_code: inf.billing_address?.postal_code || '',
+        country:     inf.billing_address?.country     || '',
+      },
+    });
+    setPayInfoError('');
+    setPayInfoOpen(true);
+  };
+  const setPayInfoField = (k, v) => setPayInfoForm(f => ({ ...f, [k]: v }));
+  const setAddrField = (k, v) => setPayInfoForm(f => ({
+    ...f, billing_address: { ...f.billing_address, [k]: v },
+  }));
+  const handlePayInfoSave = async () => {
+    setPayInfoSaving(true); setPayInfoError('');
+    try {
+      const r = await fetch(`/api/influencers/${id}/payment-info`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payInfoForm),
+      });
+      if (!r.ok) throw new Error();
+      setInf(await r.json());
+      setPayInfoOpen(false);
+    } catch { setPayInfoError('Failed to save.'); }
+    finally { setPayInfoSaving(false); }
+  };
+
+  // ── Payment record ──
   const openPayModal = () => {
     setPayForm({ payment_date: new Date().toISOString().slice(0, 10), amount: '', method: '' });
     setPayError(''); setPayConfirmed(false); setPayModalOpen(true);
@@ -207,6 +254,18 @@ export default function InfluencerDetail() {
     `$${parseFloat(o.subtotal_price || 0).toFixed(2)}`,
   ]);
 
+  // ── Billing address display ──
+  const billingLines = inf.billing_address
+    ? [
+        inf.billing_address.line1,
+        inf.billing_address.line2,
+        inf.billing_address.city,
+        inf.billing_address.province,
+        inf.billing_address.postal_code,
+        inf.billing_address.country,
+      ].filter(Boolean)
+    : [];
+
   // ── History action label map ──
   const actionLabel = {
     created: 'Created',
@@ -229,7 +288,6 @@ export default function InfluencerDetail() {
         {/* ── Card 1: Info ── */}
         <Card>
           <BlockStack gap="400">
-            {/* Header row: meta + status */}
             <InlineStack align="space-between" blockAlign="start">
               <InlineStack gap="600">
                 <BlockStack gap="100">
@@ -242,18 +300,13 @@ export default function InfluencerDetail() {
                 </BlockStack>
               </InlineStack>
               <div style={{ minWidth: 160 }}>
-                <Select
-                  label="Status" labelInline
-                  options={STATUS_OPTIONS}
-                  value={inf.status}
-                  onChange={handleStatusChange}
-                />
+                <Select label="Status" labelInline options={STATUS_OPTIONS}
+                  value={inf.status} onChange={handleStatusChange} />
               </div>
             </InlineStack>
 
             <Divider />
 
-            {/* Info fields */}
             <InlineStack align="space-between" blockAlign="start">
               <InlineStack gap="600" wrap>
                 <BlockStack gap="100">
@@ -314,13 +367,11 @@ export default function InfluencerDetail() {
           </BlockStack>
         </Card>
 
-        {/* ── Card 2: Sales Stats (only if code exists) ── */}
+        {/* ── Card 2: Sales Stats ── */}
         {inf.code && (
           <Card>
             <BlockStack gap="400">
               <Text variant="headingMd">Code Usage</Text>
-
-              {/* Snapshot row */}
               <InlineStack gap="600" wrap>
                 <BlockStack gap="100">
                   <Text variant="bodySm" tone="subdued">Code</Text>
@@ -336,7 +387,9 @@ export default function InfluencerDetail() {
                     {inf.last_stats_total != null
                       ? `$${parseFloat(inf.last_stats_total).toLocaleString('en', { minimumFractionDigits: 2 })}`
                       : '—'}
-                    {inf.last_stats_days ? <Text as="span" tone="subdued" variant="bodySm"> (last {inf.last_stats_days}d)</Text> : ''}
+                    {inf.last_stats_days
+                      ? <Text as="span" tone="subdued" variant="bodySm"> (last {inf.last_stats_days}d)</Text>
+                      : ''}
                   </Text>
                 </BlockStack>
                 {commissionAmt && (
@@ -346,13 +399,9 @@ export default function InfluencerDetail() {
                   </BlockStack>
                 )}
               </InlineStack>
-
               {inf.last_stats_refreshed_at && (
-                <Text variant="bodySm" tone="subdued">
-                  Last refreshed: {fmt(inf.last_stats_refreshed_at)}
-                </Text>
+                <Text variant="bodySm" tone="subdued">Last refreshed: {fmt(inf.last_stats_refreshed_at)}</Text>
               )}
-
               <InlineStack gap="300" blockAlign="end">
                 <div style={{ minWidth: 180 }}>
                   <Select label="" labelHidden options={DAYS_OPTIONS}
@@ -360,8 +409,6 @@ export default function InfluencerDetail() {
                 </div>
                 <Button onClick={refreshStats} loading={statsLoading}>Refresh</Button>
               </InlineStack>
-
-              {/* Orders table */}
               {orders.length > 0 && (
                 <Box paddingBlockStart="200">
                   <Text variant="bodyMd" fontWeight="semibold" tone="subdued">
@@ -383,10 +430,13 @@ export default function InfluencerDetail() {
         {/* ── Card 3: Payment ── */}
         <Card>
           <BlockStack gap="400">
-            <Text variant="headingMd">Payment</Text>
+            <InlineStack align="space-between">
+              <Text variant="headingMd">Payment</Text>
+              <Button onClick={openPayInfo}>Edit</Button>
+            </InlineStack>
 
-            {/* Payment info */}
-            <InlineStack gap="400" wrap>
+            {/* Payment info fields — always shown, empty shows '—' */}
+            <InlineStack gap="600" wrap>
               <BlockStack gap="100">
                 <Text variant="bodySm" tone="subdued">Payment Method</Text>
                 <Text variant="bodyMd">{inf.payment_method || '—'}</Text>
@@ -396,21 +446,16 @@ export default function InfluencerDetail() {
                 <Text variant="bodyMd">{inf.phone_number || '—'}</Text>
               </BlockStack>
             </InlineStack>
-            {inf.billing_address && Object.values(inf.billing_address).some(Boolean) && (
-              <BlockStack gap="100">
-                <Text variant="bodySm" tone="subdued">Billing Address</Text>
-                <Text variant="bodyMd">
-                  {[
-                    inf.billing_address.line1,
-                    inf.billing_address.line2,
-                    inf.billing_address.city,
-                    inf.billing_address.province,
-                    inf.billing_address.postal_code,
-                    inf.billing_address.country,
-                  ].filter(Boolean).join(', ')}
-                </Text>
-              </BlockStack>
-            )}
+
+            <BlockStack gap="100">
+              <Text variant="bodySm" tone="subdued">Mailing Address</Text>
+              {billingLines.length === 0
+                ? <Text variant="bodyMd">—</Text>
+                : billingLines.map((line, i) => (
+                    <Text key={i} variant="bodyMd">{line}</Text>
+                  ))
+              }
+            </BlockStack>
 
             <Divider />
 
@@ -419,7 +464,6 @@ export default function InfluencerDetail() {
               <Text variant="bodyMd" fontWeight="semibold">Payment History</Text>
               <Button size="slim" onClick={openPayModal}>Add</Button>
             </InlineStack>
-
             {(inf.payment_history || []).length === 0 ? (
               <Text tone="subdued">No payment records.</Text>
             ) : (
@@ -493,7 +537,48 @@ export default function InfluencerDetail() {
         </Modal.Section>
       </Modal>
 
-      {/* ── Add Payment Modal ── */}
+      {/* ── Edit Payment Info Modal ── */}
+      <Modal open={payInfoOpen} onClose={() => setPayInfoOpen(false)} title="Edit Payment Info"
+        primaryAction={{ content: payInfoSaving ? 'Saving…' : 'Save', onAction: handlePayInfoSave, disabled: payInfoSaving }}
+        secondaryActions={[{ content: 'Cancel', onAction: () => setPayInfoOpen(false) }]}
+      >
+        <Modal.Section>
+          {payInfoError && <Box paddingBlockEnd="400"><Banner tone="critical">{payInfoError}</Banner></Box>}
+          <BlockStack gap="400">
+            <TextField label="Payment Method" value={payInfoForm.payment_method}
+              onChange={v => setPayInfoField('payment_method', v)} autoComplete="off"
+              placeholder="e.g. PayPal, E-Transfer, Bank Transfer" />
+            <TextField label="Phone" value={payInfoForm.phone_number}
+              onChange={v => setPayInfoField('phone_number', v)} autoComplete="off" />
+            <TextField label="Mailing Address Line 1" value={payInfoForm.billing_address.line1}
+              onChange={v => setAddrField('line1', v)} autoComplete="off" />
+            <TextField label="Mailing Address Line 2" value={payInfoForm.billing_address.line2}
+              onChange={v => setAddrField('line2', v)} autoComplete="off" />
+            <InlineStack gap="300">
+              <div style={{ flex: 1 }}>
+                <TextField label="City" value={payInfoForm.billing_address.city}
+                  onChange={v => setAddrField('city', v)} autoComplete="off" />
+              </div>
+              <div style={{ flex: 1 }}>
+                <TextField label="Province / State" value={payInfoForm.billing_address.province}
+                  onChange={v => setAddrField('province', v)} autoComplete="off" />
+              </div>
+            </InlineStack>
+            <InlineStack gap="300">
+              <div style={{ flex: 1 }}>
+                <TextField label="Postal Code" value={payInfoForm.billing_address.postal_code}
+                  onChange={v => setAddrField('postal_code', v)} autoComplete="off" />
+              </div>
+              <div style={{ flex: 1 }}>
+                <TextField label="Country" value={payInfoForm.billing_address.country}
+                  onChange={v => setAddrField('country', v)} autoComplete="off" />
+              </div>
+            </InlineStack>
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
+
+      {/* ── Add Payment Record Modal ── */}
       <Modal open={payModalOpen} onClose={() => setPayModalOpen(false)} title="Add Payment Record"
         primaryAction={{ content: paySaving ? 'Saving…' : 'Save', onAction: handlePaySave, disabled: paySaving }}
         secondaryActions={[{ content: 'Cancel', onAction: () => setPayModalOpen(false) }]}
@@ -506,7 +591,8 @@ export default function InfluencerDetail() {
             <TextField label="Amount ($)" type="number" value={payForm.amount}
               onChange={v => setPayForm(f => ({ ...f, amount: v }))} autoComplete="off" />
             <TextField label="Method" value={payForm.method}
-              onChange={v => setPayForm(f => ({ ...f, method: v }))} autoComplete="off" placeholder="e.g. PayPal, E-Transfer" />
+              onChange={v => setPayForm(f => ({ ...f, method: v }))} autoComplete="off"
+              placeholder="e.g. PayPal, E-Transfer" />
             <Banner tone="warning">
               <InlineStack gap="200" blockAlign="center">
                 <input type="checkbox" id="payConfirm" checked={payConfirmed}

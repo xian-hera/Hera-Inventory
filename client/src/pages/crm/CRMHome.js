@@ -2,12 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Page, Layout, Button, BlockStack, Text, TextField, Banner, Modal } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 
-const CRM_PIN_VERIFIED_KEY = 'crm_pin_verified';
-const CRM_PIN_CONFIG_KEY   = 'crm_pin_config';
+const CRM_PIN_VERIFIED_KEY = 'crm_pin_verified';  // { expiry: timestamp }
 const PIN_EXPIRY_DAYS      = 30;
-const DEFAULT_PIN          = '3591';
-
-export { CRM_PIN_VERIFIED_KEY, CRM_PIN_CONFIG_KEY, PIN_EXPIRY_DAYS, DEFAULT_PIN };
 
 function CRMHome() {
   const navigate = useNavigate();
@@ -17,13 +13,15 @@ function CRMHome() {
   const [pinInput, setPinInput]   = useState('');
   const [pinError, setPinError]   = useState('');
   const [showHint, setShowHint]   = useState(false);
-  const [pinConfig, setPinConfig] = useState({ pin: DEFAULT_PIN, hint: '' });
+  const [hint, setHint]           = useState('');
+  const [verifying, setVerifying] = useState(false);
 
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem(CRM_PIN_CONFIG_KEY);
-      if (stored) setPinConfig(JSON.parse(stored));
-    } catch (e) {}
+    // Fetch hint from backend
+    fetch('/api/settings/pin/hint?key=crm_pin')
+      .then(r => r.json())
+      .then(data => setHint(data.hint || ''))
+      .catch(() => {});
 
     if (isDeviceVerified()) {
       setReady(true);
@@ -41,18 +39,32 @@ function CRMHome() {
     } catch (e) { return false; }
   };
 
-  const handleConfirm = () => {
-    if (pinInput === pinConfig.pin) {
-      const expiry = Date.now() + PIN_EXPIRY_DAYS * 24 * 60 * 60 * 1000;
-      localStorage.setItem(CRM_PIN_VERIFIED_KEY, JSON.stringify({ expiry }));
-      setShowModal(false);
-      setReady(true);
-    } else {
-      setPinError('Incorrect PIN. Please try again.');
-      setPinInput('');
+  const handleConfirm = async () => {
+    setVerifying(true);
+    setPinError('');
+    try {
+      const res = await fetch('/api/settings/pin/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'crm_pin', pin: pinInput }),
+      });
+      if (res.ok) {
+        const expiry = Date.now() + PIN_EXPIRY_DAYS * 24 * 60 * 60 * 1000;
+        localStorage.setItem(CRM_PIN_VERIFIED_KEY, JSON.stringify({ expiry }));
+        setShowModal(false);
+        setReady(true);
+      } else {
+        setPinError('Incorrect PIN. Please try again.');
+        setPinInput('');
+      }
+    } catch (e) {
+      setPinError('Network error. Please try again.');
+    } finally {
+      setVerifying(false);
     }
   };
 
+  // Cancel → go back to home
   const handleClose = () => {
     navigate('/');
   };
@@ -88,7 +100,8 @@ function CRMHome() {
         primaryAction={{
           content: 'Confirm',
           onAction: handleConfirm,
-          disabled: pinInput.length !== 4,
+          disabled: pinInput.length !== 4 || verifying,
+          loading: verifying,
         }}
         secondaryActions={[{ content: 'Cancel', onAction: handleClose }]}
       >
@@ -117,7 +130,7 @@ function CRMHome() {
             </Button>
             {showHint && (
               <Text variant="bodySm" tone="subdued">
-                {pinConfig.hint || 'No hint set.'}
+                {hint || 'No hint set.'}
               </Text>
             )}
             <Text variant="bodySm" tone="subdued">

@@ -2,24 +2,24 @@ import React, { useState, useEffect } from 'react';
 import { Page, Layout, Button, BlockStack, Text, TextField, Banner, Modal } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 
-const PIN_VERIFIED_KEY = 'buyer_pin_verified';   // { expiry: timestamp }
-const PIN_CONFIG_KEY   = 'buyer_pin_config';     // { pin, hint }
+const PIN_VERIFIED_KEY = 'buyer_pin_verified';  // { expiry: timestamp }
 const PIN_EXPIRY_DAYS  = 30;
-const DEFAULT_PIN      = '3591';
 
 function Home() {
   const navigate = useNavigate();
-  const [showModal, setShowModal]   = useState(false);
-  const [pinInput, setPinInput]     = useState('');
-  const [pinError, setPinError]     = useState('');
-  const [showHint, setShowHint]     = useState(false);
-  const [pinConfig, setPinConfig]   = useState({ pin: DEFAULT_PIN, hint: '' });
+  const [showModal, setShowModal] = useState(false);
+  const [pinInput, setPinInput]   = useState('');
+  const [pinError, setPinError]   = useState('');
+  const [showHint, setShowHint]   = useState(false);
+  const [hint, setHint]           = useState('');
+  const [verifying, setVerifying] = useState(false);
 
+  // Fetch hint from backend on mount
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem(PIN_CONFIG_KEY);
-      if (stored) setPinConfig(JSON.parse(stored));
-    } catch (e) {}
+    fetch('/api/settings/pin/hint?key=buyer_pin')
+      .then(r => r.json())
+      .then(data => setHint(data.hint || ''))
+      .catch(() => {});
   }, []);
 
   const isDeviceVerified = () => {
@@ -42,15 +42,28 @@ function Home() {
     }
   };
 
-  const handleConfirm = () => {
-    if (pinInput === pinConfig.pin) {
-      const expiry = Date.now() + PIN_EXPIRY_DAYS * 24 * 60 * 60 * 1000;
-      localStorage.setItem(PIN_VERIFIED_KEY, JSON.stringify({ expiry }));
-      setShowModal(false);
-      navigate('/buyer');
-    } else {
-      setPinError('Incorrect PIN. Please try again.');
-      setPinInput('');
+  const handleConfirm = async () => {
+    setVerifying(true);
+    setPinError('');
+    try {
+      const res = await fetch('/api/settings/pin/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'buyer_pin', pin: pinInput }),
+      });
+      if (res.ok) {
+        const expiry = Date.now() + PIN_EXPIRY_DAYS * 24 * 60 * 60 * 1000;
+        localStorage.setItem(PIN_VERIFIED_KEY, JSON.stringify({ expiry }));
+        setShowModal(false);
+        navigate('/buyer');
+      } else {
+        setPinError('Incorrect PIN. Please try again.');
+        setPinInput('');
+      }
+    } catch (e) {
+      setPinError('Network error. Please try again.');
+    } finally {
+      setVerifying(false);
     }
   };
 
@@ -86,7 +99,8 @@ function Home() {
         primaryAction={{
           content: 'Confirm',
           onAction: handleConfirm,
-          disabled: pinInput.length !== 4,
+          disabled: pinInput.length !== 4 || verifying,
+          loading: verifying,
         }}
         secondaryActions={[{ content: 'Cancel', onAction: handleClose }]}
       >
@@ -115,7 +129,7 @@ function Home() {
             </Button>
             {showHint && (
               <Text variant="bodySm" tone="subdued">
-                {pinConfig.hint || 'No hint set.'}
+                {hint || 'No hint set.'}
               </Text>
             )}
             <Text variant="bodySm" tone="subdued">

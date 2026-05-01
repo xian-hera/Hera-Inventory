@@ -110,6 +110,7 @@ export default function InfluencerList() {
   return (
     <Page
       title="Influencers"
+      backAction={{ onAction: () => navigate('/crm') }}
       primaryAction={{ content: 'Add Influencer', onAction: () => { setForm(EMPTY_FORM); setModalOpen(true); } }}
     >
       {/* Filter bar */}

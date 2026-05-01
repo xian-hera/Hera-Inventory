@@ -42,6 +42,7 @@ app.use('/api/price-change-tasks', require('./routes/priceChangeTasks'));
 app.use('/api/hairdressers', require('./routes/hairdressers'));
 app.use('/api/birthday-config', birthdayConfigRouter);
 app.use('/api/influencers', require('./routes/influencers'));
+app.use('/api/settings', require('./routes/settings'));
 
 // Serve static files in production
 if (process.env.NODE_ENV === 'production') {

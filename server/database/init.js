@@ -218,6 +218,20 @@ const initDatabase = async () => {
 
     // ────────────────────────────────────────────────────────────────────────────
 
+    // ─── App Settings (global key-value store) ──────────────────────────────────
+    // Used for server-side PIN storage (buyer_pin, crm_pin)
+    // value is JSONB: { hash: <sha256 of pin>, hint: <string> }
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS app_settings (
+        key TEXT PRIMARY KEY,
+        value JSONB NOT NULL,
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
+    // ────────────────────────────────────────────────────────────────────────────
+
     await client.query('COMMIT');
     console.log('✓ Database initialized successfully');
   } catch (e) {

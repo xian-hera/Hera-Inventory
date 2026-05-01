@@ -1,12 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   Page, Layout, Button, BlockStack, TextField, Banner, Modal, Text
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 
-const PIN_CONFIG_KEY   = 'buyer_pin_config';
 const PIN_VERIFIED_KEY = 'buyer_pin_verified';
-const DEFAULT_PIN      = '3591';
 
 function BuyerSettings() {
   const navigate = useNavigate();
@@ -14,24 +12,19 @@ function BuyerSettings() {
   const [showModal, setShowModal]       = useState(false);
   const [step, setStep]                 = useState('verify');
   const [currentInput, setCurrentInput] = useState('');
+  const [verifiedPin, setVerifiedPin]   = useState(''); // holds the verified current PIN for update
   const [newPin, setNewPin]             = useState('');
   const [newHint, setNewHint]           = useState('');
   const [modalError, setModalError]     = useState('');
   const [success, setSuccess]           = useState(false);
-  const [pinConfig, setPinConfig]       = useState({ pin: DEFAULT_PIN, hint: '' });
-
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem(PIN_CONFIG_KEY);
-      if (stored) setPinConfig(JSON.parse(stored));
-    } catch (e) {}
-  }, []);
+  const [loading, setLoading]           = useState(false);
 
   const openModal = () => {
     setStep('verify');
     setCurrentInput('');
+    setVerifiedPin('');
     setNewPin('');
-    setNewHint(pinConfig.hint || '');
+    setNewHint('');
     setModalError('');
     setSuccess(false);
     setShowModal(true);
@@ -44,33 +37,65 @@ function BuyerSettings() {
     navigate('/');
   };
 
-  const handleVerify = () => {
-    if (currentInput === pinConfig.pin) {
-      setStep('set');
-      setCurrentInput('');
-      setModalError('');
-    } else {
-      setModalError('Incorrect PIN.');
-      setCurrentInput('');
+  const handleVerify = async () => {
+    setLoading(true);
+    setModalError('');
+    try {
+      const res = await fetch('/api/settings/pin/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'buyer_pin', pin: currentInput }),
+      });
+      if (res.ok) {
+        // Fetch current hint to pre-fill
+        const hintRes = await fetch('/api/settings/pin/hint?key=buyer_pin');
+        const hintData = await hintRes.json().catch(() => ({}));
+        setNewHint(hintData.hint || '');
+        setVerifiedPin(currentInput); // save verified PIN before clearing input
+        setStep('set');
+        setCurrentInput('');
+      } else {
+        setModalError('Incorrect PIN.');
+        setCurrentInput('');
+      }
+    } catch (e) {
+      setModalError('Network error. Please try again.');
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!/^\d{4}$/.test(newPin)) {
       setModalError('PIN must be exactly 4 digits.');
       return;
     }
-    const updated = { pin: newPin, hint: newHint.trim() };
-    localStorage.setItem(PIN_CONFIG_KEY, JSON.stringify(updated));
-    localStorage.removeItem(PIN_VERIFIED_KEY);
-    setPinConfig(updated);
-    setSuccess(true);
-    setTimeout(() => closeModal(), 1400);
+    setLoading(true);
+    setModalError('');
+    try {
+      const res = await fetch('/api/settings/pin/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'buyer_pin', currentPin: verifiedPin, newPin, hint: newHint }),
+      });
+      if (res.ok) {
+        localStorage.removeItem(PIN_VERIFIED_KEY);
+        setSuccess(true);
+        setTimeout(() => closeModal(), 1400);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setModalError(data.error || 'Failed to update PIN.');
+      }
+    } catch (e) {
+      setModalError('Network error. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const primaryAction = step === 'verify'
-    ? { content: 'Verify', onAction: handleVerify, disabled: currentInput.length !== 4 }
-    : { content: 'Save PIN', onAction: handleSave, disabled: newPin.length !== 4 };
+    ? { content: 'Verify', onAction: handleVerify, disabled: currentInput.length !== 4 || loading, loading }
+    : { content: 'Save PIN', onAction: handleSave, disabled: newPin.length !== 4 || loading, loading };
 
   return (
     <Page title="Settings" backAction={{ onAction: () => navigate('/buyer') }}>
