@@ -11,18 +11,8 @@ const STATUS_OPTIONS = [
   { label: 'Archive', value: 'archive' },
 ];
 
-const DAYS_OPTIONS = [
-  { label: 'Last 7 days', value: '7' },
-  { label: 'Last 30 days', value: '30' },
-  { label: 'Last 180 days', value: '180' },
-  { label: 'Last 365 days', value: '365' },
-];
-
 const EMPTY_PLATFORM = { label: '', url: '' };
-
-const EMPTY_BILLING = {
-  line1: '', line2: '', city: '', province: '', postal_code: '', country: '',
-};
+const EMPTY_BILLING  = { line1: '', line2: '', city: '', province: '', postal_code: '', country: '' };
 
 function fmt(date) {
   if (!date) return '—';
@@ -41,33 +31,32 @@ export default function InfluencerDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
 
-  const [inf, setInf] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [inf, setInf]               = useState(null);
+  const [loading, setLoading]       = useState(true);
   const [statsLoading, setStatsLoading] = useState(false);
-  const [selectedDays, setSelectedDays] = useState('180');
-  const [orders, setOrders] = useState([]);
+  const [statsError, setStatsError] = useState('');
 
   // Edit info modal
-  const [editOpen, setEditOpen] = useState(false);
-  const [editForm, setEditForm] = useState({});
+  const [editOpen, setEditOpen]     = useState(false);
+  const [editForm, setEditForm]     = useState({});
   const [editSaving, setEditSaving] = useState(false);
-  const [editError, setEditError] = useState('');
+  const [editError, setEditError]   = useState('');
 
   // Note
-  const [noteText, setNoteText] = useState('');
+  const [noteText, setNoteText]       = useState('');
   const [noteLoading, setNoteLoading] = useState(false);
 
   // Payment info modal
-  const [payInfoOpen, setPayInfoOpen] = useState(false);
-  const [payInfoForm, setPayInfoForm] = useState({ payment_method: '', phone_number: '', billing_address: EMPTY_BILLING });
+  const [payInfoOpen, setPayInfoOpen]     = useState(false);
+  const [payInfoForm, setPayInfoForm]     = useState({ payment_method: '', phone_number: '', billing_address: EMPTY_BILLING });
   const [payInfoSaving, setPayInfoSaving] = useState(false);
-  const [payInfoError, setPayInfoError] = useState('');
+  const [payInfoError, setPayInfoError]   = useState('');
 
   // Payment record modal
   const [payModalOpen, setPayModalOpen] = useState(false);
-  const [payForm, setPayForm] = useState({ payment_date: '', amount: '', method: '' });
-  const [paySaving, setPaySaving] = useState(false);
-  const [payError, setPayError] = useState('');
+  const [payForm, setPayForm]           = useState({ payment_date: '', amount: '', method: '' });
+  const [paySaving, setPaySaving]       = useState(false);
+  const [payError, setPayError]         = useState('');
   const [payConfirmed, setPayConfirmed] = useState(false);
 
   const load = useCallback(async () => {
@@ -160,22 +149,22 @@ export default function InfluencerDetail() {
   // ── Refresh stats ──
   const refreshStats = async () => {
     setStatsLoading(true);
+    setStatsError('');
     try {
       const r = await fetch(`/api/influencers/${id}/refresh-stats`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ days: parseInt(selectedDays) }),
       });
       const data = await r.json();
       if (data.error) throw new Error(data.error);
-      setOrders(data.orders || []);
       setInf(i => ({
         ...i,
         last_stats_total: data.total_sale,
         last_stats_used: data.used_times,
-        last_stats_days: parseInt(selectedDays),
         last_stats_refreshed_at: new Date().toISOString(),
       }));
+    } catch (e) {
+      setStatsError(e.message);
     } finally { setStatsLoading(false); }
   };
 
@@ -183,7 +172,7 @@ export default function InfluencerDetail() {
   const openPayInfo = () => {
     setPayInfoForm({
       payment_method: inf.payment_method || '',
-      phone_number: inf.phone_number || '',
+      phone_number:   inf.phone_number   || '',
       billing_address: {
         line1:       inf.billing_address?.line1       || '',
         line2:       inf.billing_address?.line2       || '',
@@ -242,18 +231,6 @@ export default function InfluencerDetail() {
     ? (parseFloat(inf.last_stats_total) * parseFloat(inf.commission_rate) / 100).toFixed(2)
     : null;
 
-  // ── Order table rows ──
-  const orderRows = orders.map(o => [
-    o.name
-      ? <a href={`https://admin.shopify.com/store/beaute-hera/orders/${o.id}`}
-          target="_blank" rel="noopener noreferrer"
-          style={{ color: '#005bd3', textDecoration: 'none' }}>{o.name}</a>
-      : '—',
-    o.customer_name || '—',
-    o.destination || '—',
-    `$${parseFloat(o.subtotal_price || 0).toFixed(2)}`,
-  ]);
-
   // ── Billing address display ──
   const billingLines = inf.billing_address
     ? [
@@ -266,15 +243,14 @@ export default function InfluencerDetail() {
       ].filter(Boolean)
     : [];
 
-  // ── History action label map ──
   const actionLabel = {
-    created: 'Created',
-    info_updated: 'Info updated',
+    created:        'Created',
+    info_updated:   'Info updated',
     status_changed: 'Status changed',
-    note_added: 'Note added',
-    note_deleted: 'Note deleted',
-    payment_added: 'Payment added',
-    stats_refreshed: 'Sales stats refreshed',
+    note_added:     'Note added',
+    note_deleted:   'Note deleted',
+    payment_added:  'Payment added',
+    stats_refreshed:'Sales stats refreshed',
   };
 
   return (
@@ -367,22 +343,27 @@ export default function InfluencerDetail() {
           </BlockStack>
         </Card>
 
-        {/* ── Card 2: Sales Stats ── */}
+        {/* ── Card 2: Code Usage (only if code exists) ── */}
         {inf.code && (
           <Card>
             <BlockStack gap="400">
               <Text variant="headingMd">Code Usage</Text>
+
+              {statsError && <Banner tone="critical" onDismiss={() => setStatsError('')}>{statsError}</Banner>}
+
               <InlineStack gap="600" wrap>
                 <BlockStack gap="100">
                   <Text variant="bodySm" tone="subdued">Code</Text>
-                  <a
-                    href={`https://admin.shopify.com/store/beaute-hera/discounts?search=${encodeURIComponent(inf.code)}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={{ color: '#005bd3', textDecoration: 'none', fontWeight: 600, fontSize: 14 }}
+                  <span
+                    onClick={() => {
+                      navigator.clipboard.writeText(inf.code).catch(() => {});
+                      window.open('https://admin.shopify.com/store/beaute-hera/discounts', '_blank');
+                    }}
+                    style={{ color: '#005bd3', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}
+                    title="Copy code and open Shopify Discounts"
                   >
                     {inf.code} ↗
-                  </a>
+                  </span>
                 </BlockStack>
                 <BlockStack gap="100">
                   <Text variant="bodySm" tone="subdued">Used Times</Text>
@@ -394,9 +375,6 @@ export default function InfluencerDetail() {
                     {inf.last_stats_total != null
                       ? `$${parseFloat(inf.last_stats_total).toLocaleString('en', { minimumFractionDigits: 2 })}`
                       : '—'}
-                    {inf.last_stats_days
-                      ? <Text as="span" tone="subdued" variant="bodySm"> (last {inf.last_stats_days}d)</Text>
-                      : ''}
                   </Text>
                 </BlockStack>
                 {commissionAmt && (
@@ -406,30 +384,14 @@ export default function InfluencerDetail() {
                   </BlockStack>
                 )}
               </InlineStack>
+
               {inf.last_stats_refreshed_at && (
                 <Text variant="bodySm" tone="subdued">Last refreshed: {fmt(inf.last_stats_refreshed_at)}</Text>
               )}
-              <InlineStack gap="300" blockAlign="end">
-                <div style={{ minWidth: 180 }}>
-                  <Select label="" labelHidden options={DAYS_OPTIONS}
-                    value={selectedDays} onChange={setSelectedDays} />
-                </div>
+
+              <Box>
                 <Button onClick={refreshStats} loading={statsLoading}>Refresh</Button>
-              </InlineStack>
-              {orders.length > 0 && (
-                <Box paddingBlockStart="200">
-                  <Text variant="bodyMd" fontWeight="semibold" tone="subdued">
-                    Recent {orders.length} orders
-                  </Text>
-                  <Box paddingBlockStart="200">
-                    <DataTable
-                      columnContentTypes={['text', 'text', 'text', 'numeric']}
-                      headings={['Order #', 'Customer', 'Destination', 'Subtotal']}
-                      rows={orderRows}
-                    />
-                  </Box>
-                </Box>
-              )}
+              </Box>
             </BlockStack>
           </Card>
         )}
@@ -442,7 +404,6 @@ export default function InfluencerDetail() {
               <Button onClick={openPayInfo}>Edit</Button>
             </InlineStack>
 
-            {/* Payment info fields — always shown, empty shows '—' */}
             <InlineStack gap="600" wrap>
               <BlockStack gap="100">
                 <Text variant="bodySm" tone="subdued">Payment Method</Text>
@@ -458,15 +419,12 @@ export default function InfluencerDetail() {
               <Text variant="bodySm" tone="subdued">Mailing Address</Text>
               {billingLines.length === 0
                 ? <Text variant="bodyMd">—</Text>
-                : billingLines.map((line, i) => (
-                    <Text key={i} variant="bodyMd">{line}</Text>
-                  ))
+                : billingLines.map((line, i) => <Text key={i} variant="bodyMd">{line}</Text>)
               }
             </BlockStack>
 
             <Divider />
 
-            {/* Payment history */}
             <InlineStack align="space-between">
               <Text variant="bodyMd" fontWeight="semibold">Payment History</Text>
               <Button size="slim" onClick={openPayModal}>Add</Button>

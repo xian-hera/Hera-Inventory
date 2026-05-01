@@ -183,96 +183,88 @@ router.post('/:id/payments', async (req, res) => {
   } finally { client.release(); }
 });
 
+
 // ─── SHOPIFY SALES STATS ─────────────────────────────────────────────────────
-// POST /api/influencers/:id/refresh-stats  — body: { days: 7|30|180|365 }
-// Fetches ALL orders in the date window without discount_code param (unreliable),
-// then filters by code in Node.js.
+// POST /api/influencers/:id/refresh-stats
+// Uses GraphQL codeDiscountNodeByCode — one request, accurate, no order pagination.
 router.post('/:id/refresh-stats', async (req, res) => {
-  const { days = 180 } = req.body;
   const client = await pool.connect();
   try {
     const { rows } = await client.query(
-      `SELECT code, commission_rate FROM influencers WHERE id=$1`,
+      `SELECT code FROM influencers WHERE id=$1`,
       [req.params.id]
     );
     if (!rows.length) return res.status(404).json({ error: 'Not found' });
 
-    const { code, commission_rate } = rows[0];
-    if (!code) return res.json({ orders: [], total_sale: 0, used_times: 0 });
+    const { code } = rows[0];
+    if (!code) return res.json({ total_sale: 0, used_times: 0 });
 
-    const session   = req.shopifySession;
-    const shop      = session.shop;
-    const token     = session.accessToken;
-    const codeUpper = code.trim().toUpperCase();
+    const session = req.shopifySession;
+    const shop    = session.shop;
+    const token   = session.accessToken;
 
-    const createdAtMin = new Date(Date.now() - days * 86400000).toISOString();
-
-    // Fetch ALL orders in window — no discount_code param, filter after
-    let allOrders = [];
-    let url = `https://${shop}/admin/api/2026-01/orders.json`
-            + `?status=any&limit=250`
-            + `&created_at_min=${encodeURIComponent(createdAtMin)}`
-            + `&fields=id,name,created_at,subtotal_price,discount_codes,shipping_address,customer`;
-
-    while (url) {
-      const resp = await fetch(url, {
-        headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
-      });
-      if (!resp.ok) {
-        const body = await resp.text();
-        throw new Error(`Shopify API error ${resp.status}: ${body}`);
+    const query = `{
+      codeDiscountNodeByCode(code: "${code.trim().replace(/"/g, '')}") {
+        codeDiscount {
+          ... on DiscountCodeBasic {
+            asyncUsageCount
+            totalSales { amount currencyCode }
+          }
+          ... on DiscountCodeBxgy {
+            asyncUsageCount
+            totalSales { amount currencyCode }
+          }
+          ... on DiscountCodeFreeShipping {
+            asyncUsageCount
+            totalSales { amount currencyCode }
+          }
+        }
       }
-      const data = await resp.json();
-      allOrders = allOrders.concat(data.orders || []);
+    }`;
 
-      const link = resp.headers.get('Link') || '';
-      const next = link.match(/<([^>]+)>;\s*rel="next"/);
-      url = next ? next[1] : null;
+    const resp = await fetch(`https://${shop}/admin/api/2026-01/graphql.json`, {
+      method: 'POST',
+      headers: {
+        'X-Shopify-Access-Token': token,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ query }),
+    });
+
+    if (!resp.ok) {
+      const body = await resp.text();
+      throw new Error(`Shopify GraphQL error ${resp.status}: ${body}`);
     }
 
-    // Filter by code (case-insensitive)
-    const filtered = allOrders.filter(o =>
-      Array.isArray(o.discount_codes) &&
-      o.discount_codes.some(d => d.code.trim().toUpperCase() === codeUpper)
-    );
+    const result = await resp.json();
+    const discount = result?.data?.codeDiscountNodeByCode?.codeDiscount;
 
-    console.log(`Total orders fetched: ${allOrders.length}`);
-    console.log(`Filtered by code "${codeUpper}": ${filtered.length}`);
+    if (!discount) {
+      return res.status(404).json({ error: `Discount code "${code}" not found in Shopify` });
+    }
 
-    const total_sale = filtered.reduce((sum, o) => sum + parseFloat(o.subtotal_price || 0), 0);
+    const used_times = discount.asyncUsageCount ?? 0;
+    const total_sale = parseFloat(discount.totalSales?.amount ?? 0);
 
     await client.query(`
       UPDATE influencers
-      SET last_stats_days=$1, last_stats_total=$2, last_stats_used=$3,
+      SET last_stats_total=$1, last_stats_used=$2,
           last_stats_refreshed_at=NOW(), updated_at=NOW()
-      WHERE id=$4
-    `, [days, total_sale.toFixed(2), filtered.length, req.params.id]);
+      WHERE id=$3
+    `, [total_sale.toFixed(2), used_times, req.params.id]);
 
     await client.query(`
       INSERT INTO influencer_history (influencer_id, action, detail)
       VALUES ($1, 'stats_refreshed', $2)
-    `, [req.params.id, `Sales stats refreshed (last ${days} days): ${filtered.length} orders, $${total_sale.toFixed(2)}`]);
+    `, [req.params.id, `Sales stats refreshed: ${used_times} uses, $${total_sale.toFixed(2)}`]);
 
-    const orders = filtered.slice(0, 50).map(o => ({
-      id:             o.id,
-      name:           o.name,
-      created_at:     o.created_at,
-      subtotal_price: o.subtotal_price,
-      customer_name:  o.customer
-        ? `${o.customer.first_name || ''} ${o.customer.last_name || ''}`.trim() || '—'
-        : '—',
-      destination: o.shipping_address
-        ? [o.shipping_address.city, o.shipping_address.province_code || o.shipping_address.province]
-            .filter(Boolean).join(', ') || '—'
-        : '—',
-    }));
-
-    res.json({ orders, total_sale: total_sale.toFixed(2), used_times: filtered.length });
+    res.json({ total_sale: total_sale.toFixed(2), used_times });
   } catch (e) {
     console.error('POST /api/influencers/:id/refresh-stats error:', e);
     res.status(500).json({ error: e.message });
   } finally { client.release(); }
 });
+
 
 // ─── DELETE ──────────────────────────────────────────────────────────────────
 router.delete('/:id', async (req, res) => {
