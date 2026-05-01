@@ -185,6 +185,8 @@ router.post('/:id/payments', async (req, res) => {
 
 // ─── SHOPIFY SALES STATS ─────────────────────────────────────────────────────
 // POST /api/influencers/:id/refresh-stats  — body: { days: 7|30|180|365 }
+// Fetches ALL orders in the date window without discount_code param (unreliable),
+// then filters by code in Node.js.
 router.post('/:id/refresh-stats', async (req, res) => {
   const { days = 180 } = req.body;
   const client = await pool.connect();
@@ -198,44 +200,47 @@ router.post('/:id/refresh-stats', async (req, res) => {
     const { code, commission_rate } = rows[0];
     if (!code) return res.json({ orders: [], total_sale: 0, used_times: 0 });
 
-    // Use session already loaded by the /api middleware in shopify.js
-    const session = req.shopifySession;
-    const shop    = session.shop;
-    const token   = session.accessToken;
+    const session   = req.shopifySession;
+    const shop      = session.shop;
+    const token     = session.accessToken;
+    const codeUpper = code.trim().toUpperCase();
 
     const createdAtMin = new Date(Date.now() - days * 86400000).toISOString();
+
+    // Fetch ALL orders in window — no discount_code param, filter after
     let allOrders = [];
-    let url = `https://${shop}/admin/api/2026-01/orders.json?status=any&limit=250`
+    let url = `https://${shop}/admin/api/2026-01/orders.json`
+            + `?status=any&limit=250`
             + `&created_at_min=${encodeURIComponent(createdAtMin)}`
-            + `&discount_code=${encodeURIComponent(code)}`
             + `&fields=id,name,created_at,subtotal_price,discount_codes,shipping_address,customer`;
 
-    // Paginate through all matching orders
     while (url) {
       const resp = await fetch(url, {
         headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
       });
-      if (!resp.ok) throw new Error(`Shopify API error: ${resp.status}`);
+      if (!resp.ok) {
+        const body = await resp.text();
+        throw new Error(`Shopify API error ${resp.status}: ${body}`);
+      }
       const data = await resp.json();
       allOrders = allOrders.concat(data.orders || []);
 
-      // Follow Link header for next page
       const link = resp.headers.get('Link') || '';
       const next = link.match(/<([^>]+)>;\s*rel="next"/);
       url = next ? next[1] : null;
     }
 
-    // Secondary filter: confirm the code actually matches (Shopify query is case-insensitive but we double-check)
+    // Filter by code (case-insensitive)
     const filtered = allOrders.filter(o =>
       Array.isArray(o.discount_codes) &&
-      o.discount_codes.some(d => d.code.toUpperCase() === code.toUpperCase())
+      o.discount_codes.some(d => d.code.trim().toUpperCase() === codeUpper)
     );
-// 在 while 循环结束后加
+
     console.log(`Total orders fetched: ${allOrders.length}`);
     console.log(`Filtered by code "${codeUpper}": ${filtered.length}`);
+
     const total_sale = filtered.reduce((sum, o) => sum + parseFloat(o.subtotal_price || 0), 0);
 
-    // Cache results on the influencer row
     await client.query(`
       UPDATE influencers
       SET last_stats_days=$1, last_stats_total=$2, last_stats_used=$3,
@@ -246,19 +251,19 @@ router.post('/:id/refresh-stats', async (req, res) => {
     await client.query(`
       INSERT INTO influencer_history (influencer_id, action, detail)
       VALUES ($1, 'stats_refreshed', $2)
-    `, [req.params.id, `Sales stats refreshed (last ${days} days)`]);
+    `, [req.params.id, `Sales stats refreshed (last ${days} days): ${filtered.length} orders, $${total_sale.toFixed(2)}`]);
 
-    // Return most recent 50 orders for the detail table
     const orders = filtered.slice(0, 50).map(o => ({
       id:             o.id,
       name:           o.name,
       created_at:     o.created_at,
       subtotal_price: o.subtotal_price,
       customer_name:  o.customer
-        ? `${o.customer.first_name || ''} ${o.customer.last_name || ''}`.trim()
+        ? `${o.customer.first_name || ''} ${o.customer.last_name || ''}`.trim() || '—'
         : '—',
       destination: o.shipping_address
-        ? `${o.shipping_address.city || ''}, ${o.shipping_address.province_code || o.shipping_address.province || ''}`
+        ? [o.shipping_address.city, o.shipping_address.province_code || o.shipping_address.province]
+            .filter(Boolean).join(', ') || '—'
         : '—',
     }));
 

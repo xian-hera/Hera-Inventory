@@ -375,7 +375,14 @@ export default function InfluencerDetail() {
               <InlineStack gap="600" wrap>
                 <BlockStack gap="100">
                   <Text variant="bodySm" tone="subdued">Code</Text>
-                  <Text variant="bodyMd" fontWeight="semibold">{inf.code}</Text>
+                  <a
+                    href={`https://admin.shopify.com/store/beaute-hera/discounts?search=${encodeURIComponent(inf.code)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ color: '#005bd3', textDecoration: 'none', fontWeight: 600, fontSize: 14 }}
+                  >
+                    {inf.code} ↗
+                  </a>
                 </BlockStack>
                 <BlockStack gap="100">
                   <Text variant="bodySm" tone="subdued">Used Times</Text>
