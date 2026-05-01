@@ -230,7 +230,9 @@ router.post('/:id/refresh-stats', async (req, res) => {
       Array.isArray(o.discount_codes) &&
       o.discount_codes.some(d => d.code.toUpperCase() === code.toUpperCase())
     );
-
+// 在 while 循环结束后加
+    console.log(`Total orders fetched: ${allOrders.length}`);
+    console.log(`Filtered by code "${codeUpper}": ${filtered.length}`);
     const total_sale = filtered.reduce((sum, o) => sum + parseFloat(o.subtotal_price || 0), 0);
 
     // Cache results on the influencer row
