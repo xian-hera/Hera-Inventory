@@ -33,6 +33,8 @@ import HairdresserList from './pages/crm/HairdresserList';
 import HairdresserDetail from './pages/crm/HairdresserDetail';
 import BirthdayReward from './pages/crm/BirthdayReward';
 import BirthdaySubscribers from './pages/crm/BirthdaySubscribers';
+import InfluencerList from './pages/crm/InfluencerList';
+import InfluencerDetail from './pages/crm/InfluencerDetail';
 
 function App() {
   return (
@@ -76,6 +78,8 @@ function App() {
           <Route path="/crm/hairdressers/:id" element={<HairdresserDetail />} />
           <Route path="/crm/birthday-reward" element={<BirthdayReward />} />
           <Route path="/crm/birthday-reward/subscribers" element={<BirthdaySubscribers />} />
+          <Route path="/crm/influencers" element={<InfluencerList />} />
+          <Route path="/crm/influencers/:id" element={<InfluencerDetail />} />
         </Routes>
       </BrowserRouter>
     </AppProvider>

@@ -72,7 +72,8 @@ const buildTag = (name) =>
   `hairdresser_${name.toLowerCase().replace(/\s+/g, '_')}`;
 
 // ── GET /api/hairdressers ─────────────────────────────────────────────────────
-// Returns all hairdressers with live email/phone from Shopify and last generated_at
+// Returns all hairdressers with live email/phone from Shopify, last generated_at,
+// and bound_customers count from our own database
 router.get('/', async (req, res) => {
   try {
     const { rows } = await pool.query(`
@@ -81,10 +82,14 @@ router.get('/', async (req, res) => {
         h.shopify_customer_id,
         h.name,
         h.created_at,
-        rl.generated_at AS last_generated_at
+        rl.generated_at AS last_generated_at,
+        COUNT(DISTINCT cb.customer_shopify_id) AS bound_customers
       FROM hairdressers h
       LEFT JOIN referral_links rl
         ON rl.hairdresser_id = h.id AND rl.is_active = TRUE
+      LEFT JOIN customer_bindings cb
+        ON cb.hairdresser_id = h.id
+      GROUP BY h.id, h.name, h.created_at, rl.generated_at
       ORDER BY h.name ASC
     `);
 
@@ -93,6 +98,7 @@ router.get('/', async (req, res) => {
         const shopify = await fetchShopifyCustomer(h.shopify_customer_id);
         return {
           ...h,
+          bound_customers: parseInt(h.bound_customers, 10),
           email: shopify.email || null,
           phone: shopify.phone || null,
         };

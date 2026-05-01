@@ -217,12 +217,13 @@ function HairdresserList() {
                 </EmptyState>
               ) : (
                 <DataTable
-                  columnContentTypes={['text', 'text', 'text', 'text', 'text']}
-                  headings={['Name', 'Email', 'Phone', 'Last link generated', 'Actions']}
+                  columnContentTypes={['text', 'text', 'text', 'numeric', 'text', 'text']}
+                  headings={['Name', 'Email', 'Phone', 'Bound customers', 'Last link generated', 'Actions']}
                   rows={hairdressers.map((h) => [
                     <Text fontWeight="semibold">{h.name}</Text>,
                     <Text tone="subdued">{h.email || '—'}</Text>,
                     <Text tone="subdued">{h.phone || '—'}</Text>,
+                    <Text>{h.bound_customers ?? 0}</Text>,
                     <Text tone="subdued">{formatDate(h.last_generated_at)}</Text>,
                     <InlineStack gap="200">
                       <Button

@@ -73,6 +73,9 @@ function CRMHome() {
               <Button size="large" fullWidth onClick={() => navigate('/crm/birthday-reward')}>
                 Birthday Reward
               </Button>
+              <Button size="large" fullWidth onClick={() => navigate('/crm/influencers')}>
+                Influencer Management
+              </Button>
             </BlockStack>
           </Layout.Section>
         </Layout>
