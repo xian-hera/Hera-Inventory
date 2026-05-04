@@ -79,11 +79,11 @@ function Home() {
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">
-            <Button size="large" fullWidth onClick={handleBuyerClick}>
-              Purchasing
-            </Button>
             <Button size="large" fullWidth onClick={() => navigate('/crm')}>
               CRM / Growth
+            </Button>
+            <Button size="large" fullWidth onClick={handleBuyerClick}>
+              Purchasing
             </Button>
             <Button size="large" fullWidth onClick={() => navigate('/manager')}>
               Store
