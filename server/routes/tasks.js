@@ -411,28 +411,49 @@ router.patch('/:id/commit', async (req, res) => {
       }
 
       try {
+        // Step 1: fetch inventoryItem id and current on_hand in a single query
         const variantRes = await shopifyRequest(() =>
           client.request(`{
             productVariants(first: 1, query: "barcode:${item.barcode}") {
-              edges { node { inventoryItem { id } } }
+              edges {
+                node {
+                  inventoryItem {
+                    id
+                    inventoryLevel(locationId: "${shopifyLocationId}") {
+                      quantities(names: ["on_hand"]) { name quantity }
+                    }
+                  }
+                }
+              }
             }
           }`)
         );
-        const invItemId = variantRes.data?.productVariants?.edges[0]?.node?.inventoryItem?.id;
+        const inventoryItem = variantRes.data?.productVariants?.edges[0]?.node?.inventoryItem;
+        const invItemId = inventoryItem?.id;
         if (!invItemId) {
           errors.push(`Barcode ${item.barcode}: inventory item not found in Shopify`);
           continue;
         }
 
-        const adjustRes = await shopifyRequest(() =>
+        // Step 2: compute new on_hand by applying delta to current on_hand
+        const currentOnHand = inventoryItem?.inventoryLevel?.quantities?.find(q => q.name === "on_hand")?.quantity ?? null;
+        if (currentOnHand === null) {
+          errors.push(`Barcode ${item.barcode}: could not read current on_hand from Shopify`);
+          continue;
+        }
+        const newOnHand = currentOnHand + delta;
+
+        // Step 3: set new on_hand as absolute value with compare-and-swap
+        const setRes = await shopifyRequest(() =>
           client.request(`
             mutation {
-              inventoryAdjustQuantities(input: {
+              inventorySetOnHandQuantities(input: {
                 reason: "cycle_count_available",
-                changes: [{
+                setQuantities: [{
                   inventoryItemId: "${invItemId}",
                   locationId: "${shopifyLocationId}",
-                  delta: ${delta}
+                  quantity: ${newOnHand},
+                  changeFromQuantity: ${currentOnHand}
                 }]
               }) {
                 userErrors { field message }
@@ -441,7 +462,7 @@ router.patch('/:id/commit', async (req, res) => {
           `)
         );
 
-        const userErrors = adjustRes.data?.inventoryAdjustQuantities?.userErrors;
+        const userErrors = setRes.data?.inventorySetOnHandQuantities?.userErrors;
         if (userErrors && userErrors.length > 0) {
           errors.push(`Barcode ${item.barcode}: ${userErrors.map(e => e.message).join(", ")}`);
           continue;
