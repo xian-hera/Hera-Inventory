@@ -412,41 +412,42 @@ router.patch('/:id/commit', async (req, res) => {
 
       try {
         const variantRes = await shopifyRequest(() =>
-          client.query({
-            data: `{
-              productVariants(first: 1, query: "barcode:${item.barcode}") {
-                edges { node { inventoryItem { id } } }
-              }
-            }`
-          })
+          client.request(`{
+            productVariants(first: 1, query: "barcode:${item.barcode}") {
+              edges { node { inventoryItem { id } } }
+            }
+          }`)
         );
-        const invItemId = variantRes.body.data.productVariants.edges[0]?.node?.inventoryItem?.id;
+        const invItemId = variantRes.data?.productVariants?.edges[0]?.node?.inventoryItem?.id;
         if (!invItemId) {
           errors.push(`Barcode ${item.barcode}: inventory item not found in Shopify`);
           continue;
         }
 
-        const newOnHand = item.soh + delta;
-        await shopifyRequest(() =>
-          client.query({
-            data: `
-              mutation {
-                inventorySetOnHandQuantities(input: {
-                  reason: "cycle_count_available",
-                  setQuantities: [{
-                    inventoryItemId: "${invItemId}",
-                    locationId: "${shopifyLocationId}",
-                    quantity: ${newOnHand}
-                  }]
-                }) {
-                  userErrors { field message }
-                }
+        const adjustRes = await shopifyRequest(() =>
+          client.request(`
+            mutation {
+              inventoryAdjustQuantities(input: {
+                reason: "cycle_count_available",
+                changes: [{
+                  inventoryItemId: "${invItemId}",
+                  locationId: "${shopifyLocationId}",
+                  delta: ${delta}
+                }]
+              }) {
+                userErrors { field message }
               }
-            `
-          })
+            }
+          `)
         );
 
-        await pool.query('UPDATE task_items SET is_committed = TRUE WHERE id = $1', [item.id]);
+        const userErrors = adjustRes.data?.inventoryAdjustQuantities?.userErrors;
+        if (userErrors && userErrors.length > 0) {
+          errors.push(`Barcode ${item.barcode}: ${userErrors.map(e => e.message).join(", ")}`);
+          continue;
+        }
+
+        await pool.query("UPDATE task_items SET is_committed = TRUE WHERE id = $1", [item.id]);
       } catch (e) {
         console.error(`Commit failed for item ${item.id} (barcode: ${item.barcode}):`, e.message);
         errors.push(`Barcode ${item.barcode}: ${e.message}`);
