@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import ReactDOM from 'react-dom';
 import {
   Page, Layout, Card, Button, BlockStack, InlineStack,
   Text, Banner, Spinner, TextField, Modal, Select, Checkbox,
@@ -46,8 +47,13 @@ function ManagerLabelPrintTaskDetail() {
   const [searchResults, setSearchResults] = useState([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchChecked, setSearchChecked] = useState([]);
+  const [searchDropOpen, setSearchDropOpen] = useState(false);
+  const [dropdownPos, setDropdownPos]     = useState({ top: 0, left: 0, width: 0 });
   const [addingItems, setAddingItems]     = useState(false);
   const [addError, setAddError]           = useState('');
+
+  const searchInputRef = useRef(null);
+  const searchDropRef  = useRef(null);
 
   const [showPrint, setShowPrint]           = useState(false);
   const [templates, setTemplates]           = useState([]);
@@ -63,6 +69,29 @@ function ManagerLabelPrintTaskDetail() {
   const barcodeTimer   = useRef(null);
   const itemsRef       = useRef(items);
   const searchDebounce = useRef(null);
+
+  // Update dropdown position whenever it opens or results change
+  useEffect(() => {
+    if (searchDropOpen && searchInputRef.current) {
+      const rect = searchInputRef.current.getBoundingClientRect();
+      setDropdownPos({ top: rect.bottom + 4, left: rect.left, width: rect.width });
+    }
+  }, [searchDropOpen, searchResults]);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    if (!searchDropOpen) return;
+    const handleMouseDown = (e) => {
+      if (
+        searchInputRef.current && !searchInputRef.current.contains(e.target) &&
+        searchDropRef.current && !searchDropRef.current.contains(e.target)
+      ) {
+        setSearchDropOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleMouseDown);
+    return () => document.removeEventListener('mousedown', handleMouseDown);
+  }, [searchDropOpen]);
 
   useEffect(() => { itemsRef.current = items; }, [items]);
 
@@ -172,6 +201,7 @@ function ManagerLabelPrintTaskDetail() {
     if (value.trim().length < 2) {
       setSearchResults([]);
       setSearchChecked([]);
+      setSearchDropOpen(false);
       return;
     }
     searchDebounce.current = setTimeout(async () => {
@@ -182,8 +212,10 @@ function ManagerLabelPrintTaskDetail() {
         if (!res.ok) throw new Error('Search failed');
         const data = await res.json();
         setSearchResults(data.slice(0, 30));
+        setSearchDropOpen(true);
       } catch (e) {
         setSearchResults([]);
+        setSearchDropOpen(false);
       } finally {
         setSearchLoading(false);
       }
@@ -223,6 +255,7 @@ function ManagerLabelPrintTaskDetail() {
       setSearchChecked([]);
       setSearchQuery('');
       setSearchResults([]);
+      setSearchDropOpen(false);
     } catch (e) {
       setAddError(e.message);
     } finally {
@@ -520,19 +553,12 @@ ${barcodeScript}</head><body>${allLabels}</body></html>`;
               {/* Search bar */}
               <div style={{ position: 'relative' }}>
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                  <div style={{ flex: 1, position: 'relative' }}>
+                  <div ref={searchInputRef} style={{ flex: 1, position: 'relative' }}>
                     <input
                       type="text"
                       value={searchQuery}
                       onChange={e => handleSearchChange(e.target.value)}
-                      placeholder="Search by name or SKU..."
-                      autoComplete="off"
-                      style={{
-                        width: '100%', padding: '10px 12px', fontSize: '14px',
-                        border: '1px solid #c9cccf', borderRadius: '8px',
-                        outline: 'none', boxSizing: 'border-box', display: 'block',
-                      }}
-                      onFocus={e => { e.target.style.borderColor = '#005bd3'; }}
+                      onFocus={e => { e.target.style.borderColor = '#005bd3'; if (searchResults.length > 0) setSearchDropOpen(true); }}
                       onBlur={e => { e.target.style.borderColor = '#c9cccf'; }}
                     />
                   </div>
@@ -553,15 +579,21 @@ ${barcodeScript}</head><body>${allLabels}</body></html>`;
                   </button>
                 </div>
 
-                {/* Dropdown results */}
-                {searchResults.length > 0 && (
-                  <div style={{
-                    position: 'absolute', top: '100%', left: 0, right: 0,
-                    marginTop: '4px', background: 'white',
-                    border: '1px solid #c9cccf', borderRadius: '8px',
-                    boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
-                    maxHeight: '280px', overflowY: 'auto', zIndex: 100,
-                  }}>
+                {/* Dropdown results — rendered via portal to escape Card overflow:hidden */}
+                {searchDropOpen && searchResults.length > 0 && ReactDOM.createPortal(
+                  <div
+                    ref={searchDropRef}
+                    style={{
+                      position: 'fixed',
+                      top: dropdownPos.top,
+                      left: dropdownPos.left,
+                      width: dropdownPos.width,
+                      background: 'white',
+                      border: '1px solid #c9cccf', borderRadius: '8px',
+                      boxShadow: '0 4px 16px rgba(0,0,0,0.18)',
+                      maxHeight: '280px', overflowY: 'auto', zIndex: 99999,
+                    }}
+                  >
                     {searchResults.map(r => {
                       const checked = searchChecked.includes(r.variantId);
                       const alreadyAdded = !!itemsRef.current.find(i => i.sku === r.barcode);
@@ -594,7 +626,8 @@ ${barcodeScript}</head><body>${allLabels}</body></html>`;
                         </div>
                       );
                     })}
-                  </div>
+                  </div>,
+                  document.body
                 )}
               </div>
 
