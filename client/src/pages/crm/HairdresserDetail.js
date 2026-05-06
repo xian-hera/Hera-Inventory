@@ -16,10 +16,18 @@ function HairdresserDetail() {
   const [error, setError]               = useState('');
 
   // Referral link / QR
-  const [activeLink, setActiveLink]     = useState(null); // { url, generated_at }
+  const [activeLink, setActiveLink]     = useState(null);
   const [generating, setGenerating]     = useState(false);
   const [generateError, setGenerateError] = useState('');
   const qrCanvasRef                     = useRef(null);
+
+  // Notes
+  const [notes, setNotes]               = useState([]);
+  const [notesLoading, setNotesLoading] = useState(true);
+  const [noteInput, setNoteInput]       = useState('');
+  const [savingNote, setSavingNote]     = useState(false);
+  const [noteError, setNoteError]       = useState('');
+  const [deletingNoteId, setDeletingNoteId] = useState(null);
 
   // Customers
   const [customers, setCustomers]       = useState([]);
@@ -34,7 +42,11 @@ function HairdresserDetail() {
   const [dateFrom, setDateFrom]         = useState('');
   const [statsLoading, setStatsLoading] = useState(false);
   const [statsError, setStatsError]     = useState('');
-  const [stats, setStats]               = useState(null); // last cached result
+  const [stats, setStats]               = useState(null);
+
+  // Activity log
+  const [activity, setActivity]         = useState([]);
+  const [activityLoading, setActivityLoading] = useState(true);
 
   // ── Fetch hairdresser ─────────────────────────────────────────────────────
   const fetchHairdresser = useCallback(async () => {
@@ -79,11 +91,33 @@ function HairdresserDetail() {
     } catch (e) {}
   }, [id]);
 
+  // ── Fetch notes ───────────────────────────────────────────────────────────
+  const fetchNotes = useCallback(async () => {
+    setNotesLoading(true);
+    try {
+      const res = await fetch(`/api/hairdressers/${id}/notes`);
+      if (res.ok) setNotes(await res.json());
+    } catch (e) {}
+    finally { setNotesLoading(false); }
+  }, [id]);
+
+  // ── Fetch activity log ────────────────────────────────────────────────────
+  const fetchActivity = useCallback(async () => {
+    setActivityLoading(true);
+    try {
+      const res = await fetch(`/api/hairdressers/${id}/activity`);
+      if (res.ok) setActivity(await res.json());
+    } catch (e) {}
+    finally { setActivityLoading(false); }
+  }, [id]);
+
   useEffect(() => {
     fetchHairdresser();
     fetchCustomers();
     fetchStats();
-  }, [fetchHairdresser, fetchCustomers, fetchStats]);
+    fetchNotes();
+    fetchActivity();
+  }, [fetchHairdresser, fetchCustomers, fetchStats, fetchNotes, fetchActivity]);
 
   // ── Draw QR code whenever activeLink changes ──────────────────────────────
   useEffect(() => {
@@ -103,7 +137,8 @@ function HairdresserDetail() {
       const res = await fetch(`/api/hairdressers/${id}/generate-link`, { method: 'POST' });
       if (!res.ok) throw new Error('Failed to generate link');
       const data = await res.json();
-      setActiveLink(data); // { url, generated_at }
+      setActiveLink(data);
+      await fetchActivity();
     } catch (e) {
       setGenerateError(e.message);
     } finally {
@@ -119,6 +154,43 @@ function HairdresserDetail() {
     link.download = `hairdresser-${hairdresser?.name?.replace(/\s+/g, '_') || id}-qr.png`;
     link.href = canvas.toDataURL('image/png');
     link.click();
+  };
+
+  // ── Add note ──────────────────────────────────────────────────────────────
+  const handleAddNote = async () => {
+    if (!noteInput.trim()) return;
+    setSavingNote(true);
+    setNoteError('');
+    try {
+      const res = await fetch(`/api/hairdressers/${id}/notes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: noteInput.trim() }),
+      });
+      if (!res.ok) throw new Error('Failed to save note');
+      setNoteInput('');
+      await fetchNotes();
+      await fetchActivity();
+    } catch (e) {
+      setNoteError(e.message);
+    } finally {
+      setSavingNote(false);
+    }
+  };
+
+  // ── Delete note ───────────────────────────────────────────────────────────
+  const handleDeleteNote = async (noteId) => {
+    setDeletingNoteId(noteId);
+    try {
+      const res = await fetch(`/api/hairdressers/${id}/notes/${noteId}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Failed to delete note');
+      await fetchNotes();
+      await fetchActivity();
+    } catch (e) {
+      setNoteError(e.message);
+    } finally {
+      setDeletingNoteId(null);
+    }
   };
 
   // ── Unbind all ────────────────────────────────────────────────────────────
@@ -155,6 +227,38 @@ function HairdresserDetail() {
       setStatsError(e.message);
     } finally {
       setStatsLoading(false);
+    }
+  };
+
+  // ── Export CSV ────────────────────────────────────────────────────────────
+  const handleExportCSV = () => {
+    const headers = ['Name', 'Email', 'Phone number'];
+    const rows = customers.map((c) => [
+      c.name || '',
+      c.email || '',
+      c.phone || '',
+    ]);
+    const csvContent = [headers, ...rows]
+      .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+      .join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${hairdresser?.name?.replace(/\s+/g, '_') || id}-customers.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // ── Activity label ────────────────────────────────────────────────────────
+  const formatActivityAction = (action, detail) => {
+    switch (action) {
+      case 'created':            return 'Hairdresser created';
+      case 'first_link_generated': return 'First referral link and QR code generated';
+      case 'note_added':         return `Note added: "${detail}"`;
+      case 'note_deleted':       return `Note deleted: "${detail}"`;
+      default:                   return action;
     }
   };
 
@@ -231,7 +335,6 @@ function HairdresserDetail() {
                     Last generated: {formatDateTime(activeLink.generated_at)}
                   </Text>
 
-                  {/* URL display */}
                   <div style={{
                     background: '#f6f6f7',
                     borderRadius: '8px',
@@ -243,7 +346,6 @@ function HairdresserDetail() {
                     {activeLink.url}
                   </div>
 
-                  {/* QR Code */}
                   <BlockStack gap="200" align="center">
                     <canvas ref={qrCanvasRef} style={{ borderRadius: '8px', display: 'block' }} />
                     <Button size="slim" onClick={handleDownloadQR}>
@@ -255,6 +357,76 @@ function HairdresserDetail() {
                 <Text tone="subdued" variant="bodySm">
                   No link generated yet. Click Generate to create one.
                 </Text>
+              )}
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+
+        {/* ── Notes ── */}
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="400">
+              <Text variant="headingSm" as="h2">Notes</Text>
+
+              {noteError && (
+                <Banner tone="critical" onDismiss={() => setNoteError('')}>{noteError}</Banner>
+              )}
+
+              <InlineStack gap="200" blockAlign="end">
+                <div style={{ flex: 1 }}>
+                  <TextField
+                    label=""
+                    labelHidden
+                    value={noteInput}
+                    onChange={setNoteInput}
+                    placeholder="Add a note..."
+                    autoComplete="off"
+                    multiline={2}
+                  />
+                </div>
+                <Button
+                  onClick={handleAddNote}
+                  loading={savingNote}
+                  disabled={!noteInput.trim()}
+                >
+                  Save
+                </Button>
+              </InlineStack>
+
+              {notesLoading ? (
+                <InlineStack align="center"><Spinner size="small" /></InlineStack>
+              ) : notes.length === 0 ? (
+                <Text tone="subdued" variant="bodySm">No notes yet.</Text>
+              ) : (
+                <BlockStack gap="300">
+                  {notes.map((note) => (
+                    <div
+                      key={note.id}
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'flex-start',
+                        padding: '10px 12px',
+                        background: '#f6f6f7',
+                        borderRadius: '8px',
+                        gap: '12px',
+                      }}
+                    >
+                      <BlockStack gap="100">
+                        <Text variant="bodySm" tone="subdued">{formatDateTime(note.created_at)}</Text>
+                        <Text variant="bodyMd">{note.content}</Text>
+                      </BlockStack>
+                      <Button
+                        size="slim"
+                        tone="critical"
+                        loading={deletingNoteId === note.id}
+                        onClick={() => handleDeleteNote(note.id)}
+                      >
+                        Delete
+                      </Button>
+                    </div>
+                  ))}
+                </BlockStack>
               )}
             </BlockStack>
           </Card>
@@ -273,13 +445,21 @@ function HairdresserDetail() {
                     </Text>
                   )}
                 </BlockStack>
-                <Button
-                  tone="critical"
-                  disabled={customers.length === 0}
-                  onClick={() => setShowUnbindModal(true)}
-                >
-                  Unbind All
-                </Button>
+                <InlineStack gap="200">
+                  <Button
+                    disabled={customers.length === 0}
+                    onClick={handleExportCSV}
+                  >
+                    Export
+                  </Button>
+                  <Button
+                    tone="critical"
+                    disabled={customers.length === 0}
+                    onClick={() => setShowUnbindModal(true)}
+                  >
+                    Unbind All
+                  </Button>
+                </InlineStack>
               </InlineStack>
 
               {customersLoading ? (
@@ -360,6 +540,44 @@ function HairdresserDetail() {
                 <Text tone="subdued" variant="bodySm">
                   No statistics calculated yet. Select a start date and click Calculate.
                 </Text>
+              )}
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+
+        {/* ── Activity Log ── */}
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="400">
+              <Text variant="headingSm" as="h2">Activity Log</Text>
+
+              {activityLoading ? (
+                <InlineStack align="center"><Spinner size="small" /></InlineStack>
+              ) : activity.length === 0 ? (
+                <Text tone="subdued" variant="bodySm">No activity recorded yet.</Text>
+              ) : (
+                <BlockStack gap="200">
+                  {activity.map((entry) => (
+                    <div
+                      key={entry.id}
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'flex-start',
+                        padding: '8px 0',
+                        borderBottom: '1px solid #e1e3e5',
+                        gap: '16px',
+                      }}
+                    >
+                      <Text variant="bodyMd">
+                        {formatActivityAction(entry.action, entry.detail)}
+                      </Text>
+                      <Text variant="bodySm" tone="subdued" style={{ whiteSpace: 'nowrap' }}>
+                        {formatDateTime(entry.created_at)}
+                      </Text>
+                    </div>
+                  ))}
+                </BlockStack>
               )}
             </BlockStack>
           </Card>

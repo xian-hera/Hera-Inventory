@@ -216,6 +216,29 @@ const initDatabase = async () => {
       )
     `);
 
+    // Notes attached to a hairdresser — free-text, manually added and deleted
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS hairdresser_notes (
+        id SERIAL PRIMARY KEY,
+        hairdresser_id INTEGER NOT NULL REFERENCES hairdressers(id) ON DELETE CASCADE,
+        content TEXT NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
+    // Activity log — records key events for each hairdresser
+    // action values: 'created' | 'first_link_generated' | 'note_added' | 'note_deleted'
+    // detail: optional extra info (e.g. note content)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS hairdresser_activity_log (
+        id SERIAL PRIMARY KEY,
+        hairdresser_id INTEGER NOT NULL REFERENCES hairdressers(id) ON DELETE CASCADE,
+        action VARCHAR NOT NULL,
+        detail TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
     // ────────────────────────────────────────────────────────────────────────────
 
     // ─── App Settings (global key-value store) ──────────────────────────────────

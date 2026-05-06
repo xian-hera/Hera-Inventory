@@ -71,6 +71,18 @@ const buildReferralUrl = (shopifyCustomerId) => {
 const buildTag = (name) =>
   `hairdresser_${name.toLowerCase().replace(/\s+/g, '_')}`;
 
+// Write an activity log entry
+const logActivity = async (hairdresserId, action, detail = null) => {
+  try {
+    await pool.query(
+      `INSERT INTO hairdresser_activity_log (hairdresser_id, action, detail) VALUES ($1, $2, $3)`,
+      [hairdresserId, action, detail]
+    );
+  } catch (e) {
+    console.error('logActivity error:', e);
+  }
+};
+
 // ── GET /api/hairdressers ─────────────────────────────────────────────────────
 // Returns all hairdressers with live email/phone from Shopify, last generated_at,
 // and bound_customers count from our own database
@@ -151,7 +163,7 @@ router.post('/bind', async (req, res) => {
       return res.status(404).json({ error: 'Hairdresser not found' });
     }
     const hairdresser = hdRes.rows[0];
-    const tag = buildTag(hairdresser.name);
+    const newTag = buildTag(hairdresser.name);
 
     // Verify the referral link is currently active
     const linkRes = await pool.query(
@@ -162,13 +174,20 @@ router.post('/bind', async (req, res) => {
       return res.status(403).json({ error: 'This referral link is no longer active' });
     }
 
-    // Write binding record — always insert new row to preserve history
+    // Remove any existing binding this customer has with other hairdressers
+    await pool.query(
+      `DELETE FROM customer_bindings
+       WHERE customer_shopify_id = $1 AND hairdresser_id != $2`,
+      [String(customer_shopify_id), hairdresser.id]
+    );
+
+    // Write new binding record
     await pool.query(
       `INSERT INTO customer_bindings (customer_shopify_id, hairdresser_id) VALUES ($1, $2)`,
       [String(customer_shopify_id), hairdresser.id]
     );
 
-    // Apply Shopify tag to customer (fetch current tags first to avoid overwriting)
+    // Update Shopify tags: remove all hairdresser_ tags, then add the new one
     const client = await getClient();
     const gid = `gid://shopify/Customer/${customer_shopify_id}`;
 
@@ -180,17 +199,19 @@ router.post('/bind', async (req, res) => {
     const tagRes = await shopifyRequest(client, tagQuery, { id: gid });
     const currentTags = tagRes.data?.customer?.tags || [];
 
-    if (!currentTags.includes(tag)) {
-      const mutation = `
-        mutation updateCustomer($input: CustomerInput!) {
-          customerUpdate(input: $input) {
-            customer { id tags }
-            userErrors { field message }
-          }
+    // Strip all existing hairdresser_ tags, then add the new one
+    const filteredTags = currentTags.filter((t) => !t.startsWith('hairdresser_'));
+    const updatedTags = [...filteredTags, newTag];
+
+    const mutation = `
+      mutation updateCustomer($input: CustomerInput!) {
+        customerUpdate(input: $input) {
+          customer { id tags }
+          userErrors { field message }
         }
-      `;
-      await shopifyRequest(client, mutation, { input: { id: gid, tags: [...currentTags, tag] } });
-    }
+      }
+    `;
+    await shopifyRequest(client, mutation, { input: { id: gid, tags: updatedTags } });
 
     res.json({ success: true });
   } catch (e) {
@@ -262,6 +283,9 @@ router.post('/', async (req, res) => {
       return res.status(409).json({ error: 'Hairdresser already exists' });
     }
 
+    // Log creation
+    await logActivity(rows[0].id, 'created');
+
     res.status(201).json(rows[0]);
   } catch (e) {
     console.error('POST /api/hairdressers error:', e);
@@ -285,6 +309,7 @@ router.delete('/:id', async (req, res) => {
 
 // ── POST /api/hairdressers/:id/generate-link ──────────────────────────────────
 // Deactivate all previous links, generate new active URL
+// Logs only the first-ever link generation
 router.post('/:id/generate-link', async (req, res) => {
   const dbClient = await pool.connect();
   try {
@@ -295,6 +320,13 @@ router.post('/:id/generate-link', async (req, res) => {
       [id]
     );
     if (hdRes.rows.length === 0) return res.status(404).json({ error: 'Not found' });
+
+    // Check if this is the first-ever link for this hairdresser
+    const existingLinks = await dbClient.query(
+      `SELECT COUNT(*) AS cnt FROM referral_links WHERE hairdresser_id = $1`,
+      [id]
+    );
+    const isFirst = parseInt(existingLinks.rows[0].cnt, 10) === 0;
 
     const url = buildReferralUrl(hdRes.rows[0].shopify_customer_id);
 
@@ -315,6 +347,12 @@ router.post('/:id/generate-link', async (req, res) => {
     );
 
     await dbClient.query('COMMIT');
+
+    // Log only the first generation
+    if (isFirst) {
+      await logActivity(id, 'first_link_generated');
+    }
+
     res.json(rows[0]);
   } catch (e) {
     await dbClient.query('ROLLBACK');
@@ -326,7 +364,7 @@ router.post('/:id/generate-link', async (req, res) => {
 });
 
 // ── GET /api/hairdressers/:id/customers ───────────────────────────────────────
-// Returns up to 100 currently bound customers with live Shopify name + email
+// Returns up to 100 currently bound customers with live Shopify name, email, phone
 router.get('/:id/customers', async (req, res) => {
   try {
     const { id } = req.params;
@@ -350,6 +388,7 @@ router.get('/:id/customers', async (req, res) => {
           bound_at: row.bound_at,
           name: fullName || null,
           email: shopify.email || null,
+          phone: shopify.phone || null,
         };
       })
     );
@@ -509,6 +548,96 @@ router.get('/:id/statistics', async (req, res) => {
     res.json(rows[0]);
   } catch (e) {
     console.error('GET /api/hairdressers/:id/statistics error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── GET /api/hairdressers/:id/notes ──────────────────────────────────────────
+// Return all notes for a hairdresser
+router.get('/:id/notes', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { rows } = await pool.query(
+      `SELECT * FROM hairdresser_notes
+       WHERE hairdresser_id = $1
+       ORDER BY created_at DESC`,
+      [id]
+    );
+    res.json(rows);
+  } catch (e) {
+    console.error('GET /api/hairdressers/:id/notes error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── POST /api/hairdressers/:id/notes ─────────────────────────────────────────
+// Add a note for a hairdresser
+router.post('/:id/notes', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { content } = req.body;
+    if (!content || !content.trim()) {
+      return res.status(400).json({ error: 'content is required' });
+    }
+
+    const { rows } = await pool.query(
+      `INSERT INTO hairdresser_notes (hairdresser_id, content)
+       VALUES ($1, $2)
+       RETURNING *`,
+      [id, content.trim()]
+    );
+
+    await logActivity(id, 'note_added', content.trim());
+
+    res.status(201).json(rows[0]);
+  } catch (e) {
+    console.error('POST /api/hairdressers/:id/notes error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── DELETE /api/hairdressers/:id/notes/:noteId ───────────────────────────────
+// Delete a note for a hairdresser
+router.delete('/:id/notes/:noteId', async (req, res) => {
+  try {
+    const { id, noteId } = req.params;
+
+    // Fetch note content before deleting (for activity log)
+    const noteRes = await pool.query(
+      `SELECT content FROM hairdresser_notes WHERE id = $1 AND hairdresser_id = $2`,
+      [noteId, id]
+    );
+    if (noteRes.rows.length === 0) return res.status(404).json({ error: 'Note not found' });
+    const content = noteRes.rows[0].content;
+
+    await pool.query(
+      `DELETE FROM hairdresser_notes WHERE id = $1 AND hairdresser_id = $2`,
+      [noteId, id]
+    );
+
+    await logActivity(id, 'note_deleted', content);
+
+    res.json({ success: true });
+  } catch (e) {
+    console.error('DELETE /api/hairdressers/:id/notes/:noteId error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── GET /api/hairdressers/:id/activity ───────────────────────────────────────
+// Return activity log for a hairdresser
+router.get('/:id/activity', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { rows } = await pool.query(
+      `SELECT * FROM hairdresser_activity_log
+       WHERE hairdresser_id = $1
+       ORDER BY created_at DESC`,
+      [id]
+    );
+    res.json(rows);
+  } catch (e) {
+    console.error('GET /api/hairdressers/:id/activity error:', e);
     res.status(500).json({ error: e.message });
   }
 });
