@@ -42,9 +42,12 @@ function ManagerLabelPrintTaskDetail() {
   const [scanError, setScanError]     = useState('');
   const [selectedIds, setSelectedIds] = useState([]);
 
-  const [showTypeIn, setShowTypeIn] = useState(false);
-  const [typeInValue, setTypeInValue] = useState('');
-  const [typeInError, setTypeInError] = useState('');
+  const [searchQuery, setSearchQuery]     = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchChecked, setSearchChecked] = useState([]);
+  const [addingItems, setAddingItems]     = useState(false);
+  const [addError, setAddError]           = useState('');
 
   const [showPrint, setShowPrint]           = useState(false);
   const [templates, setTemplates]           = useState([]);
@@ -56,13 +59,12 @@ function ManagerLabelPrintTaskDetail() {
   const [deleteItemId, setDeleteItemId]     = useState(null);
   const [deleteLoading, setDeleteLoading]   = useState(false);
 
-  const barcodeBuffer = useRef('');
-  const barcodeTimer  = useRef(null);
-  const itemsRef      = useRef(items);
-  const showTypeInRef = useRef(false);
+  const barcodeBuffer  = useRef('');
+  const barcodeTimer   = useRef(null);
+  const itemsRef       = useRef(items);
+  const searchDebounce = useRef(null);
 
   useEffect(() => { itemsRef.current = items; }, [items]);
-  useEffect(() => { showTypeInRef.current = showTypeIn; }, [showTypeIn]);
 
   const fetchTask = useCallback(async () => {
     setLoading(true);
@@ -87,7 +89,6 @@ function ManagerLabelPrintTaskDetail() {
 
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (showTypeInRef.current) return;
       const activeTag = document.activeElement?.tagName;
       if (['INPUT', 'TEXTAREA'].includes(activeTag)) return;
 
@@ -163,16 +164,69 @@ function ManagerLabelPrintTaskDetail() {
     }
   };
 
-  const handleTypeInSubmit = async () => {
-    const sku = typeInValue.trim();
-    if (!sku) return;
-    setTypeInError('');
+  // Search with debounce
+  const handleSearchChange = (value) => {
+    setSearchQuery(value);
+    setAddError('');
+    clearTimeout(searchDebounce.current);
+    if (value.trim().length < 2) {
+      setSearchResults([]);
+      setSearchChecked([]);
+      return;
+    }
+    searchDebounce.current = setTimeout(async () => {
+      setSearchLoading(true);
+      try {
+        const params = new URLSearchParams({ q: value.trim() });
+        const res = await fetch(`/api/shopify/search?${params.toString()}`);
+        if (!res.ok) throw new Error('Search failed');
+        const data = await res.json();
+        setSearchResults(data.slice(0, 30));
+      } catch (e) {
+        setSearchResults([]);
+      } finally {
+        setSearchLoading(false);
+      }
+    }, 400);
+  };
+
+  const toggleSearchCheck = (variantId) => {
+    setSearchChecked(prev =>
+      prev.includes(variantId) ? prev.filter(x => x !== variantId) : [...prev, variantId]
+    );
+  };
+
+  const handleAddChecked = async () => {
+    const toAdd = searchResults.filter(r => searchChecked.includes(r.variantId));
+    if (toAdd.length === 0) return;
+    setAddingItems(true);
+    setAddError('');
     try {
-      await addBySku(sku);
-      setTypeInValue('');
-      setShowTypeIn(false);
+      for (const item of toAdd) {
+        const sku = item.barcode; // barcode === sku in this store
+        // Skip if already in list
+        if (itemsRef.current.find(i => i.sku === sku)) continue;
+        const res = await fetch(`/api/label-print-tasks/${taskId}/items`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            variant_id: item.variantId,
+            sku,
+            custom_name: item.name,
+            qty_to_print: 1,
+          }),
+        });
+        if (!res.ok) throw new Error('Failed to add item');
+        const newItem = await res.json();
+        setItems(prev => [newItem, ...prev]);
+      }
+      setSearchChecked([]);
+      setSearchQuery('');
+      setSearchResults([]);
     } catch (e) {
-      setTypeInError(e.message);
+      setAddError(e.message);
+    } finally {
+      setAddingItems(false);
     }
   };
 
@@ -459,17 +513,97 @@ ${barcodeScript}</head><body>${allLabels}</body></html>`;
     >
       <Layout>
         <Layout.Section>
-          {scanError && <Banner tone="critical" onDismiss={() => setScanError('')}>{scanError}</Banner>}
-
           <Card>
-            <BlockStack gap="200">
-              <Text variant="headingSm">Scan or enter SKU</Text>
-              <InlineStack gap="200" blockAlign="center">
-                <Button onClick={() => { setTypeInValue(''); setTypeInError(''); setShowTypeIn(true); }}>
-                  Type in SKU
-                </Button>
-                {scanLoading && <Spinner size="small" />}
-              </InlineStack>
+            <BlockStack gap="300">
+              <Text variant="headingSm">Scan or search to add items</Text>
+
+              {/* Search bar */}
+              <div style={{ position: 'relative' }}>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <div style={{ flex: 1, position: 'relative' }}>
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={e => handleSearchChange(e.target.value)}
+                      placeholder="Search by name or SKU..."
+                      autoComplete="off"
+                      style={{
+                        width: '100%', padding: '10px 12px', fontSize: '14px',
+                        border: '1px solid #c9cccf', borderRadius: '8px',
+                        outline: 'none', boxSizing: 'border-box', display: 'block',
+                      }}
+                      onFocus={e => { e.target.style.borderColor = '#005bd3'; }}
+                      onBlur={e => { e.target.style.borderColor = '#c9cccf'; }}
+                    />
+                  </div>
+                  {searchLoading && <Spinner size="small" />}
+                  {!searchLoading && scanLoading && <Spinner size="small" />}
+                  <button
+                    onClick={handleAddChecked}
+                    disabled={searchChecked.length === 0 || addingItems}
+                    style={{
+                      padding: '10px 18px', borderRadius: '8px', border: 'none',
+                      background: searchChecked.length > 0 && !addingItems ? '#008060' : '#f6f6f7',
+                      color: searchChecked.length > 0 && !addingItems ? 'white' : '#8c9196',
+                      cursor: searchChecked.length > 0 && !addingItems ? 'pointer' : 'not-allowed',
+                      fontSize: '14px', fontWeight: '600', whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {addingItems ? 'Adding…' : searchChecked.length > 0 ? `Add (${searchChecked.length})` : 'Add'}
+                  </button>
+                </div>
+
+                {/* Dropdown results */}
+                {searchResults.length > 0 && (
+                  <div style={{
+                    position: 'absolute', top: '100%', left: 0, right: 0,
+                    marginTop: '4px', background: 'white',
+                    border: '1px solid #c9cccf', borderRadius: '8px',
+                    boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+                    maxHeight: '280px', overflowY: 'auto', zIndex: 100,
+                  }}>
+                    {searchResults.map(r => {
+                      const checked = searchChecked.includes(r.variantId);
+                      const alreadyAdded = !!itemsRef.current.find(i => i.sku === r.barcode);
+                      return (
+                        <div
+                          key={r.variantId}
+                          onClick={() => toggleSearchCheck(r.variantId)}
+                          style={{
+                            padding: '10px 12px', cursor: 'pointer',
+                            display: 'flex', alignItems: 'center', gap: '8px',
+                            background: checked ? '#f1f8f5' : 'white',
+                            borderBottom: '1px solid #f1f3f5',
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => {}}
+                            style={{ cursor: 'pointer', flexShrink: 0 }}
+                          />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: '14px', fontWeight: '500', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {r.name}
+                            </div>
+                            <div style={{ fontSize: '12px', color: '#6d7175' }}>{r.barcode}</div>
+                          </div>
+                          {alreadyAdded && (
+                            <span style={{ color: '#008060', fontSize: '12px', fontWeight: '600', flexShrink: 0 }}>✓ Added</span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {addError && (
+                <div style={{ background: '#fff4f4', borderRadius: '8px', padding: '8px 12px', fontSize: '13px', color: '#d72c0d' }}>
+                  {addError}
+                </div>
+              )}
+              {scanError && <Banner tone="critical" onDismiss={() => setScanError('')}>{scanError}</Banner>}
             </BlockStack>
           </Card>
         </Layout.Section>
@@ -536,55 +670,6 @@ ${barcodeScript}</head><body>${allLabels}</body></html>`;
           </Card>
         </Layout.Section>
       </Layout>
-
-      {/* 手动输入 SKU 弹窗 */}
-      {showTypeIn && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          background: 'rgba(0,0,0,0.6)', zIndex: 3000 }}>
-          <div style={{ position: 'fixed', top: '50%', left: '16px', right: '16px',
-            transform: 'translateY(-50%)', background: 'white', borderRadius: '12px',
-            padding: '24px', maxWidth: '400px', margin: '0 auto', zIndex: 3001 }}>
-            <button onClick={() => setShowTypeIn(false)} style={{ position: 'absolute',
-              top: '12px', right: '12px', background: 'none', border: 'none',
-              fontSize: '20px', cursor: 'pointer' }}>✕</button>
-            <BlockStack gap="300">
-              <Text variant="headingMd" fontWeight="bold">Type in SKU</Text>
-              {typeInError && (
-                <div style={{ background: '#fff4f4', borderRadius: '8px', padding: '10px 14px',
-                  fontSize: '14px', color: '#d72c0d' }}>{typeInError}</div>
-              )}
-              <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: '14px', color: '#202223', fontWeight: '500', marginBottom: '4px' }}>SKU</div>
-                  <input
-                    type="text"
-                    value={typeInValue}
-                    onChange={e => { setTypeInValue(e.target.value); setTypeInError(''); }}
-                    onKeyDown={e => { if (e.key === 'Enter') handleTypeInSubmit(); }}
-                    autoComplete="off" autoFocus
-                    placeholder="Enter exact SKU"
-                    style={{ width: '100%', padding: '10px 12px', fontSize: '16px',
-                      border: '1px solid #c9cccf', borderRadius: '8px',
-                      outline: 'none', boxSizing: 'border-box', display: 'block' }}
-                    onFocus={e => { e.target.style.borderColor = '#005bd3'; }}
-                    onBlur={e => { e.target.style.borderColor = '#c9cccf'; }}
-                  />
-                </div>
-                <button
-                  onClick={handleTypeInSubmit}
-                  disabled={!typeInValue.trim()}
-                  style={{ padding: '10px 18px', borderRadius: '8px', border: 'none',
-                    background: typeInValue.trim() ? '#008060' : '#f6f6f7',
-                    color: typeInValue.trim() ? 'white' : '#8c9196',
-                    cursor: typeInValue.trim() ? 'pointer' : 'not-allowed',
-                    fontSize: '14px', fontWeight: '600', whiteSpace: 'nowrap' }}>
-                  Search
-                </button>
-              </div>
-            </BlockStack>
-          </div>
-        </div>
-      )}
 
       {/* Print modal */}
       <Modal open={showPrint} onClose={() => setShowPrint(false)}
