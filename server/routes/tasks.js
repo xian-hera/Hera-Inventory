@@ -141,6 +141,7 @@ router.post('/negative-inventory', async (req, res) => {
                   node {
                     sku
                     metafield(namespace: "custom", key: "name") { value }
+                    discontinued: metafield(namespace: "custom", key: "discontinued") { value }
                   }
                 }
               }
@@ -160,6 +161,7 @@ router.post('/negative-inventory', async (req, res) => {
       for (const { node: product } of page.edges) {
         for (const { node: variant } of product.variants.edges) {
           if (!variant.sku) continue;
+          if (variant.discontinued?.value === 'true') continue;
           allVariants.push({
             sku: variant.sku,
             name: variant.metafield?.value || product.title,
