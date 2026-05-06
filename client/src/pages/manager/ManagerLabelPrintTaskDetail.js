@@ -349,26 +349,44 @@ function ManagerLabelPrintTaskDetail() {
       const tmpl = await tmplRes.json();
       const selectedItems = items.filter(i => selectedIds.includes(i.id));
 
-      // Collect all metafield keys used in this template
-      const metafieldKeys = (tmpl.elements || [])
-        .filter(el => el.type === 'text')
-        .flatMap(el => el.field_entries || (el.field_key ? [{ fieldKey: el.field_key, metafieldNamespace: el.metafield_namespace, metafieldKey: el.metafield_key }] : []))
-        .filter(fe => fe.fieldKey === 'product.metafield' || fe.fieldKey === 'variant.metafield');
+      // Fetch live variant data for all items at print time.
+      // This ensures fields like price, vendor, product_title etc. are always current,
+      // regardless of whether the item was added via scan or search.
+      const liveDataMap = {};
+      await Promise.all(selectedItems.map(async (item) => {
+        try {
+          const res = await fetch(`/api/shopify/variant-by-sku?sku=${encodeURIComponent(item.sku)}`);
+          if (!res.ok) return;
+          liveDataMap[item.sku] = await res.json();
+        } catch { /* skip — item will print with whatever is stored */ }
+      }));
 
-      // If template uses metafields, fetch full variant data for each item
-      let metafieldMap = {};
-      if (metafieldKeys.length > 0) {
-        await Promise.all(selectedItems.map(async (item) => {
-          try {
-            const res = await fetch(`/api/shopify/variant-by-sku?sku=${encodeURIComponent(item.sku)}`);
-            if (!res.ok) return;
-            const data = await res.json();
-            metafieldMap[item.sku] = data;
-          } catch { /* skip, will show empty */ }
-        }));
-      }
+      // Enrich each item with live Shopify data, falling back to stored values
+      const enrichedItems = selectedItems.map(item => {
+        const live = liveDataMap[item.sku];
+        if (!live) return item;
+        const { variant, product } = live;
+        const customName = variant.metafields?.find(
+          m => m.namespace === CUSTOM_NAME_NAMESPACE && m.key === CUSTOM_NAME_KEY
+        )?.value || item.custom_name || '';
+        return {
+          ...item,
+          product_title:    product.title               || item.product_title,
+          variant_title:    variant.title               || item.variant_title,
+          custom_name:      customName,
+          price:            variant.price               ?? item.price,
+          compare_at_price: variant.compare_at_price    ?? item.compare_at_price,
+          barcode:          variant.barcode             || item.barcode,
+          vendor:           product.vendor              || item.vendor,
+          product_type:     product.product_type        || item.product_type,
+        };
+      });
 
-      const printContent = buildPrintHtml(tmpl, selectedItems, qty, metafieldMap);
+      // metafieldMap reuses liveDataMap for template elements referencing arbitrary metafields
+      const metafieldMap = {};
+      Object.entries(liveDataMap).forEach(([sku, data]) => { metafieldMap[sku] = data; });
+
+      const printContent = buildPrintHtml(tmpl, enrichedItems, qty, metafieldMap);
       const win = window.open('', '_blank');
       if (!win) throw new Error('Pop-up blocked. Please allow pop-ups for this site.');
       win.document.write(printContent);
