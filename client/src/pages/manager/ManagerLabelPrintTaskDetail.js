@@ -551,24 +551,28 @@ ${barcodeScript}</head><body>${allLabels}</body></html>`;
               <Text variant="headingSm">Scan or search to add items</Text>
 
               {/* Search bar */}
-              <div style={{ position: 'relative' }}>
+              <div ref={searchInputRef} style={{ position: 'relative' }}>
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                  <div ref={searchInputRef} style={{ flex: 1, position: 'relative' }}>
-                    <input
-                      type="text"
-                      value={searchQuery}
-                      onChange={e => handleSearchChange(e.target.value)}
-                      onFocus={e => { e.target.style.borderColor = '#005bd3'; if (searchResults.length > 0) setSearchDropOpen(true); }}
-                      onBlur={e => { e.target.style.borderColor = '#c9cccf'; }}
-                    />
-                  </div>
-                  {searchLoading && <Spinner size="small" />}
-                  {!searchLoading && scanLoading && <Spinner size="small" />}
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={e => handleSearchChange(e.target.value)}
+                    onFocus={e => { e.target.style.borderColor = '#005bd3'; if (searchResults.length > 0) setSearchDropOpen(true); }}
+                    onBlur={e => { e.target.style.borderColor = '#c9cccf'; }}
+                    placeholder="Search by name or SKU..."
+                    autoComplete="off"
+                    style={{
+                      flex: 1, padding: '8px 12px',
+                      border: '1px solid #c9cccf', borderRadius: '8px',
+                      fontSize: '14px', outline: 'none', boxSizing: 'border-box',
+                    }}
+                  />
+                  {(searchLoading || scanLoading) && <Spinner size="small" />}
                   <button
                     onClick={handleAddChecked}
                     disabled={searchChecked.length === 0 || addingItems}
                     style={{
-                      padding: '10px 18px', borderRadius: '8px', border: 'none',
+                      padding: '8px 18px', borderRadius: '8px', border: 'none',
                       background: searchChecked.length > 0 && !addingItems ? '#008060' : '#f6f6f7',
                       color: searchChecked.length > 0 && !addingItems ? 'white' : '#8c9196',
                       cursor: searchChecked.length > 0 && !addingItems ? 'pointer' : 'not-allowed',
@@ -591,7 +595,7 @@ ${barcodeScript}</head><body>${allLabels}</body></html>`;
                       background: 'white',
                       border: '1px solid #c9cccf', borderRadius: '8px',
                       boxShadow: '0 4px 16px rgba(0,0,0,0.18)',
-                      maxHeight: '280px', overflowY: 'auto', zIndex: 99999,
+                      maxHeight: '420px', overflowY: 'auto', zIndex: 99999,
                     }}
                   >
                     {searchResults.map(r => {
