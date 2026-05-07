@@ -559,9 +559,9 @@ router.get('/variant-by-sku', async (req, res) => {
             product {
               id title vendor productType
               mainSku: metafield(namespace: "custom", key: "main_sku") { value }
-              metafields(first: 20) { edges { node { namespace key value } } }
+              metafields(first: 50) { edges { node { namespace key value } } }
             }
-            metafields(first: 20) { edges { node { namespace key value } } }
+            metafields(first: 50) { edges { node { namespace key value } } }
           }
         }
       }
@@ -581,9 +581,9 @@ router.get('/variant-by-sku', async (req, res) => {
               id title sku price compareAtPrice barcode
               product {
                 id title vendor productType
-                metafields(first: 20) { edges { node { namespace key value } } }
+                metafields(first: 50) { edges { node { namespace key value } } }
               }
-              metafields(first: 20) { edges { node { namespace key value } } }
+              metafields(first: 50) { edges { node { namespace key value } } }
             }
           }
         }
