@@ -379,7 +379,7 @@ router.get('/search', async (req, res) => {
           edges {
             node {
               id title productType
-              variants(first: 10) {
+              variants(first: 100) {
                 edges {
                   node {
                     id sku barcode
