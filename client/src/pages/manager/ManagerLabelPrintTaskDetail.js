@@ -64,6 +64,8 @@ function ManagerLabelPrintTaskDetail() {
   const [printError, setPrintError]         = useState('');
   const [deleteItemId, setDeleteItemId]     = useState(null);
   const [deleteLoading, setDeleteLoading]   = useState(false);
+  const [showDeleteSelected, setShowDeleteSelected] = useState(false);
+  const [deleteSelectedLoading, setDeleteSelectedLoading] = useState(false);
 
   const barcodeBuffer  = useRef('');
   const barcodeTimer   = useRef(null);
@@ -289,6 +291,25 @@ function ManagerLabelPrintTaskDetail() {
       setScanError('Failed to delete item.');
     } finally {
       setDeleteLoading(false);
+    }
+  };
+
+  const handleDeleteSelected = async () => {
+    if (selectedIds.length === 0) return;
+    setDeleteSelectedLoading(true);
+    try {
+      await Promise.all(
+        selectedIds.map(id =>
+          fetch(`/api/label-print-tasks/${taskId}/items/${id}`, { method: 'DELETE' })
+        )
+      );
+      setItems(prev => prev.filter(i => !selectedIds.includes(i.id)));
+      setSelectedIds([]);
+      setShowDeleteSelected(false);
+    } catch (e) {
+      setScanError('Failed to delete selected items.');
+    } finally {
+      setDeleteSelectedLoading(false);
     }
   };
 
@@ -666,6 +687,13 @@ ${barcodeScript}</head><body>${allLabels}</body></html>`;
         <Layout.Section>
           <InlineStack gap="300" align="end">
             <Button
+              tone="critical"
+              disabled={selectedIds.length === 0}
+              onClick={() => setShowDeleteSelected(true)}
+            >
+              {selectedIds.length > 0 ? `Delete selected (${selectedIds.length})` : 'Delete selected'}
+            </Button>
+            <Button
               disabled={selectedIds.length === 0}
               onClick={openPrintModal}
             >
@@ -754,6 +782,24 @@ ${barcodeScript}</head><body>${allLabels}</body></html>`;
         secondaryActions={[{ content: 'Cancel', onAction: () => setDeleteItemId(null) }]}>
         <Modal.Section>
           <Text>Remove this item from the print task?</Text>
+        </Modal.Section>
+      </Modal>
+
+      {/* Delete selected confirm */}
+      <Modal
+        open={showDeleteSelected}
+        onClose={() => setShowDeleteSelected(false)}
+        title={`Remove ${selectedIds.length} item${selectedIds.length !== 1 ? 's' : ''}`}
+        primaryAction={{
+          content: 'Remove',
+          destructive: true,
+          onAction: handleDeleteSelected,
+          loading: deleteSelectedLoading,
+        }}
+        secondaryActions={[{ content: 'Cancel', onAction: () => setShowDeleteSelected(false) }]}
+      >
+        <Modal.Section>
+          <Text>Remove {selectedIds.length} selected item{selectedIds.length !== 1 ? 's' : ''} from the print task?</Text>
         </Modal.Section>
       </Modal>
     </Page>
