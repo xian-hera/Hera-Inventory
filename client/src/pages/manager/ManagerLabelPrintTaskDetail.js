@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import ReactDOM from 'react-dom';
 import {
   Page, Layout, Card, Button, BlockStack, InlineStack,
   Text, Banner, Spinner, TextField, Modal, Select, Checkbox,
@@ -43,17 +42,9 @@ function ManagerLabelPrintTaskDetail() {
   const [scanError, setScanError]     = useState('');
   const [selectedIds, setSelectedIds] = useState([]);
 
-  const [searchQuery, setSearchQuery]     = useState('');
-  const [searchResults, setSearchResults] = useState([]);
-  const [searchLoading, setSearchLoading] = useState(false);
-  const [searchChecked, setSearchChecked] = useState([]);
-  const [searchDropOpen, setSearchDropOpen] = useState(false);
-  const [dropdownPos, setDropdownPos]     = useState({ top: 0, left: 0, width: 0 });
-  const [addingItems, setAddingItems]     = useState(false);
-  const [addError, setAddError]           = useState('');
-
-  const searchInputRef = useRef(null);
-  const searchDropRef  = useRef(null);
+  const [showTypeIn, setShowTypeIn] = useState(false);
+  const [typeInValue, setTypeInValue] = useState('');
+  const [typeInError, setTypeInError] = useState('');
 
   const [showPrint, setShowPrint]           = useState(false);
   const [templates, setTemplates]           = useState([]);
@@ -64,38 +55,14 @@ function ManagerLabelPrintTaskDetail() {
   const [printError, setPrintError]         = useState('');
   const [deleteItemId, setDeleteItemId]     = useState(null);
   const [deleteLoading, setDeleteLoading]   = useState(false);
-  const [showDeleteSelected, setShowDeleteSelected] = useState(false);
-  const [deleteSelectedLoading, setDeleteSelectedLoading] = useState(false);
 
-  const barcodeBuffer  = useRef('');
-  const barcodeTimer   = useRef(null);
-  const itemsRef       = useRef(items);
-  const searchDebounce = useRef(null);
-
-  // Update dropdown position whenever it opens or results change
-  useEffect(() => {
-    if (searchDropOpen && searchInputRef.current) {
-      const rect = searchInputRef.current.getBoundingClientRect();
-      setDropdownPos({ top: rect.bottom + 4, left: rect.left, width: rect.width });
-    }
-  }, [searchDropOpen, searchResults]);
-
-  // Close dropdown on outside click
-  useEffect(() => {
-    if (!searchDropOpen) return;
-    const handleMouseDown = (e) => {
-      if (
-        searchInputRef.current && !searchInputRef.current.contains(e.target) &&
-        searchDropRef.current && !searchDropRef.current.contains(e.target)
-      ) {
-        setSearchDropOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleMouseDown);
-    return () => document.removeEventListener('mousedown', handleMouseDown);
-  }, [searchDropOpen]);
+  const barcodeBuffer = useRef('');
+  const barcodeTimer  = useRef(null);
+  const itemsRef      = useRef(items);
+  const showTypeInRef = useRef(false);
 
   useEffect(() => { itemsRef.current = items; }, [items]);
+  useEffect(() => { showTypeInRef.current = showTypeIn; }, [showTypeIn]);
 
   const fetchTask = useCallback(async () => {
     setLoading(true);
@@ -120,6 +87,7 @@ function ManagerLabelPrintTaskDetail() {
 
   useEffect(() => {
     const handleKeyDown = (e) => {
+      if (showTypeInRef.current) return;
       const activeTag = document.activeElement?.tagName;
       if (['INPUT', 'TEXTAREA'].includes(activeTag)) return;
 
@@ -195,73 +163,16 @@ function ManagerLabelPrintTaskDetail() {
     }
   };
 
-  // Search with debounce
-  const handleSearchChange = (value) => {
-    setSearchQuery(value);
-    setAddError('');
-    clearTimeout(searchDebounce.current);
-    if (value.trim().length < 2) {
-      setSearchResults([]);
-      setSearchChecked([]);
-      setSearchDropOpen(false);
-      return;
-    }
-    searchDebounce.current = setTimeout(async () => {
-      setSearchLoading(true);
-      try {
-        const params = new URLSearchParams({ q: value.trim() });
-        const res = await fetch(`/api/shopify/search?${params.toString()}`);
-        if (!res.ok) throw new Error('Search failed');
-        const data = await res.json();
-        setSearchResults(data.slice(0, 30));
-        setSearchDropOpen(true);
-      } catch (e) {
-        setSearchResults([]);
-        setSearchDropOpen(false);
-      } finally {
-        setSearchLoading(false);
-      }
-    }, 400);
-  };
-
-  const toggleSearchCheck = (variantId) => {
-    setSearchChecked(prev =>
-      prev.includes(variantId) ? prev.filter(x => x !== variantId) : [...prev, variantId]
-    );
-  };
-
-  const handleAddChecked = async () => {
-    const toAdd = searchResults.filter(r => searchChecked.includes(r.variantId));
-    if (toAdd.length === 0) return;
-    setAddingItems(true);
-    setAddError('');
+  const handleTypeInSubmit = async () => {
+    const sku = typeInValue.trim();
+    if (!sku) return;
+    setTypeInError('');
     try {
-      for (const item of toAdd) {
-        const sku = item.barcode; // barcode === sku in this store
-        // Skip if already in list
-        if (itemsRef.current.find(i => i.sku === sku)) continue;
-        const res = await fetch(`/api/label-print-tasks/${taskId}/items`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            variant_id: item.variantId,
-            sku,
-            custom_name: item.name,
-            qty_to_print: 1,
-          }),
-        });
-        if (!res.ok) throw new Error('Failed to add item');
-        const newItem = await res.json();
-        setItems(prev => [newItem, ...prev]);
-      }
-      setSearchChecked([]);
-      setSearchQuery('');
-      setSearchResults([]);
-      setSearchDropOpen(false);
+      await addBySku(sku);
+      setTypeInValue('');
+      setShowTypeIn(false);
     } catch (e) {
-      setAddError(e.message);
-    } finally {
-      setAddingItems(false);
+      setTypeInError(e.message);
     }
   };
 
@@ -291,25 +202,6 @@ function ManagerLabelPrintTaskDetail() {
       setScanError('Failed to delete item.');
     } finally {
       setDeleteLoading(false);
-    }
-  };
-
-  const handleDeleteSelected = async () => {
-    if (selectedIds.length === 0) return;
-    setDeleteSelectedLoading(true);
-    try {
-      await Promise.all(
-        selectedIds.map(id =>
-          fetch(`/api/label-print-tasks/${taskId}/items/${id}`, { method: 'DELETE' })
-        )
-      );
-      setItems(prev => prev.filter(i => !selectedIds.includes(i.id)));
-      setSelectedIds([]);
-      setShowDeleteSelected(false);
-    } catch (e) {
-      setScanError('Failed to delete selected items.');
-    } finally {
-      setDeleteSelectedLoading(false);
     }
   };
 
@@ -370,44 +262,26 @@ function ManagerLabelPrintTaskDetail() {
       const tmpl = await tmplRes.json();
       const selectedItems = items.filter(i => selectedIds.includes(i.id));
 
-      // Fetch live variant data for all items at print time.
-      // This ensures fields like price, vendor, product_title etc. are always current,
-      // regardless of whether the item was added via scan or search.
-      const liveDataMap = {};
-      await Promise.all(selectedItems.map(async (item) => {
-        try {
-          const res = await fetch(`/api/shopify/variant-by-sku?sku=${encodeURIComponent(item.sku)}`);
-          if (!res.ok) return;
-          liveDataMap[item.sku] = await res.json();
-        } catch { /* skip — item will print with whatever is stored */ }
-      }));
+      // Collect all metafield keys used in this template
+      const metafieldKeys = (tmpl.elements || [])
+        .filter(el => el.type === 'text')
+        .flatMap(el => el.field_entries || (el.field_key ? [{ fieldKey: el.field_key, metafieldNamespace: el.metafield_namespace, metafieldKey: el.metafield_key }] : []))
+        .filter(fe => fe.fieldKey === 'product.metafield' || fe.fieldKey === 'variant.metafield');
 
-      // Enrich each item with live Shopify data, falling back to stored values
-      const enrichedItems = selectedItems.map(item => {
-        const live = liveDataMap[item.sku];
-        if (!live) return item;
-        const { variant, product } = live;
-        const customName = variant.metafields?.find(
-          m => m.namespace === CUSTOM_NAME_NAMESPACE && m.key === CUSTOM_NAME_KEY
-        )?.value || item.custom_name || '';
-        return {
-          ...item,
-          product_title:    product.title               || item.product_title,
-          variant_title:    variant.title               || item.variant_title,
-          custom_name:      customName,
-          price:            variant.price               ?? item.price,
-          compare_at_price: variant.compare_at_price    ?? item.compare_at_price,
-          barcode:          variant.barcode             || item.barcode,
-          vendor:           product.vendor              || item.vendor,
-          product_type:     product.product_type        || item.product_type,
-        };
-      });
+      // If template uses metafields, fetch full variant data for each item
+      let metafieldMap = {};
+      if (metafieldKeys.length > 0) {
+        await Promise.all(selectedItems.map(async (item) => {
+          try {
+            const res = await fetch(`/api/shopify/variant-by-sku?sku=${encodeURIComponent(item.sku)}`);
+            if (!res.ok) return;
+            const data = await res.json();
+            metafieldMap[item.sku] = data;
+          } catch { /* skip, will show empty */ }
+        }));
+      }
 
-      // metafieldMap reuses liveDataMap for template elements referencing arbitrary metafields
-      const metafieldMap = {};
-      Object.entries(liveDataMap).forEach(([sku, data]) => { metafieldMap[sku] = data; });
-
-      const printContent = buildPrintHtml(tmpl, enrichedItems, qty, metafieldMap);
+      const printContent = buildPrintHtml(tmpl, selectedItems, qty, metafieldMap);
       const win = window.open('', '_blank');
       if (!win) throw new Error('Pop-up blocked. Please allow pop-ups for this site.');
       win.document.write(printContent);
@@ -487,7 +361,7 @@ function ManagerLabelPrintTaskDetail() {
           const align = el.align || 'left';
           const decoration = el.underline ? 'underline' : el.linethrough ? 'line-through' : 'none';
           // Fixed box position; text wraps within width, clamped to 2 lines, rest hidden.
-          const textStyle = `position:absolute;left:${left}px;top:${top}px;width:${width}px;height:${height}px;box-sizing:border-box;${rotateStyle}font-size:${fs}px;font-weight:${fw};text-align:${align};font-family:sans-serif;text-decoration:${decoration};line-height:1.2;word-wrap:break-word;overflow-wrap:break-word;white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;`;
+          const textStyle = `position:absolute;left:${left}px;top:${top}px;width:${width}px;height:${height}px;box-sizing:border-box;${rotateStyle}font-size:${fs}px;font-weight:${fw};text-align:${align};font-family:sans-serif;text-decoration:${decoration};line-height:1.2;word-wrap:break-word;overflow-wrap:break-word;white-space:normal;overflow:hidden;`;
           return `<div style="${textStyle}">${displayValue}</div>`;
         }
 
@@ -514,7 +388,27 @@ function ManagerLabelPrintTaskDetail() {
         }
 
         if (el.type === 'svg' && el.svg_data) {
-          return `<div style="${baseStyle}">${el.svg_data}</div>`;
+          // Inject viewBox (from original width/height) and scale SVG to fill the container,
+          // preserving aspect ratio — mirrors Fabric.js editor behaviour.
+          const scaledSvg = el.svg_data.replace(
+            /<svg([^>]*)>/,
+            (match, attrs) => {
+              // Extract original width and height to build viewBox
+              const wMatch = attrs.match(/width=["\']([\.\d]+)["\']/) ;
+              const hMatch = attrs.match(/height=["\']([\.\d]+)["\']/) ;
+              const vbMatch = attrs.match(/viewBox=/);
+              const vw = wMatch ? wMatch[1] : null;
+              const vh = hMatch ? hMatch[1] : null;
+              // Build new attribute string: remove old w/h, add viewBox if missing, set 100% size
+              let newAttrs = attrs
+                .replace(/\s*width=["\'"][^\"']*["\']/g, '')
+                .replace(/\s*height=["\'"][^\"']*["\']/g, '');
+              if (!vbMatch && vw && vh) newAttrs += ` viewBox="0 0 ${vw} ${vh}"`;
+              return `<svg${newAttrs} width="100%" height="100%" preserveAspectRatio="xMidYMid meet">`;
+            }
+          );
+          const svgContainerStyle = `position:absolute;left:${left}px;top:${top}px;width:${width}px;height:${height}px;box-sizing:border-box;${rotateStyle}`;
+          return `<div style="${svgContainerStyle}">${scaledSvg}</div>`;
         }
 
         return '';
@@ -585,114 +479,23 @@ ${barcodeScript}</head><body>${allLabels}</body></html>`;
     >
       <Layout>
         <Layout.Section>
+          {scanError && <Banner tone="critical" onDismiss={() => setScanError('')}>{scanError}</Banner>}
+
           <Card>
-            <BlockStack gap="300">
-              <Text variant="headingSm">Scan or search to add items</Text>
-
-              {/* Search bar */}
-              <div ref={searchInputRef} style={{ position: 'relative' }}>
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={e => handleSearchChange(e.target.value)}
-                    onFocus={e => { e.target.style.borderColor = '#005bd3'; if (searchResults.length > 0) setSearchDropOpen(true); }}
-                    onBlur={e => { e.target.style.borderColor = '#c9cccf'; }}
-                    placeholder="Search by name or SKU..."
-                    autoComplete="off"
-                    style={{
-                      flex: 1, padding: '8px 12px',
-                      border: '1px solid #c9cccf', borderRadius: '8px',
-                      fontSize: '14px', outline: 'none', boxSizing: 'border-box',
-                    }}
-                  />
-                  {(searchLoading || scanLoading) && <Spinner size="small" />}
-                  <button
-                    onClick={handleAddChecked}
-                    disabled={searchChecked.length === 0 || addingItems}
-                    style={{
-                      padding: '8px 18px', borderRadius: '8px', border: 'none',
-                      background: searchChecked.length > 0 && !addingItems ? '#008060' : '#f6f6f7',
-                      color: searchChecked.length > 0 && !addingItems ? 'white' : '#8c9196',
-                      cursor: searchChecked.length > 0 && !addingItems ? 'pointer' : 'not-allowed',
-                      fontSize: '14px', fontWeight: '600', whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {addingItems ? 'Adding…' : searchChecked.length > 0 ? `Add (${searchChecked.length})` : 'Add'}
-                  </button>
-                </div>
-
-                {/* Dropdown results — rendered via portal to escape Card overflow:hidden */}
-                {searchDropOpen && searchResults.length > 0 && ReactDOM.createPortal(
-                  <div
-                    ref={searchDropRef}
-                    style={{
-                      position: 'fixed',
-                      top: dropdownPos.top,
-                      left: dropdownPos.left,
-                      width: dropdownPos.width,
-                      background: 'white',
-                      border: '1px solid #c9cccf', borderRadius: '8px',
-                      boxShadow: '0 4px 16px rgba(0,0,0,0.18)',
-                      maxHeight: '420px', overflowY: 'auto', zIndex: 99999,
-                    }}
-                  >
-                    {searchResults.map(r => {
-                      const checked = searchChecked.includes(r.variantId);
-                      const alreadyAdded = !!itemsRef.current.find(i => i.sku === r.barcode);
-                      return (
-                        <div
-                          key={r.variantId}
-                          onClick={() => toggleSearchCheck(r.variantId)}
-                          style={{
-                            padding: '10px 12px', cursor: 'pointer',
-                            display: 'flex', alignItems: 'center', gap: '8px',
-                            background: checked ? '#f1f8f5' : 'white',
-                            borderBottom: '1px solid #f1f3f5',
-                          }}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={() => {}}
-                            style={{ cursor: 'pointer', flexShrink: 0 }}
-                          />
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: '14px', fontWeight: '500', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                              {r.name}
-                            </div>
-                            <div style={{ fontSize: '12px', color: '#6d7175' }}>{r.barcode}</div>
-                          </div>
-                          {alreadyAdded && (
-                            <span style={{ color: '#008060', fontSize: '12px', fontWeight: '600', flexShrink: 0 }}>✓ Added</span>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>,
-                  document.body
-                )}
-              </div>
-
-              {addError && (
-                <div style={{ background: '#fff4f4', borderRadius: '8px', padding: '8px 12px', fontSize: '13px', color: '#d72c0d' }}>
-                  {addError}
-                </div>
-              )}
-              {scanError && <Banner tone="critical" onDismiss={() => setScanError('')}>{scanError}</Banner>}
+            <BlockStack gap="200">
+              <Text variant="headingSm">Scan or enter SKU</Text>
+              <InlineStack gap="200" blockAlign="center">
+                <Button onClick={() => { setTypeInValue(''); setTypeInError(''); setShowTypeIn(true); }}>
+                  Type in SKU
+                </Button>
+                {scanLoading && <Spinner size="small" />}
+              </InlineStack>
             </BlockStack>
           </Card>
         </Layout.Section>
 
         <Layout.Section>
           <InlineStack gap="300" align="end">
-            <Button
-              tone="critical"
-              disabled={selectedIds.length === 0}
-              onClick={() => setShowDeleteSelected(true)}
-            >
-              {selectedIds.length > 0 ? `Delete selected (${selectedIds.length})` : 'Delete selected'}
-            </Button>
             <Button
               disabled={selectedIds.length === 0}
               onClick={openPrintModal}
@@ -754,6 +557,55 @@ ${barcodeScript}</head><body>${allLabels}</body></html>`;
         </Layout.Section>
       </Layout>
 
+      {/* 手动输入 SKU 弹窗 */}
+      {showTypeIn && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.6)', zIndex: 3000 }}>
+          <div style={{ position: 'fixed', top: '50%', left: '16px', right: '16px',
+            transform: 'translateY(-50%)', background: 'white', borderRadius: '12px',
+            padding: '24px', maxWidth: '400px', margin: '0 auto', zIndex: 3001 }}>
+            <button onClick={() => setShowTypeIn(false)} style={{ position: 'absolute',
+              top: '12px', right: '12px', background: 'none', border: 'none',
+              fontSize: '20px', cursor: 'pointer' }}>✕</button>
+            <BlockStack gap="300">
+              <Text variant="headingMd" fontWeight="bold">Type in SKU</Text>
+              {typeInError && (
+                <div style={{ background: '#fff4f4', borderRadius: '8px', padding: '10px 14px',
+                  fontSize: '14px', color: '#d72c0d' }}>{typeInError}</div>
+              )}
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: '14px', color: '#202223', fontWeight: '500', marginBottom: '4px' }}>SKU</div>
+                  <input
+                    type="text"
+                    value={typeInValue}
+                    onChange={e => { setTypeInValue(e.target.value); setTypeInError(''); }}
+                    onKeyDown={e => { if (e.key === 'Enter') handleTypeInSubmit(); }}
+                    autoComplete="off" autoFocus
+                    placeholder="Enter exact SKU"
+                    style={{ width: '100%', padding: '10px 12px', fontSize: '16px',
+                      border: '1px solid #c9cccf', borderRadius: '8px',
+                      outline: 'none', boxSizing: 'border-box', display: 'block' }}
+                    onFocus={e => { e.target.style.borderColor = '#005bd3'; }}
+                    onBlur={e => { e.target.style.borderColor = '#c9cccf'; }}
+                  />
+                </div>
+                <button
+                  onClick={handleTypeInSubmit}
+                  disabled={!typeInValue.trim()}
+                  style={{ padding: '10px 18px', borderRadius: '8px', border: 'none',
+                    background: typeInValue.trim() ? '#008060' : '#f6f6f7',
+                    color: typeInValue.trim() ? 'white' : '#8c9196',
+                    cursor: typeInValue.trim() ? 'pointer' : 'not-allowed',
+                    fontSize: '14px', fontWeight: '600', whiteSpace: 'nowrap' }}>
+                  Search
+                </button>
+              </div>
+            </BlockStack>
+          </div>
+        </div>
+      )}
+
       {/* Print modal */}
       <Modal open={showPrint} onClose={() => setShowPrint(false)}
         title={`Print ${selectedIds.length} item${selectedIds.length !== 1 ? 's' : ''}`}
@@ -782,24 +634,6 @@ ${barcodeScript}</head><body>${allLabels}</body></html>`;
         secondaryActions={[{ content: 'Cancel', onAction: () => setDeleteItemId(null) }]}>
         <Modal.Section>
           <Text>Remove this item from the print task?</Text>
-        </Modal.Section>
-      </Modal>
-
-      {/* Delete selected confirm */}
-      <Modal
-        open={showDeleteSelected}
-        onClose={() => setShowDeleteSelected(false)}
-        title={`Remove ${selectedIds.length} item${selectedIds.length !== 1 ? 's' : ''}`}
-        primaryAction={{
-          content: 'Remove',
-          destructive: true,
-          onAction: handleDeleteSelected,
-          loading: deleteSelectedLoading,
-        }}
-        secondaryActions={[{ content: 'Cancel', onAction: () => setShowDeleteSelected(false) }]}
-      >
-        <Modal.Section>
-          <Text>Remove {selectedIds.length} selected item{selectedIds.length !== 1 ? 's' : ''} from the print task?</Text>
         </Modal.Section>
       </Modal>
     </Page>
