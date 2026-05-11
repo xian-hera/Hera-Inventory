@@ -618,10 +618,10 @@ function BuyerLabelEditor() {
             <div style={{ width: 1, height: 24, background: '#e1e3e5', margin: '0 4px' }} />
 
             {selType === 'text' && !multiSelected && <>
-              {['left','center','right'].map(a => (
+              {['left','center','right','justify'].map(a => (
                 <ToolBtn key={a} title={`Align ${a}`} active={sel.textAlign === a}
                   onClick={() => updateSelected({ align: a })}>
-                  {a === 'left' ? '⬡' : a === 'center' ? '☰' : '⬠'}
+                  {a === 'left' ? '⬡' : a === 'center' ? '☰' : a === 'right' ? '⬠' : '▤'}
                 </ToolBtn>
               ))}
               <div style={{ width: 1, height: 24, background: '#e1e3e5', margin: '0 4px' }} />
