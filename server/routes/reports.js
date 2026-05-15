@@ -150,6 +150,26 @@ router.patch('/:id/commit', async (req, res) => {
 
 // Shared commit helper
 // 改动五.3：接受可选的 adjustment 参数，覆盖默认的 poh - soh
+async function shopifyRequest(fn, retries = 3) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      const is429 =
+        e?.response?.status === 429 ||
+        e?.message?.includes("throttled") ||
+        e?.message?.includes("Throttled");
+      if (is429 && i < retries - 1) {
+        const wait = (i + 1) * 1000;
+        console.log(`Rate limited, retrying in ${wait}ms...`);
+        await new Promise(r => setTimeout(r, wait));
+        continue;
+      }
+      throw e;
+    }
+  }
+}
+
 async function commitReport(id, customAdjustment) {
   const report = await pool.query('SELECT * FROM zero_qty_reports WHERE id = $1', [id]);
   if (report.rows.length === 0) throw new Error('Report not found');
@@ -166,26 +186,54 @@ async function commitReport(id, customAdjustment) {
     const shopify = getShopify();
     const client = new shopify.clients.Graphql({ session });
 
-    const variantRes = await client.query({
-      data: `{ productVariants(first: 1, query: "barcode:${r.barcode}") {
-        edges { node { inventoryItem { id } } }
-      } }`
-    });
-    const invItemId = variantRes.body.data.productVariants.edges[0]?.node?.inventoryItem?.id;
-    if (invItemId) {
-      const newOnHand = r.soh + delta;
-      await client.query({
-        data: `mutation {
+    // Step 1: fetch inventoryItem id and current on_hand in a single query
+    const variantRes = await shopifyRequest(() =>
+      client.request(`{
+        productVariants(first: 1, query: "barcode:${r.barcode}") {
+          edges {
+            node {
+              inventoryItem {
+                id
+                inventoryLevel(locationId: "${r.shopify_location_id}") {
+                  quantities(names: ["on_hand"]) { name quantity }
+                }
+              }
+            }
+          }
+        }
+      }`)
+    );
+    const inventoryItem = variantRes.data?.productVariants?.edges[0]?.node?.inventoryItem;
+    const invItemId = inventoryItem?.id;
+    if (!invItemId) throw new Error(`Barcode ${r.barcode}: inventory item not found in Shopify`);
+
+    // Step 2: compute new on_hand by applying delta to current on_hand
+    const currentOnHand = inventoryItem?.inventoryLevel?.quantities?.find(q => q.name === "on_hand")?.quantity ?? null;
+    if (currentOnHand === null) throw new Error(`Barcode ${r.barcode}: could not read current on_hand from Shopify`);
+    const newOnHand = currentOnHand + delta;
+
+    // Step 3: set new on_hand as absolute value with compare-and-swap
+    const setRes = await shopifyRequest(() =>
+      client.request(`
+        mutation {
           inventorySetOnHandQuantities(input: {
             reason: "cycle_count_available",
             setQuantities: [{
               inventoryItemId: "${invItemId}",
               locationId: "${r.shopify_location_id}",
-              quantity: ${newOnHand}
+              quantity: ${newOnHand},
+              changeFromQuantity: ${currentOnHand}
             }]
-          }) { userErrors { field message } }
-        }`
-      });
+          }) {
+            userErrors { field message }
+          }
+        }
+      `)
+    );
+
+    const userErrors = setRes.data?.inventorySetOnHandQuantities?.userErrors;
+    if (userErrors && userErrors.length > 0) {
+      throw new Error(`Barcode ${r.barcode}: ${userErrors.map(e => e.message).join(", ")}`);
     }
   }
 
