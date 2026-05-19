@@ -510,7 +510,23 @@ function ManagerLabelPrintTaskDetail() {
         }
 
         if (el.type === 'svg' && el.svg_data) {
-          return `<div style="${baseStyle}">${el.svg_data}</div>`;
+          const scaledSvg = el.svg_data.replace(
+            /<svg([^>]*)>/,
+            (match, attrs) => {
+              const wMatch = attrs.match(/width=["']([\.\d]+)["']/);
+              const hMatch = attrs.match(/height=["']([\.\d]+)["']/);
+              const vbMatch = attrs.match(/viewBox=/);
+              const vw = wMatch ? wMatch[1] : null;
+              const vh = hMatch ? hMatch[1] : null;
+              let newAttrs = attrs
+                .replace(/\s*width=["'][^"']*["']/g, '')
+                .replace(/\s*height=["'][^"']*["']/g, '');
+              if (!vbMatch && vw && vh) newAttrs += ` viewBox="0 0 ${vw} ${vh}"`;
+              return `<svg${newAttrs} width="100%" height="100%" preserveAspectRatio="xMidYMid meet">`;
+            }
+          );
+          const svgContainerStyle = `position:absolute;left:${left}px;top:${top}px;width:${width}px;height:${height}px;box-sizing:border-box;${rotateStyle}`;
+          return `<div style="${svgContainerStyle}">${scaledSvg}</div>`;
         }
 
         return '';
