@@ -685,7 +685,7 @@ router.post('/commission/calculate', async (req, res) => {
             if (effectiveFrom >= effectiveTo) return;
 
             const gid = `gid://shopify/Customer/${binding.customer_shopify_id}`;
-            const queryStr = `created_at:>='${effectiveFrom}' created_at:<='${effectiveTo}' financial_status:paid`;
+            const queryStr = `created_at:>='${effectiveFrom}' created_at:<='${effectiveTo}'`;
 
             const response = await shopifyRequest(client, ordersQuery, { id: gid, query: queryStr });
             const edges = response.data?.customer?.orders?.edges || [];
@@ -1206,7 +1206,7 @@ router.post('/:id/statistics', async (req, res) => {
         if (effectiveFrom >= effectiveTo) return;
 
         const gid = `gid://shopify/Customer/${binding.customer_shopify_id}`;
-        const queryStr = `created_at:>='${effectiveFrom}' created_at:<='${effectiveTo}' financial_status:paid`;
+        const queryStr = `created_at:>='${effectiveFrom}' created_at:<='${effectiveTo}'`;
 
         const response = await shopifyRequest(client, ordersQuery, { id: gid, query: queryStr });
         const edges = response.data?.customer?.orders?.edges || [];
