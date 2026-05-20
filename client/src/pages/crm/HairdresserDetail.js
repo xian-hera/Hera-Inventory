@@ -254,11 +254,13 @@ function HairdresserDetail() {
   // ── Activity label ────────────────────────────────────────────────────────
   const formatActivityAction = (action, detail) => {
     switch (action) {
-      case 'created':            return 'Hairdresser created';
+      case 'created':              return 'Hairdresser created';
       case 'first_link_generated': return 'First referral link and QR code generated';
-      case 'note_added':         return `Note added: "${detail}"`;
-      case 'note_deleted':       return `Note deleted: "${detail}"`;
-      default:                   return action;
+      case 'bulk_link_generated':  return 'Referral link bulk generated';
+      case 'commission_paid':      return detail || 'Commission paid';
+      case 'note_added':           return `Note added: "${detail}"`;
+      case 'note_deleted':         return `Note deleted: "${detail}"`;
+      default:                     return action;
     }
   };
 

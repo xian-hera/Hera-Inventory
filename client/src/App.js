@@ -31,6 +31,7 @@ import CRMHome from './pages/crm/CRMHome';
 import CRMSettings from './pages/crm/CRMSettings';
 import HairdresserList from './pages/crm/HairdresserList';
 import HairdresserDetail from './pages/crm/HairdresserDetail';
+import SettleCommissions from './pages/crm/SettleCommissions';
 import BirthdayReward from './pages/crm/BirthdayReward';
 import BirthdaySubscribers from './pages/crm/BirthdaySubscribers';
 import InfluencerList from './pages/crm/InfluencerList';
@@ -75,6 +76,8 @@ function App() {
           <Route path="/crm" element={<CRMHome />} />
           <Route path="/crm/settings" element={<CRMSettings />} />
           <Route path="/crm/hairdressers" element={<HairdresserList />} />
+          {/* SettleCommissions must be before /:id to avoid route conflict */}
+          <Route path="/crm/hairdressers/settle-commissions" element={<SettleCommissions />} />
           <Route path="/crm/hairdressers/:id" element={<HairdresserDetail />} />
           <Route path="/crm/birthday-reward" element={<BirthdayReward />} />
           <Route path="/crm/birthday-reward/subscribers" element={<BirthdaySubscribers />} />
