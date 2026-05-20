@@ -705,7 +705,7 @@ router.post('/commission/calculate', async (req, res) => {
             }
 
             edges.forEach(({ node }) => {
-              if (node.displayFinancialStatus !== 'Paid') return;
+              if (node.displayFinancialStatus !== 'PAID') return;
               // Sum line items, excluding gift cards
               node.lineItems.edges.forEach(({ node: item }) => {
                 if (item.isGiftCard) return;
