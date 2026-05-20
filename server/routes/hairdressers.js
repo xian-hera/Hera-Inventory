@@ -500,6 +500,81 @@ router.post('/bulk-generate-links', async (req, res) => {
   }
 });
 
+// ── DELETE /api/hairdressers/unbind-all ──────────────────────────────────────
+// Unbind ALL customers from ALL hairdressers
+// Soft-deletes all active bindings and removes hairdresser_ tags from Shopify
+router.delete('/unbind-all', async (req, res) => {
+  const dbClient = await pool.connect();
+  try {
+    // Get all hairdressers that have at least one active binding
+    const hdRes = await dbClient.query(`
+      SELECT DISTINCT h.id, h.name
+      FROM hairdressers h
+      INNER JOIN customer_bindings cb ON cb.hairdresser_id = h.id AND cb.unbound_at IS NULL
+    `);
+
+    if (hdRes.rows.length === 0) {
+      return res.json({ success: true, unbound: 0 });
+    }
+
+    let totalUnbound = 0;
+
+    const client = await getClient();
+    const tagQuery = `query getCustomerTags($id: ID!) { customer(id: $id) { tags } }`;
+    const mutation = `
+      mutation updateCustomer($input: CustomerInput!) {
+        customerUpdate(input: $input) {
+          customer { id tags }
+          userErrors { field message }
+        }
+      }
+    `;
+
+    for (const h of hdRes.rows) {
+      try {
+        const tag = buildTag(h.name);
+
+        // Collect currently bound customer IDs for this hairdresser
+        const bindRes = await dbClient.query(
+          `SELECT DISTINCT customer_shopify_id FROM customer_bindings
+           WHERE hairdresser_id = $1 AND unbound_at IS NULL`,
+          [h.id]
+        );
+        const customerIds = bindRes.rows.map(r => r.customer_shopify_id);
+
+        // Soft-delete all active bindings for this hairdresser
+        await dbClient.query(
+          `UPDATE customer_bindings SET unbound_at = NOW()
+           WHERE hairdresser_id = $1 AND unbound_at IS NULL`,
+          [h.id]
+        );
+
+        totalUnbound += customerIds.length;
+
+        // Remove Shopify tags — best-effort
+        await Promise.allSettled(
+          customerIds.map(async (customerId) => {
+            const gid = `gid://shopify/Customer/${customerId}`;
+            const tagRes = await shopifyRequest(client, tagQuery, { id: gid });
+            const currentTags = tagRes.data?.customer?.tags || [];
+            const updatedTags = currentTags.filter(t => t !== tag);
+            await shopifyRequest(client, mutation, { input: { id: gid, tags: updatedTags } });
+          })
+        );
+      } catch (e) {
+        console.error(`unbind-all: failed for hairdresser ${h.id}:`, e);
+      }
+    }
+
+    res.json({ success: true, unbound: totalUnbound });
+  } catch (e) {
+    console.error('DELETE /api/hairdressers/unbind-all error:', e);
+    res.status(500).json({ error: e.message });
+  } finally {
+    dbClient.release();
+  }
+});
+
 // ── GET /api/hairdressers/commission/settings ─────────────────────────────────
 router.get('/commission/settings', async (req, res) => {
   try {

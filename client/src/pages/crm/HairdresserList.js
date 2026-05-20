@@ -38,6 +38,11 @@ function HairdresserList() {
   const [bulkGenerateResult, setBulkGenerateResult] = useState(null); // { generated, message }
   const [showBulkModal, setShowBulkModal]           = useState(false);
 
+  // Unbind all customers (global)
+  const [showUnbindAllModal, setShowUnbindAllModal] = useState(false);
+  const [unbindingAll, setUnbindingAll]             = useState(false);
+  const [unbindAllError, setUnbindAllError]         = useState('');
+
   // ── Fetch hairdresser list ────────────────────────────────────────────────
   const fetchHairdressers = useCallback(async () => {
     setListLoading(true);
@@ -196,6 +201,22 @@ function HairdresserList() {
     }
   };
 
+  // ── Unbind all customers globally ────────────────────────────────────────
+  const handleUnbindAll = async () => {
+    setUnbindingAll(true);
+    setUnbindAllError('');
+    try {
+      const res = await fetch('/api/hairdressers/unbind-all', { method: 'DELETE' });
+      if (!res.ok) throw new Error('Failed to unbind all customers');
+      setShowUnbindAllModal(false);
+      await fetchHairdressers();
+    } catch (e) {
+      setUnbindAllError(e.message);
+    } finally {
+      setUnbindingAll(false);
+    }
+  };
+
   // ── List summary stats ────────────────────────────────────────────────────
   const totalCount       = hairdressers.length;
   const withCustomers    = hairdressers.filter(h => (h.bound_customers ?? 0) >= 1).length;
@@ -317,6 +338,13 @@ function HairdresserList() {
                   </Text>
                 </BlockStack>
                 <InlineStack gap="200">
+                  <Button
+                    size="slim"
+                    tone="critical"
+                    onClick={() => { setUnbindAllError(''); setShowUnbindAllModal(true); }}
+                  >
+                    Unbind All
+                  </Button>
                   <Button
                     size="slim"
                     onClick={() => navigate('/crm/hairdressers/settle-commissions')}
@@ -473,6 +501,33 @@ function HairdresserList() {
                 : (bulkGenerateResult.message || 'All hairdressers already have links.')}
             </Text>
           )}
+        </Modal.Section>
+      </Modal>
+
+      {/* ── Unbind All (global) confirmation modal ── */}
+      <Modal
+        open={showUnbindAllModal}
+        onClose={() => { setShowUnbindAllModal(false); setUnbindAllError(''); }}
+        title="Unbind all customers"
+        primaryAction={{
+          content: 'Confirm',
+          destructive: true,
+          loading: unbindingAll,
+          onAction: handleUnbindAll,
+        }}
+        secondaryActions={[{
+          content: 'Cancel',
+          onAction: () => { setShowUnbindAllModal(false); setUnbindAllError(''); },
+        }]}
+      >
+        <Modal.Section>
+          <BlockStack gap="300">
+            {unbindAllError && <Banner tone="critical">{unbindAllError}</Banner>}
+            <Text>
+              This will unbind all customers from all hairdressers. Their Shopify tags will
+              also be removed. This action cannot be undone.
+            </Text>
+          </BlockStack>
         </Modal.Section>
       </Modal>
 
