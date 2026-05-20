@@ -639,7 +639,7 @@ router.post('/commission/calculate', async (req, res) => {
           orders(first: 250, query: $query) {
             edges {
               node {
-                financialStatus
+                displayFinancialStatus
                 lineItems(first: 100) {
                   edges {
                     node {
@@ -701,11 +701,11 @@ router.post('/commission/calculate', async (req, res) => {
             const edges = response.data?.customer?.orders?.edges || [];
             console.log('[calculate] orders returned:', edges.length, 'errors:', JSON.stringify(response.errors || null));
             if (edges.length > 0) {
-              console.log('[calculate] first order financialStatus:', edges[0].node.financialStatus, 'lineItems:', edges[0].node.lineItems?.edges?.length);
+              console.log('[calculate] first order displayFinancialStatus:', edges[0].node.displayFinancialStatus, 'lineItems:', edges[0].node.lineItems?.edges?.length);
             }
 
             edges.forEach(({ node }) => {
-              if (node.financialStatus !== 'PAID') return;
+              if (node.displayFinancialStatus !== 'Paid') return;
               // Sum line items, excluding gift cards
               node.lineItems.edges.forEach(({ node: item }) => {
                 if (item.isGiftCard) return;
@@ -1189,7 +1189,7 @@ router.post('/:id/statistics', async (req, res) => {
           orders(first: 250, query: $query) {
             edges {
               node {
-                financialStatus
+                displayFinancialStatus
                 lineItems(first: 100) {
                   edges {
                     node {
