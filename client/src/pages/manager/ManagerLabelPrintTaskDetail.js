@@ -45,6 +45,8 @@ function ManagerLabelPrintTaskDetail() {
 
   const [searchQuery, setSearchQuery]     = useState('');
   const [searchResults, setSearchResults] = useState([]);
+  const [searchTotal, setSearchTotal]     = useState(0);
+  const [searchOffset, setSearchOffset]   = useState(0);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchChecked, setSearchChecked] = useState([]);
   const [searchDropOpen, setSearchDropOpen] = useState(false);
@@ -195,33 +197,47 @@ function ManagerLabelPrintTaskDetail() {
     }
   };
 
+  // Core search executor — shared by initial search and load more
+  const doSearch = async (q, offset, append) => {
+    setSearchLoading(true);
+    try {
+      const params = new URLSearchParams({ q, offset });
+      const res = await fetch(`/api/shopify/search?${params.toString()}`);
+      if (!res.ok) throw new Error('Search failed');
+      const data = await res.json();
+      setSearchTotal(data.total);
+      setSearchResults(prev => append ? [...prev, ...data.results] : data.results);
+      setSearchDropOpen(true);
+    } catch (e) {
+      if (!append) {
+        setSearchResults([]);
+        setSearchDropOpen(false);
+      }
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+
   // Search with debounce
   const handleSearchChange = (value) => {
     setSearchQuery(value);
     setAddError('');
+    setSearchOffset(0);
     clearTimeout(searchDebounce.current);
     if (value.trim().length < 2) {
       setSearchResults([]);
       setSearchChecked([]);
       setSearchDropOpen(false);
+      setSearchTotal(0);
       return;
     }
-    searchDebounce.current = setTimeout(async () => {
-      setSearchLoading(true);
-      try {
-        const params = new URLSearchParams({ q: value.trim() });
-        const res = await fetch(`/api/shopify/search?${params.toString()}`);
-        if (!res.ok) throw new Error('Search failed');
-        const data = await res.json();
-        setSearchResults(data.slice(0, 30));
-        setSearchDropOpen(true);
-      } catch (e) {
-        setSearchResults([]);
-        setSearchDropOpen(false);
-      } finally {
-        setSearchLoading(false);
-      }
-    }, 400);
+    searchDebounce.current = setTimeout(() => doSearch(value.trim(), 0, false), 400);
+  };
+
+  const handleLoadMore = () => {
+    const nextOffset = searchOffset + 50;
+    setSearchOffset(nextOffset);
+    doSearch(searchQuery.trim(), nextOffset, true);
   };
 
   const toggleSearchCheck = (variantId) => {
@@ -256,6 +272,8 @@ function ManagerLabelPrintTaskDetail() {
       setSearchChecked([]);
       setSearchQuery('');
       setSearchResults([]);
+      setSearchTotal(0);
+      setSearchOffset(0);
       setSearchDropOpen(false);
     } catch (e) {
       setAddError(e.message);
@@ -680,6 +698,24 @@ ${barcodeScript}</head><body>${allLabels}</body></html>`;
                         </div>
                       );
                     })}
+
+                    {/* Load more */}
+                    {searchResults.length < searchTotal && (
+                      <div
+                        onClick={searchLoading ? undefined : handleLoadMore}
+                        style={{
+                          padding: '10px 12px',
+                          textAlign: 'center',
+                          cursor: searchLoading ? 'not-allowed' : 'pointer',
+                          color: searchLoading ? '#8c9196' : '#005bd3',
+                          fontWeight: '600',
+                          fontSize: '13px',
+                          borderTop: '1px solid #f1f3f5',
+                        }}
+                      >
+                        {searchLoading ? 'Loading…' : `Load more (${searchTotal - searchResults.length} remaining)`}
+                      </div>
+                    )}
                   </div>,
                   document.body
                 )}

@@ -10,6 +10,9 @@ const initDatabase = async () => {
   try {
     await client.query('BEGIN');
 
+    // Enable pg_trgm for trigram-based fuzzy search on variant_search_index
+    await client.query(`CREATE EXTENSION IF NOT EXISTS pg_trgm`);
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS location_map (
         location_name TEXT PRIMARY KEY,
@@ -251,6 +254,55 @@ const initDatabase = async () => {
         value JSONB NOT NULL,
         updated_at TIMESTAMPTZ DEFAULT NOW()
       )
+    `);
+
+    // ────────────────────────────────────────────────────────────────────────────
+
+    // ─── Variant Search Index ───────────────────────────────────────────────────
+    // Local cache of all variants for fast full-text search by custom.name / SKU.
+    // Synced from Shopify on a configurable interval (default 12 hours).
+    // Sync interval is stored in app_settings under key 'variant_sync_interval_hours'.
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS variant_search_index (
+        id                  SERIAL PRIMARY KEY,
+        shopify_variant_id  VARCHAR(100) NOT NULL UNIQUE,
+        shopify_product_id  VARCHAR(100) NOT NULL,
+        sku                 VARCHAR(255),
+        barcode             VARCHAR(255),
+        custom_name         TEXT,
+        product_title       TEXT,
+        product_type        VARCHAR(255),
+        vendor              VARCHAR(255),
+        synced_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_variant_search_custom_name_trgm
+      ON variant_search_index
+      USING GIN (custom_name gin_trgm_ops)
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_variant_search_product_title_trgm
+      ON variant_search_index
+      USING GIN (product_title gin_trgm_ops)
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_variant_search_sku
+      ON variant_search_index (sku)
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_variant_search_barcode
+      ON variant_search_index (barcode)
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_variant_search_product_id
+      ON variant_search_index (shopify_product_id)
     `);
 
     // ────────────────────────────────────────────────────────────────────────────

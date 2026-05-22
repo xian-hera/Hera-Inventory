@@ -36,6 +36,7 @@ import BirthdayReward from './pages/crm/BirthdayReward';
 import BirthdaySubscribers from './pages/crm/BirthdaySubscribers';
 import InfluencerList from './pages/crm/InfluencerList';
 import InfluencerDetail from './pages/crm/InfluencerDetail';
+import ProductDatabaseSettings from './pages/buyer/ProductDatabaseSettings';
 
 function App() {
   return (
@@ -59,6 +60,7 @@ function App() {
           <Route path="/buyer/label-templates/:id" element={<BuyerLabelEditor />} />
           <Route path="/buyer/price-change" element={<BuyerPriceChange />} />
           <Route path="/buyer/price-change/published" element={<BuyerPriceChangePublished />} />
+          <Route path="/buyer/product-database" element={<ProductDatabaseSettings />} />
 
           {/* Manager */}
           <Route path="/manager" element={<ManagerHome />} />

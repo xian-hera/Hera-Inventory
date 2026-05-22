@@ -353,120 +353,89 @@ router.post('/sync-locations', async (req, res) => {
 });
 
 // GET /api/shopify/search
+// Searches the local variant_search_index table.
+// Rule 1 — pure digits: SKU contains match (no same-product bleed)
+// Rule 2 — contains letters: all words must appear in product_title OR all words in custom_name (ILIKE, AND per word)
+// Special chars / [ ] - @ # are treated as literals.
+// Supports pagination: ?q=...&offset=0  returns { total, results[] }
 router.get('/search', async (req, res) => {
   try {
-    const session = await getSession();
-    if (!session) return res.status(401).json({ error: 'No session' });
+    const { q, offset } = req.query;
+    if (!q || q.trim().length < 2) return res.json({ total: 0, results: [] });
 
-    const { q, vendors, tag } = req.query;
-    let queryParts = [];
-    if (q && q.trim().length >= 2) queryParts.push(`(title:*${q}* OR sku:*${q}*)`);
-    if (vendors) {
-      const vendorList = vendors.split(',');
-      const escapedVendors = vendorList.map(v => `vendor:"${v.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`);
-      queryParts.push(`(${escapedVendors.join(' OR ')})`);
-    }
-    if (tag) queryParts.push(`tag:"${tag.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`);
-    if (queryParts.length === 0) return res.json([]);
+    const raw = q.trim();
+    const { pool } = require('../database/init');
+    const PAGE_SIZE = 50;
+    const skip = parseInt(offset) || 0;
 
-    const queryString = queryParts.join(' AND ');
-    const shopify = getShopify();
-    const client = new shopify.clients.Graphql({ session });
+    // ── Rule 1: pure digits → SKU contains match ─────────────────────────────
+    if (/^\d+$/.test(raw)) {
+      const countRes = await pool.query(
+        `SELECT COUNT(*) FROM variant_search_index WHERE sku LIKE $1`,
+        [`%${raw}%`]
+      );
+      const total = parseInt(countRes.rows[0].count);
 
-    const gqlQuery = `
-      query searchProducts($queryString: String!) {
-        products(first: 20, query: $queryString) {
-          edges {
-            node {
-              id title productType
-              variants(first: 100) {
-                edges {
-                  node {
-                    id sku barcode
-                    metafield(namespace: "custom", key: "name") { value }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    `;
+      const rows = await pool.query(
+        `SELECT * FROM variant_search_index
+         WHERE sku LIKE $1
+         ORDER BY sku
+         LIMIT $2 OFFSET $3`,
+        [`%${raw}%`, PAGE_SIZE, skip]
+      );
 
-    const response = await shopifyRequest(client, gqlQuery, { queryString });
-    const products = response.data.products.edges;
-
-    let variants = [];
-    for (const { node: product } of products) {
-      for (const { node: variant } of product.variants.edges) {
-        const name = variant.metafield?.value || product.title;
-        variants.push({
-          productId: product.id,
-          variantId: variant.id,
-          name,
-          barcode: variant.barcode || variant.sku,
-          productType: product.productType,
-        });
-      }
+      return res.json({
+        total,
+        results: rows.rows.map(v => ({
+          productId: v.shopify_product_id,
+          variantId: v.shopify_variant_id,
+          name: v.custom_name || v.product_title,
+          barcode: v.barcode || v.sku,
+          productType: v.product_type,
+        })),
+      });
     }
 
-    res.json(variants.slice(0, 50));
+    // ── Rule 2: contains letters → multi-word ILIKE match ────────────────────
+    // Split on whitespace; every word must appear in the field (AND).
+    // title match → all variants of that product are included.
+    // name match  → only that specific variant is included.
+    // Special chars are passed through as literals (LIKE does not treat / [ ] - @ # specially).
+    const words = raw.split(/\s+/).filter(Boolean);
+
+    // Build parameterised conditions: one $N per word
+    const titleConditions = words.map((_, i) => `product_title ILIKE $${i + 1}`).join(' AND ');
+    const nameConditions  = words.map((_, i) => `custom_name  ILIKE $${i + 1}`).join(' AND ');
+    const params = words.map(w => `%${w}%`);
+
+    const whereClause = `(${titleConditions}) OR (${nameConditions})`;
+
+    const countRes = await pool.query(
+      `SELECT COUNT(*) FROM variant_search_index WHERE ${whereClause}`,
+      params
+    );
+    const total = parseInt(countRes.rows[0].count);
+
+    const rows = await pool.query(
+      `SELECT * FROM variant_search_index
+       WHERE ${whereClause}
+       ORDER BY product_title, custom_name
+       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, PAGE_SIZE, skip]
+    );
+
+    return res.json({
+      total,
+      results: rows.rows.map(v => ({
+        productId: v.shopify_product_id,
+        variantId: v.shopify_variant_id,
+        name: v.custom_name || v.product_title,
+        barcode: v.barcode || v.sku,
+        productType: v.product_type,
+      })),
+    });
   } catch (e) {
     console.error('GET /api/shopify/search error:', e);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// GET /api/shopify/vendors-tags
-router.get('/vendors-tags', async (req, res) => {
-  try {
-    const session = await getSession();
-    if (!session) return res.status(401).json({ error: 'No session' });
-
-    const shopify = getShopify();
-    const client = new shopify.clients.Graphql({ session });
-    
-// Vendors: traverse all products to collect unique vendors
-    const vendorSet = new Set();
-    let productCursor = null, hasMoreProducts = true;
-    while (hasMoreProducts) {
-      const afterClause = productCursor ? `, after: "${productCursor}"` : '';
-      const productQuery = `{
-        products(first: 250${afterClause}) {
-          pageInfo { hasNextPage endCursor }
-          edges { node { vendor } }
-        }
-      }`;
-      const productResponse = await shopifyRequest(client, productQuery);
-      const page = productResponse.data.products;
-      for (const { node } of page.edges) {
-        if (node.vendor) vendorSet.add(node.vendor);
-      }
-      hasMoreProducts = page.pageInfo.hasNextPage;
-      productCursor = page.pageInfo.endCursor;
-    }
-    const allVendors = Array.from(vendorSet).sort();
-
-    // Fetch all tags with pagination
-    let allTags = [], tagCursor = null, hasMoreTags = true;
-    while (hasMoreTags) {
-      const afterClause = tagCursor ? `, after: "${tagCursor}"` : '';
-      const tagQuery = `{
-        productTags(first: 250${afterClause}) {
-          edges { node cursor }
-          pageInfo { hasNextPage }
-        }
-      }`;
-      const tagResponse = await shopifyRequest(client, tagQuery);
-      const edges = tagResponse.data.productTags.edges;
-      allTags = [...allTags, ...edges.map(e => e.node).filter(Boolean)];
-      hasMoreTags = tagResponse.data.productTags.pageInfo.hasNextPage;
-      if (hasMoreTags && edges.length > 0) tagCursor = edges[edges.length - 1].cursor;
-    }
-
-    res.json({ vendors: allVendors.sort(), tags: allTags.sort() });
-  } catch (e) {
-    console.error('GET /api/shopify/vendors-tags error:', e);
     res.status(500).json({ error: e.message });
   }
 });
@@ -704,5 +673,145 @@ router.get('/search-customers', async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
+// GET /api/shopify/vendors-tags
+router.get('/vendors-tags', async (req, res) => {
+  try {
+    const session = await getSession();
+    if (!session) return res.status(401).json({ error: 'No session' });
+
+    const shopify = getShopify();
+    const client = new shopify.clients.Graphql({ session });
+
+    // Vendors: traverse all products to collect unique vendors
+    const vendorSet = new Set();
+    let productCursor = null, hasMoreProducts = true;
+    while (hasMoreProducts) {
+      const afterClause = productCursor ? `, after: "${productCursor}"` : '';
+      const productQuery = `{
+        products(first: 250${afterClause}) {
+          pageInfo { hasNextPage endCursor }
+          edges { node { vendor } }
+        }
+      }`;
+      const productResponse = await shopifyRequest(client, productQuery);
+      const page = productResponse.data.products;
+      for (const { node } of page.edges) {
+        if (node.vendor) vendorSet.add(node.vendor);
+      }
+      hasMoreProducts = page.pageInfo.hasNextPage;
+      productCursor = page.pageInfo.endCursor;
+    }
+    const allVendors = Array.from(vendorSet).sort();
+
+    // Fetch all tags with pagination
+    let allTags = [], tagCursor = null, hasMoreTags = true;
+    while (hasMoreTags) {
+      const afterClause = tagCursor ? `, after: "${tagCursor}"` : '';
+      const tagQuery = `{
+        productTags(first: 250${afterClause}) {
+          edges { node cursor }
+          pageInfo { hasNextPage }
+        }
+      }`;
+      const tagResponse = await shopifyRequest(client, tagQuery);
+      const edges = tagResponse.data.productTags.edges;
+      allTags = [...allTags, ...edges.map(e => e.node).filter(Boolean)];
+      hasMoreTags = tagResponse.data.productTags.pageInfo.hasNextPage;
+      if (hasMoreTags && edges.length > 0) tagCursor = edges[edges.length - 1].cursor;
+    }
+
+    res.json({ vendors: allVendors.sort(), tags: allTags.sort() });
+  } catch (e) {
+    console.error('GET /api/shopify/vendors-tags error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── Product Database Settings ───────────────────────────────────────────────
+
+// GET /api/shopify/product-db-settings
+// Returns current sync interval (hours), last synced time, total variants in index,
+// and whether a sync is currently running.
+router.get('/product-db-settings', async (req, res) => {
+  try {
+    const { pool } = require('../database/init');
+    const { getSyncStatus } = require('../jobs/syncVariantIndex');
+
+    const settingRes = await pool.query(
+      `SELECT value FROM app_settings WHERE key = 'variant_sync_interval_hours'`
+    );
+    const intervalHours = settingRes.rows.length > 0
+      ? parseInt(settingRes.rows[0].value)
+      : 12;
+
+    const countRes = await pool.query(`SELECT COUNT(*) FROM variant_search_index`);
+    const totalVariants = parseInt(countRes.rows[0].count);
+
+    const status = getSyncStatus();
+
+    res.json({
+      intervalHours,
+      totalVariants,
+      isSyncing: status.isSyncing,
+      lastSyncedAt: status.lastSyncedAt,
+      lastSyncCount: status.lastSyncCount,
+    });
+  } catch (e) {
+    console.error('GET /api/shopify/product-db-settings error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/shopify/product-db-settings
+// Saves a new sync interval and restarts the scheduler.
+// Body: { intervalHours: number }
+router.post('/product-db-settings', async (req, res) => {
+  try {
+    const { intervalHours } = req.body;
+    const hours = parseInt(intervalHours);
+    if (isNaN(hours) || hours < 1 || hours > 168) {
+      return res.status(400).json({ error: 'intervalHours must be between 1 and 168' });
+    }
+
+    const { pool } = require('../database/init');
+    const { startSyncScheduler } = require('../jobs/syncVariantIndex');
+
+    await pool.query(
+      `INSERT INTO app_settings (key, value, updated_at)
+       VALUES ('variant_sync_interval_hours', $1::jsonb, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = $1::jsonb, updated_at = NOW()`,
+      [JSON.stringify(hours)]
+    );
+
+    // Restart scheduler with new interval (does NOT trigger an immediate sync)
+    await startSyncScheduler({ skipInitialSync: true });
+
+    res.json({ success: true, intervalHours: hours });
+  } catch (e) {
+    console.error('POST /api/shopify/product-db-settings error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/shopify/sync-variant-index
+// Manually triggers an immediate sync. Returns immediately; sync runs in background.
+router.post('/sync-variant-index', async (req, res) => {
+  try {
+    const { syncVariantIndex, getSyncStatus } = require('../jobs/syncVariantIndex');
+    const status = getSyncStatus();
+    if (status.isSyncing) {
+      return res.status(409).json({ error: 'Sync already in progress' });
+    }
+    // Fire and forget — client polls /product-db-settings for status
+    syncVariantIndex().catch(e => console.error('[sync-variant-index] Error:', e.message));
+    res.json({ started: true });
+  } catch (e) {
+    console.error('POST /api/shopify/sync-variant-index error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 module.exports = { router, getDepartment };

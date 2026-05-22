@@ -108,6 +108,9 @@ function BuyerSettings() {
             <Button size="large" fullWidth onClick={() => navigate('/buyer/stock-losses-settings')}>
               Stock Losses Settings
             </Button>
+            <Button size="large" fullWidth onClick={() => navigate('/buyer/product-database')}>
+              Product Database
+            </Button>
             <Button size="large" fullWidth onClick={openModal}>
               Set PIN
             </Button>

@@ -7,6 +7,7 @@ const { initDatabase } = require('./database/init');
 const birthdayRoute = require('./routes/birthday');
 const { router: birthdayConfigRouter, registerRestartFn } = require('./routes/birthdayConfig');
 const { startBirthdayScheduler } = require('./jobs/birthdayScheduler');
+const { startSyncScheduler } = require('./jobs/syncVariantIndex');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -65,6 +66,8 @@ const startServer = async () => {
     await startBirthdayScheduler();
     // 注册重启函数，让 birthdayConfig 路由可以触发 scheduler 重启
     registerRestartFn(startBirthdayScheduler);
+    // Start variant search index sync scheduler
+    await startSyncScheduler();
     app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
       console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
