@@ -54,7 +54,7 @@ function ManagerHome() {
       .then(data => {
         setBadges({
           inventoryCount: data.weeklyCountingTasks || 0,
-          labelPrint: data.labelPrintTasks || 0,
+          labelPrint:     data.labelPrintTasks     || 0,
         });
       })
       .catch(() => {});
@@ -119,7 +119,6 @@ function ManagerHome() {
               </BlockStack>
             </Card>
 
-            {/* Inventory Count */}
             <Button size="large" fullWidth onClick={() => handleNavigate('/manager/inventory-count')}>
               <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 Inventory Count
@@ -127,23 +126,25 @@ function ManagerHome() {
               </span>
             </Button>
 
-            {/* Stock Losses */}
             <Button size="large" fullWidth onClick={() => handleNavigate('/manager/stock-losses')}>
               Stock Losses
             </Button>
 
-            {/* Restock */}
             <Button size="large" fullWidth onClick={() => handleNavigate('/manager/restock-plan')}>
               Restock
             </Button>
 
-            {/* Label Print */}
             <Button size="large" fullWidth onClick={() => handleNavigate('/manager/label-print')}>
               <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 Label Print
                 <Badge count={badges.labelPrint} />
               </span>
             </Button>
+
+            <Button size="large" fullWidth onClick={() => handleNavigate('/manager/employee-cap')}>
+              Employee Cap
+            </Button>
+
           </BlockStack>
         </Layout.Section>
       </Layout>

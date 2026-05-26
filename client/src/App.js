@@ -27,6 +27,7 @@ import ManagerLabelPrintTaskDetail from './pages/manager/ManagerLabelPrintTaskDe
 import BuyerPriceChange from './pages/buyer/BuyerPriceChange';
 import BuyerPriceChangePublished from './pages/buyer/BuyerPriceChangePublished';
 import ManagerPriceChangeDetail from './pages/manager/ManagerPriceChangeDetail';
+import ManagerEmployeeCap from './pages/manager/ManagerEmployeeCap';
 import CRMHome from './pages/crm/CRMHome';
 import CRMSettings from './pages/crm/CRMSettings';
 import HairdresserList from './pages/crm/HairdresserList';
@@ -36,6 +37,7 @@ import BirthdayReward from './pages/crm/BirthdayReward';
 import BirthdaySubscribers from './pages/crm/BirthdaySubscribers';
 import InfluencerList from './pages/crm/InfluencerList';
 import InfluencerDetail from './pages/crm/InfluencerDetail';
+import EmployeeCap from './pages/crm/EmployeeCap';
 import ProductDatabaseSettings from './pages/buyer/ProductDatabaseSettings';
 
 function App() {
@@ -73,18 +75,19 @@ function App() {
           <Route path="/manager/label-print" element={<ManagerLabelPrintTasks />} />
           <Route path="/manager/label-print/:taskId" element={<ManagerLabelPrintTaskDetail />} />
           <Route path="/manager/price-change/:taskId" element={<ManagerPriceChangeDetail />} />
+          <Route path="/manager/employee-cap" element={<ManagerEmployeeCap />} />
 
           {/* CRM */}
           <Route path="/crm" element={<CRMHome />} />
           <Route path="/crm/settings" element={<CRMSettings />} />
           <Route path="/crm/hairdressers" element={<HairdresserList />} />
-          {/* SettleCommissions must be before /:id to avoid route conflict */}
           <Route path="/crm/hairdressers/settle-commissions" element={<SettleCommissions />} />
           <Route path="/crm/hairdressers/:id" element={<HairdresserDetail />} />
           <Route path="/crm/birthday-reward" element={<BirthdayReward />} />
           <Route path="/crm/birthday-reward/subscribers" element={<BirthdaySubscribers />} />
           <Route path="/crm/influencers" element={<InfluencerList />} />
           <Route path="/crm/influencers/:id" element={<InfluencerDetail />} />
+          <Route path="/crm/employee-cap" element={<EmployeeCap />} />
         </Routes>
       </BrowserRouter>
     </AppProvider>

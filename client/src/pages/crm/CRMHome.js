@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Page, Layout, Button, BlockStack, Text, TextField, Banner, Modal } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 
-const CRM_PIN_VERIFIED_KEY = 'crm_pin_verified';  // { expiry: timestamp }
+const CRM_PIN_VERIFIED_KEY = 'crm_pin_verified';
 const PIN_EXPIRY_DAYS      = 30;
 
 function CRMHome() {
@@ -17,7 +17,6 @@ function CRMHome() {
   const [verifying, setVerifying] = useState(false);
 
   useEffect(() => {
-    // Fetch hint from backend
     fetch('/api/settings/pin/hint?key=crm_pin')
       .then(r => r.json())
       .then(data => setHint(data.hint || ''))
@@ -64,10 +63,7 @@ function CRMHome() {
     }
   };
 
-  // Cancel → go back to home
-  const handleClose = () => {
-    navigate('/');
-  };
+  const handleClose = () => { navigate('/'); };
 
   return (
     <Page
@@ -87,6 +83,9 @@ function CRMHome() {
               </Button>
               <Button size="large" fullWidth onClick={() => navigate('/crm/influencers')}>
                 Influencer Management
+              </Button>
+              <Button size="large" fullWidth onClick={() => navigate('/crm/employee-cap')}>
+                Employee Cap
               </Button>
             </BlockStack>
           </Layout.Section>
