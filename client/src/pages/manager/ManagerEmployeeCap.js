@@ -175,7 +175,7 @@ function ManagerEmployeeCap() {
                   </Text>
                 ) : (
                   employees.map(emp => {
-                    const exceeded = Number(emp.total_amount) > Number(capAmount);
+                    const exceeded = Number(emp.total_amount) >= Number(capAmount) - 50;
                     return (
                       <div key={emp.id} style={{
                         display: 'grid',
