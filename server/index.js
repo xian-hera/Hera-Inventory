@@ -19,6 +19,10 @@ app.use(cors());
 // because it needs raw body for HMAC verification
 app.use('/api/birthday', birthdayRoute);
 
+// Connecteam webhook — registered before express.json() so raw body is available if needed
+// (currently uses JSON body, but keeping it early in case HMAC verification is added later)
+app.use('/api/employees/webhook/connecteam', require('./routes/employees'));
+
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
@@ -44,6 +48,7 @@ app.use('/api/hairdressers', require('./routes/hairdressers'));
 app.use('/api/birthday-config', birthdayConfigRouter);
 app.use('/api/influencers', require('./routes/influencers'));
 app.use('/api/settings', require('./routes/settings'));
+app.use('/api/employees', require('./routes/employees'));
 
 // Serve static files in production
 if (process.env.NODE_ENV === 'production') {
@@ -64,9 +69,7 @@ const startServer = async () => {
   try {
     await initDatabase();
     await startBirthdayScheduler();
-    // 注册重启函数，让 birthdayConfig 路由可以触发 scheduler 重启
     registerRestartFn(startBirthdayScheduler);
-    // Start variant search index sync scheduler
     await startSyncScheduler();
     app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);

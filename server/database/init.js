@@ -97,9 +97,6 @@ const initDatabase = async () => {
     `);
 
     // Stock Losses settings matrix (type × reason → photo/instruction config)
-    // type_value: 'ALL' | any product type string | custom type label
-    // reason: 'damaged_delivery' | 'damaged_employee' | 'expired' | 'stolen' | 'tester' | 'other' | custom
-    // metafield_namespace, metafield_key, metafield_value: optional sub-condition for custom type rows
     await client.query(`
       CREATE TABLE IF NOT EXISTS stock_losses_settings (
         id SERIAL PRIMARY KEY,
@@ -174,7 +171,6 @@ const initDatabase = async () => {
 
     // ─── CRM / Hairdresser ──────────────────────────────────────────────────────
 
-    // Hairdressers enrolled in the referral programme
     await client.query(`
       CREATE TABLE IF NOT EXISTS hairdressers (
         id SERIAL PRIMARY KEY,
@@ -184,8 +180,6 @@ const initDatabase = async () => {
       )
     `);
 
-    // Referral link history — one active link per hairdresser at a time
-    // is_active: only the most recently generated link is TRUE
     await client.query(`
       CREATE TABLE IF NOT EXISTS referral_links (
         id SERIAL PRIMARY KEY,
@@ -196,7 +190,6 @@ const initDatabase = async () => {
       )
     `);
 
-    // Customer–hairdresser binding records (each bind / renew = new row, history preserved)
     await client.query(`
       CREATE TABLE IF NOT EXISTS customer_bindings (
         id SERIAL PRIMARY KEY,
@@ -206,7 +199,6 @@ const initDatabase = async () => {
       )
     `);
 
-    // Statistics cache — one row per hairdresser, replaced on each recalculation
     await client.query(`
       CREATE TABLE IF NOT EXISTS statistics_cache (
         id SERIAL PRIMARY KEY,
@@ -219,7 +211,6 @@ const initDatabase = async () => {
       )
     `);
 
-    // Notes attached to a hairdresser — free-text, manually added and deleted
     await client.query(`
       CREATE TABLE IF NOT EXISTS hairdresser_notes (
         id SERIAL PRIMARY KEY,
@@ -229,9 +220,6 @@ const initDatabase = async () => {
       )
     `);
 
-    // Activity log — records key events for each hairdresser
-    // action values: 'created' | 'first_link_generated' | 'note_added' | 'note_deleted'
-    // detail: optional extra info (e.g. note content)
     await client.query(`
       CREATE TABLE IF NOT EXISTS hairdresser_activity_log (
         id SERIAL PRIMARY KEY,
@@ -245,8 +233,6 @@ const initDatabase = async () => {
     // ────────────────────────────────────────────────────────────────────────────
 
     // ─── App Settings (global key-value store) ──────────────────────────────────
-    // Used for server-side PIN storage (buyer_pin, crm_pin)
-    // value is JSONB: { hash: <sha256 of pin>, hint: <string> }
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS app_settings (
@@ -256,12 +242,72 @@ const initDatabase = async () => {
       )
     `);
 
+    // ─── Employee Cap ────────────────────────────────────────────────────────────
+
+    // employees: synced from Connecteam
+    // branches: TEXT[] — one employee can belong to multiple branches
+    // status: 'active' | 'archived'
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS employees (
+        id                   SERIAL PRIMARY KEY,
+        connecteam_user_id   VARCHAR(100) NOT NULL UNIQUE,
+        name                 TEXT NOT NULL,
+        email                TEXT,
+        branches             TEXT[] NOT NULL DEFAULT '{}',
+        status               TEXT NOT NULL DEFAULT 'active',
+        shopify_customer_id  VARCHAR(100),
+        created_at           TIMESTAMPTZ DEFAULT NOW(),
+        updated_at           TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_employees_status ON employees (status)
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_employees_email ON employees (email)
+    `);
+
+    // employee_purchases: persisted total purchase per employee per season
+    // season format: '2025-S1' | '2025-S2' | '2025-S3' | '2025-S4'
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS employee_purchases (
+        id                SERIAL PRIMARY KEY,
+        employee_id       INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+        season            TEXT NOT NULL,
+        total_amount      DECIMAL(10,2) NOT NULL DEFAULT 0,
+        last_refreshed_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (employee_id, season)
+      )
+    `);
+
+    // employee_settings: global settings + per-location last refresh timestamps
+    // key examples:
+    //   'cap_amount'          → { value: 600 }
+    //   'cap_tax_mode'        → { value: 'before_tax' | 'after_tax' }
+    //   'last_refresh_all'    → { refreshed_at: ISO string }
+    //   'last_refresh_MTL01'  → { refreshed_at: ISO string }
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS employee_settings (
+        key        TEXT PRIMARY KEY,
+        value      JSONB NOT NULL,
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
+    // Seed defaults if not already present
+    await client.query(`
+      INSERT INTO employee_settings (key, value)
+      VALUES
+        ('cap_amount',   '{"value": 600}'),
+        ('cap_tax_mode', '{"value": "before_tax"}')
+      ON CONFLICT (key) DO NOTHING
+    `);
+
     // ────────────────────────────────────────────────────────────────────────────
 
     // ─── Variant Search Index ───────────────────────────────────────────────────
-    // Local cache of all variants for fast full-text search by custom.name / SKU.
-    // Synced from Shopify on a configurable interval (default 12 hours).
-    // Sync interval is stored in app_settings under key 'variant_sync_interval_hours'.
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS variant_search_index (
