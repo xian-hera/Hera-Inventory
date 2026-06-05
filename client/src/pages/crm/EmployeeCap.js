@@ -21,10 +21,10 @@ function EmployeeCap() {
   const [capInput,     setCapInput]     = useState('');
   const [savingCap,    setSavingCap]    = useState(false);
 
-  // ── sync state ────────────────────────────────────────────────────────────
+  // ── relink state ─────────────────────────────────────────────────────────
   const [empCount,     setEmpCount]     = useState(null);
-  const [syncing,      setSyncing]      = useState(false);
-  const [syncMsg,      setSyncMsg]      = useState('');
+  const [relinking,    setRelinking]    = useState(false);
+  const [relinkMsg,    setRelinkMsg]    = useState('');
 
   // ── tag-check state ───────────────────────────────────────────────────────
   const [tagChecking,  setTagChecking]  = useState(false);
@@ -125,22 +125,22 @@ function EmployeeCap() {
     loadEmployees(1);
   }, [loadEmployees]);
 
-  // ── sync ──────────────────────────────────────────────────────────────────
+  // ── relink ────────────────────────────────────────────────────────────────
 
-  const handleSync = async () => {
-    setSyncing(true);
-    setSyncMsg('');
+  const handleRelink = async () => {
+    setRelinking(true);
+    setRelinkMsg('');
     setError('');
     try {
-      const res  = await fetch('/api/employees/sync', { method: 'POST' });
+      const res  = await fetch('/api/employees/relink', { method: 'POST' });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Sync failed');
-      setSyncMsg(`Sync complete — ${data.synced} employees updated.`);
-      await Promise.all([loadCount(), loadEmployees(1)]);
+      if (!res.ok) throw new Error(data.error || 'Re-link failed');
+      setRelinkMsg(`Re-link complete — ${data.updated} updated, ${data.skipped} unchanged, ${data.failed} failed.`);
+      await loadEmployees(1);
     } catch (e) {
       setError(e.message);
     } finally {
-      setSyncing(false);
+      setRelinking(false);
     }
   };
 
@@ -261,11 +261,11 @@ function EmployeeCap() {
             {error && (
               <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>
             )}
-            {syncMsg && (
-              <Banner tone="success" onDismiss={() => setSyncMsg('')}>{syncMsg}</Banner>
+            {relinkMsg && (
+              <Banner tone="success" onDismiss={() => setRelinkMsg('')}>{relinkMsg}</Banner>
             )}
 
-            {/* ── Card 1: Employee count + Sync + Cap ── */}
+            {/* ── Card 1: Employee count + Re-link + Cap ── */}
             <Card>
               <InlineStack align="space-between" blockAlign="start" wrap={false}>
 
@@ -277,14 +277,14 @@ function EmployeeCap() {
                   <Text variant="bodySm" tone="subdued">Active employees</Text>
                 </BlockStack>
 
-                {/* Middle: sync */}
+                {/* Middle: re-link */}
                 <BlockStack gap="100" inlineAlign="center">
                   <Button
-                    onClick={handleSync}
-                    loading={syncing}
-                    disabled={syncing}
+                    onClick={handleRelink}
+                    loading={relinking}
+                    disabled={relinking}
                   >
-                    Sync
+                    Re-link
                   </Button>
                 </BlockStack>
 

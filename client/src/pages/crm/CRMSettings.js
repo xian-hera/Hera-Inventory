@@ -6,18 +6,40 @@ import { useNavigate } from 'react-router-dom';
 
 const CRM_PIN_VERIFIED_KEY = 'crm_pin_verified';
 
+// Random word list for sync confirmation
+const CONFIRM_WORDS = [
+  'ALPINE', 'BRIDGE', 'CANVAS', 'DAGGER', 'ENGINE',
+  'FALCON', 'GARDEN', 'HARBOR', 'ISLAND', 'JUNGLE',
+  'KETTLE', 'LANTERN', 'MARBLE', 'NECTAR', 'OYSTER',
+];
+
+function randomWord() {
+  return CONFIRM_WORDS[Math.floor(Math.random() * CONFIRM_WORDS.length)];
+}
+
 function CRMSettings() {
   const navigate = useNavigate();
 
+  // ── PIN modal state ────────────────────────────────────────────────────────
   const [showModal, setShowModal]       = useState(false);
   const [step, setStep]                 = useState('verify');
   const [currentInput, setCurrentInput] = useState('');
-  const [verifiedPin, setVerifiedPin]   = useState(''); // holds the verified current PIN for update
+  const [verifiedPin, setVerifiedPin]   = useState('');
   const [newPin, setNewPin]             = useState('');
   const [newHint, setNewHint]           = useState('');
   const [modalError, setModalError]     = useState('');
   const [success, setSuccess]           = useState(false);
   const [loading, setLoading]           = useState(false);
+
+  // ── Sync modal state ───────────────────────────────────────────────────────
+  const [showSyncModal, setShowSyncModal]   = useState(false);
+  const [syncWord, setSyncWord]             = useState('');
+  const [syncInput, setSyncInput]           = useState('');
+  const [syncError, setSyncError]           = useState('');
+  const [syncing, setSyncing]               = useState(false);
+  const [syncResult, setSyncResult]         = useState('');
+
+  // ── PIN modal handlers ─────────────────────────────────────────────────────
 
   const openModal = () => {
     setStep('verify');
@@ -47,11 +69,10 @@ function CRMSettings() {
         body: JSON.stringify({ key: 'crm_pin', pin: currentInput }),
       });
       if (res.ok) {
-        // Fetch current hint to pre-fill
-        const hintRes = await fetch('/api/settings/pin/hint?key=crm_pin');
+        const hintRes  = await fetch('/api/settings/pin/hint?key=crm_pin');
         const hintData = await hintRes.json().catch(() => ({}));
         setNewHint(hintData.hint || '');
-        setVerifiedPin(currentInput); // save verified PIN before clearing input
+        setVerifiedPin(currentInput);
         setStep('set');
         setCurrentInput('');
       } else {
@@ -97,6 +118,41 @@ function CRMSettings() {
     ? { content: 'Verify', onAction: handleVerify, disabled: currentInput.length !== 4 || loading, loading }
     : { content: 'Save PIN', onAction: handleSave, disabled: newPin.length !== 4 || loading, loading };
 
+  // ── Sync modal handlers ────────────────────────────────────────────────────
+
+  const openSyncModal = () => {
+    setSyncWord(randomWord());
+    setSyncInput('');
+    setSyncError('');
+    setSyncResult('');
+    setShowSyncModal(true);
+  };
+
+  const closeSyncModal = () => {
+    if (syncing) return;
+    setShowSyncModal(false);
+  };
+
+  const handleSync = async () => {
+    if (syncInput.trim().toUpperCase() !== syncWord) {
+      setSyncError(`Please type exactly: ${syncWord}`);
+      return;
+    }
+    setSyncing(true);
+    setSyncError('');
+    setSyncResult('');
+    try {
+      const res  = await fetch('/api/employees/sync', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Sync failed');
+      setSyncResult(`Sync complete — ${data.synced} employees processed.`);
+    } catch (e) {
+      setSyncError(e.message);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   return (
     <Page title="CRM Settings" backAction={{ onAction: () => navigate('/crm') }}>
       <Layout>
@@ -105,6 +161,9 @@ function CRMSettings() {
             <Button size="large" fullWidth onClick={openModal}>
               Set PIN
             </Button>
+            <Button size="large" fullWidth onClick={openSyncModal}>
+              Sync Employees from Connecteam
+            </Button>
             <Button size="large" fullWidth tone="critical" onClick={handleLogout}>
               Log out
             </Button>
@@ -112,6 +171,7 @@ function CRMSettings() {
         </Layout.Section>
       </Layout>
 
+      {/* ── PIN Modal ── */}
       <Modal
         open={showModal}
         onClose={closeModal}
@@ -170,6 +230,55 @@ function CRMSettings() {
                 <Text variant="bodySm" tone="subdued">
                   Changing the PIN will sign out all devices. They will need to re-enter the new PIN.
                 </Text>
+              </>
+            )}
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
+
+      {/* ── Sync Modal ── */}
+      <Modal
+        open={showSyncModal}
+        onClose={closeSyncModal}
+        title="Sync Employees from Connecteam"
+        primaryAction={{
+          content: syncing ? 'Syncing…' : 'Confirm Sync',
+          onAction: handleSync,
+          disabled: syncInput.trim().toUpperCase() !== syncWord || syncing,
+          loading: syncing,
+          destructive: true,
+        }}
+        secondaryActions={[{ content: 'Cancel', onAction: closeSyncModal, disabled: syncing }]}
+      >
+        <Modal.Section>
+          <BlockStack gap="300">
+            {syncError && (
+              <Banner tone="critical" onDismiss={() => setSyncError('')}>{syncError}</Banner>
+            )}
+            {syncResult && (
+              <Banner tone="success">{syncResult}</Banner>
+            )}
+            {!syncResult && (
+              <>
+                <Banner tone="warning">
+                  Sync should only be performed once during initial setup, or when instructed. Running it repeatedly is unnecessary and may cause data issues.
+                </Banner>
+                <Text variant="bodyMd">
+                  To confirm, type <strong>{syncWord}</strong> below:
+                </Text>
+                <input
+                  value={syncInput}
+                  onChange={e => { setSyncInput(e.target.value); setSyncError(''); }}
+                  placeholder={syncWord}
+                  autoComplete="off"
+                  autoFocus
+                  style={{
+                    width: '100%', padding: '10px 12px', fontSize: '16px',
+                    border: `1px solid ${syncInput.trim().toUpperCase() === syncWord ? '#008060' : '#c9cccf'}`,
+                    borderRadius: '8px', outline: 'none', boxSizing: 'border-box',
+                    letterSpacing: '2px', textTransform: 'uppercase',
+                  }}
+                />
               </>
             )}
           </BlockStack>

@@ -160,16 +160,55 @@ async function updateShopifyEmployeeTag(customerId, addTag) {
   });
 }
 
+/**
+ * Find a Shopify customer by exact email using /customers.json?email=
+ * This is more reliable than /customers/search.json which uses full-text search.
+ * Returns the customer object or null.
+ */
 async function findShopifyCustomerByEmail(email) {
   const data      = await shopifyFetch(
-    `/customers/search.json?query=email:${encodeURIComponent(email)}&limit=1`
+    `/customers.json?email=${encodeURIComponent(email)}&limit=1`
   );
   const customers = data.customers || [];
   return customers.length > 0 ? customers[0] : null;
 }
 
+/**
+ * Create a new Shopify customer with the given name and email.
+ * Returns the created customer object.
+ */
+async function createShopifyCustomer(name, email) {
+  const parts     = name.trim().split(' ');
+  const firstName = parts[0] || '';
+  const lastName  = parts.slice(1).join(' ') || '';
+
+  const data = await shopifyFetch('/customers.json', {
+    method: 'POST',
+    body:   JSON.stringify({
+      customer: {
+        first_name:            firstName,
+        last_name:             lastName,
+        email:                 email,
+        verified_email:        true,
+        send_email_welcome:    false,
+      },
+    }),
+  });
+
+  return data.customer;
+}
+
 // ─── Core upsert ─────────────────────────────────────────────────────────────
 
+/**
+ * Upsert an employee from Connecteam user data.
+ *
+ * shopify_customer_id resolution order:
+ *   1. If already in DB → keep it, never overwrite with null
+ *   2. If not in DB and email exists → look up by exact email in Shopify
+ *   3. If still not found → create a new Shopify customer
+ *   4. No email → leave shopify_customer_id as null
+ */
 async function upsertEmployee(connecteamUser, branchFieldId, opts = {}) {
   const { forceStatus } = opts;
 
@@ -180,22 +219,35 @@ async function upsertEmployee(connecteamUser, branchFieldId, opts = {}) {
   const email       = connecteamUser.email || null;
   const ctUserId    = String(connecteamUser.userId);
 
-  const existing = await pool.query(
+  // Always prefer the existing shopify_customer_id from the DB
+  const existing        = await pool.query(
     'SELECT id, shopify_customer_id FROM employees WHERE connecteam_user_id = $1',
     [ctUserId]
   );
+  const existingShopifyId = existing.rows[0]?.shopify_customer_id || null;
+  let   shopifyCustomerId = existingShopifyId;
 
-  let shopifyCustomerId = existing.rows[0]?.shopify_customer_id || null;
-
+  // Only attempt Shopify lookup/creation if we don't already have an ID
   if (!shopifyCustomerId && email) {
     try {
+      // 1. Try exact email lookup first
       const sc = await findShopifyCustomerByEmail(email);
-      if (sc) shopifyCustomerId = String(sc.id);
+      if (sc) {
+        shopifyCustomerId = String(sc.id);
+        console.log(`[sync] Found Shopify customer for ${email}: ${shopifyCustomerId}`);
+      } else {
+        // 2. Not found — create a new customer
+        const created = await createShopifyCustomer(name, email);
+        shopifyCustomerId = String(created.id);
+        console.log(`[sync] Created Shopify customer for ${email}: ${shopifyCustomerId}`);
+      }
     } catch (e) {
-      console.warn(`upsertEmployee: Shopify lookup failed for ${email}:`, e.message);
+      // Do NOT set shopifyCustomerId to null — leave it as is (null or existing)
+      console.warn(`upsertEmployee: Shopify lookup/create failed for ${email}:`, e.message);
     }
   }
 
+  // Upsert employee — never overwrite an existing shopify_customer_id with null
   await pool.query(`
     INSERT INTO employees
       (connecteam_user_id, name, email, branches, status, shopify_customer_id, updated_at)
@@ -205,10 +257,11 @@ async function upsertEmployee(connecteamUser, branchFieldId, opts = {}) {
       email               = EXCLUDED.email,
       branches            = EXCLUDED.branches,
       status              = EXCLUDED.status,
-      shopify_customer_id = COALESCE(EXCLUDED.shopify_customer_id, employees.shopify_customer_id),
+      shopify_customer_id = COALESCE(employees.shopify_customer_id, EXCLUDED.shopify_customer_id),
       updated_at          = NOW()
   `, [ctUserId, name, email, branches, status, shopifyCustomerId]);
 
+  // Manage Shopify employee tag
   if (shopifyCustomerId) {
     try {
       await updateShopifyEmployeeTag(shopifyCustomerId, status === 'active');
@@ -334,7 +387,6 @@ router.get('/count', async (req, res) => {
 });
 
 // GET /api/employees
-// Query: season=current|last, branches=ALL|MTL01,..., status=all|exceeded, page=1, per_page=50
 router.get('/', async (req, res) => {
   try {
     const {
@@ -450,7 +502,6 @@ router.post('/tag-check', async (req, res) => {
 });
 
 // POST /api/employees/refresh
-// Body: { scope: 'all' | '<branch_name>' }
 router.post('/refresh', async (req, res) => {
   const { scope = 'all' } = req.body;
   try {
@@ -510,10 +561,64 @@ router.post('/refresh', async (req, res) => {
   }
 });
 
+// ─── Re-link ──────────────────────────────────────────────────────────────────
+
+/**
+ * POST /api/employees/relink
+ * For every active employee with an email, re-query Shopify by exact email
+ * and update shopify_customer_id if it has changed or was missing.
+ * Safe to run at any time — does not touch Connecteam data.
+ */
+router.post('/relink', async (req, res) => {
+  try {
+    const result    = await pool.query(
+      `SELECT id, name, email, shopify_customer_id FROM employees WHERE status = 'active' AND email IS NOT NULL`
+    );
+    const employees = result.rows;
+
+    let updated = 0;
+    let skipped = 0;
+    let failed  = 0;
+
+    for (const emp of employees) {
+      try {
+        const sc = await findShopifyCustomerByEmail(emp.email);
+        if (!sc) { skipped++; continue; }
+
+        const newId = String(sc.id);
+        if (newId === emp.shopify_customer_id) { skipped++; continue; }
+
+        // ID has changed or was null — update it
+        await pool.query(
+          `UPDATE employees SET shopify_customer_id = $1, updated_at = NOW() WHERE id = $2`,
+          [newId, emp.id]
+        );
+
+        // Re-apply employee tag with correct ID
+        try {
+          await updateShopifyEmployeeTag(newId, true);
+        } catch (e) {
+          console.warn(`relink: tag update failed for ${newId}:`, e.message);
+        }
+
+        console.log(`[relink] ${emp.name} (${emp.email}): ${emp.shopify_customer_id || 'null'} → ${newId}`);
+        updated++;
+      } catch (e) {
+        console.warn(`relink: failed for ${emp.email}:`, e.message);
+        failed++;
+      }
+    }
+
+    res.json({ ok: true, updated, skipped, failed });
+  } catch (e) {
+    console.error('POST /employees/relink:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ─── Connecteam Webhook ───────────────────────────────────────────────────────
 
 router.post('/webhook/connecteam', async (req, res) => {
-  // Respond immediately — Connecteam requires a fast 200
   res.status(200).json({ received: true });
 
   const body      = req.body;
