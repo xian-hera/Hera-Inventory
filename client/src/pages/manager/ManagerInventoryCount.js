@@ -48,7 +48,7 @@ function ManagerInventoryCount() {
               </span>
             </Button>
             <Button size="large" fullWidth onClick={() => navigate('/manager/zero-qty-report')}>
-              Zero/Low Inventory Count
+              Manual Inventory Count
             </Button>
           </BlockStack>
         </Layout.Section>

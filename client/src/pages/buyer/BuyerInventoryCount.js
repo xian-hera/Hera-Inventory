@@ -52,7 +52,7 @@ function BuyerInventoryCount() {
             </Button>
             <Button size="large" fullWidth onClick={() => navigate('/buyer/zero-qty-report')}>
               <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                Zero/Low Inventory Count
+                Manual Inventory Count
                 <Badge count={badges.zeroLow} />
               </span>
             </Button>
