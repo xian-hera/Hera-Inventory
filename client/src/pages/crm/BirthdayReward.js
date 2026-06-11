@@ -1,12 +1,21 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Page, Layout, Card, BlockStack, InlineStack, Text, Button,
-  Select, TextField, Banner, Spinner, Badge, Divider, Box,
+  Select, TextField, Banner, Spinner, Badge, Divider, Box, IndexTable,
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 
 const HOUR_OPTIONS   = Array.from({ length: 24 }, (_, i) => ({ label: `${String(i).padStart(2, '0')}`, value: String(i) }));
 const MINUTE_OPTIONS = Array.from({ length: 60 }, (_, i) => ({ label: `${String(i).padStart(2, '0')}`, value: String(i) }));
+
+function formatDateTime(value) {
+  if (!value) return '—';
+  return new Date(value).toLocaleString('en-CA', {
+    timeZone: 'America/Toronto',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  });
+}
 
 function BirthdayReward() {
   const navigate = useNavigate();
@@ -17,15 +26,17 @@ function BirthdayReward() {
   const [saved, setSaved]     = useState(false);
   const [error, setError]     = useState('');
 
+  // ── 配置项（仅保留 Remove Job 相关） ──
   const [enabled,          setEnabled]          = useState(true);
-  const [addJobEnabled,    setAddJobEnabled]    = useState(true);
-  const [addJobHour,       setAddJobHour]       = useState('9');
-  const [addJobMinute,     setAddJobMinute]     = useState('0');
   const [removeJobEnabled, setRemoveJobEnabled] = useState(true);
   const [removeJobHour,    setRemoveJobHour]    = useState('23');
-  const [removeJobMinute,  setRemoveJobMinute]  = useState('50');
+  const [removeJobMinute,  setRemoveJobMinute]  = useState('30');
   const [tagDelayHours,    setTagDelayHours]    = useState('48');
   const [campaignTag,      setCampaignTag]      = useState('birthday_campaign');
+
+  // ── 当前持有 tag 的顾客 ──
+  const [activeRows, setActiveRows]       = useState([]);
+  const [activeLoading, setActiveLoading] = useState(true);
 
   const fetchConfig = useCallback(async () => {
     try {
@@ -34,9 +45,6 @@ function BirthdayReward() {
       const data = await res.json();
       setConfig(data);
       setEnabled(data.enabled);
-      setAddJobEnabled(data.add_job_enabled);
-      setAddJobHour(String(data.add_job_hour));
-      setAddJobMinute(String(data.add_job_minute));
       setRemoveJobEnabled(data.remove_job_enabled);
       setRemoveJobHour(String(data.remove_job_hour));
       setRemoveJobMinute(String(data.remove_job_minute));
@@ -49,7 +57,20 @@ function BirthdayReward() {
     }
   }, []);
 
-  useEffect(() => { fetchConfig(); }, [fetchConfig]);
+  const fetchActive = useCallback(async () => {
+    try {
+      setActiveLoading(true);
+      const res  = await fetch('/api/birthday-config/active');
+      const data = await res.json();
+      setActiveRows(Array.isArray(data) ? data : []);
+    } catch (err) {
+      setError('Failed to load active customers: ' + err.message);
+    } finally {
+      setActiveLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { fetchConfig(); fetchActive(); }, [fetchConfig, fetchActive]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -61,9 +82,6 @@ function BirthdayReward() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           enabled,
-          add_job_enabled:    addJobEnabled,
-          add_job_hour:       parseInt(addJobHour),
-          add_job_minute:     parseInt(addJobMinute),
           remove_job_enabled: removeJobEnabled,
           remove_job_hour:    parseInt(removeJobHour),
           remove_job_minute:  parseInt(removeJobMinute),
@@ -89,6 +107,8 @@ function BirthdayReward() {
     );
   }
 
+  const resourceName = { singular: 'customer', plural: 'customers' };
+
   return (
     <Page
       title="Birthday Reward"
@@ -97,11 +117,11 @@ function BirthdayReward() {
     >
       <Layout>
 
-        {/* 顶部：浏览表单按钮 */}
+        {/* 顶部：查看消费记录按钮 */}
         <Layout.Section>
           <InlineStack align="end">
-            <Button onClick={() => navigate('/crm/birthday-reward/subscribers')}>
-              View Subscriber List
+            <Button onClick={() => navigate('/crm/birthday-reward/orders')}>
+              View Spending Records
             </Button>
           </InlineStack>
         </Layout.Section>
@@ -128,7 +148,7 @@ function BirthdayReward() {
                 <BlockStack gap="100">
                   <Text variant="headingMd">Master Switch</Text>
                   <Text variant="bodySm" tone="subdued">
-                    When disabled, all webhooks, jobs, and tag operations are paused.
+                    When disabled, the claim endpoint and the tag removal job are paused.
                   </Text>
                 </BlockStack>
                 <InlineStack gap="300" blockAlign="center">
@@ -153,7 +173,7 @@ function BirthdayReward() {
             <BlockStack gap="400">
               <Text variant="headingMd">Campaign Tag</Text>
               <Text variant="bodySm" tone="subdued">
-                This tag is added on birthdays and removed after the delay period.
+                The tag added when a customer claims their birthday reward, and removed after the delay period.
               </Text>
               <TextField
                 label="Tag name"
@@ -165,65 +185,15 @@ function BirthdayReward() {
           </Card>
         </Layout.Section>
 
-        {/* Card 3：添加 tag Job */}
+        {/* Card 3：移除 tag Job 设置 */}
         <Layout.Section>
           <Card>
             <BlockStack gap="400">
               <InlineStack align="space-between" blockAlign="center">
                 <BlockStack gap="100">
-                  <Text variant="headingMd">Add Tag Job</Text>
+                  <Text variant="headingMd">Tag Removal</Text>
                   <Text variant="bodySm" tone="subdued">
-                    Runs daily to add the campaign tag to customers whose birthday is tomorrow.
-                  </Text>
-                </BlockStack>
-                <Badge tone={addJobEnabled ? 'success' : 'critical'}>
-                  {addJobEnabled ? 'On' : 'Off'}
-                </Badge>
-              </InlineStack>
-
-              <Divider />
-
-              <InlineStack gap="400" blockAlign="end">
-                <Box minWidth="120px">
-                  <Select
-                    label="Hour"
-                    options={HOUR_OPTIONS}
-                    value={addJobHour}
-                    onChange={setAddJobHour}
-                  />
-                </Box>
-                <Box minWidth="120px">
-                  <Select
-                    label="Minute"
-                    options={MINUTE_OPTIONS}
-                    value={addJobMinute}
-                    onChange={setAddJobMinute}
-                  />
-                </Box>
-                <Button
-                  tone={addJobEnabled ? 'critical' : undefined}
-                  onClick={() => setAddJobEnabled((v) => !v)}
-                >
-                  {addJobEnabled ? 'Disable Job' : 'Enable Job'}
-                </Button>
-              </InlineStack>
-
-              <Text variant="bodySm" tone="subdued">
-                Scheduled time (Montreal): {String(addJobHour).padStart(2, '0')}:{String(addJobMinute).padStart(2, '0')}
-              </Text>
-            </BlockStack>
-          </Card>
-        </Layout.Section>
-
-        {/* Card 4：移除 tag Job */}
-        <Layout.Section>
-          <Card>
-            <BlockStack gap="400">
-              <InlineStack align="space-between" blockAlign="center">
-                <BlockStack gap="100">
-                  <Text variant="headingMd">Remove Tag Job</Text>
-                  <Text variant="bodySm" tone="subdued">
-                    Runs daily to remove expired campaign tags.
+                    Sets how long a tag lasts and when each day it is removed.
                   </Text>
                 </BlockStack>
                 <Badge tone={removeJobEnabled ? 'success' : 'critical'}>
@@ -232,6 +202,20 @@ function BirthdayReward() {
               </InlineStack>
 
               <Divider />
+
+              <TextField
+                label="Tag duration (hours)"
+                type="number"
+                value={tagDelayHours}
+                onChange={setTagDelayHours}
+                helpText="How many hours after a customer claims the reward before the tag is scheduled for removal."
+                autoComplete="off"
+                min="1"
+              />
+
+              <Text variant="bodySm" tone="subdued">
+                Removal time (the tag is removed at this time on the day the duration elapses):
+              </Text>
 
               <InlineStack gap="400" blockAlign="end">
                 <Box minWidth="120px">
@@ -258,21 +242,53 @@ function BirthdayReward() {
                 </Button>
               </InlineStack>
 
-              <Divider />
-
-              <TextField
-                label="Tag delay (hours)"
-                type="number"
-                value={tagDelayHours}
-                onChange={setTagDelayHours}
-                helpText="How many hours after adding the tag before it is automatically removed."
-                autoComplete="off"
-                min="1"
-              />
-
               <Text variant="bodySm" tone="subdued">
-                Scheduled time (Montreal): {String(removeJobHour).padStart(2, '0')}:{String(removeJobMinute).padStart(2, '0')}
+                Scheduled removal time (Montreal): {String(removeJobHour).padStart(2, '0')}:{String(removeJobMinute).padStart(2, '0')}
               </Text>
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+
+        {/* Card 4：当前持有 tag 的顾客 */}
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="400">
+              <InlineStack align="space-between" blockAlign="center">
+                <Text variant="headingMd">Customers With Active Tag</Text>
+                <Button variant="plain" onClick={fetchActive}>Refresh</Button>
+              </InlineStack>
+              <Text variant="bodySm" tone="subdued">
+                {activeRows.length} customer{activeRows.length !== 1 ? 's' : ''} currently hold the tag.
+              </Text>
+
+              {activeLoading ? (
+                <InlineStack align="center"><Spinner /></InlineStack>
+              ) : (
+                <IndexTable
+                  resourceName={resourceName}
+                  itemCount={activeRows.length}
+                  headings={[
+                    { title: 'Customer' },
+                    { title: 'Tag added' },
+                    { title: 'Scheduled removal' },
+                  ]}
+                  selectable={false}
+                >
+                  {activeRows.map((row, i) => (
+                    <IndexTable.Row id={String(row.id)} key={row.id} position={i}>
+                      <IndexTable.Cell>
+                        <Text variant="bodyMd">{row.email || row.customer_id}</Text>
+                      </IndexTable.Cell>
+                      <IndexTable.Cell>
+                        <Text variant="bodyMd">{formatDateTime(row.tag_added_at)}</Text>
+                      </IndexTable.Cell>
+                      <IndexTable.Cell>
+                        <Text variant="bodyMd" tone="subdued">{formatDateTime(row.tag_remove_at)}</Text>
+                      </IndexTable.Cell>
+                    </IndexTable.Row>
+                  ))}
+                </IndexTable>
+              )}
             </BlockStack>
           </Card>
         </Layout.Section>

@@ -351,6 +351,69 @@ const initDatabase = async () => {
       ON variant_search_index (shopify_product_id)
     `);
 
+    // ─── Birthday Campaign ───────────────────────────────────────────────────────
+    // 顾客点击生日邮件按钮 → Netlify 通知本 APP → 加 birthday_campaign tag +
+    // 写 birthday_campaign_log；Remove Job 到期时拉取该顾客 tag 期间订单存入
+    // birthday_orders，并摘 tag。
+
+    // 配置表（单行，id=1）。仅保留 Remove Job 相关配置。
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS birthday_config (
+        id                 INTEGER PRIMARY KEY DEFAULT 1,
+        enabled            BOOLEAN NOT NULL DEFAULT TRUE,
+        remove_job_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        remove_job_hour    INTEGER NOT NULL DEFAULT 23,
+        remove_job_minute  INTEGER NOT NULL DEFAULT 30,
+        tag_delay_hours    INTEGER NOT NULL DEFAULT 48,
+        campaign_tag       TEXT NOT NULL DEFAULT 'birthday_campaign',
+        updated_at         TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
+    // 种子配置行
+    await client.query(`
+      INSERT INTO birthday_config (id) VALUES (1)
+      ON CONFLICT (id) DO NOTHING
+    `);
+
+    // tag 记录表（核心）。status: 'pending' | 'removed' | 'failed'
+    // 注意：id 用 SERIAL（与现有库一致），不是 BIGSERIAL。
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS birthday_campaign_log (
+        id             SERIAL PRIMARY KEY,
+        customer_id    TEXT NOT NULL,
+        email          TEXT,
+        tag_added_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        tag_remove_at  TIMESTAMPTZ NOT NULL,
+        tag_removed_at TIMESTAMPTZ,
+        status         TEXT NOT NULL DEFAULT 'pending'
+      )
+    `);
+
+    // 现有库已有索引 idx_birthday_log_pending（部分索引，针对 pending 状态），
+    // 这里不重复创建。如果是全新库，部署时建议手动评估是否要加 (status, tag_remove_at) 复合索引。
+
+    // 订单记录表。order_id 唯一约束 → 配合 ON CONFLICT 做幂等。
+    // id 用 SERIAL、log_id 用 INTEGER，与 birthday_campaign_log.id 类型对齐。
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS birthday_orders (
+        id               SERIAL PRIMARY KEY,
+        log_id           INTEGER NOT NULL REFERENCES birthday_campaign_log(id) ON DELETE CASCADE,
+        customer_id      TEXT NOT NULL,
+        order_id         TEXT NOT NULL UNIQUE,
+        order_name       TEXT,
+        order_amount     NUMERIC(12,2) NOT NULL DEFAULT 0,
+        currency         TEXT DEFAULT 'CAD',
+        order_created_at TIMESTAMPTZ,
+        recorded_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_birthday_orders_log
+      ON birthday_orders (log_id)
+    `);
+
     // ────────────────────────────────────────────────────────────────────────────
 
     await client.query('COMMIT');

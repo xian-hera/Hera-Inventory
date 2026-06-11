@@ -1,8 +1,10 @@
 // server/routes/birthday.js
 // ─────────────────────────────────────────────────────────────
-// 两个 Webhook 端点：
-//   POST /webhooks/customers-update — customers/update（GraphQL API 注册，用 SHOPIFY_API_SECRET 验签）
-//   POST /webhooks/consent-update   — customers/email_marketing_consent_update（Admin UI 注册，用 SHOPIFY_WEBHOOK_SECRET 验签）
+// 单一端点：POST /birthday/claim-tag
+//   由 Netlify 函数 claim.js 调用，顾客点击生日邮件按钮后触发。
+//   职责：验证 shared secret → 给顾客加 birthday_campaign tag →
+//        在 birthday_campaign_log 写入记录（含到期时间）。
+//   tag 的移除由 birthdayScheduler.js 的 Remove Job 自动处理。
 // ─────────────────────────────────────────────────────────────
 
 const express = require('express');
@@ -10,199 +12,147 @@ const router  = express.Router();
 const crypto  = require('crypto');
 const { pool } = require('../database/init');
 const { getSession, getShopify } = require('../shopify');
+const { calcTagRemoveAt } = require('../jobs/birthdayScheduler');
 
-// GraphQL API 注册的 webhook → 用 App client secret 验签
-const SHOPIFY_API_SECRET     = process.env.SHOPIFY_API_SECRET;
-// Admin UI 手动注册的 webhook → 用 Notifications 页面的 signing secret 验签
-const SHOPIFY_WEBHOOK_SECRET = process.env.SHOPIFY_WEBHOOK_SECRET;
+// Netlify 调用时携带的 shared secret，从环境变量读取（不得硬编码）
+const BIRTHDAY_APP_SECRET = process.env.BIRTHDAY_APP_SECRET;
 
 // ── 工具函数 ─────────────────────────────────────────────────
 
-function verifyHmac(rawBody, hmacHeader, secret) {
-  if (!secret) {
-    console.warn('[Birthday] 签名 secret 未设置，跳过验证');
-    return true;
+// 比较两个 secret，使用 timingSafeEqual 防止时序攻击
+function verifySecret(provided) {
+  if (!BIRTHDAY_APP_SECRET) {
+    console.warn('[Birthday] BIRTHDAY_APP_SECRET 未设置，拒绝所有请求');
+    return false;
   }
+  const a = Buffer.from(String(provided || ''), 'utf8');
+  const b = Buffer.from(BIRTHDAY_APP_SECRET, 'utf8');
+  if (a.length !== b.length) return false;
   try {
-    const digest = crypto
-      .createHmac('sha256', secret)
-      .update(rawBody)
-      .digest('base64');
-    return crypto.timingSafeEqual(
-      Buffer.from(digest, 'base64'),
-      Buffer.from(hmacHeader || '', 'base64')
-    );
+    return crypto.timingSafeEqual(a, b);
   } catch {
     return false;
   }
 }
 
-function parseBirthDate(value) {
-  if (!value) return null;
-  const match = String(value).match(/^\d{4}-(\d{2})-(\d{2})$/);
-  if (!match) return null;
-  const month = parseInt(match[1], 10);
-  const day   = parseInt(match[2], 10);
-  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
-  return { month, day };
-}
-
-function extractBirthDateFromPayload(payload) {
-  const metafields = payload.metafields || [];
-  const field = metafields.find(
-    (m) => m.namespace === 'facts' && m.key === 'birth_date'
-  );
-  return field ? field.value : null;
-}
-
-async function fetchBirthDate(customerId) {
+async function getClient() {
   const session = await getSession();
   if (!session) throw new Error('未找到 Shopify session');
   const shopify = getShopify();
-  const client  = new shopify.clients.Graphql({ session });
-  const response = await client.request(
-    `query getCustomerBirthDate($id: ID!) {
-       customer(id: $id) {
-         email
-         metafield(namespace: "facts", key: "birth_date") { value }
-       }
+  return new shopify.clients.Graphql({ session });
+}
+
+// 给顾客加 tag（若已存在则跳过）
+async function addTagToCustomer(client, customerId, tag) {
+  const fetchRes = await client.request(
+    `query getCustomerTags($id: ID!) {
+       customer(id: $id) { tags email }
      }`,
     { variables: { id: customerId } }
   );
-  return response?.data?.customer || null;
-}
+  const customer = fetchRes?.data?.customer;
+  if (!customer) throw new Error(`找不到顾客 ${customerId}`);
 
-async function fetchConsentState(customerId) {
-  const session = await getSession();
-  if (!session) throw new Error('未找到 Shopify session');
-  const shopify = getShopify();
-  const client  = new shopify.clients.Graphql({ session });
-  const response = await client.request(
-    `query getCustomerConsent($id: ID!) {
-       customer(id: $id) {
-         email
-         emailMarketingConsent { marketingState }
+  const existingTags = customer.tags || [];
+  const email = customer.email || null;
+
+  if (existingTags.includes(tag)) {
+    console.log(`[Birthday] 顾客 ${customerId} 已有 tag "${tag}"，跳过加 tag`);
+    return { email, alreadyTagged: true };
+  }
+
+  const newTags = [...existingTags, tag];
+  const updateRes = await client.request(
+    `mutation customerUpdate($input: CustomerInput!) {
+       customerUpdate(input: $input) {
+         customer { id tags }
+         userErrors { field message }
        }
      }`,
-    { variables: { id: customerId } }
+    { variables: { input: { id: customerId, tags: newTags } } }
   );
-  return response?.data?.customer || null;
+  const errors = updateRes?.data?.customerUpdate?.userErrors || [];
+  if (errors.length) throw new Error(errors.map((e) => e.message).join(', '));
+
+  return { email, alreadyTagged: false };
 }
 
-async function syncSubscriber(customerId, email, emailSubscribed, rawBirthDate) {
-  const birthDate = parseBirthDate(rawBirthDate);
-  if (emailSubscribed && birthDate) {
-    await pool.query(
-      `INSERT INTO birthday_subscribers
-         (customer_id, email, birth_month, birth_day, updated_at)
-       VALUES ($1, $2, $3, $4, NOW())
-       ON CONFLICT (customer_id) DO UPDATE SET
-         email       = EXCLUDED.email,
-         birth_month = EXCLUDED.birth_month,
-         birth_day   = EXCLUDED.birth_day,
-         updated_at  = NOW()`,
-      [customerId, email, birthDate.month, birthDate.day]
+// ── 读取配置（用于计算到期时间） ──────────────────────────────
+
+async function getConfig() {
+  const result = await pool.query('SELECT * FROM birthday_config WHERE id = 1');
+  return result.rows[0];
+}
+
+// ── POST /birthday/claim-tag ──────────────────────────────────
+
+router.post('/claim-tag', express.json(), async (req, res) => {
+  // 1. 验证 secret
+  if (!verifySecret(req.headers['x-birthday-secret'])) {
+    console.warn('[Birthday] claim-tag: secret 验证失败');
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  // 2. 校验 body
+  const { customerId, tag } = req.body || {};
+  if (!customerId || !tag) {
+    return res.status(400).json({ error: 'Missing customerId or tag' });
+  }
+  if (!/^gid:\/\/shopify\/Customer\/\d+$/.test(customerId)) {
+    return res.status(400).json({ error: 'Invalid customerId format' });
+  }
+
+  try {
+    // 3. 读取配置，确认总开关
+    const config = await getConfig();
+    if (!config || !config.enabled) {
+      console.log('[Birthday] claim-tag: 系统已禁用，拒绝');
+      return res.status(503).json({ error: 'Birthday system disabled' });
+    }
+
+    // 4. 加 tag
+    const client = await getClient();
+    const { email } = await addTagToCustomer(client, customerId, tag);
+
+    // 5. 计算到期时间：领取时间 + tag_delay_hours，取那天的 remove_job 时间
+    const tagAddedAt   = new Date();
+    const tagRemoveAt  = calcTagRemoveAt(
+      tagAddedAt,
+      config.tag_delay_hours,
+      config.remove_job_hour,
+      config.remove_job_minute
     );
-    console.log(`[Birthday] Upserted 订阅者: ${email} (生日: ${birthDate.month}月${birthDate.day}日)`);
-  } else {
-    const result = await pool.query(
-      `DELETE FROM birthday_subscribers WHERE customer_id = $1`,
+
+    // 6. 写入 log（同一顾客已有 pending 记录则不重复插入）
+    const existing = await pool.query(
+      `SELECT id FROM birthday_campaign_log
+       WHERE customer_id = $1 AND status = 'pending'`,
       [customerId]
     );
-    if (result.rowCount > 0) {
-      console.log(`[Birthday] 已移出订阅者: ${email || customerId} (email_subscribed=${emailSubscribed}, birth_date=${rawBirthDate || '无'})`);
-    }
-  }
-}
 
-// ── Webhook 1：customers/update ───────────────────────────────
-// GraphQL API 注册 → 用 SHOPIFY_API_SECRET 验签
-
-router.post(
-  '/webhooks/customers-update',
-  express.raw({ type: 'application/json' }),
-  async (req, res) => {
-    if (!verifyHmac(req.body, req.headers['x-shopify-hmac-sha256'], SHOPIFY_API_SECRET)) {
-      console.warn('[Birthday] customers-update: HMAC 验证失败');
-      return res.status(401).send('Unauthorized');
-    }
-
-    let payload;
-    try {
-      payload = JSON.parse(req.body.toString('utf8'));
-    } catch (e) {
-      console.error('[Birthday] customers-update: payload 解析失败:', e.message);
-      return res.status(400).send('Bad Request');
-    }
-
-    res.status(200).send('OK');
-
-    try {
-      const rawBirthDate = extractBirthDateFromPayload(payload);
-      if (!rawBirthDate) return;
-
-      const customerId = payload.admin_graphql_api_id;
-      const email      = payload.email;
-      console.log(`[Birthday] customers-update: ${customerId} | birth_date=${rawBirthDate}`);
-
-      const customerData = await fetchConsentState(customerId);
-      if (!customerData) {
-        console.warn(`[Birthday] customers-update: 找不到顾客 ${customerId}`);
-        return;
-      }
-
-      const emailSubscribed = customerData.emailMarketingConsent?.marketingState === 'SUBSCRIBED';
-      await syncSubscriber(customerId, email || customerData.email, emailSubscribed, rawBirthDate);
-    } catch (err) {
-      console.error('[Birthday] customers-update 处理失败:', err.message);
-    }
-  }
-);
-
-// ── Webhook 2：customers/email_marketing_consent_update ───────
-// Admin UI 注册 → 用 SHOPIFY_WEBHOOK_SECRET 验签
-
-router.post(
-  '/webhooks/consent-update',
-  express.raw({ type: 'application/json' }),
-  async (req, res) => {
-    if (!verifyHmac(req.body, req.headers['x-shopify-hmac-sha256'], SHOPIFY_WEBHOOK_SECRET)) {
-      console.warn('[Birthday] consent-update: HMAC 验证失败');
-      return res.status(401).send('Unauthorized');
-    }
-
-    let payload;
-    try {
-      payload = JSON.parse(req.body.toString('utf8'));
-    } catch (e) {
-      console.error('[Birthday] consent-update: payload 解析失败:', e.message);
-      return res.status(400).send('Bad Request');
-    }
-
-    res.status(200).send('OK');
-
-    try {
-      const customerId      = payload.admin_graphql_api_id;
-      const marketingState  = payload.email_marketing_consent?.state || '';
-      const emailSubscribed = marketingState.toUpperCase() === 'SUBSCRIBED';
-      console.log(`[Birthday] consent-update: ${customerId} | state=${marketingState}`);
-
-      const customerData = await fetchBirthDate(customerId);
-      if (!customerData) {
-        console.warn(`[Birthday] consent-update: 找不到顾客 ${customerId}`);
-        return;
-      }
-
-      await syncSubscriber(
-        customerId,
-        customerData.email,
-        emailSubscribed,
-        customerData.metafield?.value || null
+    if (existing.rows.length > 0) {
+      console.log(`[Birthday] claim-tag: 顾客 ${customerId} 已有 pending 记录，仅更新到期时间`);
+      await pool.query(
+        `UPDATE birthday_campaign_log
+         SET tag_remove_at = $1, email = COALESCE($2, email)
+         WHERE id = $3`,
+        [tagRemoveAt, email, existing.rows[0].id]
       );
-    } catch (err) {
-      console.error('[Birthday] consent-update 处理失败:', err.message);
+    } else {
+      await pool.query(
+        `INSERT INTO birthday_campaign_log
+           (customer_id, email, tag_added_at, tag_remove_at, status)
+         VALUES ($1, $2, $3, $4, 'pending')`,
+        [customerId, email, tagAddedAt, tagRemoveAt]
+      );
     }
+
+    console.log(`[Birthday] claim-tag: ✓ ${customerId} | tag=${tag} | 到期=${tagRemoveAt.toISOString()}`);
+    return res.status(200).json({ ok: true, tagRemoveAt });
+  } catch (err) {
+    console.error('[Birthday] claim-tag 处理失败:', err.message);
+    return res.status(500).json({ error: 'Internal error' });
   }
-);
+});
 
 module.exports = router;

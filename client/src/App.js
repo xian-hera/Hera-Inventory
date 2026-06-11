@@ -34,7 +34,7 @@ import HairdresserList from './pages/crm/HairdresserList';
 import HairdresserDetail from './pages/crm/HairdresserDetail';
 import SettleCommissions from './pages/crm/SettleCommissions';
 import BirthdayReward from './pages/crm/BirthdayReward';
-import BirthdaySubscribers from './pages/crm/BirthdaySubscribers';
+import BirthdayOrders from './pages/crm/BirthdayOrders';
 import InfluencerList from './pages/crm/InfluencerList';
 import InfluencerDetail from './pages/crm/InfluencerDetail';
 import EmployeeCap from './pages/crm/EmployeeCap';
@@ -84,7 +84,7 @@ function App() {
           <Route path="/crm/hairdressers/settle-commissions" element={<SettleCommissions />} />
           <Route path="/crm/hairdressers/:id" element={<HairdresserDetail />} />
           <Route path="/crm/birthday-reward" element={<BirthdayReward />} />
-          <Route path="/crm/birthday-reward/subscribers" element={<BirthdaySubscribers />} />
+          <Route path="/crm/birthday-reward/orders" element={<BirthdayOrders />} />
           <Route path="/crm/influencers" element={<InfluencerList />} />
           <Route path="/crm/influencers/:id" element={<InfluencerDetail />} />
           <Route path="/crm/employee-cap" element={<EmployeeCap />} />
