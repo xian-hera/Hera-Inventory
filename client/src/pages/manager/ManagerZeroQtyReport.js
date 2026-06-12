@@ -131,8 +131,8 @@ function ManagerZeroQtyReport() {
       const res  = await fetch(`/api/shopify/inventory?barcode=${encodeURIComponent(barcode)}&locationId=${encodeURIComponent(loc.id)}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Product not found');
-      const existing = items.find(i => i.barcode === barcode);
-      setPopupData({ ...data, barcode, locationId: loc.id });
+      const existing = items.find(i => i.barcode === data.barcode);
+      setPopupData({ ...data, locationId: loc.id });
       setPopupSoh(data.soh ?? null);
       setPopupCommitted(data.committed ?? 0);
       setPopupScanHistory(existing?.scan_history || []);
@@ -208,8 +208,8 @@ function ManagerZeroQtyReport() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'SKU not found');
       setShowTypeIn(false); setSkuInput('');
-      const existing = items.find(i => i.barcode === skuInput.trim());
-      setPopupData({ ...data, barcode: skuInput.trim(), locationId: loc.id });
+      const existing = items.find(i => i.barcode === data.barcode);
+      setPopupData({ ...data, locationId: loc.id });
       setPopupSoh(data.soh ?? null);
       setPopupScanHistory(existing?.scan_history || []);
       setCountInput('');
