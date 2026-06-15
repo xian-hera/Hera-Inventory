@@ -195,7 +195,7 @@ function SearchWithFilters({ onAddItems, taskItems }) {
         if (selectedTag) params.append('tag', selectedTag);
         const res = await fetch(`/api/shopify/search?${params.toString()}`);
         const data = await res.json();
-        setResults(data);
+        setResults(data.results || []);
         setDropOpen(true);
       } catch (e) {
         console.error('Search failed');

@@ -536,6 +536,8 @@ function ManagerTaskDetail() {
                   rows={rows}
                 />
               </Card>
+              {/* Android 底部导航栏占位，防止最后一行被遮挡 */}
+              <div style={{ height: 'var(--shopify-safe-area-inset-bottom, 80px)' }} />
             </BlockStack>
           </Layout.Section>
         </Layout>
