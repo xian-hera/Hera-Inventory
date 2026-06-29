@@ -266,6 +266,111 @@ router.post('/:id/refresh-stats', async (req, res) => {
 });
 
 
+// ─── SHOPIFY SALES STATS BY DATE RANGE ───────────────────────────────────────
+// POST /api/influencers/:id/stats-range   body: { start_date, end_date }  (YYYY-MM-DD)
+// codeDiscountNodeByCode only exposes an all-time aggregate, so a date range has to be
+// computed by searching ORDERS that used the code within [start_date, end_date].
+//
+// IMPORTANT LIMITATION: order search only returns orders the app is allowed to read.
+// Without "read all orders" / protected-customer-data approval, Shopify restricts this
+// to roughly the last 60 days, so ranges older than that may come back empty even when
+// sales actually occurred. This is a permission limit, not a missing-data bug.
+router.post('/:id/stats-range', async (req, res) => {
+  const { start_date, end_date } = req.body;
+  if (!start_date || !end_date) {
+    return res.status(400).json({ error: 'start_date and end_date are required' });
+  }
+
+  const client = await pool.connect();
+  try {
+    const { rows } = await client.query(
+      `SELECT code, commission_rate FROM influencers WHERE id=$1`,
+      [req.params.id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
+
+    const { code, commission_rate } = rows[0];
+    if (!code) return res.json({ used_times: 0, total_sale: '0.00', commission: null });
+
+    const session = req.shopifySession;
+    const shop    = session.shop;
+    const token   = session.accessToken;
+
+    // Inclusive range: from start 00:00:00 to end 23:59:59 (Shopify interprets these
+    // against the shop timezone).
+    const searchQuery =
+      `discount_code:${JSON.stringify(code.trim())} ` +
+      `created_at:>=${start_date}T00:00:00 created_at:<=${end_date}T23:59:59`;
+
+    const gql = `query($cursor: String, $q: String!) {
+      orders(first: 250, after: $cursor, query: $q) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          id
+          currentSubtotalPriceSet { shopMoney { amount } }
+        }
+      }
+    }`;
+
+    let cursor     = null;
+    let hasNext    = true;
+    let used_times = 0;
+    let total_sale = 0;
+    let pages      = 0;
+    const MAX_PAGES = 40; // safety cap: 40 * 250 = 10,000 orders
+
+    while (hasNext && pages < MAX_PAGES) {
+      const resp = await fetch(`https://${shop}/admin/api/2026-01/graphql.json`, {
+        method: 'POST',
+        headers: {
+          'X-Shopify-Access-Token': token,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ query: gql, variables: { cursor, q: searchQuery } }),
+      });
+
+      if (!resp.ok) {
+        const body = await resp.text();
+        throw new Error(`Shopify GraphQL error ${resp.status}: ${body}`);
+      }
+
+      const result = await resp.json();
+      if (result.errors) {
+        throw new Error(`Shopify GraphQL error: ${JSON.stringify(result.errors)}`);
+      }
+
+      const orders = result?.data?.orders;
+      const nodes  = orders?.nodes ?? [];
+      for (const o of nodes) {
+        used_times += 1;
+        total_sale += parseFloat(o.currentSubtotalPriceSet?.shopMoney?.amount ?? 0);
+      }
+
+      hasNext = orders?.pageInfo?.hasNextPage ?? false;
+      cursor  = orders?.pageInfo?.endCursor ?? null;
+      pages  += 1;
+    }
+
+    const truncated  = hasNext; // hit the safety cap before exhausting results
+    const commission = commission_rate != null
+      ? (total_sale * parseFloat(commission_rate) / 100).toFixed(2)
+      : null;
+
+    res.json({
+      start_date,
+      end_date,
+      used_times,
+      total_sale: total_sale.toFixed(2),
+      commission,
+      truncated,
+    });
+  } catch (e) {
+    console.error('POST /api/influencers/:id/stats-range error:', e);
+    res.status(500).json({ error: e.message });
+  } finally { client.release(); }
+});
+
+
 // ─── DELETE ──────────────────────────────────────────────────────────────────
 router.delete('/:id', async (req, res) => {
   try {

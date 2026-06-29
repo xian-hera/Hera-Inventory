@@ -36,6 +36,13 @@ export default function InfluencerDetail() {
   const [statsLoading, setStatsLoading] = useState(false);
   const [statsError, setStatsError] = useState('');
 
+  // Code-usage date-range query (ad-hoc, does not overwrite the all-time figures)
+  const [rangeStart, setRangeStart]     = useState('');
+  const [rangeEnd, setRangeEnd]         = useState('');
+  const [rangeLoading, setRangeLoading] = useState(false);
+  const [rangeError, setRangeError]     = useState('');
+  const [rangeResult, setRangeResult]   = useState(null);
+
   // Edit info modal
   const [editOpen, setEditOpen]     = useState(false);
   const [editForm, setEditForm]     = useState({});
@@ -166,6 +173,27 @@ export default function InfluencerDetail() {
     } catch (e) {
       setStatsError(e.message);
     } finally { setStatsLoading(false); }
+  };
+
+  // ── Date-range code-usage query ──
+  const queryRange = async () => {
+    if (!rangeStart || !rangeEnd) { setRangeError('Please select both a start and end date.'); return; }
+    if (rangeStart > rangeEnd)    { setRangeError('Start date must be on or before end date.'); return; }
+    setRangeLoading(true);
+    setRangeError('');
+    setRangeResult(null);
+    try {
+      const r = await fetch(`/api/influencers/${id}/stats-range`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ start_date: rangeStart, end_date: rangeEnd }),
+      });
+      const data = await r.json();
+      if (data.error) throw new Error(data.error);
+      setRangeResult(data);
+    } catch (e) {
+      setRangeError(e.message);
+    } finally { setRangeLoading(false); }
   };
 
   // ── Payment info edit ──
@@ -351,7 +379,10 @@ export default function InfluencerDetail() {
 
               {statsError && <Banner tone="critical" onDismiss={() => setStatsError('')}>{statsError}</Banner>}
 
-              <InlineStack gap="600" wrap>
+              <InlineStack align="space-between" blockAlign="start" gap="500" wrap>
+                {/* LEFT: all-time stats (unchanged) */}
+                <BlockStack gap="400">
+                <InlineStack gap="600" wrap>
                 <BlockStack gap="100">
                   <Text variant="bodySm" tone="subdued">Code</Text>
                   <span
@@ -392,6 +423,79 @@ export default function InfluencerDetail() {
               <Box>
                 <Button onClick={refreshStats} loading={statsLoading}>Refresh</Button>
               </Box>
+                </BlockStack>
+
+                {/* RIGHT: ad-hoc date-range query */}
+                <Box
+                  background="bg-surface-secondary"
+                  padding="400"
+                  borderRadius="300"
+                  minWidth="280px"
+                >
+                  <BlockStack gap="300">
+                    <Text variant="bodyMd" fontWeight="semibold">Query by date range</Text>
+                    <Text variant="bodySm" tone="subdued">
+                      Looks up usage, sales and commission for a specific period. Does not
+                      change the all-time figures on the left.
+                    </Text>
+                    <InlineStack gap="300" wrap>
+                      <div style={{ flex: 1, minWidth: 120 }}>
+                        <TextField label="Start" type="date" value={rangeStart}
+                          onChange={setRangeStart} autoComplete="off" />
+                      </div>
+                      <div style={{ flex: 1, minWidth: 120 }}>
+                        <TextField label="End" type="date" value={rangeEnd}
+                          onChange={setRangeEnd} autoComplete="off" />
+                      </div>
+                    </InlineStack>
+
+                    <Button onClick={queryRange} loading={rangeLoading}>Query</Button>
+
+                    {rangeError && (
+                      <Banner tone="critical" onDismiss={() => setRangeError('')}>{rangeError}</Banner>
+                    )}
+
+                    {rangeResult && (
+                      <BlockStack gap="200">
+                        <Divider />
+                        <Text variant="bodySm" tone="subdued">
+                          {fmtDate(rangeResult.start_date)} – {fmtDate(rangeResult.end_date)}
+                        </Text>
+                        <InlineStack gap="500" wrap>
+                          <BlockStack gap="050">
+                            <Text variant="bodySm" tone="subdued">Used Times</Text>
+                            <Text variant="bodyMd">{rangeResult.used_times}</Text>
+                          </BlockStack>
+                          <BlockStack gap="050">
+                            <Text variant="bodySm" tone="subdued">Total Sale</Text>
+                            <Text variant="bodyMd">
+                              ${parseFloat(rangeResult.total_sale).toLocaleString('en', { minimumFractionDigits: 2 })}
+                            </Text>
+                          </BlockStack>
+                          {rangeResult.commission != null && (
+                            <BlockStack gap="050">
+                              <Text variant="bodySm" tone="subdued">Commission</Text>
+                              <Text variant="bodyMd">
+                                ${parseFloat(rangeResult.commission).toLocaleString('en', { minimumFractionDigits: 2 })}
+                              </Text>
+                            </BlockStack>
+                          )}
+                        </InlineStack>
+                        {rangeResult.truncated && (
+                          <Text variant="bodySm" tone="caution">
+                            Result capped at 10,000 orders — narrow the range for an exact total.
+                          </Text>
+                        )}
+                      </BlockStack>
+                    )}
+
+                    <Text variant="bodySm" tone="subdued">
+                      Note: order lookups are limited to roughly the last 60 days unless the
+                      app has extended order access, so older ranges may return nothing.
+                    </Text>
+                  </BlockStack>
+                </Box>
+              </InlineStack>
             </BlockStack>
           </Card>
         )}
