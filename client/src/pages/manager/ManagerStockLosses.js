@@ -445,6 +445,30 @@ function ManagerStockLosses() {
 
   useEffect(() => { loadItems(); }, [loadItems]);
 
+  // While any item's photo is still processing, poll the list so
+  // "Photo uploading" flips to cleared / "Photo failed" automatically once
+  // the background job on the server finishes, without the manager needing
+  // to refresh the page.
+  const refreshItemsPhotoStatus = useCallback(async () => {
+    if (!location) return;
+    try {
+      const res = await fetch(`/api/stock-losses?location=${encodeURIComponent(location)}`);
+      const data = await res.json();
+      if (!Array.isArray(data)) return;
+      const fifteenDaysAgo = Date.now() - 15 * 24 * 60 * 60 * 1000;
+      setItems(data.filter(i => new Date(i.submitted_at).getTime() > fifteenDaysAgo));
+    } catch (e) {
+      // Ignore — will retry on the next tick.
+    }
+  }, [location]);
+
+  useEffect(() => {
+    const hasProcessing = items.some(i => i.photo_status === 'processing');
+    if (!hasProcessing) return;
+    const timer = setInterval(refreshItemsPhotoStatus, 4000);
+    return () => clearInterval(timer);
+  }, [items, refreshItemsPhotoStatus]);
+
   const allReasons = [
     ...BUILT_IN_REASONS,
     ...customReasons.map(r => ({ key: r.reason_key, label: r.reason_label })),
@@ -648,19 +672,36 @@ function ManagerStockLosses() {
 
   const handleSubmitItems = async (ids) => {
     if (ids.length === 0) return;
+    // Never submit items whose photos are still uploading or failed to
+    // process — those need to finish or be recreated first. Submit the
+    // rest and let the manager know how many were skipped.
+    const blockedIds = ids.filter(id => {
+      const item = items.find(i => i.id === id);
+      return item && (item.photo_status === 'processing' || item.photo_status === 'failed');
+    });
+    const submittableIds = ids.filter(id => !blockedIds.includes(id));
+
+    if (submittableIds.length === 0) {
+      setError('These item(s) have photos still uploading or failed — please wait or re-create them before submitting.');
+      return;
+    }
+
     setSubmitting(true);
     try {
       const res = await fetch('/api/stock-losses/submit-many', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids }),
+        body: JSON.stringify({ ids: submittableIds }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Submit failed');
-      setItems(prev => prev.filter(i => !ids.includes(i.id)));
-      setSelectedIds([]);
+      setItems(prev => prev.filter(i => !submittableIds.includes(i.id)));
+      setSelectedIds(prev => prev.filter(id => !submittableIds.includes(id)));
       setSubmitSuccess(true);
       setTimeout(() => setSubmitSuccess(false), 3000);
+      if (blockedIds.length > 0) {
+        setError(`${blockedIds.length} item(s) skipped: photo still uploading or failed. Please wait or re-create them.`);
+      }
     } catch (e) {
       setError('Failed to submit: ' + e.message);
     } finally {
@@ -754,7 +795,7 @@ function ManagerStockLosses() {
                 ) : (
                   <div>
                     <div style={{
-                      display: 'grid', gridTemplateColumns: '32px 1fr 80px 80px',
+                      display: 'grid', gridTemplateColumns: '32px 1fr 110px 70px 70px',
                       gap: '8px', padding: '8px 0', borderBottom: '1px solid #e1e3e5',
                       fontSize: '12px', fontWeight: '600', color: '#6d7175',
                     }}>
@@ -764,12 +805,13 @@ function ManagerStockLosses() {
                         onChange={toggleSelectAll}
                       />
                       <span>Name / SKU</span>
+                      <span></span>
                       <span>System</span>
                       <span>Qty</span>
                     </div>
                     {items.map(item => (
                       <div key={item.id} style={{
-                        display: 'grid', gridTemplateColumns: '32px 1fr 80px 80px',
+                        display: 'grid', gridTemplateColumns: '32px 1fr 110px 70px 70px',
                         gap: '8px', padding: '10px 0', borderBottom: '1px solid #f1f1f1',
                         alignItems: 'start',
                       }}>
@@ -786,6 +828,10 @@ function ManagerStockLosses() {
                             {item.reason_label}
                             {item.reason_detail && ` · ${item.reason_detail}`}
                           </div>
+                        </div>
+                        <div style={{ fontSize: '11px', color: '#d72c0d', fontWeight: '600', wordBreak: 'break-word' }}>
+                          {item.photo_status === 'processing' && 'Photo uploading'}
+                          {item.photo_status === 'failed' && 'Photo failed, please recreate'}
                         </div>
                         <div style={{ fontSize: '14px' }}>{item.soh ?? '—'}</div>
                         <div style={{ fontSize: '14px', color: '#d72c0d', fontWeight: '600' }}>

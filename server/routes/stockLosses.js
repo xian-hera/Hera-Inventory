@@ -2,7 +2,126 @@ const express = require('express');
 const router = express.Router();
 const { pool } = require('../database/init');
 
-// GET /api/stock-losses?location=MTL01
+// Poll Shopify until a newly created file finishes processing and has a
+// permanent CDN url. Shopify's fileCreate is async: right after creation
+// file.image.url is usually null/undefined and the file status is
+// PROCESSING. Without waiting for READY, callers would fall back to the
+// temporary stagedUploadsCreate resourceUrl (shopify-staged-uploads/tmp/...),
+// which Shopify garbage-collects after a few days — causing NoSuchKey
+// errors later on. This function waits (with retries) until Shopify
+// reports the file as READY and returns a real, permanent url.
+async function waitForFileReady(client, gid, { maxAttempts = 10, delayMs = 1500 } = {}) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const res = await client.request(`
+      query getFile($id: ID!) {
+        node(id: $id) {
+          ... on MediaImage {
+            id
+            status
+            image { url }
+          }
+        }
+      }
+    `, {
+      variables: { id: gid }
+    });
+
+    const node = res.data?.node;
+    if (node?.status === 'READY' && node?.image?.url) {
+      return node.image.url;
+    }
+    if (node?.status === 'FAILED') {
+      throw new Error('Shopify file processing failed');
+    }
+
+    // Not ready yet — wait before checking again.
+    await new Promise(resolve => setTimeout(resolve, delayMs));
+  }
+  // Gave up waiting; caller decides how to handle a null url.
+  return null;
+}
+
+// Runs in the background after a stock-loss entry with photos is created.
+// Not awaited by the request handler — the HTTP response has already been
+// sent by the time this resolves. Waits for each photo's Shopify file to
+// finish processing, then writes the final permanent urls (and
+// photo_status = 'ready') back onto the row. If any photo fails to
+// process, or an unexpected error occurs, marks photo_status = 'failed'
+// so the manager UI can show "Photo failed, please recreate".
+async function processPhotosForEntry(rowId, gids) {
+  if (!gids || gids.length === 0) return;
+  try {
+    const { getShopify, getSession } = require('../shopify');
+    const session = await getSession();
+    const shopify = getShopify();
+    const client = new shopify.clients.Graphql({ session });
+
+    const urls = [];
+    for (const gid of gids) {
+      const url = await waitForFileReady(client, gid, { maxAttempts: 8, delayMs: 3000 });
+      if (!url) {
+        console.error(`processPhotosForEntry: gid ${gid} not ready for row ${rowId}`);
+        await pool.query(
+          "UPDATE stock_losses SET photo_status = 'failed', photo_status_updated_at = NOW() WHERE id = $1",
+          [rowId]
+        );
+        return;
+      }
+      urls.push(url);
+    }
+
+    await pool.query(
+      "UPDATE stock_losses SET photo_urls = $1, photo_status = 'ready', photo_status_updated_at = NOW() WHERE id = $2",
+      [urls, rowId]
+    );
+  } catch (e) {
+    console.error(`processPhotosForEntry error for row ${rowId}:`, e.message);
+    try {
+      await pool.query(
+        "UPDATE stock_losses SET photo_status = 'failed', photo_status_updated_at = NOW() WHERE id = $1",
+        [rowId]
+      );
+    } catch (e2) {
+      console.error('processPhotosForEntry: failed to mark row as failed:', e2.message);
+    }
+  }
+}
+
+const STUCK_PHOTO_TIMEOUT_MINUTES = 10;
+
+// Safety net: if the server restarts while processPhotosForEntry() is
+// mid-flight, or a background job dies without updating the row (e.g. an
+// uncaught exception, process crash), the row would stay 'processing'
+// forever with nothing watching it. This periodic sweep marks any row
+// stuck in 'processing' past a timeout as 'failed', so the manager sees
+// "please recreate" instead of an item silently stuck forever. It does
+// not retry — genuinely legitimate processing should finish within the
+// retry budget in processPhotosForEntry (~24s per photo), so anything
+// still 'processing' after this timeout is almost certainly abandoned.
+async function sweepStuckPhotoRows() {
+  try {
+    const result = await pool.query(
+      `UPDATE stock_losses
+       SET photo_status = 'failed', photo_status_updated_at = NOW()
+       WHERE photo_status = 'processing'
+         AND photo_status_updated_at < NOW() - INTERVAL '${STUCK_PHOTO_TIMEOUT_MINUTES} minutes'
+       RETURNING id`
+    );
+    if (result.rows.length > 0) {
+      console.error(
+        `sweepStuckPhotoRows: marked ${result.rows.length} stuck row(s) as failed:`,
+        result.rows.map(r => r.id)
+      );
+    }
+  } catch (e) {
+    console.error('sweepStuckPhotoRows error:', e.message);
+  }
+}
+
+// Run once shortly after the process starts (covers rows left stuck by a
+// previous crash/restart), then periodically thereafter.
+setTimeout(sweepStuckPhotoRows, 15000);
+setInterval(sweepStuckPhotoRows, 2 * 60 * 1000);
 router.get('/', async (req, res) => {
   try {
     const { location } = req.query;
@@ -89,13 +208,15 @@ router.post('/', async (req, res) => {
     }
 
     const adjustment = -Math.abs(qty);
+    const hasPhotos = (shopify_file_gids || []).length > 0;
 
     const result = await pool.query(
       `INSERT INTO stock_losses
         (barcode, name, product_type, vendor, location, shopify_location_id,
          reason, reason_label, reason_detail, qty, adjustment, soh,
-         photo_urls, shopify_file_gids, status, submitted_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'pending',NOW())
+         photo_urls, shopify_file_gids, status, submitted_at,
+         photo_status, photo_status_updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'pending',NOW(),$15,$16)
        RETURNING *`,
       [
         barcode, name || '', product_type || null, vendor || null,
@@ -103,8 +224,20 @@ router.post('/', async (req, res) => {
         reason, reason_label || reason, reason_detail || null,
         qty, adjustment, soh ?? null,
         photo_urls || [], shopify_file_gids || [],
+        hasPhotos ? 'processing' : null,
+        hasPhotos ? new Date() : null,
       ]
     );
+
+    // Fire-and-forget: wait for Shopify to finish processing the photos
+    // and write the permanent urls back onto this row once ready. Not
+    // awaited — the response below goes out immediately regardless.
+    if (hasPhotos) {
+      processPhotosForEntry(result.rows[0].id, shopify_file_gids).catch(e => {
+        console.error('processPhotosForEntry unhandled error:', e.message);
+      });
+    }
+
     res.json({ success: true, row: result.rows[0] });
   } catch (e) {
     console.error('POST /api/stock-losses error:', e);
@@ -170,12 +303,19 @@ router.patch('/submit-many', async (req, res) => {
   try {
     const { ids } = req.body;
     if (!ids || ids.length === 0) return res.status(400).json({ error: 'No ids provided' });
-    await pool.query(
+    // Server-side safety net mirroring the frontend's own check: never move
+    // an item to 'reviewing' while its photos are still processing or
+    // failed, even if a client somehow sends its id anyway.
+    const result = await pool.query(
       `UPDATE stock_losses SET status = 'reviewing', submitted_at = NOW()
-       WHERE id = ANY($1) AND status = 'pending'`,
+       WHERE id = ANY($1) AND status = 'pending'
+         AND (photo_status IS NULL OR photo_status = 'ready')
+       RETURNING id`,
       [ids]
     );
-    res.json({ success: true });
+    const submittedIds = result.rows.map(r => r.id);
+    const skippedIds = ids.filter(id => !submittedIds.includes(id));
+    res.json({ success: true, submittedIds, skippedIds });
   } catch (e) {
     console.error('PATCH /api/stock-losses/submit-many error:', e);
     res.status(500).json({ error: e.message });
@@ -393,9 +533,18 @@ router.post('/upload-photo', async (req, res) => {
     const file = fileRes.data?.fileCreate?.files?.[0];
     if (!file) return res.status(500).json({ error: 'Failed to create file in Shopify' });
 
+    // Return immediately — do NOT block the request waiting for Shopify to
+    // finish processing the image. Shopify's fileCreate is async, so
+    // file.image?.url is usually still null/undefined at this point.
+    // Deliberately do NOT fall back to target.resourceUrl here either —
+    // that url is a temporary staged-upload link that Shopify garbage
+    // collects after a few days, which is what caused the original
+    // NoSuchKey bug. The gid is enough for the frontend to attach to the
+    // entry; the permanent url gets filled in asynchronously by
+    // processPhotosForEntry() once the entry is created via POST /.
     res.json({
       gid: file.id,
-      url: file.image?.url || target.resourceUrl,
+      url: file.image?.url || null,
     });
   } catch (e) {
     console.error('POST /api/stock-losses/upload-photo error:', e);
