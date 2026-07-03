@@ -167,7 +167,29 @@ function ManagerZeroQtyReport() {
     setPopupCommitted(0); setPopupScanHistory([]); setCountInput('');
   };
 
-  const handleCorrect = () => closePopup();
+  const handleCorrect = async () => {
+    if (!popupData) { closePopup(); return; }
+    const newEntry   = { type: 'correct', created_at: new Date().toISOString() };
+    const newHistory = [...popupScanHistory, newEntry];
+    const poh        = computePOH(newHistory, popupSoh);
+    try {
+      const res  = await fetch('/api/reports/drafts', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          barcode: popupData.barcode, name: popupData.name,
+          type: popupData.productType || null, location,
+          shopify_location_id: popupData.locationId,
+          soh: popupSoh, poh, scan_history: newHistory,
+        }),
+      });
+      const saved = await res.json();
+      setItems(prev => {
+        const exists = prev.find(i => i.barcode === saved.barcode);
+        return exists ? prev.map(i => i.barcode === saved.barcode ? saved : i) : [...prev, saved];
+      });
+    } catch (e) { setError('Failed to save item'); }
+    closePopup();
+  };
 
   const handleSubmitCount = async () => {
     if (!popupData || !countInput) return;
@@ -220,17 +242,27 @@ function ManagerZeroQtyReport() {
     }
   };
 
+  const isMarkedCorrect = (item) => {
+    const h = item.scan_history;
+    return Array.isArray(h) && h.length > 0 && h[h.length - 1].type === 'correct';
+  };
+
   const handleSubmitItems = async (ids) => {
     setSubmitting(true);
     try {
-      const toSubmit = items.filter(i => ids.includes(i.id));
+      const toSubmit = items.filter(i => ids.includes(i.id) && !isMarkedCorrect(i));
+      if (toSubmit.length === 0) {
+        setError('Selected item(s) are marked "Correct" — nothing to submit.');
+        return;
+      }
       const res = await fetch('/api/reports/submit', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ items: toSubmit }),
       });
       if (!res.ok) throw new Error('Failed to submit');
-      setItems(prev => prev.filter(i => !ids.includes(i.id)));
-      setSelectedIds([]);
+      const submittedIds = toSubmit.map(i => i.id);
+      setItems(prev => prev.filter(i => !submittedIds.includes(i.id)));
+      setSelectedIds(prev => prev.filter(id => !submittedIds.includes(id)));
     } catch (e) { setError(e.message); }
     finally { setSubmitting(false); }
   };
@@ -260,6 +292,32 @@ function ManagerZeroQtyReport() {
     prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   const toggleSelectAll = () =>
     setSelectedIds(selectedIds.length === items.length ? [] : items.map(i => i.id));
+
+  const handleExportCSV = () => {
+    if (items.length === 0) return;
+    const escapeCsv = (val) => {
+      const str = String(val ?? '');
+      return /[",\n]/.test(str) ? '"' + str.replace(/"/g, '""') + '"' : str;
+    };
+    const header = ['Name', 'SKU', 'System', 'Actual'];
+    const dataRows = items.map(item => [
+      escapeCsv(item.name),
+      escapeCsv(item.barcode),
+      escapeCsv(item.soh),
+      escapeCsv(item.poh),
+    ].join(','));
+    const csvContent = [header.join(','), ...dataRows].join('\r\n');
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url  = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    const datePart = new Date().toISOString().slice(0, 10);
+    link.download = `inventory-count-${location || 'export'}-${datePart}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
 
   const rows = items.map(item => [
     <Checkbox checked={selectedIds.includes(item.id)} onChange={() => toggleSelectOne(item.id)} />,
@@ -305,6 +363,15 @@ function ManagerZeroQtyReport() {
                       border: '1px solid #c9cccf', background: 'white', color: '#202223',
                       cursor: 'pointer', fontSize: '14px', fontWeight: '500', textAlign: 'center' }}>
                     Type in SKU
+                  </button>
+                  <button disabled={items.length === 0} onClick={handleExportCSV}
+                    style={{ flex: 1, padding: '10px 16px', borderRadius: '8px',
+                      border: '1px solid #c9cccf',
+                      background: items.length === 0 ? '#f6f6f7' : 'white',
+                      color: items.length === 0 ? '#8c9196' : '#202223',
+                      cursor: items.length === 0 ? 'not-allowed' : 'pointer',
+                      fontSize: '14px', fontWeight: '500', textAlign: 'center' }}>
+                    Export to CSV
                   </button>
                 </div>
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
