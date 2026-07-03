@@ -35,6 +35,15 @@ const METAFIELD_CONDITIONS = [
   { label: "doesn't exist with",          value: "doesn't exist with" },
 ];
 
+const QUANTITY_CONDITIONS = [
+  { label: 'equal',          value: 'equal' },
+  { label: 'not equal',      value: 'not equal' },
+  { label: 'more than',      value: 'more than' },
+  { label: 'more or equal',  value: 'more or equal' },
+  { label: 'less than',      value: 'less than' },
+  { label: 'less or equal',  value: 'less or equal' },
+];
+
 function newMetafieldRow() {
   return { id: Date.now() + Math.random(), level: 'product', condition: 'value matches exactly', key: '', value: '' };
 }
@@ -48,15 +57,17 @@ function CreatingTask() {
   const [metafieldRows, setMetafieldRows]       = useState([]);
   const [metafieldLogic, setMetafieldLogic]     = useState('all');
 
+  const [showQuantityFilter, setShowQuantityFilter] = useState(false);
+  const [quantityCondition, setQuantityCondition]   = useState('');
+  const [quantityValue, setQuantityValue]           = useState('');
+
   const [products, setProducts]                 = useState([]);
   const [taskItems, setTaskItems]               = useState([]);
-  const [negativeItems, setNegativeItems]       = useState({});
   const [excludedBarcodes, setExcludedBarcodes] = useState({});
+  const [quantityExcludedBarcodes, setQuantityExcludedBarcodes] = useState({});
   const [selectedProductBarcodes, setSelectedProductBarcodes] = useState([]);
   const [loadingProducts, setLoadingProducts]   = useState(false);
-  const [loadingNegative, setLoadingNegative]   = useState(false);
   const [loadingExclude, setLoadingExclude]     = useState(false);
-  const [negativeSuccess, setNegativeSuccess]   = useState(null); // null | number
   const [excludeSuccess, setExcludeSuccess]     = useState(false);
   const [csvImported, setCsvImported]           = useState(false);
   const [error, setError]                       = useState('');
@@ -65,6 +76,11 @@ function CreatingTask() {
   const csvInputRef = useRef(null);
 
   const handleShowResult = async () => {
+    const quantityFilterActive = showQuantityFilter && quantityCondition && quantityValue !== '';
+    if (quantityFilterActive && selectedLocations.length === 0) {
+      setError('Please select at least one location to use the quantity filter.');
+      return;
+    }
     setLoadingProducts(true);
     setError('');
     try {
@@ -88,40 +104,29 @@ function CreatingTask() {
       setResultFilter('');
       setExcludeSuccess(false);
       setExcludedBarcodes({});
+      setQuantityExcludedBarcodes({});
+
+      // Quantity filter is evaluated per-location: a product only shows up in a given
+      // store's task if that store's own System quantity satisfies the condition.
+      if (quantityFilterActive && Array.isArray(data) && data.length > 0) {
+        const barcodes = data.map(p => p.barcode).filter(Boolean);
+        const qtyRes = await fetch('/api/shopify/quantity-check', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            barcodes,
+            locations: selectedLocations,
+            condition: quantityCondition,
+            value: Number(quantityValue),
+          }),
+        });
+        const qtyData = await qtyRes.json();
+        if (qtyRes.ok) setQuantityExcludedBarcodes(qtyData);
+      }
     } catch (e) {
       setError('Failed to fetch products');
     } finally {
       setLoadingProducts(false);
-    }
-  };
-
-  const handleAddNegative = async () => {
-    if (selectedLocations.length === 0) {
-      setError('Please select at least one location first.');
-      return;
-    }
-    if (selectedTypes.length === 0) {
-      setError('Please select at least one type first.');
-      return;
-    }
-    setLoadingNegative(true);
-    setNegativeSuccess(null);
-    setError('');
-    try {
-      const res = await fetch('/api/tasks/negative-inventory', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ locations: selectedLocations, types: selectedTypes }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      setNegativeItems(data);
-      const totalCount = Object.values(data).reduce((sum, arr) => sum + arr.length, 0);
-      setNegativeSuccess(totalCount);
-    } catch (e) {
-      setError(e.message || 'Failed to fetch negative inventory');
-    } finally {
-      setLoadingNegative(false);
     }
   };
 
@@ -237,7 +242,7 @@ function CreatingTask() {
   };
 
   const handlePreview = () => {
-    if (taskItems.length === 0 && Object.keys(negativeItems).length === 0) {
+    if (taskItems.length === 0) {
       setError('Please add at least one product to the task.');
       return;
     }
@@ -255,8 +260,10 @@ function CreatingTask() {
     if (metafieldRows.length > 0) {
       summaryParts.push(`metafield (${metafieldLogic}): ${metafieldRows.map(r => `${r.key} ${r.condition} ${r.value}`).join('; ')}`);
     }
+    if (showQuantityFilter && quantityCondition && quantityValue !== '') {
+      summaryParts.push(`System quantity ${quantityCondition} ${quantityValue}`);
+    }
     if (csvImported) summaryParts.push('CSV imported');
-    if (Object.values(negativeItems).some(arr => arr.length > 0)) summaryParts.push('negative added');
     if (Object.values(excludedBarcodes).some(arr => arr.length > 0)) summaryParts.push('0 excluded');
 
     const filterSummary = summaryParts.length > 0 ? summaryParts.join(' | ') : 'All products';
@@ -264,30 +271,26 @@ function CreatingTask() {
     // Build regular items (deduplicated)
     const regularItems = products.filter(p => taskItems.includes(p.barcode));
 
-    // Collect all negative items across all locations, deduplicated by barcode
-    // These are shown in preview but will be re-applied per-location at save time
-    const allNegativeItems = [];
-    const negativeBarcodesSeen = new Set(regularItems.map(p => p.barcode));
-    for (const locItems of Object.values(negativeItems)) {
-      for (const item of locItems) {
-        if (!negativeBarcodesSeen.has(item.barcode)) {
-          allNegativeItems.push(item);
-          negativeBarcodesSeen.add(item.barcode);
-        }
-      }
+    // Merge manual "Exclude 0" exclusions with the automatic quantity-filter
+    // exclusions (union per location) — both use the same shape: { location: [barcode, ...] }
+    const mergedExcludedBarcodes = {};
+    const allExclusionLocations = new Set([
+      ...Object.keys(excludedBarcodes),
+      ...Object.keys(quantityExcludedBarcodes),
+    ]);
+    for (const loc of allExclusionLocations) {
+      mergedExcludedBarcodes[loc] = [...new Set([
+        ...(excludedBarcodes[loc] || []),
+        ...(quantityExcludedBarcodes[loc] || []),
+      ])];
     }
-
-    // Total negative item count (sum across all locations, before dedup against regular items)
-    const totalNegativeCount = Object.values(negativeItems).reduce((sum, arr) => sum + arr.length, 0);
 
     const taskData = {
       types: selectedTypes,
       locations: selectedLocations,
       filterSummary,
-      items: [...regularItems, ...allNegativeItems],
-      negativeItems,
-      excludedBarcodes,
-      totalNegativeCount: totalNegativeCount > 0 ? totalNegativeCount : null,
+      items: regularItems,
+      excludedBarcodes: mergedExcludedBarcodes,
     };
     sessionStorage.setItem('pendingTask', JSON.stringify(taskData));
     navigate('/buyer/counting-tasks/new/preview');
@@ -341,22 +344,6 @@ function CreatingTask() {
                     showSelectAll={true}
                   />
                 </InlineStack>
-
-                <InlineStack gap="200" align="start">
-                  <Button
-                    onClick={handleAddNegative}
-                    loading={loadingNegative}
-                    disabled={selectedLocations.length === 0 || selectedTypes.length === 0}
-                  >
-                    Add negative
-                  </Button>
-                  {loadingNegative && (
-                    <Text variant="bodySm" tone="subdued">Inquiring, be patient.</Text>
-                  )}
-                  {!loadingNegative && negativeSuccess !== null && (
-                    <Text variant="bodySm" tone="success">{negativeSuccess} items added successfully</Text>
-                  )}
-                </InlineStack>
               </BlockStack>
             </Card>
 
@@ -386,6 +373,7 @@ function CreatingTask() {
                 <BlockStack gap="300">
                   <InlineStack gap="300" align="start">
                     <Button onClick={addMetafieldRow}>Add metafield</Button>
+                    <Button onClick={() => setShowQuantityFilter(true)}>Filter quantity</Button>
                     <InlineStack gap="200">
                       {['all', 'any'].map(opt => (
                         <button
@@ -404,6 +392,47 @@ function CreatingTask() {
                       ))}
                     </InlineStack>
                   </InlineStack>
+
+                  {showQuantityFilter && (
+                    <InlineStack gap="200" align="start" wrap>
+                      <Text>only the System quantity is</Text>
+                      <select
+                        value={quantityCondition}
+                        onChange={e => setQuantityCondition(e.target.value)}
+                        style={{ padding: '6px 10px', border: '1px solid #c9cccf', borderRadius: '6px', fontSize: '14px' }}
+                      >
+                        <option value="" disabled>Choose condition</option>
+                        {QUANTITY_CONDITIONS.map(c => (
+                          <option key={c.value} value={c.value}>{c.label}</option>
+                        ))}
+                      </select>
+
+                      <input
+                        type="number"
+                        placeholder="quantity"
+                        value={quantityValue}
+                        onChange={e => setQuantityValue(e.target.value)}
+                        style={{ padding: '6px 10px', border: '1px solid #c9cccf', borderRadius: '6px', fontSize: '14px', width: '120px' }}
+                      />
+
+                      <button
+                        onClick={() => { setShowQuantityFilter(false); setQuantityCondition(''); setQuantityValue(''); setQuantityExcludedBarcodes({}); }}
+                        style={{
+                          background: 'none', border: 'none', cursor: 'pointer',
+                          color: '#d72c0d', fontSize: '18px', lineHeight: 1, padding: '4px',
+                        }}
+                        title="Remove"
+                      >
+                        ✕
+                      </button>
+                    </InlineStack>
+                  )}
+
+                  {showQuantityFilter && Object.values(quantityExcludedBarcodes).some(arr => arr.length > 0) && (
+                    <Text variant="bodySm" tone="subdued">
+                      Applied — some products will be skipped per store where their System quantity doesn't match this condition.
+                    </Text>
+                  )}
 
                   {metafieldRows.map(row => (
                     <InlineStack key={row.id} gap="200" align="start" wrap>

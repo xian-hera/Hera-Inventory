@@ -97,152 +97,6 @@ router.patch('/archive', async (req, res) => {
   }
 });
 
-// POST /api/tasks/negative-inventory
-router.post('/negative-inventory', async (req, res) => {
-  try {
-    const { locations, types } = req.body;
-    if (!locations || locations.length === 0) {
-      return res.status(400).json({ error: 'No locations provided' });
-    }
-    if (!types || types.length === 0) {
-      return res.status(400).json({ error: 'No types provided' });
-    }
-
-    const { getShopify, getSession } = require('../shopify');
-    const session = await getSession();
-    const shopify = getShopify();
-    const client = new shopify.clients.Graphql({ session });
-
-    // Step 1: fetch location ID mapping
-    const locMap = await pool.query(
-      'SELECT location_name, shopify_location_id FROM location_map WHERE location_name = ANY($1)',
-      [locations]
-    );
-    const locationIdMap = {};
-    locMap.rows.forEach(r => { locationIdMap[r.location_name] = r.shopify_location_id; });
-
-    // Only process locations that have a valid Shopify location ID
-    const validLocations = locations.filter(l => locationIdMap[l]);
-
-    // Step 2: fetch all active variant SKUs for the selected types (full pagination)
-    // status:active ensures draft and archived products are excluded
-    const typeQuery = types.map(t => `product_type:"${t}"`).join(' OR ');
-    const queryString = `(${typeQuery}) AND status:active`;
-
-    const productGqlQuery = `
-      query getProducts($queryString: String!, $cursor: String) {
-        products(first: 250, query: $queryString, after: $cursor) {
-          pageInfo { hasNextPage endCursor }
-          edges {
-            node {
-              title
-              variants(first: 100) {
-                edges {
-                  node {
-                    sku
-                    metafield(namespace: "custom", key: "name") { value }
-                    discontinued: metafield(namespace: "custom", key: "discontinued") { value }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    `;
-
-    let allVariants = [];
-    let cursor = null;
-    let hasNextPage = true;
-
-    while (hasNextPage) {
-      const response = await client.request(productGqlQuery, { variables: { queryString, cursor } });
-      const page = response.data.products;
-      for (const { node: product } of page.edges) {
-        for (const { node: variant } of product.variants.edges) {
-          if (!variant.sku) continue;
-          if (variant.discontinued?.value === 'true') continue;
-          allVariants.push({
-            sku: variant.sku,
-            name: variant.metafield?.value || product.title,
-          });
-        }
-      }
-      hasNextPage = page.pageInfo.hasNextPage;
-      cursor = page.pageInfo.endCursor;
-    }
-
-    // Initialize result with empty arrays for all locations
-    const result = {};
-    locations.forEach(l => { result[l] = []; });
-
-    if (allVariants.length === 0 || validLocations.length === 0) {
-      return res.json(result);
-    }
-
-    // Step 3: batch query on_hand for all SKUs across all locations simultaneously
-    // Use GraphQL aliases to fetch multiple locations in a single request
-    // Batch size: 50 SKUs per request (keeps query string within safe limits)
-    const BATCH_SIZE = 50;
-
-    for (let i = 0; i < allVariants.length; i += BATCH_SIZE) {
-      const batch = allVariants.slice(i, i + BATCH_SIZE);
-      const skuQuery = batch.map(v => `sku:${v.sku}`).join(' OR ');
-
-      // Build alias fields for each location
-      const locationFields = validLocations.map((loc, idx) => {
-        const locId = locationIdMap[loc];
-        return `loc${idx}: inventoryLevel(locationId: "${locId}") {
-          quantities(names: ["on_hand"]) {
-            name
-            quantity
-          }
-        }`;
-      }).join('\n');
-
-      const invQuery = `
-        query getBatchInventory($skuQuery: String!) {
-          inventoryItems(first: 50, query: $skuQuery) {
-            edges {
-              node {
-                sku
-                ${locationFields}
-              }
-            }
-          }
-        }
-      `;
-
-      try {
-        const invRes = await client.request(invQuery, { variables: { skuQuery } });
-        const edges = invRes.data?.inventoryItems?.edges || [];
-
-        for (const { node: item } of edges) {
-          if (!item.sku) continue;
-          const variant = batch.find(v => v.sku === item.sku);
-          if (!variant) continue;
-
-          validLocations.forEach((loc, idx) => {
-            const levelData = item[`loc${idx}`];
-            const onHand = levelData?.quantities?.find(q => q.name === 'on_hand')?.quantity ?? 0;
-            if (onHand < 0) {
-              result[loc].push({ barcode: variant.sku, name: variant.name });
-            }
-          });
-        }
-      } catch (e) {
-        // skip batch errors silently and continue with next batch
-        console.error(`[negative-inventory] batch error at index ${i}:`, e.message);
-      }
-    }
-
-    res.json(result);
-  } catch (e) {
-    console.error('POST /api/tasks/negative-inventory error:', e);
-    res.status(500).json({ error: e.message });
-  }
-});
-
 // Generate next task number
 async function generateTaskNo(client) {
   const result = await client.query('SELECT last_number, last_letter FROM task_counter WHERE id = 1 FOR UPDATE');
@@ -266,7 +120,7 @@ async function generateTaskNo(client) {
 router.post('/', async (req, res) => {
   const client = await pool.connect();
   try {
-    const { types, locations, filterSummary, items, notes, publish, negativeItems, excludedBarcodes } = req.body;
+    const { types, locations, filterSummary, items, notes, publish, excludedBarcodes } = req.body;
     if (!types || types.length === 0 || !locations || locations.length === 0) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
@@ -299,17 +153,6 @@ router.post('/', async (req, res) => {
           `INSERT INTO task_items (task_id, barcode, name) VALUES ($1, $2, $3)`,
           [task.id, item.barcode, item.name]
         );
-      }
-
-      const locationNegativeItems = (negativeItems && negativeItems[location]) || [];
-      for (const item of locationNegativeItems) {
-        const alreadyExists = items.some(i => i.barcode === item.barcode);
-        if (!alreadyExists) {
-          await client.query(
-            `INSERT INTO task_items (task_id, barcode, name) VALUES ($1, $2, $3)`,
-            [task.id, item.barcode, item.name]
-          );
-        }
       }
 
       createdTasks.push(task);

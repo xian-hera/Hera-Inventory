@@ -20,13 +20,6 @@ function PreviewTask() {
     if (stored) {
       const parsed = JSON.parse(stored);
       setTaskData(parsed);
-      // Auto-add note for negative items
-      if (parsed.totalNegativeCount) {
-        setNotes([{
-          text: `negative added ${parsed.totalNegativeCount}`,
-          created_at: new Date().toISOString(),
-        }]);
-      }
     } else {
       navigate('/buyer/counting-tasks/new');
     }
@@ -46,16 +39,10 @@ function PreviewTask() {
   };
 
   const handleRemoveSelected = () => {
-    setTaskData(prev => {
-      // Remove from items list
-      const newItems = prev.items.filter(p => !selectedBarcodes.includes(p.barcode));
-      // Also remove from negativeItems so they don't get re-appended at save time
-      const newNegativeItems = {};
-      for (const [loc, arr] of Object.entries(prev.negativeItems || {})) {
-        newNegativeItems[loc] = arr.filter(i => !selectedBarcodes.includes(i.barcode));
-      }
-      return { ...prev, items: newItems, negativeItems: newNegativeItems };
-    });
+    setTaskData(prev => ({
+      ...prev,
+      items: prev.items.filter(p => !selectedBarcodes.includes(p.barcode)),
+    }));
     setSelectedBarcodes([]);
   };
 
@@ -89,7 +76,6 @@ function PreviewTask() {
           locations: taskData.locations,
           filterSummary: taskData.filterSummary,
           items: taskData.items,
-          negativeItems: taskData.negativeItems || {},
           excludedBarcodes: taskData.excludedBarcodes || {},
           notes,
           publish,

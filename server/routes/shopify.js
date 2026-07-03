@@ -508,6 +508,95 @@ router.post('/soh-check', async (req, res) => {
   }
 });
 
+// POST /api/shopify/quantity-check
+// Body: { barcodes, locations, condition, value }
+// Evaluates the condition against each location's own "available" quantity.
+// Returns { location: [barcodes that do NOT satisfy the condition at that location] }
+// so the caller can exclude them from that specific store's task.
+router.post('/quantity-check', async (req, res) => {
+  try {
+    const session = await getSession();
+    if (!session) return res.status(401).json({ error: 'No session' });
+
+    const { barcodes, locations, condition, value } = req.body;
+    if (!barcodes || !locations || barcodes.length === 0 || locations.length === 0) return res.json({});
+
+    const targetValue = Number(value);
+    if (!condition || value === undefined || value === null || value === '' || isNaN(targetValue)) {
+      return res.json({});
+    }
+
+    const passesCondition = (qty) => {
+      switch (condition) {
+        case 'equal':         return qty === targetValue;
+        case 'not equal':     return qty !== targetValue;
+        case 'more than':     return qty > targetValue;
+        case 'more or equal': return qty >= targetValue;
+        case 'less than':     return qty < targetValue;
+        case 'less or equal': return qty <= targetValue;
+        default:              return true;
+      }
+    };
+
+    const { pool } = require('../database/init');
+    const shopify = getShopify();
+    const client = new shopify.clients.Graphql({ session });
+
+    const locMap = await pool.query(
+      'SELECT location_name, shopify_location_id FROM location_map WHERE location_name = ANY($1)',
+      [locations]
+    );
+    const locationIdMap = {};
+    locMap.rows.forEach(r => { locationIdMap[r.location_name] = r.shopify_location_id; });
+
+    const result = {};
+    for (const location of locations) result[location] = [];
+
+    for (const barcode of barcodes) {
+      const variantQuery = `
+        query getInventory($barcode: String!) {
+          productVariants(first: 5, query: $barcode) {
+            edges {
+              node {
+                barcode sku
+                inventoryItem {
+                  inventoryLevels(first: 30) {
+                    edges {
+                      node {
+                        location { id }
+                        quantities(names: ["available"]) { name quantity }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      `;
+      const response = await shopifyRequest(client, variantQuery, { barcode: `barcode:${barcode}` });
+      const variants = response.data?.productVariants?.edges || [];
+      if (variants.length === 0) continue;
+
+      const variant = variants[0].node;
+      const levels = variant.inventoryItem?.inventoryLevels?.edges || [];
+
+      for (const location of locations) {
+        const shopifyLocationId = locationIdMap[location];
+        if (!shopifyLocationId) continue;
+        const level = levels.find(e => e.node.location.id === shopifyLocationId);
+        const qty = level?.node.quantities.find(q => q.name === 'available')?.quantity ?? 0;
+        if (!passesCondition(qty)) result[location].push(barcode);
+      }
+    }
+
+    res.json(result);
+  } catch (e) {
+    console.error('POST /api/shopify/quantity-check error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // GET /api/shopify/variant-by-sku
 router.get('/variant-by-sku', async (req, res) => {
   try {
