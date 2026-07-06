@@ -99,15 +99,18 @@ function CreatingTask() {
         }),
       });
       const data = await res.json();
-      setProducts(data);
       setSelectedProductBarcodes([]);
       setResultFilter('');
       setExcludeSuccess(false);
       setExcludedBarcodes({});
       setQuantityExcludedBarcodes({});
 
+      let visibleProducts = data;
+
       // Quantity filter is evaluated per-location: a product only shows up in a given
       // store's task if that store's own System quantity satisfies the condition.
+      // Here, a product is dropped from the visible list only if it fails the condition
+      // at EVERY selected location (otherwise it still matters for at least one store).
       if (quantityFilterActive && Array.isArray(data) && data.length > 0) {
         const barcodes = data.map(p => p.barcode).filter(Boolean);
         const qtyRes = await fetch('/api/shopify/quantity-check', {
@@ -121,8 +124,15 @@ function CreatingTask() {
           }),
         });
         const qtyData = await qtyRes.json();
-        if (qtyRes.ok) setQuantityExcludedBarcodes(qtyData);
+        if (qtyRes.ok) {
+          setQuantityExcludedBarcodes(qtyData);
+          visibleProducts = data.filter(p =>
+            selectedLocations.some(loc => !(qtyData[loc] || []).includes(p.barcode))
+          );
+        }
       }
+
+      setProducts(visibleProducts);
     } catch (e) {
       setError('Failed to fetch products');
     } finally {
