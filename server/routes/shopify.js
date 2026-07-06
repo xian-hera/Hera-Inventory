@@ -74,6 +74,10 @@ router.get('/product-types', async (req, res) => {
 
 // POST /api/shopify/products
 router.post('/products', async (req, res) => {
+  let aborted = false;
+  req.on('close', () => {
+    if (!res.writableEnded) aborted = true;
+  });
   try {
     const session = await getSession();
     if (!session) return res.status(401).json({ error: 'No session' });
@@ -153,12 +157,15 @@ router.post('/products', async (req, res) => {
     let hasNextPage = true;
 
     while (hasNextPage) {
+      if (aborted) return;
       const response = await shopifyRequest(client, gqlQuery, { queryString, cursor });
       const page = response.data.products;
       allProducts = [...allProducts, ...page.edges];
       hasNextPage = page.pageInfo.hasNextPage;
       cursor = page.pageInfo.endCursor;
     }
+
+    if (aborted) return;
 
     const matchesCondition = (mfValue, condition, target) => {
       const val = (mfValue || '').toLowerCase().trim();
@@ -212,6 +219,7 @@ router.post('/products', async (req, res) => {
 
     res.json(variants);
   } catch (e) {
+    if (aborted) return;
     console.error('POST /api/shopify/products error:', e);
     res.status(500).json({ error: e.message });
   }
@@ -514,6 +522,10 @@ router.post('/soh-check', async (req, res) => {
 // Returns { location: [barcodes that do NOT satisfy the condition at that location] }
 // so the caller can exclude them from that specific store's task.
 router.post('/quantity-check', async (req, res) => {
+  let aborted = false;
+  req.on('close', () => {
+    if (!res.writableEnded) aborted = true;
+  });
   try {
     const session = await getSession();
     if (!session) return res.status(401).json({ error: 'No session' });
@@ -553,6 +565,7 @@ router.post('/quantity-check', async (req, res) => {
     for (const location of locations) result[location] = [];
 
     for (const barcode of barcodes) {
+      if (aborted) return;
       const variantQuery = `
         query getInventory($barcode: String!) {
           productVariants(first: 5, query: $barcode) {
@@ -590,8 +603,10 @@ router.post('/quantity-check', async (req, res) => {
       }
     }
 
+    if (aborted) return;
     res.json(result);
   } catch (e) {
+    if (aborted) return;
     console.error('POST /api/shopify/quantity-check error:', e);
     res.status(500).json({ error: e.message });
   }

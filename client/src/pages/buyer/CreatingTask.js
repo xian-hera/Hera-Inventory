@@ -74,6 +74,7 @@ function CreatingTask() {
   const [resultFilter, setResultFilter]         = useState('');
 
   const csvInputRef = useRef(null);
+  const abortControllerRef = useRef(null);
 
   const handleShowResult = async () => {
     const quantityFilterActive = showQuantityFilter && quantityCondition && quantityValue !== '';
@@ -81,12 +82,15 @@ function CreatingTask() {
       setError('Please select at least one location to use the quantity filter.');
       return;
     }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
     setLoadingProducts(true);
     setError('');
     try {
       const res = await fetch('/api/shopify/products', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({
           types: selectedTypes,
           metafields: metafieldRows.map(r => ({
@@ -116,6 +120,7 @@ function CreatingTask() {
         const qtyRes = await fetch('/api/shopify/quantity-check', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
           body: JSON.stringify({
             barcodes,
             locations: selectedLocations,
@@ -134,9 +139,21 @@ function CreatingTask() {
 
       setProducts(visibleProducts);
     } catch (e) {
-      setError('Failed to fetch products');
+      if (e.name === 'AbortError') {
+        // User cancelled on purpose — don't show this as a failure, and don't
+        // apply whatever partial data might still resolve after this point.
+      } else {
+        setError('Failed to fetch products');
+      }
     } finally {
       setLoadingProducts(false);
+      abortControllerRef.current = null;
+    }
+  };
+
+  const handleAbortShowResult = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
     }
   };
 
@@ -510,6 +527,9 @@ function CreatingTask() {
                       <Text variant="bodySm" tone="subdued">{taskItems.length} items added</Text>
                     )}
                   </InlineStack>
+                  {loadingProducts && (
+                    <Button onClick={handleAbortShowResult} tone="critical">Abort</Button>
+                  )}
                   <Button onClick={handleShowResult} loading={loadingProducts}>Show result</Button>
                 </InlineStack>
               </BlockStack>
