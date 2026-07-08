@@ -82,6 +82,12 @@ function CreatingTask() {
       setError('Please select at least one location to use the quantity filter.');
       return;
     }
+    // "Meet any condition" is supposed to mean: an item qualifies if it satisfies
+    // ANY of the conditions shown in this card — metafield rows OR the quantity
+    // filter. To make that possible, /products needs to stop hard-excluding items
+    // that fail the metafield conditions (they might still qualify via quantity),
+    // and instead tag each item so we can OR the two results together below.
+    const relaxMetafieldFilter = quantityFilterActive && metafieldLogic === 'any' && metafieldRows.length > 0;
     const controller = new AbortController();
     abortControllerRef.current = controller;
     setLoadingProducts(true);
@@ -100,6 +106,7 @@ function CreatingTask() {
             value: r.value,
           })),
           metafieldLogic,
+          relaxMetafieldFilter,
         }),
       });
       const data = await res.json();
@@ -131,10 +138,23 @@ function CreatingTask() {
         const qtyData = await qtyRes.json();
         if (qtyRes.ok) {
           setQuantityExcludedBarcodes(qtyData);
-          visibleProducts = data.filter(p =>
-            selectedLocations.some(loc => !(qtyData[loc] || []).includes(p.barcode))
-          );
+          const passesQuantity = (barcode) =>
+            selectedLocations.some(loc => !(qtyData[loc] || []).includes(barcode));
+
+          visibleProducts = relaxMetafieldFilter
+            // "any": item qualifies if it matched the metafield conditions OR passes quantity
+            ? data.filter(p => p.matchesMetafield || passesQuantity(p.barcode))
+            // "all" (or no metafield rows to combine with): item must also pass quantity,
+            // on top of the metafield filtering /products already applied
+            : data.filter(p => passesQuantity(p.barcode));
+        } else if (relaxMetafieldFilter) {
+          // Quantity check failed — /products didn't hard-filter by metafield in this
+          // mode, so fall back to filtering by matchesMetafield alone rather than
+          // showing every type-matching item.
+          visibleProducts = data.filter(p => p.matchesMetafield);
         }
+      } else if (relaxMetafieldFilter) {
+        visibleProducts = data.filter(p => p.matchesMetafield);
       }
 
       setProducts(visibleProducts);

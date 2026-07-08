@@ -86,6 +86,7 @@ router.post('/products', async (req, res) => {
       types,
       metafields,
       metafieldLogic,
+      relaxMetafieldFilter,
     } = req.body;
 
     const shopify = getShopify();
@@ -202,10 +203,18 @@ router.post('/products', async (req, res) => {
       return logic === 'any' ? results.some(Boolean) : results.every(Boolean);
     };
 
+    // When the caller is going to combine metafield matching with a quantity
+    // filter under "any" (OR) semantics, it needs items that fail the metafield
+    // conditions to still come through — they might still qualify via quantity.
+    // Hard-excluding them here (as we do by default) would make that impossible,
+    // since a later step can't OR in something it never received.
+    const shouldRelax = !!relaxMetafieldFilter && hasMetafilter && logic === 'any';
+
     let variants = [];
     for (const { node: product } of allProducts) {
       for (const { node: variant } of product.variants.edges) {
-        if (!variantPassesMeta(product, variant)) continue;
+        const matchesMetafield = variantPassesMeta(product, variant);
+        if (!shouldRelax && !matchesMetafield) continue;
         const name = variant.metafield?.value || product.title;
         variants.push({
           productId: product.id,
@@ -213,6 +222,7 @@ router.post('/products', async (req, res) => {
           name,
           barcode: variant.barcode || variant.sku,
           productType: product.productType,
+          matchesMetafield,
         });
       }
     }
