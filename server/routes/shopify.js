@@ -560,47 +560,90 @@ router.post('/quantity-check', async (req, res) => {
     );
     const locationIdMap = {};
     locMap.rows.forEach(r => { locationIdMap[r.location_name] = r.shopify_location_id; });
+    const validLocations = locations.filter(l => locationIdMap[l]);
 
     const result = {};
     for (const location of locations) result[location] = [];
 
-    for (const barcode of barcodes) {
-      if (aborted) return;
-      const variantQuery = `
-        query getInventory($barcode: String!) {
-          productVariants(first: 5, query: $barcode) {
+    if (validLocations.length === 0) return res.json(result);
+
+    // Batch size is derived from Shopify's documented GraphQL cost model for this
+    // query shape: requestedCost ≈ 2 * F * (1 + L), where F = batch size (first)
+    // and L = number of location aliases per variant. A single query can't exceed
+    // 1000 cost points, so we target ~500 (half) as a safety margin, and clamp to
+    // a practical range — Shopify support advised against very long OR chains
+    // (tens/~100, not hundreds) even though nothing hard-fails below that.
+    // Confirmed with Shopify support (Plus plan): productVariants max `first` is
+    // 250 regardless of plan; Plus only raises the per-second cost budget (1000
+    // pts/sec), not the per-query ceiling or per-connection page size.
+    const TARGET_COST = 500;
+    const MIN_BATCH_SIZE = 20;
+    const MAX_BATCH_SIZE = 100;
+    const numLocations = validLocations.length;
+    const BATCH_SIZE = Math.max(
+      MIN_BATCH_SIZE,
+      Math.min(MAX_BATCH_SIZE, Math.floor(TARGET_COST / (2 * (1 + numLocations))))
+    );
+
+    // Batches are sized to ~half the per-query cost ceiling (TARGET_COST = 500),
+    // so running 2 of them concurrently stays close to, but under, both the
+    // 1000-point per-query ceiling (each request is separate, so this doesn't
+    // apply here) and a sensible slice of the Plus 1000-points/sec throughput
+    // budget. This is a wave-based concurrency: fire CONCURRENCY batches at
+    // once, wait for that wave to finish, then fire the next wave.
+    const CONCURRENCY = 2;
+
+    const locationFields = validLocations.map((loc, idx) => {
+      const locId = locationIdMap[loc];
+      return `loc${idx}: inventoryLevel(locationId: "${locId}") {
+        quantities(names: ["available"]) { name quantity }
+      }`;
+    }).join('\n');
+
+    const runBatch = async (batch, batchIndex) => {
+      const barcodeQuery = batch.map(b => `barcode:${b}`).join(' OR ');
+      const batchQuery = `
+        query getBatchInventory($barcodeQuery: String!) {
+          productVariants(first: ${BATCH_SIZE}, query: $barcodeQuery) {
             edges {
               node {
-                barcode sku
+                barcode
                 inventoryItem {
-                  inventoryLevels(first: 30) {
-                    edges {
-                      node {
-                        location { id }
-                        quantities(names: ["available"]) { name quantity }
-                      }
-                    }
-                  }
+                  ${locationFields}
                 }
               }
             }
           }
         }
       `;
-      const response = await shopifyRequest(client, variantQuery, { barcode: `barcode:${barcode}` });
-      const variants = response.data?.productVariants?.edges || [];
-      if (variants.length === 0) continue;
+      try {
+        const response = await shopifyRequest(client, batchQuery, { barcodeQuery });
+        const edges = response.data?.productVariants?.edges || [];
 
-      const variant = variants[0].node;
-      const levels = variant.inventoryItem?.inventoryLevels?.edges || [];
+        for (const { node: variant } of edges) {
+          if (!variant.barcode) continue;
 
-      for (const location of locations) {
-        const shopifyLocationId = locationIdMap[location];
-        if (!shopifyLocationId) continue;
-        const level = levels.find(e => e.node.location.id === shopifyLocationId);
-        const qty = level?.node.quantities.find(q => q.name === 'available')?.quantity ?? 0;
-        if (!passesCondition(qty)) result[location].push(barcode);
+          validLocations.forEach((loc, idx) => {
+            const levelData = variant.inventoryItem[`loc${idx}`];
+            const qty = levelData?.quantities?.find(q => q.name === 'available')?.quantity ?? 0;
+            if (!passesCondition(qty)) result[loc].push(variant.barcode);
+          });
+        }
+      } catch (e) {
+        // skip batch errors and continue with the next batch, same as negative-inventory did
+        console.error(`[quantity-check] batch error at index ${batchIndex}:`, e.message);
       }
+    };
+
+    const batches = [];
+    for (let i = 0; i < barcodes.length; i += BATCH_SIZE) {
+      batches.push(barcodes.slice(i, i + BATCH_SIZE));
+    }
+
+    for (let i = 0; i < batches.length; i += CONCURRENCY) {
+      if (aborted) return;
+      const wave = batches.slice(i, i + CONCURRENCY);
+      await Promise.all(wave.map((batch, idx) => runBatch(batch, i + idx)));
     }
 
     if (aborted) return;
