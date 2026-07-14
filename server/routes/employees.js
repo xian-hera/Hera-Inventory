@@ -278,16 +278,19 @@ async function fetchCustomerPurchaseTotal(shopifyCustomerId, startDate, endDate,
   const url = `/orders.json?customer_id=${shopifyCustomerId}&status=any`
     + `&created_at_min=${startDate.toISOString()}`
     + `&created_at_max=${endDate.toISOString()}`
-    + `&limit=250&fields=subtotal_price,total_price,financial_status`;
+    + `&limit=250&fields=subtotal_price,total_price,current_subtotal_price,current_total_price,financial_status`;
 
   const data   = await shopifyFetch(url);
   const orders = data.orders || [];
 
   for (const order of orders) {
     if (!['paid','partially_refunded'].includes(order.financial_status)) continue;
+    // 用 current_* 字段（退货/换货/编辑后的实际净额），而非订单原始金额，
+    // 否则已退货但未产生 refund（如 exchange）的商品会被重复计入。
+    // ?? 做兜底：极少数情况下 Shopify 未返回 current_* 字段时，退回原始金额。
     const amount = taxMode === 'before_tax'
-      ? parseFloat(order.subtotal_price || 0)
-      : parseFloat(order.total_price   || 0);
+      ? parseFloat(order.current_subtotal_price ?? order.subtotal_price ?? 0)
+      : parseFloat(order.current_total_price   ?? order.total_price   ?? 0);
     total += amount;
   }
 
