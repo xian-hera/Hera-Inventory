@@ -273,18 +273,37 @@ async function upsertEmployee(connecteamUser, branchFieldId, opts = {}) {
 
 // ─── Purchase refresh ─────────────────────────────────────────────────────────
 
+/**
+ * A qualifying employee discount is a discount_application on the order that is:
+ *   - type === 'manual'            → manually added by the manager, not a discount code / automatic / script
+ *   - value_type === 'percentage'  → a percentage-off discount, not a fixed-amount discount
+ *   - target_selection === 'all'   → an ORDER-level discount applied to every line item,
+ *                                    as opposed to a PRODUCT-level discount applied to select items only
+ * All three must hold simultaneously. The exact percentage value is intentionally NOT checked.
+ */
+function hasEmployeeDiscount(order) {
+  const apps = order.discount_applications || [];
+  return apps.some(app =>
+    app.type === 'manual' &&
+    app.value_type === 'percentage' &&
+    app.target_selection === 'all'
+  );
+}
+
 async function fetchCustomerPurchaseTotal(shopifyCustomerId, startDate, endDate, taxMode) {
   let total = 0;
   const url = `/orders.json?customer_id=${shopifyCustomerId}&status=any`
     + `&created_at_min=${startDate.toISOString()}`
     + `&created_at_max=${endDate.toISOString()}`
-    + `&limit=250&fields=subtotal_price,total_price,current_subtotal_price,current_total_price,financial_status`;
+    + `&limit=250&fields=subtotal_price,total_price,current_subtotal_price,current_total_price,financial_status,discount_applications`;
 
   const data   = await shopifyFetch(url);
   const orders = data.orders || [];
 
   for (const order of orders) {
     if (!['paid','partially_refunded'].includes(order.financial_status)) continue;
+    // 只统计使用了店长手动添加的整单18%折扣的订单；未使用该折扣的订单一律排除。
+    if (!hasEmployeeDiscount(order)) continue;
     // 用 current_* 字段（退货/换货/编辑后的实际净额），而非订单原始金额，
     // 否则已退货但未产生 refund（如 exchange）的商品会被重复计入。
     // ?? 做兜底：极少数情况下 Shopify 未返回 current_* 字段时，退回原始金额。
