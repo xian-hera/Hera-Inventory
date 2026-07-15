@@ -286,6 +286,9 @@ function EmployeeCap() {
                   >
                     Re-link
                   </Button>
+                  <Text variant="bodySm" tone="subdued">
+                    Run this for new employees, or if an employee's Shopify account has changed
+                  </Text>
                 </BlockStack>
 
                 {/* Right: cap */}
