@@ -77,6 +77,9 @@ function ManagerTaskDetail() {
   const [popupCommitted, setPopupCommitted] = useState(0);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [countInput, setCountInput]         = useState('');
+  const [countWarning, setCountWarning]     = useState('');
+  const oversizeValueRef    = useRef(null);
+  const oversizeAttemptsRef = useRef(0);
   const [loadingSoh, setLoadingSoh]         = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showSkuInput, setShowSkuInput]   = useState(false);
@@ -158,6 +161,9 @@ function ManagerTaskDetail() {
   const openPopup = async (item) => {
     setPopupItem(item);
     setCountInput('');
+    setCountWarning('');
+    oversizeValueRef.current = null;
+    oversizeAttemptsRef.current = 0;
     setShowResetConfirm(false);
     setLoadingSoh(true);
     try {
@@ -203,21 +209,46 @@ function ManagerTaskDetail() {
     setPopupSoh(null);
     setPopupCommitted(0);
     setCountInput('');
+    setCountWarning('');
+    oversizeValueRef.current = null;
+    oversizeAttemptsRef.current = 0;
     setShowResetConfirm(false);
   };
 
   const handleCorrect = async () => {
     if (!popupItem) return;
-    await saveScan(popupItem, 'correct', null);
-    closePopup();
+    const ok = await saveScan(popupItem, 'correct', null);
+    if (ok) closePopup();
   };
 
   const handleSubmitCount = async () => {
     if (!popupItem || !countInput) return;
     const value = parseInt(countInput);
     if (isNaN(value)) return;
-    await saveScan(popupItem, 'counted', value);
-    closePopup();
+
+    const OVERSIZE_THRESHOLD = 1000;
+    if (value > OVERSIZE_THRESHOLD) {
+      if (oversizeValueRef.current === value) {
+        oversizeAttemptsRef.current += 1;
+      } else {
+        oversizeValueRef.current = value;
+        oversizeAttemptsRef.current = 1;
+      }
+
+      if (oversizeAttemptsRef.current < 3) {
+        setCountWarning('Quantity seems not right, double check.');
+        return;
+      }
+      // Submitted the same value 3 times in a row — treat it as a confirmed,
+      // genuine (if unusual) count rather than a scanning accident, and let it through.
+    }
+
+    oversizeValueRef.current = null;
+    oversizeAttemptsRef.current = 0;
+    setCountWarning('');
+
+    const ok = await saveScan(popupItem, 'counted', value);
+    if (ok) closePopup();
   };
 
   const saveScan = async (item, type, value) => {
@@ -230,11 +261,21 @@ function ManagerTaskDetail() {
     const newPoh     = computePOH(newHistory, popupSoh);
     const isCorrect  = newHistory[newHistory.length - 1]?.type === 'correct';
 
-    await fetch(`/api/tasks/${taskId}/items/${item.id}/scan`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ scan_history: newHistory, poh: newPoh, soh: popupSoh, is_correct: isCorrect }),
-    });
+    try {
+      const res = await fetch(`/api/tasks/${taskId}/items/${item.id}/scan`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scan_history: newHistory, poh: newPoh, soh: popupSoh, is_correct: isCorrect }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error || 'Failed to save. Please try again.');
+        return false;
+      }
+    } catch (e) {
+      setError('Failed to save. Please try again.');
+      return false;
+    }
 
     setTask(prev => ({
       ...prev,
@@ -244,6 +285,7 @@ function ManagerTaskDetail() {
           : i
       ),
     }));
+    return true;
   };
 
   const handleResetConfirmed = async () => {
@@ -670,7 +712,7 @@ function ManagerTaskDetail() {
                     inputMode="numeric"
                     placeholder="Input your count"
                     value={countInput}
-                    onChange={e => setCountInput(e.target.value)}
+                    onChange={e => { setCountInput(e.target.value); setCountWarning(''); }}
                     autoComplete="off" autoFocus
                     style={{
                       flex: 1, minWidth: 0, padding: '10px 12px', fontSize: '16px',
@@ -682,6 +724,13 @@ function ManagerTaskDetail() {
                   />
                   <Button onClick={handleSubmitCount} disabled={!countInput}>Submit</Button>
                 </div>
+
+                {countWarning && (
+                  <div style={{ background: '#fff4f4', borderRadius: '8px', padding: '10px 14px',
+                    fontSize: '14px', color: '#d72c0d' }}>
+                    {countWarning}
+                  </div>
+                )}
 
                 {loadingSoh ? <Spinner /> : popupSoh === null ? (
                   <div style={{ background: '#fff4f4', borderRadius: '12px', padding: '16px',
