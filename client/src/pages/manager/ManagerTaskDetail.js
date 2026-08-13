@@ -259,7 +259,10 @@ function ManagerTaskDetail() {
     };
     const newHistory = [...(item.scan_history || []), newEntry];
     const newPoh     = computePOH(newHistory, popupSoh);
-    const isCorrect  = newHistory[newHistory.length - 1]?.type === 'correct';
+    // is_correct 改为基于"数量是否真的一致"（newPoh === popupSoh），
+    // 而不是基于"最后一次操作是不是点了 Correct 按钮"——
+    // 后者会导致 manager 手动输入数量、但数字刚好等于系统数时被误判为不一致。
+    const isCorrect  = popupSoh !== null && popupSoh !== undefined && newPoh === popupSoh;
 
     try {
       const res = await fetch(`/api/tasks/${taskId}/items/${item.id}/scan`, {

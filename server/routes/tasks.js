@@ -410,12 +410,15 @@ router.patch('/:taskId/items/:itemId/poh', async (req, res) => {
 router.patch('/:taskId/items/:itemId/scan', async (req, res) => {
   try {
     const { itemId } = req.params;
-    const { scan_history, poh, soh, is_correct } = req.body;
+    const { scan_history, poh, soh } = req.body;
+    // is_correct 不再信任前端传来的值，服务端根据 poh === soh 重新计算，
+    // 避免前端逻辑错误（例如按"最后一次操作类型"而非"数量是否一致"判断）污染数据库。
+    const isCorrect = soh !== null && soh !== undefined && poh === soh;
     await pool.query(
       `UPDATE task_items 
        SET scan_history = $1, poh = $2, soh = $3, is_correct = $4
        WHERE id = $5`,
-      [JSON.stringify(scan_history), poh, soh, is_correct, itemId]
+      [JSON.stringify(scan_history), poh, soh, isCorrect, itemId]
     );
     res.json({ success: true });
   } catch (e) {
