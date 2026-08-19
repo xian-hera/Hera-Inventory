@@ -274,20 +274,38 @@ async function upsertEmployee(connecteamUser, branchFieldId, opts = {}) {
 // ─── Purchase refresh ─────────────────────────────────────────────────────────
 
 /**
- * A qualifying employee discount is a discount_application on the order that is:
+ * A qualifying employee discount is a discount_application on the order that matches
+ * EITHER of the following two rules (union — matching either one qualifies):
+ *
+ * Rule 1 — Order-level manual percentage discount (original rule):
  *   - type === 'manual'            → manually added by the manager, not a discount code / automatic / script
  *   - value_type === 'percentage'  → a percentage-off discount, not a fixed-amount discount
  *   - target_selection === 'all'   → an ORDER-level discount applied to every line item,
  *                                    as opposed to a PRODUCT-level discount applied to select items only
- * All three must hold simultaneously. The exact percentage value is intentionally NOT checked.
+ *   All three must hold simultaneously. The exact percentage value is NOT checked here.
+ *
+ * Rule 2 — Product-level manual percentage discount at a known employee-discount rate:
+ *   - type === 'manual'
+ *   - value_type === 'percentage'
+ *   - target_selection !== 'all'   → applied to selected line items (cashier selects all cart items)
+ *   - value is 18 or 20            → these two percentages are treated as employee-discount signatures
+ *
+ * Note: this function is only ever evaluated against orders already scoped to a single
+ * employee's shopify_customer_id (see fetchCustomerPurchaseTotal), so there is no risk of
+ * picking up non-employee customers' orders here — only which of an employee's own orders count.
  */
 function hasEmployeeDiscount(order) {
   const apps = order.discount_applications || [];
-  return apps.some(app =>
-    app.type === 'manual' &&
-    app.value_type === 'percentage' &&
-    app.target_selection === 'all'
-  );
+  return apps.some(app => {
+    if (app.type !== 'manual' || app.value_type !== 'percentage') return false;
+
+    // Rule 1: order-level discount, any percentage value
+    if (app.target_selection === 'all') return true;
+
+    // Rule 2: product-level discount, but only 18% or 20% counts as an employee discount
+    const pct = parseFloat(app.value);
+    return pct === 18 || pct === 20;
+  });
 }
 
 async function fetchCustomerPurchaseTotal(shopifyCustomerId, startDate, endDate, taxMode) {
