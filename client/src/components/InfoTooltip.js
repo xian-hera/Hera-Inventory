@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import ReactDOM from 'react-dom';
 
-const POPOVER_WIDTH = 320;
+const POPOVER_WIDTH_RATIO = 0.8; // 80% of viewport width, per Hera's spec
 const VIEWPORT_MARGIN = 16;
 
 // A small click-to-toggle "ⓘ" info tooltip. Matches the PO Receiving mockups:
@@ -28,7 +28,8 @@ function InfoTooltip({ text, children }) {
   const toggle = () => {
     if (!open && triggerRef.current) {
       const rect = triggerRef.current.getBoundingClientRect();
-      const left = Math.min(rect.left, window.innerWidth - POPOVER_WIDTH - VIEWPORT_MARGIN);
+      const popoverWidth = window.innerWidth * POPOVER_WIDTH_RATIO;
+      const left = Math.min(rect.left, window.innerWidth - popoverWidth - VIEWPORT_MARGIN);
       setPopoverStyle({
         position: 'fixed',
         top: rect.bottom + 6,
@@ -39,7 +40,7 @@ function InfoTooltip({ text, children }) {
         borderRadius: '8px',
         boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
         padding: '12px 14px',
-        width: `${POPOVER_WIDTH}px`,
+        width: `${popoverWidth}px`,
         fontSize: '13px',
         color: '#202223',
         whiteSpace: 'pre-line',

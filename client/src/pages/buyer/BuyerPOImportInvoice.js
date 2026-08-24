@@ -388,7 +388,7 @@ function BuyerPOImportInvoice() {
                     <div ref={supplierFieldRef} style={{ minWidth: 220, position: 'relative' }}>
                       <TextField
                         label="Supplier"
-                        placeholder="choose a supplier"
+                        placeholder="case sensitive"
                         value={supplierQuery}
                         onChange={handleSupplierQueryChange}
                         onFocus={openSupplierDropdown}
@@ -484,13 +484,15 @@ function BuyerPOImportInvoice() {
                         onChange={handleCsvUpload}
                       />
                       <Button fullWidth onClick={() => csvInputRef.current.click()} disabled={disabled}>Upload CSV</Button>
-                      <Text variant="bodySm" tone="subdued">
-                        accepted format, column 1, unit code{'\n'}
-                        column 2, name{'\n'}
-                        column 3, quantity{'\n'}
-                        column 4, cost{'\n'}
-                        column 5, unit discount(if applicable, can be % or amount)
-                      </Text>
+                      {/* Line breaks below are exact, per Hera's spec — allowed to overflow
+                          this column's width rather than reflow. */}
+                      <div style={{ whiteSpace: 'pre', fontSize: '13px', color: '#6d7175' }}>
+{`accepted format, column 1, unit code
+column 2, name
+column 3, quantity
+column 4, cost
+column 5, unit discount(if applicable, can be % or amount) `}
+                      </div>
                       {csvFileName && <Text variant="bodySm" tone="subdued">{csvFileName} — {csvRows.length} row(s)</Text>}
                     </BlockStack>
                   </div>
