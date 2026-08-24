@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import ReactDOM from 'react-dom';
 import Papa from 'papaparse';
 import {
   Page, Layout, Card, Button, BlockStack, InlineStack, Text, TextField,
@@ -48,6 +49,8 @@ function BuyerPOImportInvoice() {
   const [supplierId, setSupplierId] = useState(null);
   const [supplierMatches, setSupplierMatches] = useState([]);
   const [supplierDropdownOpen, setSupplierDropdownOpen] = useState(false);
+  const [supplierDropStyle, setSupplierDropStyle] = useState({});
+  const supplierFieldRef = useRef(null);
   const [supplier, setSupplier] = useState(null); // { id, name, currency, fx_rate }
   const [productTypes, setProductTypes] = useState([]);
   const [typeOptions, setTypeOptions] = useState([]);
@@ -141,12 +144,48 @@ function BuyerPOImportInvoice() {
   }, [items]);
 
   // ── Card 2: supplier autocomplete ───────────────────────────────────────
+  // The dropdown is rendered via a portal into document.body (positioned with
+  // getBoundingClientRect, same pattern as MultiSelectDropdown) so it floats
+  // above the Card instead of being clipped by it.
+  const openSupplierDropdown = () => {
+    if (supplierFieldRef.current) {
+      const rect = supplierFieldRef.current.getBoundingClientRect();
+      setSupplierDropStyle({
+        position: 'fixed',
+        top: rect.bottom + 4,
+        left: rect.left,
+        minWidth: rect.width,
+        zIndex: 99999,
+        background: 'white',
+        border: '1px solid #e1e3e5',
+        borderRadius: '8px',
+        maxHeight: '200px',
+        overflowY: 'auto',
+        boxShadow: '0 4px 16px rgba(0,0,0,0.18)',
+      });
+    }
+    setSupplierDropdownOpen(true);
+  };
+
+  useEffect(() => {
+    if (!supplierDropdownOpen) return;
+    const handleClick = (e) => {
+      const field = supplierFieldRef.current;
+      const drop = document.querySelector('[data-supplier-drop="true"]');
+      if (field && !field.contains(e.target) && drop && !drop.contains(e.target)) {
+        setSupplierDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [supplierDropdownOpen]);
+
   const handleSupplierQueryChange = (val) => {
     guardEdit(() => {
       setSupplierQuery(val);
       setSupplierId(null);
       setSupplier(null);
-      setSupplierDropdownOpen(true);
+      openSupplierDropdown();
       if (!val) { setSupplierMatches([]); return; }
       fetch(`/api/po-suppliers/autocomplete?q=${encodeURIComponent(val)}`)
         .then(r => r.json())
@@ -346,21 +385,18 @@ function BuyerPOImportInvoice() {
               <Card>
                 <BlockStack gap="200">
                   <InlineStack gap="400" wrap align="start" blockAlign="start">
-                    <div style={{ minWidth: 220, position: 'relative' }}>
+                    <div ref={supplierFieldRef} style={{ minWidth: 220, position: 'relative' }}>
                       <TextField
                         label="Supplier"
                         placeholder="choose a supplier"
                         value={supplierQuery}
                         onChange={handleSupplierQueryChange}
-                        onFocus={() => setSupplierDropdownOpen(true)}
+                        onFocus={openSupplierDropdown}
                         autoComplete="off"
                         disabled={disabled}
                       />
-                      {supplierDropdownOpen && supplierMatches.length > 0 && (
-                        <div style={{
-                          position: 'absolute', top: '64px', left: 0, zIndex: 10, background: 'white',
-                          border: '1px solid #e1e3e5', borderRadius: '8px', width: '100%', maxHeight: '200px', overflowY: 'auto',
-                        }}>
+                      {supplierDropdownOpen && supplierMatches.length > 0 && ReactDOM.createPortal(
+                        <div data-supplier-drop="true" style={supplierDropStyle}>
                           {supplierMatches.map(s => (
                             <div
                               key={s.id}
@@ -370,7 +406,8 @@ function BuyerPOImportInvoice() {
                               {s.name}
                             </div>
                           ))}
-                        </div>
+                        </div>,
+                        document.body
                       )}
                     </div>
 
@@ -435,46 +472,59 @@ function BuyerPOImportInvoice() {
 
             {confirmed && (
               <Card>
-                <InlineStack align="space-between" wrap blockAlign="start">
-                  <BlockStack gap="200">
-                    <input
-                      type="file"
-                      accept=".csv"
-                      ref={csvInputRef}
-                      style={{ display: 'none' }}
-                      onChange={handleCsvUpload}
-                    />
-                    <Button onClick={() => csvInputRef.current.click()} disabled={disabled}>Upload CSV</Button>
-                    <Text variant="bodySm" tone="subdued">
-                      accepted format, column 1, unit code{'\n'}
-                      column 2, name{'\n'}
-                      column 3, quantity{'\n'}
-                      column 4, cost{'\n'}
-                      column 5, unit discount(if applicable, can be % or amount)
-                    </Text>
-                    {csvFileName && <Text variant="bodySm" tone="subdued">{csvFileName} — {csvRows.length} row(s)</Text>}
-                  </BlockStack>
+                <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px' }}>
+                  {/* Column 1 — Upload CSV, 20% width, left-aligned */}
+                  <div style={{ width: '20%', minWidth: '180px' }}>
+                    <BlockStack gap="200">
+                      <input
+                        type="file"
+                        accept=".csv"
+                        ref={csvInputRef}
+                        style={{ display: 'none' }}
+                        onChange={handleCsvUpload}
+                      />
+                      <Button fullWidth onClick={() => csvInputRef.current.click()} disabled={disabled}>Upload CSV</Button>
+                      <Text variant="bodySm" tone="subdued">
+                        accepted format, column 1, unit code{'\n'}
+                        column 2, name{'\n'}
+                        column 3, quantity{'\n'}
+                        column 4, cost{'\n'}
+                        column 5, unit discount(if applicable, can be % or amount)
+                      </Text>
+                      {csvFileName && <Text variant="bodySm" tone="subdued">{csvFileName} — {csvRows.length} row(s)</Text>}
+                    </BlockStack>
+                  </div>
 
-                  <BlockStack gap="200">
-                    <InfoTooltip text={ADJUSTMENT_TOOLTIP}>
-                      <Text variant="bodySm">Add adjustment</Text>
-                    </InfoTooltip>
-                    {adjustmentSaved ? (
-                      <InlineStack gap="150" blockAlign="center">
-                        <Text>{adjustmentSaved.endsWith('%') ? `${adjustmentSaved} added` : `$${adjustmentSaved} added`}</Text>
-                        <span style={{ cursor: 'pointer', color: '#d72c0d' }} onClick={handleRemoveAdjustment}>×</span>
-                      </InlineStack>
-                    ) : (
-                      <InlineStack gap="150" blockAlign="center">
-                        <div style={{ width: 130 }}>
-                          <TextField label="" labelHidden placeholder="amount" value={adjustmentDraft} onChange={setAdjustmentDraft} autoComplete="off" disabled={disabled} />
-                        </div>
-                        {adjustmentDraft && <Button size="slim" onClick={handleSaveAdjustment}>Save</Button>}
-                      </InlineStack>
-                    )}
-                    <Button onClick={handleStartToProcess} loading={processing} disabled={disabled}>Start to process</Button>
-                  </BlockStack>
-                </InlineStack>
+                  {/* Columns 2 & 3 — Add adjustment / Start to process, each 20% width, grouped to the right */}
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '16px', width: '40%', minWidth: '360px' }}>
+                    <div style={{ width: '50%', minWidth: '180px' }}>
+                      <BlockStack gap="200">
+                        <InfoTooltip text={ADJUSTMENT_TOOLTIP}>
+                          <Text variant="bodySm">Add adjustment</Text>
+                        </InfoTooltip>
+                        {adjustmentSaved ? (
+                          <InlineStack gap="150" blockAlign="center">
+                            <Text>{adjustmentSaved.endsWith('%') ? `${adjustmentSaved} added` : `$${adjustmentSaved} added`}</Text>
+                            <span style={{ cursor: 'pointer', color: '#d72c0d' }} onClick={handleRemoveAdjustment}>×</span>
+                          </InlineStack>
+                        ) : (
+                          <InlineStack gap="150" blockAlign="center">
+                            <div style={{ width: 130 }}>
+                              <TextField label="" labelHidden placeholder="amount" value={adjustmentDraft} onChange={setAdjustmentDraft} autoComplete="off" disabled={disabled} />
+                            </div>
+                            {adjustmentDraft && <Button size="slim" onClick={handleSaveAdjustment}>Save</Button>}
+                          </InlineStack>
+                        )}
+                      </BlockStack>
+                    </div>
+
+                    <div style={{ width: '50%', minWidth: '180px' }}>
+                      <Button variant="primary" fullWidth onClick={handleStartToProcess} loading={processing} disabled={disabled}>
+                        Start to process
+                      </Button>
+                    </div>
+                  </div>
+                </div>
                 {processing && <Text tone="subdued">Processing…</Text>}
               </Card>
             )}
