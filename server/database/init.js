@@ -416,6 +416,91 @@ const initDatabase = async () => {
 
     // ────────────────────────────────────────────────────────────────────────────
 
+    // ─── PO Receiving (Purchasing) ───────────────────────────────────────────────
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS po_suppliers (
+        id                 SERIAL PRIMARY KEY,
+        name               TEXT NOT NULL,
+        currency           TEXT NOT NULL CHECK (currency IN ('USD','CAD')),
+        fx_rate            NUMERIC(10,4),
+        types_carrying     TEXT[] NOT NULL DEFAULT '{}',
+        last_committed_at  TIMESTAMPTZ,
+        created_at         TIMESTAMPTZ DEFAULT NOW(),
+        updated_at         TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_po_suppliers_name_lower ON po_suppliers (LOWER(name))
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS po_supplier_skus (
+        id            SERIAL PRIMARY KEY,
+        supplier_id   INTEGER NOT NULL REFERENCES po_suppliers(id) ON DELETE CASCADE,
+        code          TEXT NOT NULL,
+        sku           TEXT NOT NULL,
+        name          TEXT,
+        product_type  TEXT,
+        pack_size     INTEGER,
+        last_cost     NUMERIC(12,4),
+        cost_sum      NUMERIC(14,4) NOT NULL DEFAULT 0,
+        cost_count    INTEGER NOT NULL DEFAULT 0,
+        created_at    TIMESTAMPTZ DEFAULT NOW(),
+        updated_at    TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (supplier_id, code)
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS po_invoices (
+        id                  SERIAL PRIMARY KEY,
+        invoice_number      TEXT NOT NULL,
+        supplier_id         INTEGER NOT NULL REFERENCES po_suppliers(id),
+        product_types       TEXT[] NOT NULL DEFAULT '{}',
+        location            TEXT NOT NULL,
+        shopify_location_id TEXT NOT NULL,
+        adjustment_type     TEXT CHECK (adjustment_type IN ('amount','percentage')),
+        adjustment_value    NUMERIC(12,4),
+        is_promotional      BOOLEAN NOT NULL DEFAULT FALSE,
+        status              TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','committed')),
+        has_missing_sku     BOOLEAN NOT NULL DEFAULT FALSE,
+        has_sku_collision   BOOLEAN NOT NULL DEFAULT FALSE,
+        committed_at        TIMESTAMPTZ,
+        created_at          TIMESTAMPTZ DEFAULT NOW(),
+        updated_at          TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_po_invoices_number_lower ON po_invoices (LOWER(invoice_number))
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS po_invoice_items (
+        id                     SERIAL PRIMARY KEY,
+        invoice_id             INTEGER NOT NULL REFERENCES po_invoices(id) ON DELETE CASCADE,
+        code                   TEXT NOT NULL,
+        sku                    TEXT,
+        name                   TEXT,
+        quantity               INTEGER NOT NULL,
+        raw_cost               NUMERIC(12,4) NOT NULL,
+        unit_discount_raw      TEXT,
+        cost_before_adjustment NUMERIC(12,4) NOT NULL,
+        effective_cost         NUMERIC(12,4) NOT NULL,
+        is_missing             BOOLEAN NOT NULL DEFAULT FALSE,
+        committed              BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at             TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_po_invoice_items_invoice_id ON po_invoice_items (invoice_id)
+    `);
+
+    // ────────────────────────────────────────────────────────────────────────────
+
     await client.query('COMMIT');
     console.log('✓ Database initialized successfully');
   } catch (e) {

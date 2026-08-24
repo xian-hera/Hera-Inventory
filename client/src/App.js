@@ -39,6 +39,15 @@ import InfluencerList from './pages/crm/InfluencerList';
 import InfluencerDetail from './pages/crm/InfluencerDetail';
 import EmployeeCap from './pages/crm/EmployeeCap';
 import ProductDatabaseSettings from './pages/buyer/ProductDatabaseSettings';
+import BuyerPOReceiving from './pages/buyer/BuyerPOReceiving';
+import BuyerPOReceivingHistory from './pages/buyer/BuyerPOReceivingHistory';
+import BuyerPOImportInvoice from './pages/buyer/BuyerPOImportInvoice';
+import BuyerPOInvoiceDetail from './pages/buyer/BuyerPOInvoiceDetail';
+import BuyerPOCommitLater from './pages/buyer/BuyerPOCommitLater';
+import BuyerPOSuppliers from './pages/buyer/BuyerPOSuppliers';
+import BuyerPOSupplierAdd from './pages/buyer/BuyerPOSupplierAdd';
+import BuyerPOSupplierDetail from './pages/buyer/BuyerPOSupplierDetail';
+import BuyerPOSettings from './pages/buyer/BuyerPOSettings';
 
 function App() {
   return (
@@ -63,6 +72,16 @@ function App() {
           <Route path="/buyer/price-change" element={<BuyerPriceChange />} />
           <Route path="/buyer/price-change/published" element={<BuyerPriceChangePublished />} />
           <Route path="/buyer/product-database" element={<ProductDatabaseSettings />} />
+          <Route path="/buyer/po-receiving" element={<BuyerPOReceiving />} />
+          <Route path="/buyer/po-receiving/history" element={<BuyerPOReceivingHistory />} />
+          <Route path="/buyer/po-receiving/import" element={<BuyerPOImportInvoice />} />
+          <Route path="/buyer/po-receiving/pending/:invoiceId" element={<BuyerPOImportInvoice />} />
+          <Route path="/buyer/po-receiving/committed/:invoiceId" element={<BuyerPOInvoiceDetail />} />
+          <Route path="/buyer/po-receiving/commit-later" element={<BuyerPOCommitLater />} />
+          <Route path="/buyer/po-receiving/suppliers" element={<BuyerPOSuppliers />} />
+          <Route path="/buyer/po-receiving/suppliers/new" element={<BuyerPOSupplierAdd />} />
+          <Route path="/buyer/po-receiving/suppliers/:supplierId" element={<BuyerPOSupplierDetail />} />
+          <Route path="/buyer/po-receiving/settings" element={<BuyerPOSettings />} />
 
           {/* Manager */}
           <Route path="/manager" element={<ManagerHome />} />

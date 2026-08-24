@@ -49,6 +49,9 @@ app.use('/api/birthday-config', birthdayConfigRouter);
 app.use('/api/influencers', require('./routes/influencers'));
 app.use('/api/settings', require('./routes/settings'));
 app.use('/api/employees', require('./routes/employees'));
+app.use('/api/po-suppliers', require('./routes/poSuppliers'));
+app.use('/api/po-invoices', require('./routes/poInvoices'));
+app.use('/api/po-settings', require('./routes/poSettings'));
 
 // Serve static files in production
 if (process.env.NODE_ENV === 'production') {

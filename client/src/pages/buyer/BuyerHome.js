@@ -80,6 +80,11 @@ function BuyerHome() {
               </span>
             </Button>
 
+            {/* PO Receiving */}
+            <Button size="large" fullWidth onClick={() => navigate('/buyer/po-receiving')}>
+              PO Receiving
+            </Button>
+
             {/* Settings */}
             <Button size="large" fullWidth onClick={() => navigate('/buyer/settings')}>
               Settings
