@@ -325,6 +325,12 @@ function BuyerPOImportInvoice() {
     navigate('/buyer/po-receiving/commit-later');
   };
 
+  // ── Top-right page action: Discard (before processing) / Commit later (after) ──
+  const handleDiscard = () => {
+    if (!window.confirm('Discard this invoice? Nothing has been saved yet — all entered information will be lost.')) return;
+    navigate('/buyer/po-receiving');
+  };
+
   const handleCommitNow = async () => {
     if (hasMissing) { window.alert('There are line item(s) missing SKU. Please resolve them before committing.'); return; }
     if (hasCollision) { window.alert('There are line item(s) with a SKU collision. Please resolve them before committing.'); return; }
@@ -354,11 +360,23 @@ function BuyerPOImportInvoice() {
   const disabled = processing || committing;
   const sortedItems = [...items].sort((a, b) => (b.is_missing ? 1 : 0) - (a.is_missing ? 1 : 0));
 
+  // Top-right header action: red "Discard" before this draft has ever been
+  // processed (nothing persisted yet, so leaving just abandons it); once
+  // Start to process has succeeded, it becomes the plain "Commit later"
+  // action instead, matching the warning text in Card 1.
+  let headerActions;
+  if (items.length > 0) {
+    headerActions = [{ content: 'Commit later', onAction: handleCommitLater, disabled: committing }];
+  } else if (numberSaved) {
+    headerActions = [{ content: 'Discard', destructive: true, onAction: handleDiscard, disabled }];
+  }
+
   return (
     <Page
       title={invoiceIdParam ? invoiceNumber : 'Import an invoice'}
       titleMetadata={invoiceIdParam ? <Badge tone="attention">Commit later</Badge> : undefined}
       backAction={{ onAction: () => navigate('/buyer/po-receiving') }}
+      secondaryActions={headerActions}
     >
       <Layout>
         <Layout.Section>
@@ -366,22 +384,37 @@ function BuyerPOImportInvoice() {
             {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
 
             {/* Card 1 */}
-            <Card>
-              <InlineStack gap="300" blockAlign="end">
-                <div style={{ width: 220 }}>
-                  <TextField
-                    label="Invoice number"
-                    value={invoiceNumber}
-                    onChange={(val) => guardEdit(() => { setInvoiceNumber(val); setNumberSaved(false); })}
-                    autoComplete="off"
-                    disabled={disabled}
-                  />
-                </div>
-                <Button onClick={handleSaveNumber} disabled={disabled || numberSaved}>Save</Button>
-              </InlineStack>
-            </Card>
+            {!numberSaved ? (
+              <Card>
+                <InlineStack gap="300" blockAlign="end">
+                  <div style={{ width: 420 }}>
+                    <TextField
+                      label="Invoice number"
+                      placeholder="use original invoice number for better management"
+                      value={invoiceNumber}
+                      onChange={(val) => { setInvoiceNumber(val); setNumberSaved(false); }}
+                      autoComplete="off"
+                      disabled={disabled}
+                    />
+                  </div>
+                  <Button variant="primary" onClick={handleSaveNumber} disabled={disabled}>Save to continue</Button>
+                </InlineStack>
+              </Card>
+            ) : (
+              <Card>
+                <BlockStack gap="100">
+                  <Text variant="bodySm" tone="subdued">Invoice number</Text>
+                  <Text fontWeight="semibold">{invoiceNumber}</Text>
+                  <Text tone="subdued" variant="bodySm">
+                    {items.length > 0
+                      ? 'if you leave this page, this invoice will be saved to Commit Later'
+                      : 'if you leave this page, all input info will be discarded.'}
+                  </Text>
+                </BlockStack>
+              </Card>
+            )}
 
-            {(numberSaved || confirmed) && (
+            {numberSaved && !confirmed && (
               <Card>
                 <BlockStack gap="200">
                   <InlineStack gap="400" wrap align="start" blockAlign="start">
@@ -416,18 +449,22 @@ function BuyerPOImportInvoice() {
                         label="Type"
                         options={typeOptions}
                         selected={productTypes}
-                        onChange={(val) => guardEdit(() => setProductTypes(val))}
+                        onChange={setProductTypes}
                         placeholder="product type"
                       />
                     </div>
 
-                    <div style={{ width: 160 }}>
-                      <Text variant="bodySm" tone="subdued">Receiving to</Text>
+                    <div style={{ minWidth: 160 }}>
+                      <div style={{ fontSize: '13px', color: '#6d7175', marginBottom: '4px', lineHeight: '1.4', fontWeight: '400' }}>Receiving to</div>
                       <select
                         value={location}
-                        onChange={(e) => guardEdit(() => setLocation(e.target.value))}
+                        onChange={(e) => setLocation(e.target.value)}
                         disabled={disabled}
-                        style={{ padding: '6px 10px', border: '1px solid #c9cccf', borderRadius: '6px', fontSize: '14px', width: '100%' }}
+                        style={{
+                          width: '100%', height: '36px', padding: '0 10px',
+                          border: '1px solid #c9cccf', borderRadius: '8px', fontSize: '14px',
+                          boxSizing: 'border-box', background: 'white',
+                        }}
                       >
                         <option value="">location</option>
                         {LOCATIONS.map(l => <option key={l} value={l}>{l}</option>)}
@@ -435,8 +472,8 @@ function BuyerPOImportInvoice() {
                     </div>
 
                     <div style={{ paddingTop: '22px' }}>
-                      <Button onClick={handleConfirm} disabled={disabled || !supplierId || productTypes.length === 0 || !location}>
-                        Confirm
+                      <Button variant="primary" onClick={handleConfirm} disabled={disabled || !supplierId || productTypes.length === 0 || !location}>
+                        Confirm to continue
                       </Button>
                     </div>
                   </InlineStack>
@@ -467,6 +504,8 @@ function BuyerPOImportInvoice() {
                 <Button size="slim" onClick={() => setEditingFxRate(v => !v)} disabled={supplier.currency !== 'USD'}>
                   {editingFxRate ? 'Cancel' : 'Edit'}
                 </Button>
+                <Text tone="subdued">Type: {productTypes.join(', ')}</Text>
+                <Text tone="subdued">Receiving to: {location}</Text>
               </InlineStack>
             )}
 
