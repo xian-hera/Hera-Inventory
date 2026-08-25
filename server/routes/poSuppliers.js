@@ -146,9 +146,26 @@ router.patch('/:id', async (req, res) => {
 });
 
 // DELETE /api/po-suppliers/:id
+// Blocked if this supplier has any invoice records (pending or committed) —
+// po_invoices.supplier_id has no ON DELETE CASCADE on purpose, since a
+// committed invoice is a real historical record of Shopify inventory/cost
+// changes that already happened and shouldn't silently disappear or be
+// orphaned. The buyer has to clear those invoices first.
 router.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    const invoiceCheck = await pool.query(
+      `SELECT COUNT(*) FILTER (WHERE status = 'pending') AS pending_count,
+              COUNT(*) FILTER (WHERE status = 'committed') AS committed_count
+       FROM po_invoices WHERE supplier_id = $1`,
+      [id]
+    );
+    const { pending_count, committed_count } = invoiceCheck.rows[0];
+    if (Number(pending_count) > 0 || Number(committed_count) > 0) {
+      return res.status(400).json({
+        error: 'This Supplier has related Invoice(s) that are Committed or Commit later. To delete this Supplier, please delete those invoice records first.',
+      });
+    }
     await pool.query('DELETE FROM po_suppliers WHERE id = $1', [id]);
     res.json({ success: true });
   } catch (e) {

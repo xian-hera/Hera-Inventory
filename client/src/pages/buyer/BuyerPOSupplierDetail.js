@@ -100,7 +100,10 @@ function BuyerPOSupplierDetail() {
     if (!window.confirm(`Delete supplier "${supplier?.name}"? This also removes its SKU mapping. This cannot be undone.`)) return;
     try {
       const res = await fetch(`/api/po-suppliers/${supplierId}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error('Delete failed');
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Delete failed');
+      }
       navigate('/buyer/po-receiving/suppliers');
     } catch (e) {
       setError(e.message);

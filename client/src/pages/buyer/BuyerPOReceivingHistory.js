@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Page, Layout, Card, BlockStack, InlineStack, Text, Banner, Spinner, Badge
+  Page, Layout, Card, Button, BlockStack, InlineStack, Text, TextField, Banner, Spinner, Badge
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 
@@ -15,14 +15,28 @@ function BuyerPOReceivingHistory() {
   const navigate = useNavigate();
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
 
-  useEffect(() => {
-    fetch('/api/po-invoices/history')
-      .then(r => r.json())
-      .then(data => setHistory(Array.isArray(data) ? data : []))
-      .catch(() => {})
-      .finally(() => setLoading(false));
+  const fetchHistory = useCallback(async (q) => {
+    setLoading(true);
+    try {
+      const params = q ? `?q=${encodeURIComponent(q)}` : '';
+      const res = await fetch(`/api/po-invoices/history${params}`);
+      const data = await res.json();
+      setHistory(Array.isArray(data) ? data : []);
+    } catch (e) {
+      // ignore
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => { fetchHistory(''); }, [fetchHistory]);
+
+  const handleClearSearch = () => {
+    setSearch('');
+    fetchHistory('');
+  };
 
   return (
     <Page title="Committed invoice history" backAction={{ onAction: () => navigate('/buyer/po-receiving') }}>
@@ -34,11 +48,30 @@ function BuyerPOReceivingHistory() {
             </Banner>
 
             <Card>
+              <InlineStack gap="200" blockAlign="center">
+                <div style={{ flex: 1 }}>
+                  <TextField
+                    label=""
+                    labelHidden
+                    placeholder="Search by Supplier name, Receiving location, invoice number, SKU or code"
+                    value={search}
+                    onChange={setSearch}
+                    onKeyDown={(e) => { if (e.key === 'Enter') fetchHistory(search); }}
+                    autoComplete="off"
+                    clearButton
+                    onClearButtonClick={handleClearSearch}
+                  />
+                </div>
+                <Button onClick={() => fetchHistory(search)}>Search</Button>
+              </InlineStack>
+            </Card>
+
+            <Card>
               <BlockStack gap="300">
                 {loading ? (
                   <InlineStack align="center"><Spinner /></InlineStack>
                 ) : history.length === 0 ? (
-                  <Text tone="subdued">No committed invoices yet.</Text>
+                  <Text tone="subdued">{search ? 'No matching invoice found.' : 'No committed invoices yet.'}</Text>
                 ) : (
                   <div style={{ overflowX: 'auto' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>

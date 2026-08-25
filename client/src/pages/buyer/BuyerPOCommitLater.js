@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Page, Layout, Card, Button, BlockStack, InlineStack, Text, Checkbox, Banner, Spinner
+  Page, Layout, Card, Button, BlockStack, InlineStack, Text, TextField, Checkbox, Banner, Spinner
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 
@@ -12,11 +12,13 @@ function BuyerPOCommitLater() {
   const [error, setError] = useState('');
   const [committing, setCommitting] = useState(false);
   const [selectedIds, setSelectedIds] = useState([]);
+  const [search, setSearch] = useState('');
 
-  const fetchInvoices = useCallback(async () => {
+  const fetchInvoices = useCallback(async (q) => {
     setLoading(true);
     try {
-      const res = await fetch('/api/po-invoices/pending');
+      const params = q ? `?q=${encodeURIComponent(q)}` : '';
+      const res = await fetch(`/api/po-invoices/pending${params}`);
       const data = await res.json();
       setInvoices(Array.isArray(data) ? data : []);
     } catch (e) {
@@ -26,7 +28,13 @@ function BuyerPOCommitLater() {
     }
   }, []);
 
-  useEffect(() => { fetchInvoices(); }, [fetchInvoices]);
+  useEffect(() => { fetchInvoices(''); }, [fetchInvoices]);
+
+  const handleClearSearch = () => {
+    setSearch('');
+    setSelectedIds([]);
+    fetchInvoices('');
+  };
 
   const toggleSelectOne = (id) =>
     setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
@@ -52,7 +60,7 @@ function BuyerPOCommitLater() {
         );
       }
       setSelectedIds([]);
-      fetchInvoices();
+      fetchInvoices(search);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -71,7 +79,7 @@ function BuyerPOCommitLater() {
       });
       if (!res.ok) throw new Error('Delete failed');
       setSelectedIds([]);
-      fetchInvoices();
+      fetchInvoices(search);
     } catch (e) {
       setError(e.message);
     }
@@ -106,10 +114,31 @@ function BuyerPOCommitLater() {
             {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
 
             <Card>
+              <InlineStack gap="200" blockAlign="center">
+                <div style={{ flex: 1 }}>
+                  <TextField
+                    label=""
+                    labelHidden
+                    placeholder="Search by Supplier name, Receiving location, invoice number, SKU or code"
+                    value={search}
+                    onChange={setSearch}
+                    onKeyDown={(e) => { if (e.key === 'Enter') fetchInvoices(search); }}
+                    autoComplete="off"
+                    clearButton
+                    onClearButtonClick={handleClearSearch}
+                  />
+                </div>
+                <Button onClick={() => fetchInvoices(search)}>Search</Button>
+              </InlineStack>
+            </Card>
+
+            <Card>
               {loading ? (
                 <InlineStack align="center"><Spinner /></InlineStack>
               ) : invoices.length === 0 ? (
-                <Text tone="subdued" alignment="center">No invoices waiting to be committed.</Text>
+                <Text tone="subdued" alignment="center">
+                  {search ? 'No matching invoice found.' : 'No invoices waiting to be committed.'}
+                </Text>
               ) : (
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>

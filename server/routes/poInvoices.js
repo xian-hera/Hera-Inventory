@@ -107,15 +107,25 @@ router.get('/recent', async (req, res) => {
 });
 
 // GET /api/po-invoices/history — last 200 committed, for the "View all" page.
+// Optional ?q= searches supplier name, receiving location, invoice number,
+// and any line item's SKU or code (case-insensitive, partial match).
 router.get('/history', async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT i.id, i.invoice_number, i.committed_at, i.is_promotional, s.name AS supplier_name
-       FROM po_invoices i JOIN po_suppliers s ON s.id = i.supplier_id
-       WHERE i.status = 'committed'
-       ORDER BY i.committed_at DESC LIMIT $1`,
-      [HISTORY_LIMIT]
-    );
+    const { q } = req.query;
+    const params = [];
+    let query = `
+      SELECT DISTINCT i.id, i.invoice_number, i.committed_at, i.is_promotional, i.location, s.name AS supplier_name
+      FROM po_invoices i
+      JOIN po_suppliers s ON s.id = i.supplier_id
+      LEFT JOIN po_invoice_items it ON it.invoice_id = i.id
+      WHERE i.status = 'committed'`;
+    if (q) {
+      params.push(`%${q}%`);
+      query += ` AND (s.name ILIKE $${params.length} OR i.location ILIKE $${params.length} OR i.invoice_number ILIKE $${params.length} OR it.sku ILIKE $${params.length} OR it.code ILIKE $${params.length})`;
+    }
+    params.push(HISTORY_LIMIT);
+    query += ` ORDER BY i.committed_at DESC LIMIT $${params.length}`;
+    const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (e) {
     console.error('GET /api/po-invoices/history error:', e);
@@ -284,19 +294,36 @@ router.post('/process', async (req, res) => {
 
 // ─── Pending (Commit later) ──────────────────────────────────────────────────
 
-// GET /api/po-invoices/pending
+// GET /api/po-invoices/pending — optional ?q= searches supplier name,
+// receiving location, invoice number, and any line item's SKU or code
+// (case-insensitive, partial match). The search match is resolved in a
+// subquery (by invoice id) rather than filtered directly on the joined
+// po_invoice_items rows, so the quantity SUM below still totals ALL of a
+// matched invoice's items, not just the ones that happened to match.
 router.get('/pending', async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT i.id, i.invoice_number, i.location, s.name AS supplier_name,
-              COALESCE(SUM(it.quantity), 0) AS quantity
-       FROM po_invoices i
-       JOIN po_suppliers s ON s.id = i.supplier_id
-       LEFT JOIN po_invoice_items it ON it.invoice_id = i.id
-       WHERE i.status = 'pending'
-       GROUP BY i.id, i.invoice_number, i.location, s.name
-       ORDER BY i.created_at DESC`
-    );
+    const { q } = req.query;
+    const params = [];
+    let query = `
+      SELECT i.id, i.invoice_number, i.location, s.name AS supplier_name,
+             COALESCE(SUM(it.quantity), 0) AS quantity
+      FROM po_invoices i
+      JOIN po_suppliers s ON s.id = i.supplier_id
+      LEFT JOIN po_invoice_items it ON it.invoice_id = i.id
+      WHERE i.status = 'pending'`;
+    if (q) {
+      params.push(`%${q}%`);
+      query += ` AND i.id IN (
+        SELECT DISTINCT i2.id
+        FROM po_invoices i2
+        JOIN po_suppliers s2 ON s2.id = i2.supplier_id
+        LEFT JOIN po_invoice_items it2 ON it2.invoice_id = i2.id
+        WHERE i2.status = 'pending'
+          AND (s2.name ILIKE $${params.length} OR i2.location ILIKE $${params.length} OR i2.invoice_number ILIKE $${params.length} OR it2.sku ILIKE $${params.length} OR it2.code ILIKE $${params.length})
+      )`;
+    }
+    query += ` GROUP BY i.id, i.invoice_number, i.location, s.name ORDER BY i.created_at DESC`;
+    const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (e) {
     console.error('GET /api/po-invoices/pending error:', e);
