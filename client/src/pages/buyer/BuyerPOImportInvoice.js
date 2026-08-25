@@ -24,6 +24,12 @@ Percentage:
  New unit cost = (Line total ± Line adjustment) ÷ Qty
 Use + for surcharge, − for discount.`;
 
+const CSV_FORMAT_TOOLTIP = `column 1, unit code
+column 2, name
+column 3, quantity
+column 4, cost
+column 5, unit discount(if applicable, can be % or amount)`;
+
 const COMMITTING_RULE_TOOLTIP = `Committing will update cost field, new cost = (current qty × current cost + invoice qty × invoice unit cost) ÷ (current qty + invoice qty)`;
 
 const MISSING_SKU_TOOLTIP = `Go to Supplier management to add the missing SKU mapping first, then restart this importing, or add this to Commit later, and commit it after SKU added.`;
@@ -325,10 +331,29 @@ function BuyerPOImportInvoice() {
     navigate('/buyer/po-receiving/commit-later');
   };
 
-  // ── Top-right page action: Discard (before processing) / Commit later (after) ──
-  const handleDiscard = () => {
-    if (!window.confirm('Discard this invoice? Nothing has been saved yet — all entered information will be lost.')) return;
-    navigate('/buyer/po-receiving');
+  // ── Top-right page action: Discard ──────────────────────────────────────
+  // Stays red "Discard" the whole way from Card 1 being locked through to a
+  // successful commit — it never turns into "Commit later". The only ways
+  // to end up in Commit Later are the explicit "Commit later" button (in the
+  // Card 4 action row) or simply leaving the page (without hitting Discard)
+  // after Start to process has succeeded. So Discard must actively delete
+  // the invoice row if one has already been persisted (i.e. once Start to
+  // process has created it) — otherwise it's just a plain navigate-away.
+  const handleDiscard = async () => {
+    if (!window.confirm('Discard this invoice? This cannot be undone, and it will not be saved to Commit Later.')) return;
+    try {
+      if (invoiceId) {
+        const res = await fetch('/api/po-invoices/pending', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids: [invoiceId] }),
+        });
+        if (!res.ok) throw new Error('Failed to discard this invoice. Please try again.');
+      }
+      navigate('/buyer/po-receiving');
+    } catch (e) {
+      setError(e.message);
+    }
   };
 
   const handleCommitNow = async () => {
@@ -360,16 +385,14 @@ function BuyerPOImportInvoice() {
   const disabled = processing || committing;
   const sortedItems = [...items].sort((a, b) => (b.is_missing ? 1 : 0) - (a.is_missing ? 1 : 0));
 
-  // Top-right header action: red "Discard" before this draft has ever been
-  // processed (nothing persisted yet, so leaving just abandons it); once
-  // Start to process has succeeded, it becomes the plain "Commit later"
-  // action instead, matching the warning text in Card 1.
-  let headerActions;
-  if (items.length > 0) {
-    headerActions = [{ content: 'Commit later', onAction: handleCommitLater, disabled: committing }];
-  } else if (numberSaved) {
-    headerActions = [{ content: 'Discard', destructive: true, onAction: handleDiscard, disabled }];
-  }
+  // Top-right header action: red "Discard", shown continuously from Card 1
+  // being locked (invoice number saved) all the way through to a successful
+  // commit — it does not switch to "Commit later" once processed. Getting
+  // to Commit Later happens only via the explicit button in the Card 4
+  // action row, or by leaving the page without discarding.
+  const headerActions = numberSaved
+    ? [{ content: 'Discard', destructive: true, onAction: handleDiscard, disabled }]
+    : undefined;
 
   return (
     <Page
@@ -511,63 +534,62 @@ function BuyerPOImportInvoice() {
 
             {confirmed && (
               <Card>
-                <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px' }}>
-                  {/* Column 1 — Upload CSV, 20% width, left-aligned */}
-                  <div style={{ width: '20%', minWidth: '180px' }}>
-                    <BlockStack gap="200">
-                      <input
-                        type="file"
-                        accept=".csv"
-                        ref={csvInputRef}
-                        style={{ display: 'none' }}
-                        onChange={handleCsvUpload}
-                      />
-                      <Button fullWidth onClick={() => csvInputRef.current.click()} disabled={disabled}>Upload CSV</Button>
-                      {/* Line breaks below are exact, per Hera's spec — allowed to overflow
-                          this column's width rather than reflow. */}
-                      <div style={{ whiteSpace: 'pre', fontSize: '13px', color: '#6d7175' }}>
-{`accepted format, column 1, unit code
-column 2, name
-column 3, quantity
-column 4, cost
-column 5, unit discount(if applicable, can be % or amount) `}
-                      </div>
-                      {csvFileName && <Text variant="bodySm" tone="subdued">{csvFileName} — {csvRows.length} row(s)</Text>}
-                    </BlockStack>
+                {/* A 4-column grid (Upload CSV | filler | Add adjustment | Start to
+                    process), 2 rows (labels, controls). Grid auto-sizes each row to
+                    its tallest cell, so the label row and the control row line up
+                    across all three columns even though "Start to process" has no
+                    label of its own above it. */}
+                <div style={{ display: 'grid', gridTemplateColumns: '20% 1fr 20% 20%', columnGap: '16px', rowGap: '8px' }}>
+                  <div style={{ gridColumn: '1', gridRow: '1' }}>
+                    <InfoTooltip text={CSV_FORMAT_TOOLTIP}>
+                      <Text variant="bodySm">CSV construction requirement</Text>
+                    </InfoTooltip>
+                  </div>
+                  <div style={{ gridColumn: '3', gridRow: '1' }}>
+                    <InfoTooltip text={ADJUSTMENT_TOOLTIP}>
+                      <Text variant="bodySm">Add adjustment</Text>
+                    </InfoTooltip>
                   </div>
 
-                  {/* Columns 2 & 3 — Add adjustment / Start to process, each 20% width, grouped to the right */}
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '16px', width: '40%', minWidth: '360px' }}>
-                    <div style={{ width: '50%', minWidth: '180px' }}>
-                      <BlockStack gap="200">
-                        <InfoTooltip text={ADJUSTMENT_TOOLTIP}>
-                          <Text variant="bodySm">Add adjustment</Text>
-                        </InfoTooltip>
-                        {adjustmentSaved ? (
-                          <InlineStack gap="150" blockAlign="center">
-                            <Text>{adjustmentSaved.endsWith('%') ? `${adjustmentSaved} added` : `$${adjustmentSaved} added`}</Text>
-                            <span style={{ cursor: 'pointer', color: '#d72c0d' }} onClick={handleRemoveAdjustment}>×</span>
-                          </InlineStack>
-                        ) : (
-                          <InlineStack gap="150" blockAlign="center">
-                            <div style={{ width: 130 }}>
-                              <TextField label="" labelHidden placeholder="amount" value={adjustmentDraft} onChange={setAdjustmentDraft} autoComplete="off" disabled={disabled} />
-                            </div>
-                            {adjustmentDraft && <Button size="slim" onClick={handleSaveAdjustment}>Save</Button>}
-                          </InlineStack>
-                        )}
-                      </BlockStack>
-                    </div>
-
-                    <div style={{ width: '50%', minWidth: '180px' }}>
-                      <Button variant="primary" fullWidth onClick={handleStartToProcess} loading={processing} disabled={disabled}>
-                        Start to process
-                      </Button>
-                    </div>
+                  <div style={{ gridColumn: '1', gridRow: '2' }}>
+                    <input
+                      type="file"
+                      accept=".csv"
+                      ref={csvInputRef}
+                      style={{ display: 'none' }}
+                      onChange={handleCsvUpload}
+                    />
+                    <Button fullWidth onClick={() => csvInputRef.current.click()} disabled={disabled}>Upload CSV</Button>
+                  </div>
+                  <div style={{ gridColumn: '3', gridRow: '2' }}>
+                    {adjustmentSaved ? (
+                      <InlineStack gap="150" blockAlign="center">
+                        <Text>{adjustmentSaved.endsWith('%') ? `${adjustmentSaved} added` : `$${adjustmentSaved} added`}</Text>
+                        <span style={{ cursor: 'pointer', color: '#d72c0d' }} onClick={handleRemoveAdjustment}>×</span>
+                      </InlineStack>
+                    ) : (
+                      <InlineStack gap="150" blockAlign="center">
+                        <div style={{ flex: 1 }}>
+                          <TextField label="" labelHidden placeholder="amount" value={adjustmentDraft} onChange={setAdjustmentDraft} autoComplete="off" disabled={disabled} />
+                        </div>
+                        {adjustmentDraft && <Button size="slim" onClick={handleSaveAdjustment}>Save</Button>}
+                      </InlineStack>
+                    )}
+                  </div>
+                  <div style={{ gridColumn: '4', gridRow: '2' }}>
+                    <Button variant="primary" fullWidth onClick={handleStartToProcess} loading={processing} disabled={disabled}>
+                      Start to process
+                    </Button>
                   </div>
                 </div>
-                {processing && <Text tone="subdued">Processing…</Text>}
               </Card>
+            )}
+
+            {(csvFileName || processing) && (
+              <BlockStack gap="100">
+                {csvFileName && <Text tone="subdued" variant="bodySm">{csvFileName} — {csvRows.length} row(s)</Text>}
+                {processing && <Text tone="subdued" variant="bodySm">Processing…</Text>}
+              </BlockStack>
             )}
 
             {items.length > 0 && (
