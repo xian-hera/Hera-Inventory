@@ -265,13 +265,13 @@ function BuyerPOSettings() {
 
             <BlockStack gap="200">
               <Text variant="headingMd">History</Text>
-              <Text tone="subdued">Clear the specific history record.</Text>
+              <Text tone="subdued">Only recent 200 committed invoices are saved, any beyond that will be auto-deleted.</Text>
             </BlockStack>
 
             <Card>
               <InlineStack gap="300" blockAlign="center">
                 <Button tone="critical" onClick={handleClearHistory}>Clear</Button>
-                <Text>Clear committed invoice history in homepage.</Text>
+                <Text>Click clear to delete all saved and committed invoices. History will be empty.</Text>
               </InlineStack>
             </Card>
           </BlockStack>
