@@ -12,10 +12,17 @@
 // "Package size" is a single global metafield (not per-group) read at the
 // same time and stored on po_supplier_skus.pack_size.
 //
-// Matching a supplier's own SKU list is additive/update-only: an existing
-// (supplier_id, code) mapping is never deleted here, even if this run no
-// longer finds it — per product decision, stale mappings are left in place
-// for the buyer to clean up manually.
+// Each Update SKU run is a full wipe-and-rebuild within its own scope, not
+// an incremental upsert: a single-supplier run first deletes every existing
+// (supplier_id, code) mapping for that supplier (regardless of type), then
+// rebuilds it from the current metafield state of that supplier's
+// types_carrying. A Settings "SKU & supplier code" run (one or more types)
+// deletes every mapping — across all suppliers — whose stored product_type
+// is one of the selected types, then rebuilds those from the current
+// metafield state. Either way, the wipe and the rebuild happen inside one
+// DB transaction: if the Shopify scan or the rebuild throws partway through,
+// the whole thing rolls back and the previous mapping is left untouched
+// rather than being left half-cleared.
 
 const { pool } = require('../database/init');
 
@@ -164,8 +171,15 @@ function readPackageSize(product, variant) {
   return isNaN(n) ? null : n;
 }
 
-async function upsertMapping({ supplierId, code, sku, productType, packSize, fallbackName }) {
-  await pool.query(
+// `db` is a transaction client (from pool.connect() + BEGIN), not the pool
+// itself — every write in a wipe-and-rebuild run happens on the same
+// connection so it can all be rolled back together on failure. ON CONFLICT
+// is kept as a safety net for the (rare) case where two variants scanned in
+// the same run resolve to the same (supplier_id, code) — last one wins,
+// same as before — even though the preceding DELETE means there is normally
+// nothing to conflict with.
+async function upsertMapping(db, { supplierId, code, sku, productType, packSize, fallbackName }) {
+  await db.query(
     `INSERT INTO po_supplier_skus (supplier_id, code, sku, name, product_type, pack_size, updated_at)
      VALUES ($1, $2, $3, $4, $5, $6, NOW())
      ON CONFLICT (supplier_id, code) DO UPDATE SET
@@ -200,7 +214,9 @@ async function runSingleSupplierUpdate(supplierId) {
 
     const records = await fetchVariantsForTypes(client, supplier.types_carrying || [], packageSize, groups);
 
-    let matched = 0;
+    // Compute all matches in memory first (no DB writes yet) — the wipe only
+    // happens once we know the full rebuild set, inside the transaction below.
+    const matches = [];
     for (const { product, variant } of records) {
       if (!variant.barcode) continue;
       for (let i = 0; i < groups.length; i++) {
@@ -209,7 +225,7 @@ async function runSingleSupplierUpdate(supplierId) {
         if (nameVal !== supplier.name) continue; // exact, case-sensitive
         const codeVal = readAliasValue(product, variant, `grp${i}Code`);
         if (!codeVal) break; // matched name but no code value — nothing to map, don't check other groups either
-        await upsertMapping({
+        matches.push({
           supplierId,
           code: codeVal,
           sku: variant.barcode,
@@ -217,11 +233,29 @@ async function runSingleSupplierUpdate(supplierId) {
           packSize: readPackageSize(product, variant),
           fallbackName: variant.customName?.value || product.productType || null,
         });
-        matched++;
         break; // this supplier only matches one group per variant
       }
     }
 
+    // Wipe this supplier's entire mapping set, then rebuild it from `matches`
+    // — all inside one transaction so a failure partway through leaves the
+    // previous mapping untouched instead of half-cleared.
+    const dbClient = await pool.connect();
+    try {
+      await dbClient.query('BEGIN');
+      await dbClient.query('DELETE FROM po_supplier_skus WHERE supplier_id = $1', [supplierId]);
+      for (const m of matches) {
+        await upsertMapping(dbClient, m);
+      }
+      await dbClient.query('COMMIT');
+    } catch (e) {
+      await dbClient.query('ROLLBACK');
+      throw e;
+    } finally {
+      dbClient.release();
+    }
+
+    const matched = matches.length;
     singleSupplierStatus = { isRunning: false, supplierId, startedAt: singleSupplierStatus.startedAt, finishedAt: new Date().toISOString(), error: null, matched };
     return { matched };
   } catch (e) {
@@ -255,6 +289,9 @@ async function runGlobalUpdate(types) {
 
     const records = await fetchVariantsForTypes(client, types, packageSize, groups);
 
+    // Compute all matches (and unregistered-supplier names) in memory first —
+    // no DB writes until the transaction below.
+    const matches = [];
     const unregistered = new Map(); // name -> sample product title/type
 
     for (const { product, variant } of records) {
@@ -269,7 +306,7 @@ async function runGlobalUpdate(types) {
         }
         const codeVal = readAliasValue(product, variant, `grp${i}Code`);
         if (!codeVal) continue;
-        await upsertMapping({
+        matches.push({
           supplierId,
           code: codeVal,
           sku: variant.barcode,
@@ -280,16 +317,34 @@ async function runGlobalUpdate(types) {
       }
     }
 
+    // Wipe every mapping (across ALL suppliers) whose stored product_type is
+    // one of the selected types, then rebuild from `matches` — plus the
+    // type-update-history bump — all inside one transaction, so a failure
+    // partway through leaves the previous mapping untouched.
     const now = new Date().toISOString();
-    for (const t of types) {
-      const historyRes = await pool.query(`SELECT value FROM app_settings WHERE key = 'po_type_update_history'`);
-      const history = historyRes.rows[0]?.value || {};
-      history[t] = { lastUpdatedAt: now };
-      await pool.query(
-        `INSERT INTO app_settings (key, value, updated_at) VALUES ('po_type_update_history', $1::jsonb, NOW())
-         ON CONFLICT (key) DO UPDATE SET value = $1::jsonb, updated_at = NOW()`,
-        [JSON.stringify(history)]
-      );
+    const dbClient = await pool.connect();
+    try {
+      await dbClient.query('BEGIN');
+      await dbClient.query('DELETE FROM po_supplier_skus WHERE product_type = ANY($1)', [types]);
+      for (const m of matches) {
+        await upsertMapping(dbClient, m);
+      }
+      for (const t of types) {
+        const historyRes = await dbClient.query(`SELECT value FROM app_settings WHERE key = 'po_type_update_history'`);
+        const history = historyRes.rows[0]?.value || {};
+        history[t] = { lastUpdatedAt: now };
+        await dbClient.query(
+          `INSERT INTO app_settings (key, value, updated_at) VALUES ('po_type_update_history', $1::jsonb, NOW())
+           ON CONFLICT (key) DO UPDATE SET value = $1::jsonb, updated_at = NOW()`,
+          [JSON.stringify(history)]
+        );
+      }
+      await dbClient.query('COMMIT');
+    } catch (e) {
+      await dbClient.query('ROLLBACK');
+      throw e;
+    } finally {
+      dbClient.release();
     }
 
     const unregisteredSuppliers = Array.from(unregistered.entries()).map(([name, sampleType]) => ({ name, sampleType }));
