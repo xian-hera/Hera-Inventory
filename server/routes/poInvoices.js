@@ -449,14 +449,18 @@ async function commitInvoice(invoiceId) {
         ? (snapshot.currentQty * snapshot.currentCost + item.quantity * Number(item.effective_cost)) / totalQty
         : Number(item.effective_cost);
 
-      await shopifyRequest(client, `
-        mutation updateCost($id: ID!, $input: InventoryItemUpdateInput!) {
+      const costResp = await shopifyRequest(client, `
+        mutation updateCost($id: ID!, $input: InventoryItemInput!) {
           inventoryItemUpdate(id: $id, input: $input) {
             inventoryItem { id }
             userErrors { field message }
           }
         }
       `, { id: snapshot.inventoryItemId, input: { cost: newCost } });
+      const costErrors = costResp?.data?.inventoryItemUpdate?.userErrors || [];
+      if (costErrors.length > 0) {
+        throw new Error(`SKU ${item.sku}: cost update failed — ${costErrors.map(e => e.message).join('; ')}`);
+      }
 
       await pool.query(
         `UPDATE po_supplier_skus SET
@@ -472,7 +476,7 @@ async function commitInvoice(invoiceId) {
       );
     }
 
-    await shopifyRequest(client, `
+    const invResp = await shopifyRequest(client, `
       mutation adjustInventory($input: InventoryAdjustQuantitiesInput!) {
         inventoryAdjustQuantities(input: $input) {
           inventoryAdjustmentGroup { id }
@@ -490,6 +494,10 @@ async function commitInvoice(invoiceId) {
         }],
       },
     });
+    const invErrors = invResp?.data?.inventoryAdjustQuantities?.userErrors || [];
+    if (invErrors.length > 0) {
+      throw new Error(`SKU ${item.sku}: inventory adjustment failed — ${invErrors.map(e => e.message).join('; ')}`);
+    }
 
     // Mark this item done immediately so a mid-loop failure on a later item
     // leaves an accurate record of what has already been applied to Shopify.
