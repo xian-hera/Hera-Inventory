@@ -79,6 +79,7 @@ function PreviewTask() {
           excludedBarcodes: taskData.excludedBarcodes || {},
           notes,
           publish,
+          scanCount: !!taskData.scanCount,
         }),
       });
       const data = await res.json();
