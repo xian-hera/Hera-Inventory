@@ -88,6 +88,14 @@ function ManagerTaskDetail() {
   const showSkuInputRef                   = useRef(false);
   const [errorPopup, setErrorPopup]       = useState('');
 
+  // ─── Scan Count mode ────────────────────────────────────────────────────
+  // Isolated state for tasks created with "Scan count" checked. Never read
+  // or written by the code above (popup/computePOH/scan_history flow).
+  const [showRestartConfirm, setShowRestartConfirm]   = useState(false);
+  const [showCompleteConfirm, setShowCompleteConfirm] = useState(false);
+  const [restarting, setRestarting]                   = useState(false);
+  const [completingScan, setCompletingScan]           = useState(false);
+
   const barcodeBuffer = useRef('');
   const barcodeTimer  = useRef(null);
   const popupRef      = useRef(null);
@@ -134,7 +142,13 @@ function ManagerTaskDetail() {
         barcodeBuffer.current = '';
         if (barcode && taskRef.current) {
           const matched = taskRef.current.items.find(i => i.barcode === barcode);
-          if (matched) {
+          if (taskRef.current.scan_count_mode) {
+            // Scan Count mode: purely silent, by design (the manager is not
+            // meant to look at the screen while scanning). A match increments
+            // scan_count in the background; anything unmatched is ignored
+            // with no feedback either way — no popup, no error toast.
+            if (matched) incrementScanCount(matched);
+          } else if (matched) {
             openPopup(matched);
           } else {
             setErrorPopup(`Barcode "${barcode}" not found in this task.`);
@@ -309,6 +323,65 @@ function ManagerTaskDetail() {
     setShowResetConfirm(false);
   };
 
+  // ─── Scan Count mode ────────────────────────────────────────────────────
+
+  const incrementScanCount = async (item) => {
+    // Optimistic local update first — scanning should never feel like it
+    // waits on the network — then reconcile with the server's atomic count.
+    setTask(prev => ({
+      ...prev,
+      items: prev.items.map(i =>
+        i.id === item.id ? { ...i, scan_count: (i.scan_count || 0) + 1 } : i
+      ),
+    }));
+    try {
+      const res = await fetch(`/api/tasks/${taskId}/items/${item.id}/scan-count`, { method: 'PATCH' });
+      if (!res.ok) return;
+      const data = await res.json();
+      setTask(prev => ({
+        ...prev,
+        items: prev.items.map(i => i.id === item.id ? { ...i, scan_count: data.scan_count } : i),
+      }));
+    } catch (e) {
+      // Silent by design — no popup/toast during scanning. If this scan is
+      // lost, the manager will notice the tally is short and can Restart.
+    }
+  };
+
+  const handleRestartCounting = async () => {
+    if (!task) return;
+    setRestarting(true);
+    try {
+      await fetch(`/api/tasks/${taskId}/restart-scan`, { method: 'PATCH' });
+      setTask(prev => ({
+        ...prev,
+        items: prev.items.map(i => ({ ...i, scan_count: 0 })),
+      }));
+    } catch (e) {
+      setError('Failed to restart counting');
+    } finally {
+      setRestarting(false);
+      setShowRestartConfirm(false);
+    }
+  };
+
+  const handleCompleteScan = async () => {
+    if (!task) return;
+    setCompletingScan(true);
+    setError('');
+    try {
+      const res = await fetch(`/api/tasks/${taskId}/complete-scan`, { method: 'PATCH' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to complete scan');
+      navigate('/manager/counting-tasks');
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setCompletingScan(false);
+      setShowCompleteConfirm(false);
+    }
+  };
+
   const handleSkuSearch = () => {
     const sku = skuInput.trim();
     if (!sku || !taskRef.current) return;
@@ -382,10 +455,17 @@ function ManagerTaskDetail() {
     </Page>
   );
 
+  const isScanCountMode  = !!task.scan_count_mode;
+
   const totalCount       = task.items.length;
   const processedCount   = task.items.filter(i => i.soh !== null).length;
   const unprocessedCount = totalCount - processedCount;
   const qtyOffCount      = task.items.filter(i => i.soh !== null && !i.is_correct && i.poh !== null).length;
+
+  // Scan Count mode: "scanned" is about scan_count, not soh (soh isn't
+  // fetched until Complete Scan & Submit in this mode — see server/routes/
+  // tasks.js's /complete-scan for why).
+  const itemNotScannedCount = task.items.filter(i => (i.scan_count || 0) === 0).length;
 
   // 改动一：types 显示
   const typesLabel = Array.isArray(task.types) && task.types.length > 0
@@ -393,6 +473,10 @@ function ManagerTaskDetail() {
     : '';
 
   const filteredItems = task.items.filter(item => {
+    if (isScanCountMode) {
+      if (filter === 'item_not_scanned') return (item.scan_count || 0) === 0;
+      return true;
+    }
     if (filter === 'not_scanned') return item.soh === null;
     if (filter === 'qty_off')     return item.soh !== null && !item.is_correct && item.poh !== null;
     return true;
@@ -407,6 +491,25 @@ function ManagerTaskDetail() {
   const hasHistory = (popupItem?.scan_history || []).length > 0;
 
   const rows = displayedItems.map(item => {
+    const nameSku = (
+      <div>
+        <div style={{ fontSize: '14px', fontWeight: '500' }}>{item.name || '-'}</div>
+        <div style={{ fontSize: '12px', color: '#6d7175' }}>{item.barcode || '-'}</div>
+      </div>
+    );
+
+    if (isScanCountMode) {
+      // Scan Count mode: no popup, no Actual column. Scans is a plain
+      // per-SKU tally, pushed to the far right with an empty spacer column
+      // between it and System for extra visual separation.
+      return [
+        <div>{nameSku}</div>,
+        <div>{item.soh !== null ? String(item.soh) : ''}</div>,
+        <div />,
+        <div>{String(item.scan_count || 0)}</div>,
+      ];
+    }
+
     const scanCount = (item.scan_history || []).length;
     const scanBars  = Array.from({ length: Math.min(scanCount, 10) }).map((_, i) => (
       <span key={i} style={{
@@ -430,13 +533,6 @@ function ManagerTaskDetail() {
         </span>
       );
     }
-
-    const nameSku = (
-      <div>
-        <div style={{ fontSize: '14px', fontWeight: '500' }}>{item.name || '-'}</div>
-        <div style={{ fontSize: '12px', color: '#6d7175' }}>{item.barcode || '-'}</div>
-      </div>
-    );
 
     return [
       <div onClick={() => openPopup(item)} style={{ cursor: 'pointer' }}>{nameSku}</div>,
@@ -495,12 +591,30 @@ function ManagerTaskDetail() {
 
               <Card>
                 <BlockStack gap="300">
+                  {isScanCountMode && (
+                    <InlineStack gap="200" blockAlign="center" wrap>
+                      <span style={{
+                        padding: '4px 12px', borderRadius: '20px',
+                        background: '#e3f1df', color: '#008060',
+                        fontSize: '13px', fontWeight: '600', whiteSpace: 'nowrap',
+                      }}>
+                        Scan Count
+                      </span>
+                      <Text variant="bodySm" tone="subdued">
+                        Scan each item you find without manually counting, each scan is automatically counted, and the final quantity is calculated when the scan is complete. Scans of unlisted items will be ignored.
+                      </Text>
+                    </InlineStack>
+                  )}
                   <InlineStack gap="200" wrap align="end">
-                    <Button onClick={() => { setSkuInput(''); setSkuError(''); setShowSkuInput(true); }}>
-                      Type in SKU
-                    </Button>
+                    {!isScanCountMode && (
+                      <Button onClick={() => { setSkuInput(''); setSkuError(''); setShowSkuInput(true); }}>
+                        Type in SKU
+                      </Button>
+                    )}
                     <Button onClick={() => setShowNoteInput(true)}>Add note</Button>
-                    <Button variant="primary" onClick={handleSubmit} loading={submitting}>Submit</Button>
+                    {!isScanCountMode && (
+                      <Button variant="primary" onClick={handleSubmit} loading={submitting}>Submit</Button>
+                    )}
                   </InlineStack>
 
                   {showNoteInput && (
@@ -540,44 +654,85 @@ function ManagerTaskDetail() {
 
               <InlineStack align="space-between" gap="200">
                 <InlineStack gap="200">
-                  {['all', 'not_scanned', 'qty_off'].map(f => (
+                  {isScanCountMode
+                    ? ['all', 'item_not_scanned'].map(f => (
+                        <button
+                          key={f}
+                          onClick={() => setFilter(f)}
+                          style={{
+                            padding: '6px 14px', borderRadius: '20px', border: '1px solid #c9cccf',
+                            background: filter === f ? '#008060' : 'white',
+                            color: filter === f ? 'white' : '#202223',
+                            cursor: 'pointer', fontSize: '13px',
+                            fontWeight: filter === f ? '600' : '400',
+                          }}
+                        >
+                          {f === 'all' ? `All (${totalCount})` : `Item not Scanned (${itemNotScannedCount})`}
+                        </button>
+                      ))
+                    : ['all', 'not_scanned', 'qty_off'].map(f => (
+                        <button
+                          key={f}
+                          onClick={() => setFilter(f)}
+                          style={{
+                            padding: '6px 14px', borderRadius: '20px', border: '1px solid #c9cccf',
+                            background: filter === f ? '#008060' : 'white',
+                            color: filter === f ? 'white' : '#202223',
+                            cursor: 'pointer', fontSize: '13px',
+                            fontWeight: filter === f ? '600' : '400',
+                          }}
+                        >
+                          {f === 'all'
+                            ? `All (${totalCount})`
+                            : f === 'not_scanned'
+                              ? `Not scanned (${unprocessedCount})`
+                              : `Qty off (${qtyOffCount})`}
+                        </button>
+                      ))}
+                </InlineStack>
+                {isScanCountMode ? (
+                  <InlineStack gap="200">
                     <button
-                      key={f}
-                      onClick={() => setFilter(f)}
+                      onClick={() => setShowRestartConfirm(true)}
                       style={{
-                        padding: '6px 14px', borderRadius: '20px', border: '1px solid #c9cccf',
-                        background: filter === f ? '#008060' : 'white',
-                        color: filter === f ? 'white' : '#202223',
-                        cursor: 'pointer', fontSize: '13px',
-                        fontWeight: filter === f ? '600' : '400',
+                        padding: '6px 14px', borderRadius: '20px', border: '1px solid #d72c0d',
+                        background: '#d72c0d', color: 'white',
+                        cursor: 'pointer', fontSize: '13px', fontWeight: '600', whiteSpace: 'nowrap',
                       }}
                     >
-                      {f === 'all'
-                        ? `All (${totalCount})`
-                        : f === 'not_scanned'
-                          ? `Not scanned (${unprocessedCount})`
-                          : `Qty off (${qtyOffCount})`}
+                      Restart Counting
                     </button>
-                  ))}
-                </InlineStack>
-                <button
-                  onClick={() => setSortAZ(v => !v)}
-                  style={{
-                    padding: '6px 14px', borderRadius: '20px', border: '1px solid #c9cccf',
-                    background: sortAZ ? '#1a1a1a' : 'white',
-                    color: sortAZ ? 'white' : '#202223',
-                    cursor: 'pointer', fontSize: '13px',
-                    fontWeight: sortAZ ? '600' : '400', whiteSpace: 'nowrap',
-                  }}
-                >
-                  {sortAZ ? 'Sort A→Z ✓' : 'Sort'}
-                </button>
+                    <button
+                      onClick={() => setShowCompleteConfirm(true)}
+                      style={{
+                        padding: '6px 14px', borderRadius: '20px', border: '1px solid #008060',
+                        background: '#008060', color: 'white',
+                        cursor: 'pointer', fontSize: '13px', fontWeight: '600', whiteSpace: 'nowrap',
+                      }}
+                    >
+                      Complete Scan & Submit
+                    </button>
+                  </InlineStack>
+                ) : (
+                  <button
+                    onClick={() => setSortAZ(v => !v)}
+                    style={{
+                      padding: '6px 14px', borderRadius: '20px', border: '1px solid #c9cccf',
+                      background: sortAZ ? '#1a1a1a' : 'white',
+                      color: sortAZ ? 'white' : '#202223',
+                      cursor: 'pointer', fontSize: '13px',
+                      fontWeight: sortAZ ? '600' : '400', whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {sortAZ ? 'Sort A→Z ✓' : 'Sort'}
+                  </button>
+                )}
               </InlineStack>
 
               <Card>
                 <DataTable
-                  columnContentTypes={['text', 'numeric', 'text', 'text']}
-                  headings={['Name / SKU', 'System', 'Scans', 'Actual']}
+                  columnContentTypes={isScanCountMode ? ['text', 'numeric', 'text', 'numeric'] : ['text', 'numeric', 'text', 'text']}
+                  headings={isScanCountMode ? ['Name / SKU', 'System', '', 'Scans'] : ['Name / SKU', 'System', 'Scans', 'Actual']}
                   rows={rows}
                 />
               </Card>
@@ -828,6 +983,90 @@ function ManagerTaskDetail() {
             </div>
           </div>
         )}
+
+      {/* Scan Count: Restart Counting confirm */}
+      {showRestartConfirm && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.5)', zIndex: 2000,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 16px',
+        }}>
+          <div style={{ background: 'white', borderRadius: '12px', padding: '24px', width: '100%', maxWidth: '360px' }}>
+            <BlockStack gap="300">
+              <Text variant="headingMd" fontWeight="bold">Restart Counting?</Text>
+              <Text variant="bodyMd" tone="subdued">
+                If you believe one or more scans are duplicated or missing and you can not fix it, you can Restart Counting.
+              </Text>
+              <InlineStack gap="200" align="center">
+                <button
+                  onClick={handleRestartCounting}
+                  disabled={restarting}
+                  style={{
+                    padding: '10px 24px', borderRadius: '8px', border: 'none',
+                    background: '#d72c0d', color: 'white',
+                    cursor: restarting ? 'default' : 'pointer', fontSize: '14px', fontWeight: '600',
+                  }}
+                >
+                  {restarting ? '...' : 'Restart'}
+                </button>
+                <button
+                  onClick={() => setShowRestartConfirm(false)}
+                  disabled={restarting}
+                  style={{
+                    padding: '10px 24px', borderRadius: '8px',
+                    border: '1px solid #c9cccf', background: 'white',
+                    cursor: 'pointer', fontSize: '14px',
+                  }}
+                >
+                  Cancel
+                </button>
+              </InlineStack>
+            </BlockStack>
+          </div>
+        </div>
+      )}
+
+      {/* Scan Count: Complete Scan & Submit confirm */}
+      {showCompleteConfirm && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.5)', zIndex: 2000,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 16px',
+        }}>
+          <div style={{ background: 'white', borderRadius: '12px', padding: '24px', width: '100%', maxWidth: '360px' }}>
+            <BlockStack gap="300">
+              <Text variant="headingMd" fontWeight="bold">Complete Scan & Submit?</Text>
+              <Text variant="bodyMd" tone="subdued">
+                Make sure you have scanned all the required items before complete.
+              </Text>
+              <InlineStack gap="200" align="center">
+                <button
+                  onClick={handleCompleteScan}
+                  disabled={completingScan}
+                  style={{
+                    padding: '10px 24px', borderRadius: '8px', border: 'none',
+                    background: '#008060', color: 'white',
+                    cursor: completingScan ? 'default' : 'pointer', fontSize: '14px', fontWeight: '600',
+                  }}
+                >
+                  {completingScan ? '...' : 'Complete & Submit'}
+                </button>
+                <button
+                  onClick={() => setShowCompleteConfirm(false)}
+                  disabled={completingScan}
+                  style={{
+                    padding: '10px 24px', borderRadius: '8px',
+                    border: '1px solid #c9cccf', background: 'white',
+                    cursor: 'pointer', fontSize: '14px',
+                  }}
+                >
+                  Cancel
+                </button>
+              </InlineStack>
+            </BlockStack>
+          </div>
+        </div>
+      )}
 
       </Page>
     </div>

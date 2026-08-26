@@ -259,6 +259,74 @@ router.get('/locations', async (req, res) => {
   }
 });
 
+// Shared helper: resolves a barcode to its Shopify product/variant info and
+// current "available" quantity at a given location (honoring the main_sku
+// redirect). Extracted from GET /inventory below so that other counting-task
+// flows — specifically the Scan Count "Complete Scan & Submit" step in
+// server/routes/tasks.js — can look up System quantity for many items
+// without duplicating this GraphQL query. Behavior is unchanged from the
+// original inline version; GET /inventory just calls this now.
+async function fetchInventoryForBarcode(client, barcode, locationId) {
+  const variantQuery = `
+    query getInventory($barcode: String!) {
+      productVariants(first: 5, query: $barcode) {
+        edges {
+          node {
+            id sku barcode
+            inventoryItem {
+              id
+              inventoryLevels(first: 20) {
+                edges {
+                  node {
+                    location { id }
+                    quantities(names: ["available"]) { name quantity }
+                  }
+                }
+              }
+            }
+            metafield(namespace: "custom", key: "name") { value }
+            product {
+              title productType
+              mainSku: metafield(namespace: "custom", key: "main_sku") { value }
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  const response = await shopifyRequest(client, variantQuery, { barcode: `barcode:${barcode}` });
+  const variants = response.data.productVariants.edges;
+  if (variants.length === 0) return null;
+
+  let variant = variants[0].node;
+  const decodedLocationId = decodeURIComponent(locationId);
+
+  // main_sku redirect: if the product has a main_sku metafield, re-query using that SKU
+  const mainSku = variant.product?.mainSku?.value;
+  if (mainSku) {
+    const redirectResponse = await shopifyRequest(client, variantQuery, { barcode: `sku:${mainSku}` });
+    const redirectVariants = redirectResponse.data.productVariants.edges;
+    if (redirectVariants.length > 0) {
+      variant = redirectVariants[0].node;
+    }
+  }
+
+  const levels = variant.inventoryItem.inventoryLevels.edges;
+  const level = levels.find(e => e.node.location.id === decodedLocationId);
+  const soh = level?.node.quantities.find(q => q.name === 'available')?.quantity ?? 0;
+  const name = variant.metafield?.value || variant.product.title;
+
+  return {
+    barcode: variant.barcode || variant.sku,
+    name,
+    soh,
+    productType: variant.product.productType,
+    variantId: variant.id,
+    inventoryItemId: variant.inventoryItem.id,
+  };
+}
+
 // GET /api/shopify/inventory?barcode=XXX&locationId=YYY
 router.get('/inventory', async (req, res) => {
   try {
@@ -271,64 +339,10 @@ router.get('/inventory', async (req, res) => {
     const shopify = getShopify();
     const client = new shopify.clients.Graphql({ session });
 
-    const variantQuery = `
-      query getInventory($barcode: String!) {
-        productVariants(first: 5, query: $barcode) {
-          edges {
-            node {
-              id sku barcode
-              inventoryItem {
-                id
-                inventoryLevels(first: 20) {
-                  edges {
-                    node {
-                      location { id }
-                      quantities(names: ["available"]) { name quantity }
-                    }
-                  }
-                }
-              }
-              metafield(namespace: "custom", key: "name") { value }
-              product {
-                title productType
-                mainSku: metafield(namespace: "custom", key: "main_sku") { value }
-              }
-            }
-          }
-        }
-      }
-    `;
+    const result = await fetchInventoryForBarcode(client, barcode, locationId);
+    if (!result) return res.status(404).json({ error: 'Product not found' });
 
-    const response = await shopifyRequest(client, variantQuery, { barcode: `barcode:${barcode}` });
-    const variants = response.data.productVariants.edges;
-    if (variants.length === 0) return res.status(404).json({ error: 'Product not found' });
-
-    let variant = variants[0].node;
-    const decodedLocationId = decodeURIComponent(locationId);
-
-    // main_sku redirect: if the product has a main_sku metafield, re-query using that SKU
-    const mainSku = variant.product?.mainSku?.value;
-    if (mainSku) {
-      const redirectResponse = await shopifyRequest(client, variantQuery, { barcode: `sku:${mainSku}` });
-      const redirectVariants = redirectResponse.data.productVariants.edges;
-      if (redirectVariants.length > 0) {
-        variant = redirectVariants[0].node;
-      }
-    }
-
-    const levels = variant.inventoryItem.inventoryLevels.edges;
-    const level = levels.find(e => e.node.location.id === decodedLocationId);
-    const soh = level?.node.quantities.find(q => q.name === 'available')?.quantity ?? 0;
-    const name = variant.metafield?.value || variant.product.title;
-
-    res.json({
-      barcode: variant.barcode || variant.sku,
-      name,
-      soh,
-      productType: variant.product.productType,
-      variantId: variant.id,
-      inventoryItemId: variant.inventoryItem.id,
-    });
+    res.json(result);
   } catch (e) {
     console.error('[inventory] error:', e.message, e.stack);
     res.status(500).json({ error: e.message });
@@ -971,4 +985,4 @@ router.post('/sync-variant-index', async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-module.exports = { router, getDepartment };
+module.exports = { router, getDepartment, fetchInventoryForBarcode };

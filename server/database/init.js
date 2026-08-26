@@ -31,6 +31,7 @@ const initDatabase = async () => {
         status TEXT NOT NULL DEFAULT 'draft',
         filter_summary TEXT,
         notes JSONB DEFAULT '[]',
+        scan_count_mode BOOLEAN NOT NULL DEFAULT FALSE,
         created_at TIMESTAMPTZ DEFAULT NOW(),
         updated_at TIMESTAMPTZ DEFAULT NOW()
       )
@@ -38,6 +39,11 @@ const initDatabase = async () => {
 
     // Migration: add types column if upgrading from old schema with department
     await client.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS types TEXT[] NOT NULL DEFAULT '{}'`).catch(() => {});
+
+    // Migration: add scan_count_mode for the Scan Count task type. Existing
+    // (non-scan-count) tasks all default to FALSE, so their behavior is
+    // completely unaffected — see server/routes/tasks.js for how this branches.
+    await client.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS scan_count_mode BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS task_items (
@@ -49,9 +55,14 @@ const initDatabase = async () => {
         scan_history JSONB DEFAULT '[]',
         poh INTEGER,
         is_correct BOOLEAN DEFAULT FALSE,
-        is_committed BOOLEAN DEFAULT FALSE
+        is_committed BOOLEAN DEFAULT FALSE,
+        scan_count INTEGER NOT NULL DEFAULT 0
       )
     `);
+
+    // Migration: add scan_count tally, used only by Scan Count mode tasks.
+    // Unused (stays 0) for every existing/non-scan-count task item.
+    await client.query(`ALTER TABLE task_items ADD COLUMN IF NOT EXISTS scan_count INTEGER NOT NULL DEFAULT 0`).catch(() => {});
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS zero_qty_reports (

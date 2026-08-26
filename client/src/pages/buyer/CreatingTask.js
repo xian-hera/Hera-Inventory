@@ -7,6 +7,10 @@ import {
 import { useNavigate } from 'react-router-dom';
 import MultiSelectDropdown from '../../components/MultiSelectDropdown';
 import SearchWithFilters from '../../components/SearchWithFilters';
+import InfoTooltip from '../../components/InfoTooltip';
+
+const SCAN_COUNT_TOOLTIP_TEXT =
+  'Users scan each item they find on the shelf without manually counting. Each scan is automatically counted, and the final quantity is calculated when the scan is complete. Scans of unlisted items will be ignored.';
 
 const LOCATIONS = [
   'MTL01','MTL02','MTL03','MTL04','MTL05','MTL06',
@@ -53,6 +57,7 @@ function CreatingTask() {
 
   const [selectedTypes, setSelectedTypes]       = useState([]);
   const [selectedLocations, setSelectedLocations] = useState([]);
+  const [scanCount, setScanCount]               = useState(false);
 
   const [metafieldRows, setMetafieldRows]       = useState([]);
   const [metafieldLogic, setMetafieldLogic]     = useState('all');
@@ -338,6 +343,7 @@ function CreatingTask() {
       filterSummary,
       items: regularItems,
       excludedBarcodes: mergedExcludedBarcodes,
+      scanCount,
     };
     sessionStorage.setItem('pendingTask', JSON.stringify(taskData));
     navigate('/buyer/counting-tasks/new/preview');
@@ -374,22 +380,33 @@ function CreatingTask() {
             {/* Types + Location */}
             <Card>
               <BlockStack gap="300">
-                <InlineStack gap="400" wrap align="start">
-                  <MultiSelectDropdown
-                    label="Types"
-                    options={TYPE_OPTIONS}
-                    selected={selectedTypes}
-                    onChange={setSelectedTypes}
-                    placeholder="Select types"
-                  />
-                  <MultiSelectDropdown
-                    label="Location"
-                    options={LOCATIONS}
-                    selected={selectedLocations}
-                    onChange={setSelectedLocations}
-                    placeholder="Select locations"
-                    showSelectAll={true}
-                  />
+                <InlineStack gap="400" align="space-between" blockAlign="start" wrap>
+                  <InlineStack gap="400" wrap align="start">
+                    <MultiSelectDropdown
+                      label="Types"
+                      options={TYPE_OPTIONS}
+                      selected={selectedTypes}
+                      onChange={setSelectedTypes}
+                      placeholder="Select types"
+                    />
+                    <MultiSelectDropdown
+                      label="Location"
+                      options={LOCATIONS}
+                      selected={selectedLocations}
+                      onChange={setSelectedLocations}
+                      placeholder="Select locations"
+                      showSelectAll={true}
+                    />
+                  </InlineStack>
+                  <div style={{ paddingTop: '4px' }}>
+                    <InfoTooltip text={SCAN_COUNT_TOOLTIP_TEXT}>
+                      <Checkbox
+                        label="Scan count"
+                        checked={scanCount}
+                        onChange={setScanCount}
+                      />
+                    </InfoTooltip>
+                  </div>
                 </InlineStack>
               </BlockStack>
             </Card>

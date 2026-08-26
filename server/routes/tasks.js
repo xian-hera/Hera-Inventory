@@ -120,7 +120,7 @@ async function generateTaskNo(client) {
 router.post('/', async (req, res) => {
   const client = await pool.connect();
   try {
-    const { types, locations, filterSummary, items, notes, publish, excludedBarcodes } = req.body;
+    const { types, locations, filterSummary, items, notes, publish, excludedBarcodes, scanCount } = req.body;
     if (!types || types.length === 0 || !locations || locations.length === 0) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
@@ -130,6 +130,7 @@ router.post('/', async (req, res) => {
     locMap.rows.forEach(r => { locationIdMap[r.location_name] = r.shopify_location_id; });
 
     const status = publish ? 'counting' : 'draft';
+    const scanCountMode = !!scanCount;
     const createdTasks = [];
 
     await client.query('BEGIN');
@@ -139,9 +140,9 @@ router.post('/', async (req, res) => {
       const taskNo = await generateTaskNo(client);
 
       const taskResult = await client.query(
-        `INSERT INTO tasks (task_no, types, location, shopify_location_id, status, filter_summary, notes)
-         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-        [taskNo, types, location, shopifyLocationId, status, filterSummary, JSON.stringify(notes || [])]
+        `INSERT INTO tasks (task_no, types, location, shopify_location_id, status, filter_summary, notes, scan_count_mode)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+        [taskNo, types, location, shopifyLocationId, status, filterSummary, JSON.stringify(notes || []), scanCountMode]
       );
 
       const task = taskResult.rows[0];
@@ -426,6 +427,117 @@ router.patch('/:taskId/items/:itemId/scan', async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
+// ─── Scan Count mode ──────────────────────────────────────────────────────
+// The three endpoints below are used ONLY by tasks created with
+// scan_count_mode = TRUE (see the "Scan count" checkbox in CreatingTask.js).
+// They read/write task_items.scan_count exclusively and never touch
+// scan_history/poh/is_correct except at /complete-scan time (mirroring what
+// a normal-mode Submit does). The existing /scan, /poh and /submit endpoints
+// above are completely untouched by this section, so non-scan-count tasks
+// are unaffected.
+
+// PATCH /api/tasks/:taskId/items/:itemId/scan-count
+// Atomically increments the scan tally for one item. Called silently by the
+// manager's barcode-scan listener while working a Scan Count task — no
+// popup, no feedback either way (including for a barcode not found in the
+// task, which is handled by the caller before this is ever hit).
+router.patch('/:taskId/items/:itemId/scan-count', async (req, res) => {
+  try {
+    const { taskId, itemId } = req.params;
+    const result = await pool.query(
+      `UPDATE task_items SET scan_count = scan_count + 1
+       WHERE id = $1 AND task_id = $2 RETURNING id, scan_count`,
+      [itemId, taskId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Item not found' });
+    res.json(result.rows[0]);
+  } catch (e) {
+    console.error('PATCH /:taskId/items/:itemId/scan-count error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PATCH /api/tasks/:id/restart-scan
+// "Restart Counting" — zeroes out scan_count for every item in the task, so
+// the manager can start over if scans were duplicated/missed and can't be
+// corrected any other way. Only meaningful (and only exposed in the UI)
+// while the task is still in 'counting' status.
+router.patch('/:id/restart-scan', async (req, res) => {
+  try {
+    const { id } = req.params;
+    await pool.query('UPDATE task_items SET scan_count = 0 WHERE task_id = $1', [id]);
+    res.json({ success: true });
+  } catch (e) {
+    console.error('PATCH /:id/restart-scan error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PATCH /api/tasks/:id/complete-scan
+// "Complete Scan & Submit" — for every item in the task, looks up its
+// current Shopify "available" quantity (soh) at the task's location, sets
+// poh = scan_count (per Hera's spec: N scans = final counted quantity),
+// recomputes is_correct the same way /scan and /poh already do (poh ===
+// soh), then submits the task exactly like the normal-mode Submit does
+// (status -> 'reviewing'). From that point on, the buyer's existing
+// commit flow (PATCH /:id/commit) needs no changes: it just diffs poh vs
+// soh, which now happens to have come from a scan tally instead of a
+// manual count.
+router.patch('/:id/complete-scan', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const task = await pool.query('SELECT * FROM tasks WHERE id = $1', [id]);
+    if (task.rows.length === 0) return res.status(404).json({ error: 'Task not found' });
+    if (!task.rows[0].scan_count_mode) {
+      return res.status(400).json({ error: 'Task is not a Scan Count task' });
+    }
+    const shopifyLocationId = task.rows[0].shopify_location_id;
+
+    const items = await pool.query('SELECT * FROM task_items WHERE task_id = $1', [id]);
+
+    const { getShopify, getSession } = require('../shopify');
+    const { fetchInventoryForBarcode } = require('./shopify');
+    const session = await getSession();
+    const shopify = getShopify();
+    const client = new shopify.clients.Graphql({ session });
+
+    const warnings = [];
+
+    for (const item of items.rows) {
+      try {
+        const info = await fetchInventoryForBarcode(client, item.barcode, shopifyLocationId);
+        if (!info) {
+          warnings.push(`Barcode ${item.barcode}: not found in Shopify`);
+          continue;
+        }
+        const soh = info.soh;
+        const poh = item.scan_count;
+        const isCorrect = soh !== null && soh !== undefined && poh === soh;
+        await pool.query(
+          `UPDATE task_items SET soh = $1, poh = $2, is_correct = $3 WHERE id = $4`,
+          [soh, poh, isCorrect, item.id]
+        );
+      } catch (e) {
+        console.error(`complete-scan failed for item ${item.id} (barcode: ${item.barcode}):`, e.message);
+        warnings.push(`Barcode ${item.barcode}: ${e.message}`);
+      }
+    }
+
+    await pool.query(
+      "UPDATE tasks SET status = 'reviewing', updated_at = NOW() WHERE id = $1",
+      [id]
+    );
+
+    if (warnings.length > 0) return res.json({ success: true, warnings });
+    res.json({ success: true });
+  } catch (e) {
+    console.error('PATCH /:id/complete-scan error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────────
 
 // DELETE /api/tasks/:taskId/items
 router.delete('/:taskId/items', async (req, res) => {
