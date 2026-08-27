@@ -53,6 +53,7 @@ function BuyerPOSettings() {
 
   const [packageSize, setPackageSize] = useState(null);
   const [groups, setGroups] = useState([]);
+  const [costComparison, setCostComparison] = useState({ cad: 'invoice_cost', usd: 'invoice_cost' });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -73,6 +74,12 @@ function BuyerPOSettings() {
     setGroups(data.groups || []);
   }, []);
 
+  const fetchCostComparison = useCallback(async () => {
+    const res = await fetch('/api/po-settings/cost-comparison');
+    const data = await res.json();
+    setCostComparison({ cad: data.cad || 'invoice_cost', usd: data.usd || 'invoice_cost' });
+  }, []);
+
   const fetchTypeHistory = useCallback(async () => {
     const res = await fetch('/api/po-settings/type-update-history');
     const data = await res.json();
@@ -87,7 +94,7 @@ function BuyerPOSettings() {
   }, []);
 
   useEffect(() => {
-    Promise.all([fetchMetafields(), fetchTypeHistory()]).finally(() => setLoading(false));
+    Promise.all([fetchMetafields(), fetchTypeHistory(), fetchCostComparison()]).finally(() => setLoading(false));
     fetch('/api/shopify/product-types').then(r => r.json()).then(data => setTypeOptions(Array.isArray(data) ? data : [])).catch(() => {});
     fetchUpdateStatus().then(isRunning => { if (isRunning) startPolling(); });
     return () => { if (pollTimer.current) clearInterval(pollTimer.current); };
@@ -155,6 +162,25 @@ function BuyerPOSettings() {
     } catch (e) { setError(e.message); }
   };
 
+  const saveCostComparison = async (currency, value) => {
+    setError('');
+    const prev = costComparison;
+    setCostComparison(c => ({ ...c, [currency]: value }));
+    try {
+      const res = await fetch('/api/po-settings/cost-comparison', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [currency]: value }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setCostComparison({ cad: data.cad, usd: data.usd });
+    } catch (e) {
+      setCostComparison(prev);
+      setError(e.message);
+    }
+  };
+
   const handleUpdate = async () => {
     if (selectedTypes.length === 0) { setError('Select at least one type.'); return; }
     setError('');
@@ -210,6 +236,7 @@ function BuyerPOSettings() {
                   </InlineStack>
                   <MetafieldFieldEditor label="Supplier name" value={g.name} onSave={(val) => saveGroupField(i, 'name', val)} />
                   <MetafieldFieldEditor label="Supplier code" value={g.code} onSave={(val) => saveGroupField(i, 'code', val)} />
+                  <MetafieldFieldEditor label="Supplier cost" value={g.cost} onSave={(val) => saveGroupField(i, 'cost', val)} />
                 </BlockStack>
               </Card>
             ))}
@@ -264,14 +291,52 @@ function BuyerPOSettings() {
             </Card>
 
             <BlockStack gap="200">
+              <Text variant="headingMd">Cost comparison</Text>
+              <Text tone="subdued">Set which cost will be compared during importing an invoice.</Text>
+            </BlockStack>
+
+            <Card>
+              <InlineStack gap="600" wrap align="start">
+                <div style={{ minWidth: 260, flex: 1 }}>
+                  <BlockStack gap="200">
+                    <Text variant="headingSm">CAD supplier</Text>
+                    <Select
+                      label="Compare Supplier Cost with"
+                      options={[
+                        { label: 'Invoice cost', value: 'invoice_cost' },
+                        { label: 'effective cost', value: 'effective_cost' },
+                      ]}
+                      value={costComparison.cad}
+                      onChange={(val) => saveCostComparison('cad', val)}
+                    />
+                  </BlockStack>
+                </div>
+                <div style={{ minWidth: 260, flex: 1 }}>
+                  <BlockStack gap="200">
+                    <Text variant="headingSm">USD supplier</Text>
+                    <Select
+                      label="Compare Supplier Cost with"
+                      options={[
+                        { label: 'Invoice cost', value: 'invoice_cost' },
+                        { label: 'Invoice cost after adjustment or unit discount', value: 'effective_cost' },
+                      ]}
+                      value={costComparison.usd}
+                      onChange={(val) => saveCostComparison('usd', val)}
+                    />
+                  </BlockStack>
+                </div>
+              </InlineStack>
+            </Card>
+
+            <BlockStack gap="200">
               <Text variant="headingMd">History</Text>
-              <Text tone="subdued">Only recent 200 committed invoices are saved, any beyond that will be auto-deleted.</Text>
+              <Text tone="subdued">Clear the specific history record.</Text>
             </BlockStack>
 
             <Card>
               <InlineStack gap="300" blockAlign="center">
                 <Button tone="critical" onClick={handleClearHistory}>Clear</Button>
-                <Text>Click clear to delete all saved and committed invoices. History will be empty.</Text>
+                <Text>Clear committed invoice history in homepage.</Text>
               </InlineStack>
             </Card>
           </BlockStack>

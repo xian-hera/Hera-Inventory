@@ -53,7 +53,7 @@ function BuyerPOReceivingHistory() {
                   <TextField
                     label=""
                     labelHidden
-                    placeholder="Search by Supplier name, Receiving location, invoice number, SKU or code"
+                    placeholder="Search by Supplier name, Receiving location, PO number, invoice number, SKU or code"
                     value={search}
                     onChange={setSearch}
                     onKeyDown={(e) => { if (e.key === 'Enter') fetchHistory(search); }}
@@ -77,7 +77,7 @@ function BuyerPOReceivingHistory() {
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                       <thead>
                         <tr style={{ borderBottom: '2px solid #e1e3e5' }}>
-                          {['Date', 'Time', 'Supplier', 'Invoice number', ''].map((h, i) => (
+                          {['Date', 'Time', 'Supplier', 'PO number', 'Subtotal', ''].map((h, i) => (
                             <th key={i} style={{ padding: '8px 10px', textAlign: 'left', fontWeight: '600', color: '#6d7175', whiteSpace: 'nowrap' }}>
                               {h}
                             </th>
@@ -97,10 +97,16 @@ function BuyerPOReceivingHistory() {
                                   style={{ cursor: 'pointer', textDecoration: 'underline' }}
                                   onClick={() => navigate(`/buyer/po-receiving/committed/${inv.id}`)}
                                 >
-                                  {inv.invoice_number}
+                                  {inv.po_number || inv.invoice_number}
                                 </span>{' '}
                                 committed
+                                {inv.po_number && inv.invoice_number && (
+                                  <div>
+                                    <Text variant="bodySm" tone="subdued">Ref: {inv.invoice_number}</Text>
+                                  </div>
+                                )}
                               </td>
+                              <td style={{ padding: '10px' }}>{Number(inv.subtotal_cad || 0).toFixed(2)}</td>
                               <td style={{ padding: '10px' }}>
                                 {inv.is_promotional && <Badge>Promotional</Badge>}
                               </td>

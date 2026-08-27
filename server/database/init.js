@@ -458,11 +458,26 @@ const initDatabase = async () => {
         last_cost     NUMERIC(12,4),
         cost_sum      NUMERIC(14,4) NOT NULL DEFAULT 0,
         cost_count    INTEGER NOT NULL DEFAULT 0,
+        metafield_cost NUMERIC(12,4),
         created_at    TIMESTAMPTZ DEFAULT NOW(),
         updated_at    TIMESTAMPTZ DEFAULT NOW(),
         UNIQUE (supplier_id, code)
       )
     `);
+
+    // Migration: "Supplier cost" metafield sync value (distinct from last_cost,
+    // which is the cost actually applied at the most recent commit). Used as
+    // the CSV cost-column fallback and as the "Cost" comparison column in the
+    // invoice line item list — see server/routes/poInvoices.js.
+    await client.query(`ALTER TABLE po_supplier_skus ADD COLUMN IF NOT EXISTS metafield_cost NUMERIC(12,4)`).catch(() => {});
+
+    // Migration: a CSV line item given directly as SKU (no code) looks up its
+    // fallback cost/name by (supplier_id, sku) — this is a plain index, NOT
+    // unique: a supplier can legitimately have two different codes mapping to
+    // the same sku (that's exactly what the existing SKU-collision detection
+    // in poInvoices.js watches for), so a unique index here would break
+    // Update SKU's rebuild the first time that happens.
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_po_supplier_skus_supplier_sku ON po_supplier_skus (supplier_id, sku)`).catch(() => {});
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS po_invoices (
@@ -478,6 +493,8 @@ const initDatabase = async () => {
         status              TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','committed')),
         has_missing_sku     BOOLEAN NOT NULL DEFAULT FALSE,
         has_sku_collision   BOOLEAN NOT NULL DEFAULT FALSE,
+        has_missing_cost    BOOLEAN NOT NULL DEFAULT FALSE,
+        po_number           TEXT,
         committed_at        TIMESTAMPTZ,
         created_at          TIMESTAMPTZ DEFAULT NOW(),
         updated_at          TIMESTAMPTZ DEFAULT NOW()
@@ -488,23 +505,71 @@ const initDatabase = async () => {
       CREATE UNIQUE INDEX IF NOT EXISTS idx_po_invoices_number_lower ON po_invoices (LOWER(invoice_number))
     `);
 
+    // Migration: invoice_number becomes a free-text, non-unique reference —
+    // the auto-assigned po_number below (format PO-A000, sequential via
+    // po_number_counter) is now the canonical, unique identifier shown
+    // everywhere in the app. See poInvoices.js's generatePoNumber().
+    await client.query(`ALTER TABLE po_invoices ADD COLUMN IF NOT EXISTS po_number TEXT`).catch(() => {});
+    await client.query(`DROP INDEX IF EXISTS idx_po_invoices_number_lower`).catch(() => {});
+    await client.query(`ALTER TABLE po_invoices ALTER COLUMN invoice_number DROP NOT NULL`).catch(() => {});
+    await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_po_invoices_po_number ON po_invoices (po_number)`).catch(() => {});
+    // Migration: a line item whose cost is blank in the CSV AND has no
+    // "Supplier cost" metafield fallback available is flagged the same way a
+    // missing SKU is — blocks commit, rather than silently writing a 0 or
+    // NULL cost into Shopify's moving-average cost calculation.
+    await client.query(`ALTER TABLE po_invoices ADD COLUMN IF NOT EXISTS has_missing_cost BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS po_number_counter (
+        id          INTEGER PRIMARY KEY DEFAULT 1,
+        last_number INTEGER NOT NULL DEFAULT 0,
+        last_letter TEXT NOT NULL DEFAULT 'A'
+      )
+    `);
+    await client.query(`
+      INSERT INTO po_number_counter (id, last_number, last_letter)
+      VALUES (1, 0, 'A')
+      ON CONFLICT (id) DO NOTHING
+    `);
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS po_invoice_items (
         id                     SERIAL PRIMARY KEY,
         invoice_id             INTEGER NOT NULL REFERENCES po_invoices(id) ON DELETE CASCADE,
-        code                   TEXT NOT NULL,
+        code                   TEXT,
         sku                    TEXT,
         name                   TEXT,
         quantity               INTEGER NOT NULL,
-        raw_cost               NUMERIC(12,4) NOT NULL,
+        raw_cost               NUMERIC(12,4),
         unit_discount_raw      TEXT,
-        cost_before_adjustment NUMERIC(12,4) NOT NULL,
-        effective_cost         NUMERIC(12,4) NOT NULL,
+        cost_before_adjustment NUMERIC(12,4),
+        effective_cost         NUMERIC(12,4),
+        supplier_cost_raw      NUMERIC(12,4),
         is_missing             BOOLEAN NOT NULL DEFAULT FALSE,
         committed              BOOLEAN NOT NULL DEFAULT FALSE,
         created_at             TIMESTAMPTZ DEFAULT NOW()
       )
     `);
+
+    // Migration: code is now optional — a line item can be given directly by
+    // SKU instead (see poInvoices.js POST /process). supplier_cost_raw
+    // snapshots the "Supplier cost" comparison column (metafield_cost, in
+    // the supplier's own invoice currency — NOT always CAD) at process time,
+    // so the line item list doesn't need a live join to po_supplier_skus and
+    // a later Update SKU run doesn't retroactively change what an
+    // already-processed invoice displays.
+    await client.query(`ALTER TABLE po_invoice_items ALTER COLUMN code DROP NOT NULL`).catch(() => {});
+    // Renamed from supplier_cost_cad: that name was wrong — a USD supplier's
+    // metafield cost is USD, not CAD. No production data exists yet, so this
+    // is a plain rename with no backfill concerns.
+    await client.query(`ALTER TABLE po_invoice_items RENAME COLUMN supplier_cost_cad TO supplier_cost_raw`).catch(() => {});
+    await client.query(`ALTER TABLE po_invoice_items ADD COLUMN IF NOT EXISTS supplier_cost_raw NUMERIC(12,4)`).catch(() => {});
+    // A line item with no cost available at all (CSV blank + no metafield
+    // fallback) stores NULL here rather than a fabricated 0 — the invoice's
+    // has_missing_cost flag blocks it from being committed until fixed.
+    await client.query(`ALTER TABLE po_invoice_items ALTER COLUMN raw_cost DROP NOT NULL`).catch(() => {});
+    await client.query(`ALTER TABLE po_invoice_items ALTER COLUMN cost_before_adjustment DROP NOT NULL`).catch(() => {});
+    await client.query(`ALTER TABLE po_invoice_items ALTER COLUMN effective_cost DROP NOT NULL`).catch(() => {});
 
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_po_invoice_items_invoice_id ON po_invoice_items (invoice_id)

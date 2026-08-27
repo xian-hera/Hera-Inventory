@@ -83,6 +83,9 @@ function buildMetafieldAliases(packageSize, groups) {
     if (g?.code?.namespaceKey) {
       addField(g.code.type === 'product' ? 'product' : 'variant', g.code.namespaceKey, `grp${i}Code`, { purpose: 'code', groupIndex: i });
     }
+    if (g?.cost?.namespaceKey) {
+      addField(g.cost.type === 'product' ? 'product' : 'variant', g.cost.namespaceKey, `grp${i}Cost`, { purpose: 'cost', groupIndex: i });
+    }
   });
 
   return { productFields, variantFields, aliasMap };
@@ -171,6 +174,18 @@ function readPackageSize(product, variant) {
   return isNaN(n) ? null : n;
 }
 
+// Reads the per-group "Supplier cost" metafield (grp{i}Cost). Stored as-is
+// (in the supplier's native/invoice currency, same convention as a CSV cost
+// cell) into po_supplier_skus.metafield_cost — used by poInvoices.js as the
+// CSV cost-column fallback and, converted to CAD, as the "Cost" comparison
+// column in the invoice line item list.
+function readGroupCost(product, variant, groupIndex) {
+  const raw = readAliasValue(product, variant, `grp${groupIndex}Cost`);
+  if (raw === null || raw === undefined || raw === '') return null;
+  const n = parseFloat(raw);
+  return isNaN(n) ? null : n;
+}
+
 // `db` is a transaction client (from pool.connect() + BEGIN), not the pool
 // itself — every write in a wipe-and-rebuild run happens on the same
 // connection so it can all be rolled back together on failure. ON CONFLICT
@@ -178,16 +193,17 @@ function readPackageSize(product, variant) {
 // the same run resolve to the same (supplier_id, code) — last one wins,
 // same as before — even though the preceding DELETE means there is normally
 // nothing to conflict with.
-async function upsertMapping(db, { supplierId, code, sku, productType, packSize, fallbackName }) {
+async function upsertMapping(db, { supplierId, code, sku, productType, packSize, fallbackName, metafieldCost }) {
   await db.query(
-    `INSERT INTO po_supplier_skus (supplier_id, code, sku, name, product_type, pack_size, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, NOW())
+    `INSERT INTO po_supplier_skus (supplier_id, code, sku, name, product_type, pack_size, metafield_cost, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
      ON CONFLICT (supplier_id, code) DO UPDATE SET
-       sku          = EXCLUDED.sku,
-       product_type = EXCLUDED.product_type,
-       pack_size    = EXCLUDED.pack_size,
-       updated_at   = NOW()`,
-    [supplierId, code, sku, fallbackName || null, productType || null, packSize]
+       sku            = EXCLUDED.sku,
+       product_type   = EXCLUDED.product_type,
+       pack_size      = EXCLUDED.pack_size,
+       metafield_cost = EXCLUDED.metafield_cost,
+       updated_at     = NOW()`,
+    [supplierId, code, sku, fallbackName || null, productType || null, packSize, metafieldCost ?? null]
   );
 }
 
@@ -232,6 +248,7 @@ async function runSingleSupplierUpdate(supplierId) {
           productType: product.productType,
           packSize: readPackageSize(product, variant),
           fallbackName: variant.customName?.value || product.productType || null,
+          metafieldCost: readGroupCost(product, variant, i),
         });
         break; // this supplier only matches one group per variant
       }
@@ -313,6 +330,7 @@ async function runGlobalUpdate(types) {
           productType: product.productType,
           packSize: readPackageSize(product, variant),
           fallbackName: variant.customName?.value || product.productType || null,
+          metafieldCost: readGroupCost(product, variant, i),
         });
       }
     }

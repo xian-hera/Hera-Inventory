@@ -6,7 +6,6 @@ import {
   Banner, Badge, Checkbox, Spinner
 } from '@shopify/polaris';
 import { useNavigate, useParams } from 'react-router-dom';
-import MultiSelectDropdown from '../../components/MultiSelectDropdown';
 import InfoTooltip from '../../components/InfoTooltip';
 
 const LOCATIONS = [
@@ -24,17 +23,23 @@ Percentage:
  New unit cost = (Line total ± Line adjustment) ÷ Qty
 Use + for surcharge, − for discount.`;
 
-const CSV_FORMAT_TOOLTIP = `column 1, unit code
-column 2, name
-column 3, quantity
-column 4, cost
-column 5, unit discount(if applicable, can be % or amount)`;
+const CSV_FORMAT_TOOLTIP = `column 1, unit code (SKU or code, at least 1 required
+Column 2, SKU (SKU or code, at least 1 required
+column 3, name
+column 4, quantity (required, or will be skipped
+column 5, cost
+column 6, unit discount(if applicable, can be % or amount)`;
 
 const COMMITTING_RULE_TOOLTIP = `Committing will update cost field, new cost = (current qty × current cost + invoice qty × invoice unit cost) ÷ (current qty + invoice qty)`;
 
 const MISSING_SKU_TOOLTIP = `Go to Supplier management to add the missing SKU mapping first, then restart this importing, or add this to Commit later, and commit it after SKU added.`;
 
 const COLLISION_TOOLTIP = `Two or more unit codes on this invoice resolved to the same SKU. Fix the supplier's code mapping (or the CSV) and re-process before committing.`;
+
+const MISSING_COST_TOOLTIP = `This line item has no cost — it was left blank in the CSV and there's no Supplier cost metafield value to fall back on. It can still be committed: inventory will be received as normal, but the cost (and Shopify's average cost) will not be updated for it. Fill in a cost on the CSV, or set the SKU's Supplier cost metafield in Shopify, then re-process if you want the cost to be included.`;
+
+const EFFECTIVE_COST_TOOLTIP_USD = `effective cost = invoice cost + adjustment + unit discount + converted to CAD`;
+const EFFECTIVE_COST_TOOLTIP_CAD = `effective cost = invoice cost + adjustment + unit discount`;
 
 function BuyerPOImportInvoice() {
   const navigate = useNavigate();
@@ -45,21 +50,22 @@ function BuyerPOImportInvoice() {
   const [error, setError] = useState('');
   const [processing, setProcessing] = useState(false);
   const [committing, setCommitting] = useState(false);
+  const [exportingCsv, setExportingCsv] = useState(false);
 
-  // Card 1
+  // Card 1 — invoiceNumber is now a free-text, optional reference only; the
+  // canonical identifier is the auto-assigned poNumber (see below).
   const [invoiceNumber, setInvoiceNumber] = useState('');
   const [numberSaved, setNumberSaved] = useState(false);
+  const [poNumber, setPoNumber] = useState(null);
 
   // Card 2
   const [supplierQuery, setSupplierQuery] = useState('');
   const [supplierId, setSupplierId] = useState(null);
-  const [supplierMatches, setSupplierMatches] = useState([]);
+  const [allSuppliers, setAllSuppliers] = useState([]);
   const [supplierDropdownOpen, setSupplierDropdownOpen] = useState(false);
   const [supplierDropStyle, setSupplierDropStyle] = useState({});
   const supplierFieldRef = useRef(null);
   const [supplier, setSupplier] = useState(null); // { id, name, currency, fx_rate }
-  const [productTypes, setProductTypes] = useState([]);
-  const [typeOptions, setTypeOptions] = useState([]);
   const [location, setLocation] = useState('');
   const [confirmed, setConfirmed] = useState(false);
 
@@ -76,14 +82,24 @@ function BuyerPOImportInvoice() {
   const [items, setItems] = useState([]);
   const [hasMissing, setHasMissing] = useState(false);
   const [hasCollision, setHasCollision] = useState(false);
+  const [hasMissingCost, setHasMissingCost] = useState(false);
   const [isPromotional, setIsPromotional] = useState(false);
 
   const csvInputRef = useRef(null);
 
+  // Which stored cost field ('invoice_cost' | 'effective_cost') to compare
+  // against Supplier cost for the highlight treatment — configured in
+  // Settings, separately per supplier currency.
+  const [costComparison, setCostComparison] = useState({ cad: 'invoice_cost', usd: 'invoice_cost' });
+
   useEffect(() => {
-    fetch('/api/shopify/product-types')
+    fetch('/api/po-suppliers')
       .then(r => r.json())
-      .then(data => setTypeOptions(Array.isArray(data) ? data : []))
+      .then(data => setAllSuppliers(Array.isArray(data) ? data : []))
+      .catch(() => {});
+    fetch('/api/po-settings/cost-comparison')
+      .then(r => r.json())
+      .then(data => setCostComparison({ cad: data.cad || 'invoice_cost', usd: data.usd || 'invoice_cost' }))
       .catch(() => {});
   }, []);
 
@@ -97,12 +113,12 @@ function BuyerPOImportInvoice() {
         if (!res.ok) throw new Error(data.error);
         const inv = data.invoice;
         setInvoiceId(inv.id);
-        setInvoiceNumber(inv.invoice_number);
+        setInvoiceNumber(inv.invoice_number || '');
+        setPoNumber(inv.po_number || null);
         setNumberSaved(true);
         setSupplierId(inv.supplier_id);
         setSupplierQuery(inv.supplier_name);
         setSupplier({ id: inv.supplier_id, name: inv.supplier_name, currency: inv.supplier_currency, fx_rate: inv.fx_rate });
-        setProductTypes(inv.product_types || []);
         setLocation(inv.location);
         setConfirmed(true);
         setAdjustmentSaved(
@@ -114,6 +130,7 @@ function BuyerPOImportInvoice() {
         setItems(data.items);
         setHasMissing(inv.has_missing_sku);
         setHasCollision(inv.has_sku_collision);
+        setHasMissingCost(inv.has_missing_cost);
       } catch (e) {
         setError(e.message);
       } finally {
@@ -122,19 +139,9 @@ function BuyerPOImportInvoice() {
     })();
   }, [invoiceIdParam]);
 
-  // ── Card 1: invoice number ──────────────────────────────────────────────
-  const handleSaveNumber = async () => {
-    if (!invoiceNumber.trim()) { setError('Invoice number is required.'); return; }
-    setError('');
-    try {
-      const res = await fetch(`/api/po-invoices/check-number?number=${encodeURIComponent(invoiceNumber.trim())}`);
-      const data = await res.json();
-      if (!data.available) { setError('An invoice with this number already exists.'); return; }
-      setNumberSaved(true);
-    } catch (e) {
-      setNumberSaved(true); // advisory check only — don't block on network failure
-    }
-  };
+  // ── Card 1: reference invoice number (optional) ─────────────────────────
+  const handleSaveNumber = () => setNumberSaved(true);
+  const handleSkipNumber = () => { setInvoiceNumber(''); setNumberSaved(true); };
 
   // ── Discard-and-reprocess guard ─────────────────────────────────────────
   const guardEdit = useCallback((applyChange) => {
@@ -145,12 +152,15 @@ function BuyerPOImportInvoice() {
       setItems([]);
       setHasMissing(false);
       setHasCollision(false);
+      setHasMissingCost(false);
     }
     applyChange();
   }, [items]);
 
-  // ── Card 2: supplier autocomplete ───────────────────────────────────────
-  // The dropdown is rendered via a portal into document.body (positioned with
+  // ── Card 2: supplier dropdown ────────────────────────────────────────────
+  // Shows the full supplier list on open; typing filters that list locally
+  // (case-sensitive, matching the field's own placeholder). The dropdown is
+  // rendered via a portal into document.body (positioned with
   // getBoundingClientRect, same pattern as MultiSelectDropdown) so it floats
   // above the Card instead of being clipped by it.
   const openSupplierDropdown = () => {
@@ -165,7 +175,7 @@ function BuyerPOImportInvoice() {
         background: 'white',
         border: '1px solid #e1e3e5',
         borderRadius: '8px',
-        maxHeight: '200px',
+        maxHeight: '260px',
         overflowY: 'auto',
         boxShadow: '0 4px 16px rgba(0,0,0,0.18)',
       });
@@ -186,17 +196,16 @@ function BuyerPOImportInvoice() {
     return () => document.removeEventListener('mousedown', handleClick);
   }, [supplierDropdownOpen]);
 
+  const filteredSuppliers = supplierQuery
+    ? allSuppliers.filter(s => s.name.includes(supplierQuery))
+    : allSuppliers;
+
   const handleSupplierQueryChange = (val) => {
     guardEdit(() => {
       setSupplierQuery(val);
       setSupplierId(null);
       setSupplier(null);
       openSupplierDropdown();
-      if (!val) { setSupplierMatches([]); return; }
-      fetch(`/api/po-suppliers/autocomplete?q=${encodeURIComponent(val)}`)
-        .then(r => r.json())
-        .then(data => setSupplierMatches(Array.isArray(data) ? data : []))
-        .catch(() => setSupplierMatches([]));
     });
   };
 
@@ -209,7 +218,7 @@ function BuyerPOImportInvoice() {
   };
 
   const handleConfirm = () => {
-    if (!supplierId || productTypes.length === 0 || !location) return;
+    if (!supplierId || !location) return;
     setConfirmed(true);
   };
 
@@ -241,20 +250,22 @@ function BuyerPOImportInvoice() {
         complete: (result) => {
           let rows = result.data;
           if (rows.length === 0) return;
-          // Header detection: if the quantity or cost column of the first row
-          // doesn't parse as a number, treat that row as a header and skip it.
+          // Header detection: quantity is column 4 (index 3), cost column 5
+          // (index 4) — if either doesn't parse as a number on the first
+          // row, treat that row as a header and skip it.
           const first = rows[0];
-          if (isNaN(parseFloat(first[2])) || isNaN(parseFloat(first[3]))) {
+          if (isNaN(parseFloat(first[3])) || isNaN(parseFloat(first[4]))) {
             rows = rows.slice(1);
           }
           const parsed = rows
-            .filter(cols => (cols[0] || '').trim())
+            .filter(cols => (cols[0] || '').trim() || (cols[1] || '').trim())
             .map(cols => ({
               code: (cols[0] || '').trim(),
-              name: (cols[1] || '').trim(),
-              quantity: (cols[2] || '').trim(),
-              cost: (cols[3] || '').trim(),
-              unitDiscount: (cols[4] || '').trim(),
+              sku: (cols[1] || '').trim(),
+              name: (cols[2] || '').trim(),
+              quantity: (cols[3] || '').trim(),
+              cost: (cols[4] || '').trim(),
+              unitDiscount: (cols[5] || '').trim(),
             }));
           setCsvRows(parsed);
           setCsvFileName(file.name);
@@ -289,7 +300,6 @@ function BuyerPOImportInvoice() {
           invoiceId,
           invoiceNumber,
           supplierId,
-          productTypes,
           location,
           adjustment: adjustmentSaved,
           rows: csvRows,
@@ -300,6 +310,8 @@ function BuyerPOImportInvoice() {
       setItems(data.items);
       setHasMissing(data.hasMissing);
       setHasCollision(data.hasCollision);
+      setHasMissingCost(data.hasMissingCost);
+      setPoNumber(data.invoice.po_number);
       if (!invoiceId) {
         setInvoiceId(data.invoice.id);
         navigate(`/buyer/po-receiving/pending/${data.invoice.id}`, { replace: true });
@@ -329,6 +341,29 @@ function BuyerPOImportInvoice() {
   const handleCommitLater = async () => {
     await persistPromotionalFlag(isPromotional);
     navigate('/buyer/po-receiving/commit-later');
+  };
+
+  const handleExportCsv = async () => {
+    if (!invoiceId) return;
+    setExportingCsv(true);
+    setError('');
+    try {
+      const res = await fetch(`/api/po-invoices/${invoiceId}/export-csv`);
+      if (!res.ok) throw new Error('Export failed');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${poNumber || invoiceNumber || 'invoice'}-export.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setExportingCsv(false);
+    }
   };
 
   // ── Top-right page action: Discard ──────────────────────────────────────
@@ -383,7 +418,33 @@ function BuyerPOImportInvoice() {
   }
 
   const disabled = processing || committing;
-  const sortedItems = [...items].sort((a, b) => (b.is_missing ? 1 : 0) - (a.is_missing ? 1 : 0));
+
+  const isUsdSupplier = supplier?.currency === 'USD';
+
+  // Comparison only ever happens when BOTH Invoice cost and Supplier cost are
+  // real values — a row with no CSV cost (fallback-derived, raw_cost null)
+  // is never compared/highlighted, regardless of which field the Settings
+  // page has configured for this currency to compare against.
+  const isHighlighted = (it) => {
+    if (it.raw_cost === null || it.raw_cost === undefined) return false;
+    if (it.supplier_cost_raw === null || it.supplier_cost_raw === undefined) return false;
+    const mode = isUsdSupplier ? costComparison.usd : costComparison.cad;
+    const compareField = mode === 'effective_cost' ? it.effective_cost : it.raw_cost;
+    if (compareField === null || compareField === undefined) return false;
+    return Number(compareField).toFixed(2) !== Number(it.supplier_cost_raw).toFixed(2);
+  };
+
+  // Priority: missing SKU first, then a cost mismatch highlighted row, then
+  // everything else — same relative order the rest of the list keeps.
+  const sortedItems = [...items].sort((a, b) => {
+    const missingDiff = (b.is_missing ? 1 : 0) - (a.is_missing ? 1 : 0);
+    if (missingDiff !== 0) return missingDiff;
+    return (isHighlighted(b) ? 1 : 0) - (isHighlighted(a) ? 1 : 0);
+  });
+  const subtotalCad = items.reduce((sum, it) => sum + (Number(it.quantity) || 0) * (Number(it.effective_cost) || 0), 0);
+  const subtotalUsd = isUsdSupplier
+    ? items.reduce((sum, it) => sum + (Number(it.quantity) || 0) * (Number(it.raw_cost) || 0), 0)
+    : null;
 
   // Top-right header action: red "Discard", shown continuously from Card 1
   // being locked (invoice number saved) all the way through to a successful
@@ -396,7 +457,8 @@ function BuyerPOImportInvoice() {
 
   return (
     <Page
-      title={invoiceIdParam ? invoiceNumber : 'Import an invoice'}
+      title={invoiceId ? (poNumber || invoiceNumber || 'Invoice') : 'Import an invoice'}
+      subtitle={invoiceId && poNumber && invoiceNumber ? `Ref: ${invoiceNumber}` : undefined}
       titleMetadata={invoiceIdParam ? <Badge tone="attention">Commit later</Badge> : undefined}
       backAction={{ onAction: () => navigate('/buyer/po-receiving') }}
       secondaryActions={headerActions}
@@ -412,8 +474,8 @@ function BuyerPOImportInvoice() {
                 <InlineStack gap="300" blockAlign="end">
                   <div style={{ width: 420 }}>
                     <TextField
-                      label="Invoice number"
-                      placeholder="use original invoice number for better management"
+                      label="Invoice number (reference only, optional)"
+                      placeholder="for your own reference — can repeat, can be left blank"
                       value={invoiceNumber}
                       onChange={(val) => { setInvoiceNumber(val); setNumberSaved(false); }}
                       autoComplete="off"
@@ -421,13 +483,17 @@ function BuyerPOImportInvoice() {
                     />
                   </div>
                   <Button variant="primary" onClick={handleSaveNumber} disabled={disabled}>Save to continue</Button>
+                  <Button onClick={handleSkipNumber} disabled={disabled}>Skip</Button>
                 </InlineStack>
               </Card>
             ) : (
               <Card>
                 <BlockStack gap="100">
-                  <Text variant="bodySm" tone="subdued">Invoice number</Text>
-                  <Text fontWeight="semibold">{invoiceNumber}</Text>
+                  <Text variant="bodySm" tone="subdued">{poNumber ? 'PO number' : 'Reference invoice number'}</Text>
+                  <Text fontWeight="semibold">{poNumber || invoiceNumber || '—'}</Text>
+                  {poNumber && invoiceNumber && (
+                    <Text tone="subdued" variant="bodySm">Ref: {invoiceNumber}</Text>
+                  )}
                   <Text tone="subdued" variant="bodySm">
                     {items.length > 0
                       ? 'if you leave this page, this invoice will be saved to Commit Later'
@@ -451,9 +517,9 @@ function BuyerPOImportInvoice() {
                         autoComplete="off"
                         disabled={disabled}
                       />
-                      {supplierDropdownOpen && supplierMatches.length > 0 && ReactDOM.createPortal(
+                      {supplierDropdownOpen && filteredSuppliers.length > 0 && ReactDOM.createPortal(
                         <div data-supplier-drop="true" style={supplierDropStyle}>
-                          {supplierMatches.map(s => (
+                          {filteredSuppliers.map(s => (
                             <div
                               key={s.id}
                               style={{ padding: '8px 12px', cursor: 'pointer' }}
@@ -465,16 +531,6 @@ function BuyerPOImportInvoice() {
                         </div>,
                         document.body
                       )}
-                    </div>
-
-                    <div style={{ minWidth: 220 }}>
-                      <MultiSelectDropdown
-                        label="Type"
-                        options={typeOptions}
-                        selected={productTypes}
-                        onChange={setProductTypes}
-                        placeholder="product type"
-                      />
                     </div>
 
                     <div style={{ minWidth: 160 }}>
@@ -495,13 +551,13 @@ function BuyerPOImportInvoice() {
                     </div>
 
                     <div style={{ paddingTop: '22px' }}>
-                      <Button variant="primary" onClick={handleConfirm} disabled={disabled || !supplierId || productTypes.length === 0 || !location}>
+                      <Button variant="primary" onClick={handleConfirm} disabled={disabled || !supplierId || !location}>
                         Confirm to continue
                       </Button>
                     </div>
                   </InlineStack>
 
-                  {supplierQuery && supplierMatches.length === 0 && !supplierId && (
+                  {supplierQuery && filteredSuppliers.length === 0 && !supplierId && (
                     <Text tone="critical" variant="bodySm">
                       Supplier may not be added yet, add it and mapping its code with SKU first.
                     </Text>
@@ -527,7 +583,6 @@ function BuyerPOImportInvoice() {
                 <Button size="slim" onClick={() => setEditingFxRate(v => !v)} disabled={supplier.currency !== 'USD'}>
                   {editingFxRate ? 'Cancel' : 'Edit'}
                 </Button>
-                <Text tone="subdued">Type: {productTypes.join(', ')}</Text>
                 <Text tone="subdued">Receiving to: {location}</Text>
               </InlineStack>
             )}
@@ -570,7 +625,7 @@ function BuyerPOImportInvoice() {
                     ) : (
                       <InlineStack gap="150" blockAlign="center">
                         <div style={{ flex: 1 }}>
-                          <TextField label="" labelHidden placeholder="amount" value={adjustmentDraft} onChange={setAdjustmentDraft} autoComplete="off" disabled={disabled} />
+                          <TextField label="" labelHidden placeholder={isUsdSupplier ? 'amount in USD' : 'amount'} value={adjustmentDraft} onChange={setAdjustmentDraft} autoComplete="off" disabled={disabled} />
                         </div>
                         {adjustmentDraft && <Button size="slim" onClick={handleSaveAdjustment}>Save</Button>}
                       </InlineStack>
@@ -608,11 +663,17 @@ function BuyerPOImportInvoice() {
                       <Text tone="critical" variant="bodySm">There is(are) lineitem(s) with a SKU collision</Text>
                     </InfoTooltip>
                   )}
+                  {hasMissingCost && (
+                    <InfoTooltip text={MISSING_COST_TOOLTIP}>
+                      <Text tone="critical" variant="bodySm">There is(are) lineitem(s) missing cost</Text>
+                    </InfoTooltip>
+                  )}
                 </InlineStack>
                 <InlineStack gap="300" blockAlign="center">
                   <InfoTooltip text="When checked, only inventory will be committed, cost field will not be updated, and also this cost will be excluded from the supplier's average cost calculation.">
                     <Checkbox label="Promotional PO" checked={isPromotional} onChange={handleTogglePromotional} />
                   </InfoTooltip>
+                  <Button onClick={handleExportCsv} loading={exportingCsv} disabled={exportingCsv}>Export CSV</Button>
                   <Button onClick={handleCommitLater} disabled={committing}>Commit later</Button>
                   <Button variant="primary" onClick={handleCommitNow} loading={committing}>Commit now</Button>
                 </InlineStack>
@@ -621,42 +682,83 @@ function BuyerPOImportInvoice() {
 
             {items.length > 0 && (
               <Card>
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-                    <thead>
-                      <tr style={{ borderBottom: '2px solid #e1e3e5' }}>
-                        {['SKU', 'code', 'name', 'quantity', 'cost'].map(h => (
-                          <th key={h} style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {sortedItems.map((it, i) => (
-                        <tr key={i} style={{ borderBottom: '1px solid #f1f1f1' }}>
-                          <td style={{ padding: '10px' }}>
-                            {it.is_missing ? (
-                              <InlineStack gap="100" blockAlign="center">
-                                <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#d72c0d', display: 'inline-block' }} />
-                                <Text tone="critical">missing</Text>
-                              </InlineStack>
-                            ) : it.sku}
-                          </td>
-                          <td style={{ padding: '10px' }}>{it.code}</td>
-                          <td style={{ padding: '10px' }}>{it.name}</td>
-                          <td style={{ padding: '10px' }}>{it.quantity}</td>
-                          <td style={{ padding: '10px' }}>
-                            {Number(it.cost_before_adjustment).toFixed(2) !== Number(it.effective_cost).toFixed(2) && (
-                              <span style={{ textDecoration: 'line-through', color: '#8c9196', fontSize: '11px', marginRight: '6px' }}>
-                                {Number(it.cost_before_adjustment).toFixed(2)}
-                              </span>
-                            )}
-                            {Number(it.effective_cost).toFixed(2)}
-                          </td>
+                <BlockStack gap="200">
+                  <InlineStack align="end" gap="400">
+                    {isUsdSupplier && (
+                      <Text tone="subdued" variant="bodySm">USD subtotal: {subtotalUsd.toFixed(2)}</Text>
+                    )}
+                    <Text variant="bodyMd" fontWeight="bold">CAD subtotal: {subtotalCad.toFixed(2)}</Text>
+                  </InlineStack>
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                      <thead>
+                        <tr style={{ borderBottom: '2px solid #e1e3e5' }}>
+                          {['SKU', 'code', 'name', 'quantity'].map(h => (
+                            <th key={h} style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>{h}</th>
+                          ))}
+                          <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Invoice cost</th>
+                          <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>
+                            <InfoTooltip text={isUsdSupplier ? EFFECTIVE_COST_TOOLTIP_USD : EFFECTIVE_COST_TOOLTIP_CAD}>
+                              effective cost
+                            </InfoTooltip>
+                          </th>
+                          <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Supplier cost</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                      </thead>
+                      <tbody>
+                        {sortedItems.map((it, i) => {
+                          const highlighted = isHighlighted(it);
+                          const compareMode = isUsdSupplier ? costComparison.usd : costComparison.cad;
+                          const hasRawCost = it.raw_cost !== null && it.raw_cost !== undefined;
+                          const hasEffectiveCost = it.effective_cost !== null && it.effective_cost !== undefined;
+                          // USD supplier only: strike through, next to effective cost, what
+                          // the invoice cost would be with no discount/adjustment applied —
+                          // just converted straight to CAD — whenever discount/adjustment
+                          // actually changed the number. Not shown for CAD suppliers, since
+                          // Invoice cost is already displayed right next to it in that case.
+                          const rawCostCad = isUsdSupplier && hasRawCost ? Number(it.raw_cost) * Number(supplier?.fx_rate || 1) : null;
+                          const showStrike = isUsdSupplier && rawCostCad !== null && hasEffectiveCost
+                            && rawCostCad.toFixed(2) !== Number(it.effective_cost).toFixed(2);
+                          return (
+                            <tr key={i} style={{ borderBottom: '1px solid #f1f1f1', background: highlighted ? '#fff8e1' : undefined }}>
+                              <td style={{ padding: '10px' }}>
+                                {it.is_missing ? (
+                                  <InlineStack gap="100" blockAlign="center">
+                                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#d72c0d', display: 'inline-block' }} />
+                                    <Text tone="critical">missing</Text>
+                                  </InlineStack>
+                                ) : it.sku}
+                              </td>
+                              <td style={{ padding: '10px' }}>{it.code}</td>
+                              <td style={{ padding: '10px' }}>{it.name}</td>
+                              <td style={{ padding: '10px' }}>{it.quantity}</td>
+                              <td style={{ padding: '10px', fontWeight: highlighted && compareMode === 'invoice_cost' ? 'bold' : undefined }}>
+                                {hasRawCost ? Number(it.raw_cost).toFixed(2) : '—'}
+                              </td>
+                              <td style={{ padding: '10px', fontWeight: highlighted && compareMode === 'effective_cost' ? 'bold' : undefined }}>
+                                {!hasEffectiveCost ? (
+                                  <Text tone="critical">missing</Text>
+                                ) : (
+                                  <>
+                                    {showStrike && (
+                                      <span style={{ textDecoration: 'line-through', color: '#8c9196', fontSize: '11px', marginRight: '6px' }}>
+                                        {rawCostCad.toFixed(2)}
+                                      </span>
+                                    )}
+                                    {Number(it.effective_cost).toFixed(2)}
+                                  </>
+                                )}
+                              </td>
+                              <td style={{ padding: '10px', fontWeight: highlighted ? 'bold' : undefined }}>
+                                {it.supplier_cost_raw !== null && it.supplier_cost_raw !== undefined ? Number(it.supplier_cost_raw).toFixed(2) : '—'}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </BlockStack>
               </Card>
             )}
           </BlockStack>

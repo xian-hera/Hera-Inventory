@@ -55,22 +55,30 @@ function BuyerPOReceiving() {
                       <InlineStack gap="300" blockAlign="center">
                         <Text variant="bodySm" tone="subdued">{formatDate(inv.committed_at)}</Text>
                         <Text variant="bodySm" tone="subdued">{inv.supplier_name}</Text>
-                        <Text
-                          variant="bodySm"
-                          as="span"
-                          fontWeight="medium"
-                          tone="interactive"
-                        >
-                          <span
-                            style={{ cursor: 'pointer', textDecoration: 'underline' }}
-                            onClick={() => navigate(`/buyer/po-receiving/committed/${inv.id}`)}
+                        <BlockStack gap="0">
+                          <Text
+                            variant="bodySm"
+                            as="span"
+                            fontWeight="medium"
+                            tone="interactive"
                           >
-                            {inv.invoice_number}
-                          </span>
-                        </Text>
+                            <span
+                              style={{ cursor: 'pointer', textDecoration: 'underline' }}
+                              onClick={() => navigate(`/buyer/po-receiving/committed/${inv.id}`)}
+                            >
+                              {inv.po_number || inv.invoice_number}
+                            </span>
+                          </Text>
+                          {inv.po_number && inv.invoice_number && (
+                            <Text variant="bodySm" tone="subdued">Ref: {inv.invoice_number}</Text>
+                          )}
+                        </BlockStack>
                         <Text variant="bodySm" tone="subdued">committed</Text>
                         {inv.is_promotional && <Badge>Promotional</Badge>}
                       </InlineStack>
+                      <Text variant="bodySm" tone="subdued">
+                        Subtotal: {Number(inv.subtotal_cad || 0).toFixed(2)}
+                      </Text>
                     </InlineStack>
                   ))
                 )}

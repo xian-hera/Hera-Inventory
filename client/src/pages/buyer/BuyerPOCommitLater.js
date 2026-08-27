@@ -87,15 +87,21 @@ function BuyerPOCommitLater() {
 
   const rows = invoices.map(inv => [
     <Checkbox checked={selectedIds.includes(inv.id)} onChange={() => toggleSelectOne(inv.id)} />,
-    <span
-      style={{ cursor: 'pointer', textDecoration: 'underline' }}
-      onClick={() => navigate(`/buyer/po-receiving/pending/${inv.id}`)}
-    >
-      {inv.invoice_number}
-    </span>,
+    <BlockStack gap="0">
+      <span
+        style={{ cursor: 'pointer', textDecoration: 'underline' }}
+        onClick={() => navigate(`/buyer/po-receiving/pending/${inv.id}`)}
+      >
+        {inv.po_number || inv.invoice_number}
+      </span>
+      {inv.po_number && inv.invoice_number && (
+        <Text variant="bodySm" tone="subdued">Ref: {inv.invoice_number}</Text>
+      )}
+    </BlockStack>,
     inv.supplier_name,
     inv.location,
     inv.quantity,
+    Number(inv.subtotal_cad || 0).toFixed(2),
   ]);
 
   return (
@@ -119,7 +125,7 @@ function BuyerPOCommitLater() {
                   <TextField
                     label=""
                     labelHidden
-                    placeholder="Search by Supplier name, Receiving location, invoice number, SKU or code"
+                    placeholder="Search by Supplier name, Receiving location, PO number, invoice number, SKU or code"
                     value={search}
                     onChange={setSearch}
                     onKeyDown={(e) => { if (e.key === 'Enter') fetchInvoices(search); }}
@@ -151,7 +157,7 @@ function BuyerPOCommitLater() {
                             onChange={toggleSelectAll}
                           />
                         </th>
-                        {['Invoice number', 'Supplier', 'Location', 'Quantity'].map((h, i) => (
+                        {['PO number', 'Supplier', 'Location', 'Quantity', 'Subtotal'].map((h, i) => (
                           <th key={i} style={{ padding: '8px 10px', textAlign: 'left', fontWeight: '600', color: '#6d7175', whiteSpace: 'nowrap' }}>
                             {h}
                           </th>
