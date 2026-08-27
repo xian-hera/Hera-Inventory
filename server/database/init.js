@@ -561,8 +561,28 @@ const initDatabase = async () => {
     await client.query(`ALTER TABLE po_invoice_items ALTER COLUMN code DROP NOT NULL`).catch(() => {});
     // Renamed from supplier_cost_cad: that name was wrong — a USD supplier's
     // metafield cost is USD, not CAD. No production data exists yet, so this
-    // is a plain rename with no backfill concerns.
-    await client.query(`ALTER TABLE po_invoice_items RENAME COLUMN supplier_cost_cad TO supplier_cost_raw`).catch(() => {});
+    // is a plain rename with no backfill concerns. Guarded with an
+    // information_schema check (rather than a bare ALTER + .catch) because
+    // on a fresh database supplier_cost_cad never existed in the first place
+    // (the CREATE TABLE above already uses supplier_cost_raw) — a plain
+    // ALTER ... RENAME COLUMN there would error, and since this whole
+    // function runs inside one BEGIN/COMMIT transaction, that error would
+    // poison every migration statement after it for the rest of this run,
+    // not just this one.
+    await client.query(`
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'po_invoice_items' AND column_name = 'supplier_cost_cad'
+        ) AND NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'po_invoice_items' AND column_name = 'supplier_cost_raw'
+        ) THEN
+          ALTER TABLE po_invoice_items RENAME COLUMN supplier_cost_cad TO supplier_cost_raw;
+        END IF;
+      END $$;
+    `);
     await client.query(`ALTER TABLE po_invoice_items ADD COLUMN IF NOT EXISTS supplier_cost_raw NUMERIC(12,4)`).catch(() => {});
     // A line item with no cost available at all (CSV blank + no metafield
     // fallback) stores NULL here rather than a fabricated 0 — the invoice's
