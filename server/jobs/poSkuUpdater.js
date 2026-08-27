@@ -116,9 +116,18 @@ async function fetchVariantsForTypes(client, types, packageSize, groups) {
     ? `(${types.map(t => `product_type:"${t}"`).join(' OR ')})`
     : 'status:active';
 
+  // Products-per-page is intentionally small (not 100): each product+variant
+  // node here carries every configured metafield group's fields (name/code/
+  // cost, up to 4 groups), and Shopify prices a nested products→variants
+  // connection roughly as products-per-page × variants-per-page × per-field
+  // cost. At 100×100 with a full 4-group setup this measured over Shopify's
+  // 1000-point single-query cap ("Query cost is 1001..."). 25×100 keeps the
+  // same variants-per-product ceiling (real products rarely have close to
+  // 100 variants) while cutting the worst-case node count 4x — the existing
+  // pagination loop below just does more, smaller round-trips instead.
   const gqlQuery = `
     query getVariantsForTypes($queryString: String!, $cursor: String) {
-      products(first: 100, query: $queryString, after: $cursor) {
+      products(first: 25, query: $queryString, after: $cursor) {
         pageInfo { hasNextPage endCursor }
         edges {
           node {

@@ -23,12 +23,25 @@ Percentage:
  New unit cost = (Line total ± Line adjustment) ÷ Qty
 Use + for surcharge, − for discount.`;
 
-const CSV_FORMAT_TOOLTIP = `column 1, unit code (SKU or code, at least 1 required
-Column 2, SKU (SKU or code, at least 1 required
-column 3, name
-column 4, quantity (required, or will be skipped
-column 5, cost
-column 6, unit discount(if applicable, can be % or amount)`;
+const CSV_FORMAT_TOOLTIP = (
+  <>
+    All columns must have a valid header.<br />
+    Accepted headers are: <strong>Code</strong>, <strong>SKU</strong>, <strong>Name</strong>, <strong>Quantity</strong>, <strong>Cost</strong>, <strong>Unit Discount</strong>.
+  </>
+);
+
+// Recognized CSV header names (case-insensitive, trimmed) → the field they
+// map to. "quantity" and "qty" are both accepted for the same field; every
+// other recognized header matches its field name literally.
+const CSV_HEADER_ALIASES = {
+  code: 'code',
+  sku: 'sku',
+  name: 'name',
+  quantity: 'quantity',
+  qty: 'quantity',
+  cost: 'cost',
+  'unit discount': 'unitDiscount',
+};
 
 const COMMITTING_RULE_TOOLTIP = `Committing will update cost field, new cost = (current qty × current cost + invoice qty × invoice unit cost) ÷ (current qty + invoice qty)`;
 
@@ -75,6 +88,12 @@ function BuyerPOImportInvoice() {
   // Card 3
   const [csvRows, setCsvRows] = useState([]);
   const [csvFileName, setCsvFileName] = useState('');
+  // Informational, non-blocking notices from the last CSV parse (excluded
+  // columns, rows skipped for missing quantity/code-or-SKU, cost fallback) —
+  // shown as small text under the filename/row-count line. A hard rejection
+  // (duplicated header, no quantity column, no Code/SKU column) goes through
+  // the regular `error` Banner instead, since it blocks processing outright.
+  const [csvNotices, setCsvNotices] = useState([]);
   const [adjustmentDraft, setAdjustmentDraft] = useState('');
   const [adjustmentSaved, setAdjustmentSaved] = useState(null);
 
@@ -241,6 +260,11 @@ function BuyerPOImportInvoice() {
   };
 
   // ── Card 3: CSV upload / adjustment ─────────────────────────────────────
+  // The CSV must always have a header row now — no more positional/no-header
+  // support. Columns are matched to fields by header text (case-insensitive,
+  // trimmed); any column whose header is blank, unrecognized, or a duplicate
+  // of an already-used recognized header is excluded, with a notice. See
+  // CSV_HEADER_ALIASES for the recognized set.
   const handleCsvUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -248,27 +272,111 @@ function BuyerPOImportInvoice() {
       Papa.parse(file, {
         skipEmptyLines: true,
         complete: (result) => {
-          let rows = result.data;
-          if (rows.length === 0) return;
-          // Header detection: quantity is column 4 (index 3), cost column 5
-          // (index 4) — if either doesn't parse as a number on the first
-          // row, treat that row as a header and skip it.
-          const first = rows[0];
-          if (isNaN(parseFloat(first[3])) || isNaN(parseFloat(first[4]))) {
-            rows = rows.slice(1);
-          }
-          const parsed = rows
-            .filter(cols => (cols[0] || '').trim() || (cols[1] || '').trim())
-            .map(cols => ({
-              code: (cols[0] || '').trim(),
-              sku: (cols[1] || '').trim(),
-              name: (cols[2] || '').trim(),
-              quantity: (cols[3] || '').trim(),
-              cost: (cols[4] || '').trim(),
-              unitDiscount: (cols[5] || '').trim(),
-            }));
-          setCsvRows(parsed);
+          const allRows = result.data;
           setCsvFileName(file.name);
+          if (allRows.length === 0) {
+            setCsvRows([]);
+            setCsvNotices([]);
+            setError('CSV is empty.');
+            return;
+          }
+
+          const headerRow = allRows[0];
+          const dataRows = allRows.slice(1);
+          const normalize = (h) => (h || '').toString().trim().toLowerCase();
+
+          // Map each recognized field to its (first) column index, tracking
+          // exclusion notices for blank/unrecognized/duplicate headers as we
+          // go. A duplicate of a recognized header is a hard rejection (see
+          // below), not just an exclusion.
+          const fieldToIndex = {};
+          const columnNotices = [];
+          let hasDuplicateHeader = false;
+
+          headerRow.forEach((h, i) => {
+            const colNum = i + 1;
+            const norm = normalize(h);
+            if (!norm) {
+              const hasData = dataRows.some(row => (row[i] || '').toString().trim());
+              if (hasData) columnNotices.push(`Column ${colNum} excluded: no header.`);
+              return;
+            }
+            const field = CSV_HEADER_ALIASES[norm];
+            if (!field) {
+              columnNotices.push(`Column ${colNum} excluded: header not recognized.`);
+              return;
+            }
+            if (fieldToIndex[field] !== undefined) {
+              hasDuplicateHeader = true;
+              return;
+            }
+            fieldToIndex[field] = i;
+          });
+
+          const rejectMessages = [];
+          if (hasDuplicateHeader) rejectMessages.push('Processing failed: duplicated header');
+
+          const quantityIdx = fieldToIndex.quantity;
+          const anyQuantity = quantityIdx !== undefined
+            && dataRows.some(row => (row[quantityIdx] || '').toString().trim());
+          if (quantityIdx === undefined || !anyQuantity) {
+            rejectMessages.push('processing failed: no quantity');
+          }
+
+          const codeIdx = fieldToIndex.code;
+          const skuIdx = fieldToIndex.sku;
+          if (codeIdx === undefined && skuIdx === undefined) {
+            rejectMessages.push('processing failed: no Code or SKU column found');
+          }
+
+          if (rejectMessages.length > 0) {
+            setCsvRows([]);
+            setCsvNotices([]);
+            setError(rejectMessages.join('\n'));
+            return;
+          }
+
+          const nameIdx = fieldToIndex.name;
+          const costIdx = fieldToIndex.cost;
+          const discountIdx = fieldToIndex.unitDiscount;
+
+          let someQuantityMissing = false;
+          let someCodeSkuMissing = false;
+          let someCostMissing = costIdx === undefined; // whole column absent → same fallback outcome as blank cells
+
+          const parsed = [];
+          for (const row of dataRows) {
+            const rowHasAnyValue = row.some(c => (c || '').toString().trim());
+            if (!rowHasAnyValue) continue;
+
+            const quantity = (row[quantityIdx] || '').toString().trim();
+            if (!quantity) { someQuantityMissing = true; continue; }
+
+            const code = codeIdx !== undefined ? (row[codeIdx] || '').toString().trim() : '';
+            const sku = skuIdx !== undefined ? (row[skuIdx] || '').toString().trim() : '';
+            if (!code && !sku) { someCodeSkuMissing = true; continue; }
+
+            const cost = costIdx !== undefined ? (row[costIdx] || '').toString().trim() : '';
+            if (costIdx !== undefined && !cost) someCostMissing = true;
+
+            parsed.push({
+              code,
+              sku,
+              name: nameIdx !== undefined ? (row[nameIdx] || '').toString().trim() : '',
+              quantity,
+              cost,
+              unitDiscount: discountIdx !== undefined ? (row[discountIdx] || '').toString().trim() : '',
+            });
+          }
+
+          const notices = [...columnNotices];
+          if (someCostMissing) notices.push('Missing cost will default to Supplier Cost.');
+          if (someQuantityMissing) notices.push('some row(s) is skipped: no quantity');
+          if (someCodeSkuMissing) notices.push('some row(s) is skipped: no Code or SKU');
+
+          setCsvRows(parsed);
+          setCsvNotices(notices);
+          setError('');
         },
         error: () => setError('Failed to parse CSV'),
       });
@@ -466,7 +574,11 @@ function BuyerPOImportInvoice() {
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">
-            {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
+            {error && (
+              <Banner tone="critical" onDismiss={() => setError('')}>
+                <div style={{ whiteSpace: 'pre-line' }}>{error}</div>
+              </Banner>
+            )}
 
             {/* Card 1 */}
             {!numberSaved ? (
@@ -643,6 +755,9 @@ function BuyerPOImportInvoice() {
             {(csvFileName || processing) && (
               <BlockStack gap="100">
                 {csvFileName && <Text tone="subdued" variant="bodySm">{csvFileName} — {csvRows.length} row(s)</Text>}
+                {csvNotices.map((n, i) => (
+                  <Text key={i} tone="subdued" variant="bodySm">{n}</Text>
+                ))}
                 {processing && <Text tone="subdued" variant="bodySm">Processing…</Text>}
               </BlockStack>
             )}
