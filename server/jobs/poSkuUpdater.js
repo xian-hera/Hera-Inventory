@@ -273,6 +273,39 @@ async function runSingleSupplierUpdate(supplierId) {
 
     const records = await fetchVariantsForTypes(client, supplier.types_carrying || [], packageSize, groups);
 
+    // --- Temporary targeted diagnostic -----------------------------------
+    // Dumps everything we know about one specific barcode/SKU so we can see
+    // exactly why it isn't ending up in `matches` below, without guessing.
+    // Safe to remove later — read-only, no effect on the actual update.
+    const DEBUG_TARGET_BARCODE = '846926175824';
+    if (DEBUG_TARGET_BARCODE) {
+      const found = records.filter(r => r.variant.barcode === DEBUG_TARGET_BARCODE);
+      if (found.length === 0) {
+        console.warn(
+          `[poSkuUpdater][DEBUG] barcode ${DEBUG_TARGET_BARCODE} was NOT found among the ${records.length} ` +
+          `fetched records for supplier "${supplier.name}" (types_carrying=${JSON.stringify(supplier.types_carrying)}).`
+        );
+      } else {
+        found.forEach(({ product, variant }, idx) => {
+          const groupDump = groups.map((g, i) => ({
+            group: i,
+            nameProduct: product?.[`grp${i}Name`]?.value ?? null,
+            nameVariant: variant?.[`grp${i}Name`]?.value ?? null,
+            codeProduct: product?.[`grp${i}Code`]?.value ?? null,
+            codeVariant: variant?.[`grp${i}Code`]?.value ?? null,
+            costProduct: product?.[`grp${i}Cost`]?.value ?? null,
+            costVariant: variant?.[`grp${i}Cost`]?.value ?? null,
+          }));
+          console.warn(
+            `[poSkuUpdater][DEBUG] barcode ${DEBUG_TARGET_BARCODE} record #${idx}: ` +
+            `productId=${product.id}, productType=${JSON.stringify(product.productType)}, ` +
+            `supplierNameExpected=${JSON.stringify(supplier.name)}, groups=${JSON.stringify(groupDump)}`
+          );
+        });
+      }
+    }
+    // --- End temporary targeted diagnostic --------------------------------
+
     // Compute all matches in memory first (no DB writes yet) — the wipe only
     // happens once we know the full rebuild set, inside the transaction below.
     const matches = [];
