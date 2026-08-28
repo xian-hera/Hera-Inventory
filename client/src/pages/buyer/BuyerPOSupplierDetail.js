@@ -269,8 +269,8 @@ function BuyerPOSupplierDetail() {
               </InlineStack>
             </Card>
 
-            {skus.length > 0 || search ? (
-              <Card>
+            <Card>
+              <BlockStack gap="200">
                 <InlineStack gap="200" blockAlign="center">
                   <div style={{ flex: 1 }}>
                     <TextField
@@ -280,12 +280,15 @@ function BuyerPOSupplierDetail() {
                       onChange={setSearch}
                       onKeyDown={(e) => { if (e.key === 'Enter') fetchDetail(search); }}
                       autoComplete="off"
+                      clearButton
+                      onClearButtonClick={() => { setSearch(''); fetchDetail(''); }}
                     />
                   </div>
                   <Button onClick={() => fetchDetail(search)}>Search</Button>
                 </InlineStack>
-              </Card>
-            ) : null}
+                {!loading && <Text tone="subdued" variant="bodySm">Found {skus.length} matched</Text>}
+              </BlockStack>
+            </Card>
 
             {skus.length > 0 && (
               <Card>

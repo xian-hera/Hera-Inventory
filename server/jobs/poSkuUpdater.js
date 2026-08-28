@@ -153,21 +153,55 @@ async function fetchVariantsForTypes(client, types, packageSize, groups) {
   const variants = [];
   let cursor = null;
   let hasNextPage = true;
+  let pageNum = 0;
 
+  // --- Temporary diagnostic logging -----------------------------------
+  // Added to confirm/rule out whether the paginated fetch below is ever
+  // silently truncating results (e.g. a page coming back with GraphQL
+  // `errors` alongside null/partial `data`, which the old code treated
+  // identically to "no more pages" and quietly broke out of the loop on).
+  // Safe to remove once we've confirmed the actual failure mode — this
+  // only adds console output, it does not change any matching/fetch logic.
   while (hasNextPage) {
+    pageNum++;
     const response = await shopifyRequest(client, gqlQuery, { queryString: typeQuery, cursor });
+    if (response?.errors?.length) {
+      console.warn(
+        `[poSkuUpdater] fetchVariantsForTypes page ${pageNum} (types=${JSON.stringify(types)}): ` +
+        `GraphQL returned errors alongside this response: ${JSON.stringify(response.errors)}`
+      );
+    }
     const page = response?.data?.products;
-    if (!page) break;
+    if (!page) {
+      console.warn(
+        `[poSkuUpdater] fetchVariantsForTypes page ${pageNum} (types=${JSON.stringify(types)}): ` +
+        `no products data in response — stopping pagination early. Full response: ${JSON.stringify(response)}`
+      );
+      break;
+    }
+    let pageVariantCount = 0;
     for (const { node: product } of page.edges) {
       for (const { node: variant } of product.variants.edges) {
         variants.push({ product, variant });
+        pageVariantCount++;
       }
       // small politeness delay handled by pagination cadence below
     }
+    console.log(
+      `[poSkuUpdater] fetchVariantsForTypes page ${pageNum} (types=${JSON.stringify(types)}): ` +
+      `${page.edges.length} products, ${pageVariantCount} variants this page, ${variants.length} variants cumulative, ` +
+      `hasNextPage=${page.pageInfo.hasNextPage}`
+    );
     hasNextPage = page.pageInfo.hasNextPage;
     cursor = page.pageInfo.endCursor;
     if (hasNextPage) await new Promise(r => setTimeout(r, 300));
   }
+
+  console.log(
+    `[poSkuUpdater] fetchVariantsForTypes done (types=${JSON.stringify(types)}): ` +
+    `${pageNum} page(s) fetched, ${variants.length} total variant(s)`
+  );
+  // --- End temporary diagnostic logging --------------------------------
 
   return variants;
 }

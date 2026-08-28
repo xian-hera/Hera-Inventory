@@ -120,22 +120,25 @@ function BuyerPOCommitLater() {
             {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
 
             <Card>
-              <InlineStack gap="200" blockAlign="center">
-                <div style={{ flex: 1 }}>
-                  <TextField
-                    label=""
-                    labelHidden
-                    placeholder="Search by Supplier name, Receiving location, PO number, invoice number, SKU or code"
-                    value={search}
-                    onChange={setSearch}
-                    onKeyDown={(e) => { if (e.key === 'Enter') fetchInvoices(search); }}
-                    autoComplete="off"
-                    clearButton
-                    onClearButtonClick={handleClearSearch}
-                  />
-                </div>
-                <Button onClick={() => fetchInvoices(search)}>Search</Button>
-              </InlineStack>
+              <BlockStack gap="200">
+                <InlineStack gap="200" blockAlign="center">
+                  <div style={{ flex: 1 }}>
+                    <TextField
+                      label=""
+                      labelHidden
+                      placeholder="Search by Supplier name, Receiving location, PO number, invoice number, SKU or code"
+                      value={search}
+                      onChange={setSearch}
+                      onKeyDown={(e) => { if (e.key === 'Enter') fetchInvoices(search); }}
+                      autoComplete="off"
+                      clearButton
+                      onClearButtonClick={handleClearSearch}
+                    />
+                  </div>
+                  <Button onClick={() => fetchInvoices(search)}>Search</Button>
+                </InlineStack>
+                {!loading && <Text tone="subdued" variant="bodySm">Found {invoices.length} matched</Text>}
+              </BlockStack>
             </Card>
 
             <Card>

@@ -33,6 +33,11 @@ function BuyerPOSuppliers() {
 
   useEffect(() => { fetchSuppliers(''); }, [fetchSuppliers]);
 
+  const handleClearSearch = () => {
+    setSearch('');
+    fetchSuppliers('');
+  };
+
   return (
     <Page
       title="Supplier management"
@@ -43,20 +48,25 @@ function BuyerPOSuppliers() {
         <Layout.Section>
           <BlockStack gap="400">
             <Card>
-              <InlineStack gap="200" blockAlign="center">
-                <div style={{ flex: 1 }}>
-                  <TextField
-                    label=""
-                    labelHidden
-                    placeholder="Search by supplier name, code, or SKU"
-                    value={search}
-                    onChange={setSearch}
-                    onKeyDown={(e) => { if (e.key === 'Enter') fetchSuppliers(search); }}
-                    autoComplete="off"
-                  />
-                </div>
-                <Button onClick={() => fetchSuppliers(search)}>Search</Button>
-              </InlineStack>
+              <BlockStack gap="200">
+                <InlineStack gap="200" blockAlign="center">
+                  <div style={{ flex: 1 }}>
+                    <TextField
+                      label=""
+                      labelHidden
+                      placeholder="Search by supplier name, code, or SKU"
+                      value={search}
+                      onChange={setSearch}
+                      onKeyDown={(e) => { if (e.key === 'Enter') fetchSuppliers(search); }}
+                      autoComplete="off"
+                      clearButton
+                      onClearButtonClick={handleClearSearch}
+                    />
+                  </div>
+                  <Button onClick={() => fetchSuppliers(search)}>Search</Button>
+                </InlineStack>
+                {!loading && <Text tone="subdued" variant="bodySm">Found {suppliers.length} matched</Text>}
+              </BlockStack>
             </Card>
 
             <Card>
