@@ -446,7 +446,7 @@ router.patch('/:taskId/items/:itemId/scan-count', async (req, res) => {
   try {
     const { taskId, itemId } = req.params;
     const result = await pool.query(
-      `UPDATE task_items SET scan_count = scan_count + 1
+      `UPDATE task_items SET scan_count = scan_count + 1, ever_scanned = TRUE
        WHERE id = $1 AND task_id = $2 RETURNING id, scan_count`,
       [itemId, taskId]
     );
@@ -466,7 +466,7 @@ router.patch('/:taskId/items/:itemId/scan-count', async (req, res) => {
 router.patch('/:id/restart-scan', async (req, res) => {
   try {
     const { id } = req.params;
-    await pool.query('UPDATE task_items SET scan_count = 0 WHERE task_id = $1', [id]);
+    await pool.query('UPDATE task_items SET scan_count = 0, ever_scanned = FALSE WHERE task_id = $1', [id]);
     res.json({ success: true });
   } catch (e) {
     console.error('PATCH /:id/restart-scan error:', e);

@@ -290,6 +290,15 @@ function TaskDetail() {
       const isZeroDelta = delta === 0;
 
       if (item.is_correct || isZeroDelta) {
+        // Scan Count mode only: an item that matched (system 0, counted 0)
+        // because the manager genuinely scanned it and it came up empty
+        // looks identical, in scan_count/poh/soh terms, to one they never
+        // scanned at all — Shopify already showed 0 either way. ever_scanned
+        // is the only thing that tells them apart, so it gets a red check
+        // instead of green: still "no discrepancy to commit", but flagged as
+        // unverified rather than confirmed.
+        const isUnscannedMatch = task.scan_count_mode && !item.ever_scanned;
+        const checkColor = isUnscannedMatch ? '#d72c0d' : 'green';
         detail = '';
         if (canEdit) {
           result = isEditing
@@ -297,12 +306,17 @@ function TaskDetail() {
             : (
               <span
                 onClick={() => { setEditingItemId(item.id); setEditingValue('0'); }}
-                style={{ color: 'green', fontSize: '18px', cursor: 'pointer' }}
-                title="Click to edit"
+                style={{ color: checkColor, fontSize: '18px', cursor: 'pointer' }}
+                title={isUnscannedMatch ? 'Never scanned — system already showed 0. Click to edit.' : 'Click to edit'}
               >✓</span>
             );
         } else {
-          result = <span style={{ color: 'green', fontSize: '18px' }}>✓</span>;
+          result = (
+            <span
+              style={{ color: checkColor, fontSize: '18px' }}
+              title={isUnscannedMatch ? 'Never scanned — system already showed 0' : undefined}
+            >✓</span>
+          );
         }
       } else {
         detail = `System ${item.soh}  Actual ${item.poh}`;

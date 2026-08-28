@@ -56,13 +56,21 @@ const initDatabase = async () => {
         poh INTEGER,
         is_correct BOOLEAN DEFAULT FALSE,
         is_committed BOOLEAN DEFAULT FALSE,
-        scan_count INTEGER NOT NULL DEFAULT 0
+        scan_count INTEGER NOT NULL DEFAULT 0,
+        ever_scanned BOOLEAN NOT NULL DEFAULT FALSE
       )
     `);
 
     // Migration: add scan_count tally, used only by Scan Count mode tasks.
     // Unused (stays 0) for every existing/non-scan-count task item.
     await client.query(`ALTER TABLE task_items ADD COLUMN IF NOT EXISTS scan_count INTEGER NOT NULL DEFAULT 0`).catch(() => {});
+    // Migration: ever_scanned distinguishes, in Scan Count mode, an item the
+    // manager actually scanned at least once from one they never encountered
+    // at all — both can end up with scan_count 0 and is_correct true when
+    // Shopify's on-hand quantity for that SKU is also 0, but only the first
+    // one was actually verified on the floor. See PATCH /scan-count (sets it
+    // true), /restart-scan (resets it), and /complete-scan in tasks.js.
+    await client.query(`ALTER TABLE task_items ADD COLUMN IF NOT EXISTS ever_scanned BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS zero_qty_reports (
