@@ -153,55 +153,21 @@ async function fetchVariantsForTypes(client, types, packageSize, groups) {
   const variants = [];
   let cursor = null;
   let hasNextPage = true;
-  let pageNum = 0;
 
-  // --- Temporary diagnostic logging -----------------------------------
-  // Added to confirm/rule out whether the paginated fetch below is ever
-  // silently truncating results (e.g. a page coming back with GraphQL
-  // `errors` alongside null/partial `data`, which the old code treated
-  // identically to "no more pages" and quietly broke out of the loop on).
-  // Safe to remove once we've confirmed the actual failure mode — this
-  // only adds console output, it does not change any matching/fetch logic.
   while (hasNextPage) {
-    pageNum++;
     const response = await shopifyRequest(client, gqlQuery, { queryString: typeQuery, cursor });
-    if (response?.errors?.length) {
-      console.warn(
-        `[poSkuUpdater] fetchVariantsForTypes page ${pageNum} (types=${JSON.stringify(types)}): ` +
-        `GraphQL returned errors alongside this response: ${JSON.stringify(response.errors)}`
-      );
-    }
     const page = response?.data?.products;
-    if (!page) {
-      console.warn(
-        `[poSkuUpdater] fetchVariantsForTypes page ${pageNum} (types=${JSON.stringify(types)}): ` +
-        `no products data in response — stopping pagination early. Full response: ${JSON.stringify(response)}`
-      );
-      break;
-    }
-    let pageVariantCount = 0;
+    if (!page) break;
     for (const { node: product } of page.edges) {
       for (const { node: variant } of product.variants.edges) {
         variants.push({ product, variant });
-        pageVariantCount++;
       }
       // small politeness delay handled by pagination cadence below
     }
-    console.log(
-      `[poSkuUpdater] fetchVariantsForTypes page ${pageNum} (types=${JSON.stringify(types)}): ` +
-      `${page.edges.length} products, ${pageVariantCount} variants this page, ${variants.length} variants cumulative, ` +
-      `hasNextPage=${page.pageInfo.hasNextPage}`
-    );
     hasNextPage = page.pageInfo.hasNextPage;
     cursor = page.pageInfo.endCursor;
     if (hasNextPage) await new Promise(r => setTimeout(r, 300));
   }
-
-  console.log(
-    `[poSkuUpdater] fetchVariantsForTypes done (types=${JSON.stringify(types)}): ` +
-    `${pageNum} page(s) fetched, ${variants.length} total variant(s)`
-  );
-  // --- End temporary diagnostic logging --------------------------------
 
   return variants;
 }
@@ -237,11 +203,16 @@ function readGroupCost(product, variant, groupIndex) {
 // same as before — even though the preceding DELETE means there is normally
 // nothing to conflict with.
 async function upsertMapping(db, { supplierId, code, sku, productType, packSize, fallbackName, metafieldCost }) {
+  // Conflict target is (supplier_id, code, sku), not (supplier_id, code):
+  // some suppliers legitimately share one code across several SKUs (one
+  // product, several variants, each its own SKU/cost) — matching on code
+  // alone meant the rebuild could only keep one SKU per code, silently
+  // dropping the rest. sku is no longer in the SET list since it's now part
+  // of the match key (a conflicting row already has this exact sku).
   await db.query(
     `INSERT INTO po_supplier_skus (supplier_id, code, sku, name, product_type, pack_size, metafield_cost, updated_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-     ON CONFLICT (supplier_id, code) DO UPDATE SET
-       sku            = EXCLUDED.sku,
+     ON CONFLICT (supplier_id, code, sku) DO UPDATE SET
        product_type   = EXCLUDED.product_type,
        pack_size      = EXCLUDED.pack_size,
        metafield_cost = EXCLUDED.metafield_cost,
@@ -272,39 +243,6 @@ async function runSingleSupplierUpdate(supplierId) {
     const client = new shopify.clients.Graphql({ session });
 
     const records = await fetchVariantsForTypes(client, supplier.types_carrying || [], packageSize, groups);
-
-    // --- Temporary targeted diagnostic -----------------------------------
-    // Dumps everything we know about one specific barcode/SKU so we can see
-    // exactly why it isn't ending up in `matches` below, without guessing.
-    // Safe to remove later — read-only, no effect on the actual update.
-    const DEBUG_TARGET_BARCODE = '846926175824';
-    if (DEBUG_TARGET_BARCODE) {
-      const found = records.filter(r => r.variant.barcode === DEBUG_TARGET_BARCODE);
-      if (found.length === 0) {
-        console.warn(
-          `[poSkuUpdater][DEBUG] barcode ${DEBUG_TARGET_BARCODE} was NOT found among the ${records.length} ` +
-          `fetched records for supplier "${supplier.name}" (types_carrying=${JSON.stringify(supplier.types_carrying)}).`
-        );
-      } else {
-        found.forEach(({ product, variant }, idx) => {
-          const groupDump = groups.map((g, i) => ({
-            group: i,
-            nameProduct: product?.[`grp${i}Name`]?.value ?? null,
-            nameVariant: variant?.[`grp${i}Name`]?.value ?? null,
-            codeProduct: product?.[`grp${i}Code`]?.value ?? null,
-            codeVariant: variant?.[`grp${i}Code`]?.value ?? null,
-            costProduct: product?.[`grp${i}Cost`]?.value ?? null,
-            costVariant: variant?.[`grp${i}Cost`]?.value ?? null,
-          }));
-          console.warn(
-            `[poSkuUpdater][DEBUG] barcode ${DEBUG_TARGET_BARCODE} record #${idx}: ` +
-            `productId=${product.id}, productType=${JSON.stringify(product.productType)}, ` +
-            `supplierNameExpected=${JSON.stringify(supplier.name)}, groups=${JSON.stringify(groupDump)}`
-          );
-        });
-      }
-    }
-    // --- End temporary targeted diagnostic --------------------------------
 
     // Compute all matches in memory first (no DB writes yet) — the wipe only
     // happens once we know the full rebuild set, inside the transaction below.

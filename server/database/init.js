@@ -469,7 +469,7 @@ const initDatabase = async () => {
         metafield_cost NUMERIC(12,4),
         created_at    TIMESTAMPTZ DEFAULT NOW(),
         updated_at    TIMESTAMPTZ DEFAULT NOW(),
-        UNIQUE (supplier_id, code)
+        UNIQUE (supplier_id, code, sku)
       )
     `);
 
@@ -486,6 +486,34 @@ const initDatabase = async () => {
     // in poInvoices.js watches for), so a unique index here would break
     // Update SKU's rebuild the first time that happens.
     await client.query(`CREATE INDEX IF NOT EXISTS idx_po_supplier_skus_supplier_sku ON po_supplier_skus (supplier_id, sku)`).catch(() => {});
+
+    // Migration: relax the old (supplier_id, code) uniqueness to
+    // (supplier_id, code, sku). Some suppliers legitimately share one
+    // "code" across several SKUs (one product, several variants, each with
+    // its own SKU and its own cost) — the old constraint meant Update SKU's
+    // wipe-and-rebuild could only keep ONE of those SKUs per code, silently
+    // dropping the rest with no error (this is what surfaced as "some SKUs
+    // never get updated even though their metafields are correct"). The new
+    // composite key still allows the previously-supported reverse case (two
+    // different codes pointing at the same SKU — the existing SKU-collision
+    // detection in poInvoices.js) while also allowing one code to map to
+    // several SKUs.
+    // DROP CONSTRAINT IF EXISTS never errors even when the constraint or
+    // table predates this migration, so it's safe with no extra guard.
+    await client.query(`ALTER TABLE po_supplier_skus DROP CONSTRAINT IF EXISTS po_supplier_skus_supplier_id_code_key`).catch(() => {});
+    // Guarded by name lookup (rather than a bare ALTER + .catch) so this is
+    // idempotent across repeated deploys without risking the transaction-wide
+    // poisoning a real duplicate-constraint error would otherwise cause.
+    await client.query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'po_supplier_skus_code_sku_key'
+        ) THEN
+          ALTER TABLE po_supplier_skus ADD CONSTRAINT po_supplier_skus_code_sku_key UNIQUE (supplier_id, code, sku);
+        END IF;
+      END $$;
+    `);
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS po_invoices (

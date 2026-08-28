@@ -238,19 +238,39 @@ router.post('/process', async (req, res) => {
       return res.status(400).json({ error: 'No usable rows in this CSV — every row needs a quantity and at least a code or a SKU.' });
     }
 
-    // Duplicate unit code within this CSV (only among rows that carry a
-    // code) → hard error, no processing.
-    const codesForDupeCheck = validRows.map(r => String(r.code || '').trim()).filter(Boolean);
-    const seen = new Set();
-    const dupeCodes = new Set();
-    for (const c of codesForDupeCheck) {
-      if (seen.has(c)) dupeCodes.add(c);
-      seen.add(c);
-    }
-    if (dupeCodes.size > 0) {
+    // A CSV is expected to be homogeneous: either every usable row carries a
+    // SKU directly, or none of them do (resolving purely through this
+    // supplier's code→SKU mapping instead). A mix of the two within one file
+    // is treated as malformed input rather than guessed at row-by-row.
+    const rowsWithSku = validRows.filter(r => !!String(r.sku || '').trim());
+    const rowsWithoutSku = validRows.filter(r => !String(r.sku || '').trim());
+    if (rowsWithSku.length > 0 && rowsWithoutSku.length > 0) {
       return res.status(400).json({
-        error: `Duplicate unit code(s) in CSV: ${Array.from(dupeCodes).join(', ')}. Please fix the CSV and re-upload.`,
+        error: 'processing failed: mixed SKU presence — some rows have a SKU, others do not. Every row in the CSV must either all have a SKU or all omit it.',
       });
+    }
+
+    // Duplicate unit code within this CSV, among rows that resolve purely by
+    // code (no SKU given) → hard error: with no SKU to disambiguate, a
+    // repeated code has no way to know which line it actually refers to.
+    // A code repeated across rows that each carry their own SKU is fine and
+    // expected (one code shared by several SKUs of the same product) — those
+    // rows don't rely on the code→SKU lookup at all, so there's no ambiguity.
+    // (codesForDupeCheck is also reused below for the code→SKU DB lookup,
+    // regardless of which branch this file fell into.)
+    const codesForDupeCheck = validRows.map(r => String(r.code || '').trim()).filter(Boolean);
+    if (rowsWithoutSku.length === validRows.length) {
+      const seen = new Set();
+      const dupeCodes = new Set();
+      for (const c of codesForDupeCheck) {
+        if (seen.has(c)) dupeCodes.add(c);
+        seen.add(c);
+      }
+      if (dupeCodes.size > 0) {
+        return res.status(400).json({
+          error: `Duplicate unit code(s) in CSV: ${Array.from(dupeCodes).join(', ')}. Please fix the CSV and re-upload.`,
+        });
+      }
     }
 
     const supplierRes = await pool.query('SELECT * FROM po_suppliers WHERE id = $1', [supplierId]);
@@ -281,6 +301,18 @@ router.post('/process', async (req, res) => {
           [supplierId, skusToLookup]
         )
       : { rows: [] };
+    // Grouped by code (not deduped to one row) since a code can now
+    // legitimately map to more than one SKU — needed to detect the case
+    // below where a code-only row can't be resolved unambiguously.
+    const byCodeGroups = new Map();
+    byCodeRes.rows.forEach(r => {
+      const list = byCodeGroups.get(r.code) || [];
+      list.push(r);
+      byCodeGroups.set(r.code, list);
+    });
+    // Single-row-per-code convenience map, used only as a secondary
+    // name/cost *hint* below (when a row is given directly as SKU) — not for
+    // identity resolution, so picking one arbitrarily there is harmless.
     const supplierSkuByCode = new Map(byCodeRes.rows.map(r => [r.code, r]));
     const supplierSkuBySku = new Map(bySkuRes.rows.map(r => [r.sku, r]));
 
@@ -297,7 +329,13 @@ router.post('/process', async (req, res) => {
         viaCode = false;
         supplierRow = supplierSkuBySku.get(skuGiven) || (codeGiven ? supplierSkuByCode.get(codeGiven) : null);
       } else {
-        supplierRow = supplierSkuByCode.get(codeGiven);
+        // A code-only row can only be resolved when this code maps to
+        // exactly one SKU for this supplier. If it maps to more than one
+        // (a shared-code product), there's no way to tell which SKU this
+        // row means — treat it the same as "missing" rather than silently
+        // guessing one.
+        const codeMatches = byCodeGroups.get(codeGiven) || [];
+        supplierRow = codeMatches.length === 1 ? codeMatches[0] : null;
         sku = supplierRow?.sku || null;
         isMissing = !sku;
         viaCode = true;
@@ -508,7 +546,19 @@ router.get('/pending/:id', async (req, res) => {
         'SELECT code, sku FROM po_supplier_skus WHERE supplier_id = $1 AND code = ANY($2)',
         [invoice.supplier_id, missingCodes]
       );
-      const found = new Map(skuRes.rows.map(r => [r.code, r.sku]));
+      // Group by code first: a code can now legitimately map to more than
+      // one SKU (a shared-code product). Only resolve here when exactly one
+      // SKU matches — otherwise this item stays "missing" rather than
+      // silently picking one of several possible SKUs.
+      const byCode = new Map();
+      skuRes.rows.forEach(r => {
+        const list = byCode.get(r.code) || [];
+        list.push(r.sku);
+        byCode.set(r.code, list);
+      });
+      const found = new Map(
+        [...byCode.entries()].filter(([, skus]) => skus.length === 1).map(([code, skus]) => [code, skus[0]])
+      );
       let changed = false;
       items = items.map(item => {
         if (item.is_missing && found.has(item.code)) {
@@ -649,17 +699,23 @@ async function commitInvoice(invoiceId) {
         throw new Error(`SKU ${item.sku}: cost update failed — ${costErrors.map(e => e.message).join('; ')}`);
       }
 
+      // Keyed by sku, not code: cost is a property of the physical SKU that
+      // was actually received, not of the (possibly shared) code label on
+      // the invoice line. Keying by code would apply this SKU's cost to
+      // every other SKU sharing that code, and would silently update
+      // nothing at all for a line item resolved directly by SKU with no
+      // code on it (item.code is null there).
       await pool.query(
         `UPDATE po_supplier_skus SET
            last_cost = $1, cost_sum = cost_sum + $1, cost_count = cost_count + 1,
            name = $2, updated_at = NOW()
-         WHERE supplier_id = $3 AND code = $4`,
-        [item.effective_cost, item.name, invoice.supplier_id, item.code]
+         WHERE supplier_id = $3 AND sku = $4`,
+        [item.effective_cost, item.name, invoice.supplier_id, item.sku]
       );
     } else {
       await pool.query(
-        `UPDATE po_supplier_skus SET name = $1, updated_at = NOW() WHERE supplier_id = $2 AND code = $3`,
-        [item.name, invoice.supplier_id, item.code]
+        `UPDATE po_supplier_skus SET name = $1, updated_at = NOW() WHERE supplier_id = $2 AND sku = $3`,
+        [item.name, invoice.supplier_id, item.sku]
       );
     }
 
