@@ -109,6 +109,69 @@ function computeLineItems(rawRows, { currency, fxRate }, adjustment) {
   });
 }
 
+// Recomputes cost_before_adjustment/effective_cost for every current item on
+// a not-yet-committed invoice, from whatever is currently stored in
+// po_invoice_items — used by the inline quantity/cost edit, delete-lineitem,
+// and add-item endpoints below instead of POST /process (which wipes and
+// re-reads the CSV, discarding any manual edits). Also refreshes
+// has_missing_cost / has_missing_sku / has_sku_collision so those flags stay
+// accurate after an edit/delete/add rather than going stale.
+async function recalculateInvoice(client, invoiceId) {
+  const invRes = await client.query('SELECT * FROM po_invoices WHERE id = $1', [invoiceId]);
+  const invoice = invRes.rows[0];
+  if (!invoice) throw new Error('Invoice not found');
+  const supplierRes = await client.query('SELECT * FROM po_suppliers WHERE id = $1', [invoice.supplier_id]);
+  const supplier = supplierRes.rows[0];
+
+  const itemsRes = await client.query('SELECT * FROM po_invoice_items WHERE invoice_id = $1 ORDER BY id ASC', [invoiceId]);
+  const items = itemsRes.rows;
+
+  const adjustment = invoice.adjustment_type
+    ? { type: invoice.adjustment_type, value: Number(invoice.adjustment_value) }
+    : null;
+
+  // Same fallback convention as POST /process: raw_cost is the buyer-visible
+  // "Invoice cost" (null if never set), supplier_cost_raw is the Supplier
+  // cost metafield snapshot used for math when raw_cost is null.
+  const rawRows = items.map(it => {
+    const fallback = it.supplier_cost_raw !== null && it.supplier_cost_raw !== undefined ? Number(it.supplier_cost_raw) : null;
+    const rawCost = it.raw_cost !== null && it.raw_cost !== undefined ? Number(it.raw_cost) : fallback;
+    return { rawCost, unitDiscount: it.unit_discount_raw, quantity: it.quantity };
+  });
+
+  const computed = computeLineItems(rawRows, { currency: supplier.currency, fxRate: supplier.fx_rate }, adjustment);
+
+  for (let i = 0; i < items.length; i++) {
+    await client.query(
+      `UPDATE po_invoice_items SET cost_before_adjustment = $1, effective_cost = $2 WHERE id = $3`,
+      [computed[i].costBeforeAdjustment, computed[i].effectiveCost, items[i].id]
+    );
+  }
+
+  const hasMissingCost = items.some(it => it.raw_cost === null && it.supplier_cost_raw === null);
+  const hasMissingSku = items.some(it => it.is_missing);
+
+  // SKU-collision heuristic: which items were originally resolved "via code"
+  // (the ambiguous path) isn't persisted per row, so this approximates a
+  // real collision as "the same SKU appears on two rows carrying two
+  // different non-null codes" — a genuine code→SKU collision always looks
+  // like this, while a shared-code product's siblings never do (they have
+  // different SKUs by definition).
+  const bySku = new Map();
+  items.forEach(it => {
+    if (!it.sku || !it.code) return;
+    const codes = bySku.get(it.sku) || new Set();
+    codes.add(it.code);
+    bySku.set(it.sku, codes);
+  });
+  const hasCollision = [...bySku.values()].some(codes => codes.size > 1);
+
+  await client.query(
+    `UPDATE po_invoices SET has_missing_cost = $1, has_missing_sku = $2, has_sku_collision = $3, updated_at = NOW() WHERE id = $4`,
+    [hasMissingCost, hasMissingSku, hasCollision, invoiceId]
+  );
+}
+
 // Generates the next auto-assigned, canonical PO number: PO-A000, PO-A001,
 // … PO-A999, PO-B000, … Assigned once, at the moment a pending invoice row
 // is first created (POST /process with no invoiceId) — never reassigned on
@@ -223,7 +286,7 @@ router.get('/check-number', async (req, res) => {
 router.post('/process', async (req, res) => {
   const client = await pool.connect();
   try {
-    const { invoiceId, invoiceNumber, supplierId, location, adjustment: adjustmentRaw, rows } = req.body;
+    const { invoiceId, invoiceNumber, supplierId, location, invoiceDate, adjustment: adjustmentRaw, rows } = req.body;
 
     if (!supplierId || !location || !rows?.length) {
       return res.status(400).json({ error: 'Missing required fields' });
@@ -435,11 +498,12 @@ router.post('/process', async (req, res) => {
         `UPDATE po_invoices SET
            invoice_number = $1, supplier_id = $2, location = $3,
            shopify_location_id = $4, adjustment_type = $5, adjustment_value = $6,
-           has_missing_sku = $7, has_sku_collision = $8, has_missing_cost = $9, updated_at = NOW()
-         WHERE id = $10 AND status = 'pending' RETURNING *`,
+           has_missing_sku = $7, has_sku_collision = $8, has_missing_cost = $9, invoice_date = $10, updated_at = NOW()
+         WHERE id = $11 AND status = 'pending' RETURNING *`,
         [
           invoiceNumber || null, supplierId, location, shopifyLocationId,
-          adjustment?.type || null, adjustment?.value ?? null, hasMissing, hasCollision, hasMissingCost, invoiceId,
+          adjustment?.type || null, adjustment?.value ?? null, hasMissing, hasCollision, hasMissingCost,
+          invoiceDate || null, invoiceId,
         ]
       );
       if (updated.rows.length === 0) throw new Error('Invoice not found or already committed');
@@ -450,24 +514,30 @@ router.post('/process', async (req, res) => {
       const inserted = await client.query(
         `INSERT INTO po_invoices
            (invoice_number, supplier_id, location, shopify_location_id,
-            adjustment_type, adjustment_value, has_missing_sku, has_sku_collision, has_missing_cost, po_number, status, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'pending',NOW()) RETURNING *`,
+            adjustment_type, adjustment_value, has_missing_sku, has_sku_collision, has_missing_cost, po_number, invoice_date, status, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'pending',NOW()) RETURNING *`,
         [
           invoiceNumber || null, supplierId, location, shopifyLocationId,
           adjustment?.type || null, adjustment?.value ?? null, hasMissing, hasCollision, hasMissingCost, poNumber,
+          invoiceDate || null,
         ]
       );
       invoiceRow = inserted.rows[0];
     }
 
+    // quantity_original/raw_cost_original snapshot what this process pass
+    // produced — the baseline the buyer's later inline edits (Card 4) get
+    // struck through against. A re-process (invoiceId present, CSV
+    // re-uploaded) resets this baseline too, since it's a fresh CSV read.
     for (const item of finalItems) {
       await client.query(
         `INSERT INTO po_invoice_items
-           (invoice_id, code, sku, name, quantity, raw_cost, unit_discount_raw, cost_before_adjustment, effective_cost, supplier_cost_raw, is_missing)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+           (invoice_id, code, sku, name, quantity, raw_cost, unit_discount_raw, cost_before_adjustment, effective_cost, supplier_cost_raw, is_missing, quantity_original, raw_cost_original)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
         [
           invoiceRow.id, item.code, item.sku, item.name, item.quantity, item.raw_cost,
           item.unit_discount_raw, item.cost_before_adjustment, item.effective_cost, item.supplier_cost_raw, item.is_missing,
+          item.quantity, item.raw_cost,
         ]
       );
     }
@@ -604,6 +674,373 @@ router.patch('/pending/:id', async (req, res) => {
   }
 });
 
+// PATCH /api/po-invoices/pending/:id/items/:itemId — body: { quantity?, cost? }
+// Inline edit of a single line item's quantity and/or invoice cost (Card 4).
+// quantity_original/raw_cost_original are left untouched — that's the
+// baseline the UI strikes through against — only the current quantity/
+// raw_cost columns change. Recalculates the whole invoice afterward since an
+// adjustment (if any) is spread proportionally across every row's subtotal.
+router.patch('/pending/:id/items/:itemId', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { id, itemId } = req.params;
+    const { quantity, cost } = req.body;
+
+    const invRes = await pool.query('SELECT status FROM po_invoices WHERE id = $1', [id]);
+    if (invRes.rows.length === 0) return res.status(404).json({ error: 'Invoice not found' });
+    if (invRes.rows[0].status === 'committed') return res.status(400).json({ error: 'Invoice already committed' });
+
+    const sets = [];
+    const params = [];
+    if (quantity !== undefined) {
+      const q = parseFloat(quantity);
+      if (isNaN(q) || q < 0) return res.status(400).json({ error: 'Invalid quantity' });
+      params.push(q);
+      sets.push(`quantity = $${params.length}`);
+    }
+    if (cost !== undefined) {
+      const c = (cost === null || cost === '') ? null : parseFloat(cost);
+      if (cost !== null && cost !== '' && isNaN(c)) return res.status(400).json({ error: 'Invalid cost' });
+      params.push(c);
+      sets.push(`raw_cost = $${params.length}`);
+    }
+    if (sets.length === 0) return res.status(400).json({ error: 'Nothing to update' });
+
+    params.push(itemId, id);
+    await client.query(
+      `UPDATE po_invoice_items SET ${sets.join(', ')} WHERE id = $${params.length - 1} AND invoice_id = $${params.length}`,
+      params
+    );
+
+    await recalculateInvoice(client, id);
+
+    const invoiceRes = await client.query(
+      `SELECT i.*, s.name AS supplier_name, s.currency AS supplier_currency, s.fx_rate
+       FROM po_invoices i JOIN po_suppliers s ON s.id = i.supplier_id WHERE i.id = $1`,
+      [id]
+    );
+    const itemsRes = await client.query('SELECT * FROM po_invoice_items WHERE invoice_id = $1 ORDER BY id ASC', [id]);
+    res.json({ invoice: invoiceRes.rows[0], items: itemsRes.rows });
+  } catch (e) {
+    console.error('PATCH /api/po-invoices/pending/:id/items/:itemId error:', e);
+    res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
+  }
+});
+
+// DELETE /api/po-invoices/pending/:id/items — body: { itemIds: [...] }
+// Removes selected line items entirely (as if they were never in the CSV),
+// then recalculates the invoice.
+router.delete('/pending/:id/items', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { id } = req.params;
+    const { itemIds } = req.body;
+    if (!itemIds || itemIds.length === 0) return res.status(400).json({ error: 'No items provided' });
+
+    const invRes = await pool.query('SELECT status FROM po_invoices WHERE id = $1', [id]);
+    if (invRes.rows.length === 0) return res.status(404).json({ error: 'Invoice not found' });
+    if (invRes.rows[0].status === 'committed') return res.status(400).json({ error: 'Invoice already committed' });
+
+    await client.query('DELETE FROM po_invoice_items WHERE id = ANY($1) AND invoice_id = $2', [itemIds, id]);
+    await recalculateInvoice(client, id);
+
+    const invoiceRes = await client.query(
+      `SELECT i.*, s.name AS supplier_name, s.currency AS supplier_currency, s.fx_rate
+       FROM po_invoices i JOIN po_suppliers s ON s.id = i.supplier_id WHERE i.id = $1`,
+      [id]
+    );
+    const itemsRes = await client.query('SELECT * FROM po_invoice_items WHERE invoice_id = $1 ORDER BY id ASC', [id]);
+    res.json({ invoice: invoiceRes.rows[0], items: itemsRes.rows });
+  } catch (e) {
+    console.error('DELETE /api/po-invoices/pending/:id/items error:', e);
+    res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
+  }
+});
+
+// POST /api/po-invoices/pending/:id/items — body: { codeOrSku, quantity?, cost? }
+// "+ item": looks codeOrSku up against this invoice's supplier's saved
+// code→SKU mapping (po_supplier_skus) — an exact SKU match wins; otherwise a
+// code match is used only if it resolves to exactly one SKU (a code shared
+// across several SKUs is rejected as ambiguous, same policy as CSV import).
+// quantity defaults to 1; a blank cost means "use supplier cost" — stored as
+// NULL raw_cost, which falls back to the Supplier cost metafield at
+// recalculation time exactly like a blank CSV cost cell.
+router.post('/pending/:id/items', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { id } = req.params;
+    const { codeOrSku, quantity, cost } = req.body;
+    const input = String(codeOrSku || '').trim();
+    if (!input) return res.status(400).json({ error: 'Enter a SKU or code' });
+
+    const invRes = await pool.query('SELECT * FROM po_invoices WHERE id = $1', [id]);
+    if (invRes.rows.length === 0) return res.status(404).json({ error: 'Invoice not found' });
+    const invoice = invRes.rows[0];
+    if (invoice.status === 'committed') return res.status(400).json({ error: 'Invoice already committed' });
+
+    const bySku = await pool.query(
+      'SELECT * FROM po_supplier_skus WHERE supplier_id = $1 AND sku = $2 LIMIT 1',
+      [invoice.supplier_id, input]
+    );
+    let matchRow = bySku.rows[0] || null;
+    if (!matchRow) {
+      const byCode = await pool.query(
+        'SELECT * FROM po_supplier_skus WHERE supplier_id = $1 AND code = $2',
+        [invoice.supplier_id, input]
+      );
+      if (byCode.rows.length === 1) {
+        matchRow = byCode.rows[0];
+      } else if (byCode.rows.length > 1) {
+        return res.status(400).json({ error: 'This code matches more than one SKU for this supplier — enter the exact SKU instead.' });
+      }
+    }
+    if (!matchRow) return res.status(400).json({ error: 'This SKU/code has not been updated yet.' });
+
+    const qty = (quantity !== undefined && quantity !== '') ? parseFloat(quantity) : 1;
+    if (isNaN(qty) || qty <= 0) return res.status(400).json({ error: 'Invalid quantity' });
+    let rawCost = null;
+    if (cost !== undefined && cost !== null && cost !== '') {
+      rawCost = parseFloat(cost);
+      if (isNaN(rawCost)) return res.status(400).json({ error: 'Invalid cost' });
+    }
+    const supplierCostRaw = (matchRow.metafield_cost !== null && matchRow.metafield_cost !== undefined)
+      ? Number(matchRow.metafield_cost) : null;
+
+    const inserted = await client.query(
+      `INSERT INTO po_invoice_items
+         (invoice_id, code, sku, name, quantity, raw_cost, supplier_cost_raw, is_missing, quantity_original, raw_cost_original)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,FALSE,$8,$9) RETURNING id`,
+      [id, matchRow.code, matchRow.sku, matchRow.name || null, qty, rawCost, supplierCostRaw, qty, rawCost]
+    );
+
+    await recalculateInvoice(client, id);
+
+    const invoiceRes = await client.query(
+      `SELECT i.*, s.name AS supplier_name, s.currency AS supplier_currency, s.fx_rate
+       FROM po_invoices i JOIN po_suppliers s ON s.id = i.supplier_id WHERE i.id = $1`,
+      [id]
+    );
+    const itemsRes = await client.query('SELECT * FROM po_invoice_items WHERE invoice_id = $1 ORDER BY id ASC', [id]);
+    res.json({ invoice: invoiceRes.rows[0], items: itemsRes.rows, addedItemId: inserted.rows[0].id });
+  } catch (e) {
+    console.error('POST /api/po-invoices/pending/:id/items error:', e);
+    res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
+  }
+});
+
+// PATCH /api/po-invoices/pending/:id/reference — body: { referenceNumber }
+// invoice_number doubles as the "reference number" shown/edited inline next
+// to the invoice title. Editable any time before commit.
+router.patch('/pending/:id/reference', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { referenceNumber } = req.body;
+    const result = await pool.query(
+      `UPDATE po_invoices SET invoice_number = $1, updated_at = NOW() WHERE id = $2 AND status != 'committed' RETURNING *`,
+      [referenceNumber ? String(referenceNumber).trim() : null, id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Invoice not found or already committed' });
+    res.json(result.rows[0]);
+  } catch (e) {
+    console.error('PATCH /api/po-invoices/pending/:id/reference error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── Notes (buyer + manager, one each, manager's is a "reply") ─────────────
+
+router.post('/pending/:id/notes/buyer', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { text } = req.body;
+    if (!text || !text.trim()) return res.status(400).json({ error: 'Note text required' });
+    const cur = await pool.query('SELECT buyer_note, status FROM po_invoices WHERE id = $1', [id]);
+    if (cur.rows.length === 0) return res.status(404).json({ error: 'Invoice not found' });
+    if (cur.rows[0].buyer_note) return res.status(400).json({ error: 'Note exists already, delete it to create new' });
+    if (['store_counted', 'committed'].includes(cur.rows[0].status)) {
+      return res.status(400).json({ error: 'This invoice can no longer be annotated by the buyer' });
+    }
+    const result = await pool.query(
+      `UPDATE po_invoices SET buyer_note = $1, buyer_note_at = NOW(), updated_at = NOW() WHERE id = $2 RETURNING *`,
+      [text.trim(), id]
+    );
+    res.json(result.rows[0]);
+  } catch (e) {
+    console.error('POST /api/po-invoices/pending/:id/notes/buyer error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.delete('/pending/:id/notes/buyer', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await pool.query(
+      `UPDATE po_invoices SET buyer_note = NULL, buyer_note_at = NULL, updated_at = NOW() WHERE id = $1 RETURNING *`,
+      [id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Invoice not found' });
+    res.json(result.rows[0]);
+  } catch (e) {
+    console.error('DELETE /api/po-invoices/pending/:id/notes/buyer error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post('/pending/:id/notes/manager', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { text } = req.body;
+    if (!text || !text.trim()) return res.status(400).json({ error: 'Note text required' });
+    const cur = await pool.query('SELECT manager_note FROM po_invoices WHERE id = $1', [id]);
+    if (cur.rows.length === 0) return res.status(404).json({ error: 'Invoice not found' });
+    if (cur.rows[0].manager_note) return res.status(400).json({ error: 'Note exists already, delete it to create new' });
+    const result = await pool.query(
+      `UPDATE po_invoices SET manager_note = $1, manager_note_at = NOW(), updated_at = NOW() WHERE id = $2 RETURNING *`,
+      [text.trim(), id]
+    );
+    res.json(result.rows[0]);
+  } catch (e) {
+    console.error('POST /api/po-invoices/pending/:id/notes/manager error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.delete('/pending/:id/notes/manager', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await pool.query(
+      `UPDATE po_invoices SET manager_note = NULL, manager_note_at = NULL, updated_at = NOW() WHERE id = $1 RETURNING *`,
+      [id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Invoice not found' });
+    res.json(result.rows[0]);
+  } catch (e) {
+    console.error('DELETE /api/po-invoices/pending/:id/notes/manager error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── Send to store ──────────────────────────────────────────────────────────
+
+// POST /api/po-invoices/pending/:id/send-to-store
+// 'pending' ("Commit later") → 'sent_to_store' ("Sent to store", blue pill).
+// Only valid from 'pending' — an already-sent or already-counted invoice
+// can't be re-sent through this endpoint.
+router.post('/pending/:id/send-to-store', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await pool.query(
+      `UPDATE po_invoices SET status = 'sent_to_store', sent_to_store_at = NOW(), updated_at = NOW()
+       WHERE id = $1 AND status = 'pending' RETURNING *`,
+      [id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(400).json({ error: 'Invoice not found, or not in a state that can be sent to store' });
+    }
+    res.json(result.rows[0]);
+  } catch (e) {
+    console.error('POST /api/po-invoices/pending/:id/send-to-store error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── Manager: PO Receiving (counting) ───────────────────────────────────────
+
+// GET /api/po-invoices/manager/receiving?location=...
+// Invoices sent to this location, still awaiting the manager's count.
+router.get('/manager/receiving', async (req, res) => {
+  try {
+    const { location } = req.query;
+    if (!location) return res.status(400).json({ error: 'Missing location' });
+    const result = await pool.query(
+      `SELECT i.id, i.invoice_number, i.po_number, i.sent_to_store_at, s.name AS supplier_name,
+              COALESCE(SUM(it.quantity), 0) AS total_quantity,
+              COUNT(it.id) AS total_lineitems,
+              COUNT(it.id) FILTER (WHERE it.store_count IS NOT NULL) AS counted_lineitems
+       FROM po_invoices i
+       JOIN po_suppliers s ON s.id = i.supplier_id
+       LEFT JOIN po_invoice_items it ON it.invoice_id = i.id
+       WHERE i.status = 'sent_to_store' AND i.location = $1
+       GROUP BY i.id, i.invoice_number, i.po_number, i.sent_to_store_at, s.name
+       ORDER BY i.sent_to_store_at ASC`,
+      [location]
+    );
+    res.json(result.rows);
+  } catch (e) {
+    console.error('GET /api/po-invoices/manager/receiving error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/po-invoices/manager/receiving/:id
+router.get('/manager/receiving/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const invRes = await pool.query(
+      `SELECT i.*, s.name AS supplier_name FROM po_invoices i JOIN po_suppliers s ON s.id = i.supplier_id
+       WHERE i.id = $1 AND i.status = 'sent_to_store'`,
+      [id]
+    );
+    if (invRes.rows.length === 0) return res.status(404).json({ error: 'Invoice not found' });
+    const itemsRes = await pool.query('SELECT * FROM po_invoice_items WHERE invoice_id = $1 ORDER BY id ASC', [id]);
+    res.json({ invoice: invRes.rows[0], items: itemsRes.rows });
+  } catch (e) {
+    console.error('GET /api/po-invoices/manager/receiving/:id error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PATCH /api/po-invoices/manager/receiving/:id/items/:itemId/count — body: { count }
+// Saved immediately on every modal submit (not batched until the final
+// Submit) so leaving/closing the app mid-count never loses progress.
+router.patch('/manager/receiving/:id/items/:itemId/count', async (req, res) => {
+  try {
+    const { id, itemId } = req.params;
+    const { count } = req.body;
+    const c = parseInt(count, 10);
+    if (isNaN(c) || c < 0) return res.status(400).json({ error: 'Invalid count' });
+    const result = await pool.query(
+      `UPDATE po_invoice_items SET store_count = $1 WHERE id = $2 AND invoice_id = $3 RETURNING *`,
+      [c, itemId, id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Item not found' });
+    res.json(result.rows[0]);
+  } catch (e) {
+    console.error('PATCH /api/po-invoices/manager/receiving/:id/items/:itemId/count error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/po-invoices/manager/receiving/:id/submit
+// 'sent_to_store' → 'store_counted' (green pill on the buyer side). Requires
+// every line item to have a store_count already (each already persisted by
+// the PATCH above as the manager worked through them).
+router.post('/manager/receiving/:id/submit', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const itemsRes = await pool.query('SELECT id, store_count FROM po_invoice_items WHERE invoice_id = $1', [id]);
+    if (itemsRes.rows.length === 0 || itemsRes.rows.some(it => it.store_count === null)) {
+      return res.status(400).json({ error: 'Not all line items have been counted yet' });
+    }
+    const result = await pool.query(
+      `UPDATE po_invoices SET status = 'store_counted', store_counted_at = NOW(), updated_at = NOW()
+       WHERE id = $1 AND status = 'sent_to_store' RETURNING *`,
+      [id]
+    );
+    if (result.rows.length === 0) return res.status(400).json({ error: 'Invoice not found or not in a countable state' });
+    res.json(result.rows[0]);
+  } catch (e) {
+    console.error('POST /api/po-invoices/manager/receiving/:id/submit error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // DELETE /api/po-invoices/pending — body: { ids: [...] }
 router.delete('/pending', async (req, res) => {
   try {
@@ -660,6 +1097,9 @@ async function commitInvoice(invoiceId) {
   if (invRes.rows.length === 0) throw new Error('Invoice not found');
   const invoice = invRes.rows[0];
   if (invoice.status === 'committed') return { alreadyCommitted: true };
+  if (invoice.status === 'sent_to_store') {
+    throw new Error('This invoice has been sent to store and must be counted by the manager before it can be committed');
+  }
   if (invoice.has_missing_sku) throw new Error('Invoice has line item(s) missing SKU');
   if (invoice.has_sku_collision) throw new Error('Invoice has line item(s) with a SKU collision');
   // has_missing_cost no longer blocks commit — a line item with no cost
@@ -683,12 +1123,21 @@ async function commitInvoice(invoiceId) {
     const snapshot = await getVariantSnapshot(client, item.sku);
     if (!snapshot) throw new Error(`SKU ${item.sku}: inventory item not found in Shopify`);
 
+    // If the manager counted this item (store_count is not null), the count
+    // reflects what was physically received and overrides the original
+    // invoice quantity for both the cost-averaging math and the actual
+    // inventory adjustment. store_count of 0 is a legitimate real count
+    // (nothing received), so it must NOT fall back to item.quantity.
+    const actualQty = (item.store_count !== null && item.store_count !== undefined)
+      ? item.store_count
+      : item.quantity;
+
     const hasCost = item.effective_cost !== null && item.effective_cost !== undefined;
 
     if (!invoice.is_promotional && hasCost) {
-      const totalQty = snapshot.currentQty + item.quantity;
+      const totalQty = snapshot.currentQty + actualQty;
       const newCost = totalQty > 0
-        ? (snapshot.currentQty * snapshot.currentCost + item.quantity * Number(item.effective_cost)) / totalQty
+        ? (snapshot.currentQty * snapshot.currentCost + actualQty * Number(item.effective_cost)) / totalQty
         : Number(item.effective_cost);
 
       const costResp = await shopifyRequest(client, `
@@ -715,27 +1164,32 @@ async function commitInvoice(invoiceId) {
       [item.name, invoice.supplier_id, item.sku]
     );
 
-    const invResp = await shopifyRequest(client, `
-      mutation adjustInventory($input: InventoryAdjustQuantitiesInput!) {
-        inventoryAdjustQuantities(input: $input) {
-          inventoryAdjustmentGroup { id }
-          userErrors { field message code }
+    // A store-counted item with an actual count of 0 (nothing received)
+    // needs no inventory change at all — skip the mutation rather than
+    // sending a no-op delta of 0.
+    if (actualQty !== 0) {
+      const invResp = await shopifyRequest(client, `
+        mutation adjustInventory($input: InventoryAdjustQuantitiesInput!) {
+          inventoryAdjustQuantities(input: $input) {
+            inventoryAdjustmentGroup { id }
+            userErrors { field message code }
+          }
         }
+      `, {
+        input: {
+          reason: 'received',
+          name: 'available',
+          changes: [{
+            inventoryItemId: snapshot.inventoryItemId,
+            locationId: invoice.shopify_location_id,
+            delta: actualQty,
+          }],
+        },
+      });
+      const invErrors = invResp?.data?.inventoryAdjustQuantities?.userErrors || [];
+      if (invErrors.length > 0) {
+        throw new Error(`SKU ${item.sku}: inventory adjustment failed — ${invErrors.map(e => e.message).join('; ')}`);
       }
-    `, {
-      input: {
-        reason: 'received',
-        name: 'available',
-        changes: [{
-          inventoryItemId: snapshot.inventoryItemId,
-          locationId: invoice.shopify_location_id,
-          delta: item.quantity,
-        }],
-      },
-    });
-    const invErrors = invResp?.data?.inventoryAdjustQuantities?.userErrors || [];
-    if (invErrors.length > 0) {
-      throw new Error(`SKU ${item.sku}: inventory adjustment failed — ${invErrors.map(e => e.message).join('; ')}`);
     }
 
     // Mark this item done immediately so a mid-loop failure on a later item
