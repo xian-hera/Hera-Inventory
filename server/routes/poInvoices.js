@@ -1322,7 +1322,7 @@ router.get('/:id/export-pdf', async (req, res) => {
   try {
     const { id } = req.params;
     const invRes = await pool.query(
-      `SELECT i.*, s.types_carrying FROM po_invoices i JOIN po_suppliers s ON s.id = i.supplier_id WHERE i.id = $1`,
+      `SELECT i.*, s.types_carrying, s.name AS supplier_name FROM po_invoices i JOIN po_suppliers s ON s.id = i.supplier_id WHERE i.id = $1`,
       [id]
     );
     if (invRes.rows.length === 0) return res.status(404).json({ error: 'Invoice not found' });
@@ -1372,7 +1372,10 @@ router.get('/:id/export-pdf', async (req, res) => {
           console.error(`export-pdf: metafield lookup failed for SKU ${item.sku}:`, e.message);
         }
       }
-      rows.push([item.code || '', wigNumber, item.sku || '', name, String(item.quantity)]);
+      // No Code column — the manager receiving a printed copy doesn't need
+      // the supplier's internal code, only what identifies the physical item
+      // (Wig number / SKU / Name) and how many to count.
+      rows.push([wigNumber, item.sku || '', name, String(item.quantity)]);
     }
 
     const PDFDocument = require('pdfkit');
@@ -1383,47 +1386,75 @@ router.get('/:id/export-pdf', async (req, res) => {
     const doc = new PDFDocument({ size: 'LETTER', margin: 40 });
     doc.pipe(res);
 
-    doc.fontSize(16).text(invoice.po_number || invoice.invoice_number || 'Invoice', { continued: false });
+    // Title carries the supplier name too — a manager looking at a printed
+    // page needs to know at a glance which supplier this invoice is from.
+    doc.fontSize(16).text(`${invoice.po_number || invoice.invoice_number || 'Invoice'}  ${invoice.supplier_name || ''}`, { continued: false });
     if (invoice.po_number && invoice.invoice_number) {
       doc.fontSize(9).fillColor('#6d7175').text(`Ref: ${invoice.invoice_number}`);
     }
     doc.moveDown(0.5);
 
+    // Count is a wide blank column — left for the manager to fill in by hand
+    // off the printed page (the counted quantity, or a note), so it gets
+    // generous width rather than just enough for a number.
     const cols = [
-      { label: 'Code', width: 90 },
-      { label: 'Wig number', width: 90 },
-      { label: 'SKU', width: 110 },
-      { label: 'Name', width: 160 },
-      { label: 'Qty', width: 50 },
+      { label: 'Wig number', width: 80, key: 0 },
+      { label: 'SKU', width: 100, key: 1 },
+      { label: 'Name', width: 180, key: 2 },
+      { label: 'Qty', width: 40, key: 3 },
+      { label: 'Count', width: 130, key: null },
     ];
     const startX = doc.page.margins.left;
-    const rowHeight = 20;
+    const tableWidth = cols.reduce((s, c) => s + c.width, 0);
+    const rowVPad = 8; // top+bottom padding inside each row, on top of the wrapped text height
+    const headerHeight = 20;
 
     const drawHeader = (y) => {
       let x = startX;
       doc.fontSize(9).fillColor('#6d7175');
       cols.forEach(c => { doc.text(c.label, x, y, { width: c.width }); x += c.width; });
-      doc.moveTo(startX, y + 14).lineTo(startX + cols.reduce((s, c) => s + c.width, 0), y + 14)
-        .strokeColor('#e1e3e5').stroke();
+      doc.moveTo(startX, y + headerHeight - 6).lineTo(startX + tableWidth, y + headerHeight - 6)
+        .strokeColor('#c9cccf').lineWidth(1).stroke();
     };
 
     let y = doc.y;
     drawHeader(y);
-    y += 20;
+    y += headerHeight;
     doc.fillColor('#000');
 
     rows.forEach((r) => {
+      // Row height adapts to however tall the Name cell wraps to (the
+      // tallest cell in the row), so wrapped names never crowd into the
+      // next row — every row keeps the same consistent padding above and
+      // below its own content instead.
+      doc.fontSize(9);
+      const cellHeights = cols.map((c, i) => (
+        c.key === null ? 0 : doc.heightOfString(r[c.key] || '', { width: c.width })
+      ));
+      const contentHeight = Math.max(...cellHeights, 10);
+      const rowHeight = contentHeight + rowVPad;
+
       if (y + rowHeight > doc.page.height - doc.page.margins.bottom) {
         doc.addPage();
         y = doc.page.margins.top;
         drawHeader(y);
-        y += 20;
+        y += headerHeight;
         doc.fillColor('#000');
       }
+
       let x = startX;
-      doc.fontSize(9);
-      r.forEach((cell, i) => { doc.text(cell, x, y, { width: cols[i].width }); x += cols[i].width; });
+      cols.forEach((c, i) => {
+        if (c.key !== null) doc.text(r[c.key] || '', x, y, { width: c.width });
+        x += c.width;
+      });
       y += rowHeight;
+
+      // A faint divider between rows — keeps rows visually separated even
+      // when a wrapped Name pushes the row taller than the single-line rows
+      // around it.
+      doc.moveTo(startX, y - 4).lineTo(startX + tableWidth, y - 4)
+        .strokeColor('#f1f1f1').lineWidth(0.5).stroke();
+      doc.fillColor('#000');
     });
 
     doc.end();

@@ -142,6 +142,7 @@ function BuyerPOImportInvoice() {
   // Card 4 — inline editing / selection / add-item
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [editingItemId, setEditingItemId] = useState(null);
+  const [editingField, setEditingField] = useState(null); // 'quantity' | 'cost'
   const [editQtyDraft, setEditQtyDraft] = useState('');
   const [editCostDraft, setEditCostDraft] = useState('');
   const [savingItemEdit, setSavingItemEdit] = useState(false);
@@ -567,26 +568,39 @@ function BuyerPOImportInvoice() {
     setHasMissingCost(!!data.invoice.has_missing_cost);
   };
 
-  const startEditItem = (item) => {
+  // editingItemId/editingField together identify a single cell being edited
+  // — clicking quantity only ever puts quantity into edit mode, clicking
+  // cost only ever puts cost into edit mode, never both at once.
+  const startEditQty = (item) => {
     setEditingItemId(item.id);
+    setEditingField('quantity');
     setEditQtyDraft(String(item.quantity));
+  };
+
+  const startEditCost = (item) => {
+    setEditingItemId(item.id);
+    setEditingField('cost');
     setEditCostDraft(item.raw_cost !== null && item.raw_cost !== undefined ? String(item.raw_cost) : '');
   };
 
   const cancelEditItem = () => {
     setEditingItemId(null);
+    setEditingField(null);
     setEditQtyDraft('');
     setEditCostDraft('');
   };
 
-  const saveEditItem = async (itemId) => {
+  const saveEditItem = async (itemId, field) => {
     setSavingItemEdit(true);
     setError('');
     try {
+      const body = field === 'quantity'
+        ? { quantity: editQtyDraft }
+        : { cost: editCostDraft === '' ? null : editCostDraft };
       const res = await fetch(`/api/po-invoices/pending/${invoiceId}/items/${itemId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ quantity: editQtyDraft, cost: editCostDraft === '' ? null : editCostDraft }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
@@ -1250,7 +1264,8 @@ function BuyerPOImportInvoice() {
                           const rawCostCad = isUsdSupplier && hasRawCost ? Number(it.raw_cost) * Number(supplier?.fx_rate || 1) : null;
                           const showStrike = isUsdSupplier && rawCostCad !== null && hasEffectiveCost
                             && rawCostCad.toFixed(2) !== Number(it.effective_cost).toFixed(2);
-                          const isEditingRow = editingItemId === it.id;
+                          const isEditingQty = editingItemId === it.id && editingField === 'quantity';
+                          const isEditingCost = editingItemId === it.id && editingField === 'cost';
                           const qtyEdited = it.quantity_original !== null && it.quantity_original !== undefined
                             && Number(it.quantity_original) !== Number(it.quantity);
                           const costEdited = it.raw_cost_original !== null && it.raw_cost_original !== undefined
@@ -1274,12 +1289,41 @@ function BuyerPOImportInvoice() {
                               <td style={{ padding: '10px' }}>{it.code}</td>
                               <td style={{ padding: '10px' }}>{it.name}</td>
                               <td style={{ padding: '10px' }}>
-                                {isEditingRow ? (
-                                  <div style={{ width: 70 }}>
-                                    <TextField label="" labelHidden type="number" value={editQtyDraft} onChange={setEditQtyDraft} autoComplete="off" />
-                                  </div>
+                                {isEditingQty ? (
+                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', whiteSpace: 'nowrap' }}>
+                                    <input
+                                      type="number"
+                                      value={editQtyDraft}
+                                      onChange={(e) => setEditQtyDraft(e.target.value)}
+                                      autoFocus
+                                      style={{
+                                        width: '3.5em', padding: '4px 6px', fontSize: '13px',
+                                        border: '1px solid #c9cccf', borderRadius: '6px', boxSizing: 'content-box',
+                                      }}
+                                    />
+                                    <button
+                                      onClick={() => saveEditItem(it.id, 'quantity')}
+                                      disabled={savingItemEdit}
+                                      title="Save"
+                                      style={{
+                                        width: '22px', height: '22px', padding: 0, lineHeight: 1,
+                                        border: '1px solid #008060', borderRadius: '4px', background: '#e3f1df',
+                                        color: '#008060', cursor: savingItemEdit ? 'default' : 'pointer', fontWeight: 700,
+                                      }}
+                                    >✓</button>
+                                    <button
+                                      onClick={cancelEditItem}
+                                      disabled={savingItemEdit}
+                                      title="Cancel"
+                                      style={{
+                                        width: '22px', height: '22px', padding: 0, lineHeight: 1,
+                                        border: '1px solid #c9cccf', borderRadius: '4px', background: 'white',
+                                        color: '#6d7175', cursor: savingItemEdit ? 'default' : 'pointer', fontWeight: 700,
+                                      }}
+                                    >✕</button>
+                                  </span>
                                 ) : itemsEditable ? (
-                                  <span style={{ cursor: 'pointer' }} onClick={() => startEditItem(it)}>
+                                  <span style={{ cursor: 'pointer' }} onClick={() => startEditQty(it)}>
                                     {qtyEdited && (
                                       <span style={{ textDecoration: 'line-through', color: '#8c9196', fontSize: '11px', marginRight: '6px' }}>
                                         {it.quantity_original}
@@ -1299,16 +1343,42 @@ function BuyerPOImportInvoice() {
                                 )}
                               </td>
                               <td style={{ padding: '10px', fontWeight: highlighted && compareMode === 'invoice_cost' ? 'bold' : undefined }}>
-                                {isEditingRow ? (
-                                  <InlineStack gap="100" blockAlign="center">
-                                    <div style={{ width: 80 }}>
-                                      <TextField label="" labelHidden type="number" value={editCostDraft} onChange={setEditCostDraft} autoComplete="off" placeholder="blank = supplier cost" />
-                                    </div>
-                                    <Button size="slim" onClick={() => saveEditItem(it.id)} loading={savingItemEdit}>Save</Button>
-                                    <Button size="slim" onClick={cancelEditItem} disabled={savingItemEdit}>Cancel</Button>
-                                  </InlineStack>
+                                {isEditingCost ? (
+                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', whiteSpace: 'nowrap' }}>
+                                    <input
+                                      type="number"
+                                      value={editCostDraft}
+                                      onChange={(e) => setEditCostDraft(e.target.value)}
+                                      placeholder="—"
+                                      autoFocus
+                                      style={{
+                                        width: '4.5em', padding: '4px 6px', fontSize: '13px',
+                                        border: '1px solid #c9cccf', borderRadius: '6px', boxSizing: 'content-box',
+                                      }}
+                                    />
+                                    <button
+                                      onClick={() => saveEditItem(it.id, 'cost')}
+                                      disabled={savingItemEdit}
+                                      title="Save"
+                                      style={{
+                                        width: '22px', height: '22px', padding: 0, lineHeight: 1,
+                                        border: '1px solid #008060', borderRadius: '4px', background: '#e3f1df',
+                                        color: '#008060', cursor: savingItemEdit ? 'default' : 'pointer', fontWeight: 700,
+                                      }}
+                                    >✓</button>
+                                    <button
+                                      onClick={cancelEditItem}
+                                      disabled={savingItemEdit}
+                                      title="Cancel"
+                                      style={{
+                                        width: '22px', height: '22px', padding: 0, lineHeight: 1,
+                                        border: '1px solid #c9cccf', borderRadius: '4px', background: 'white',
+                                        color: '#6d7175', cursor: savingItemEdit ? 'default' : 'pointer', fontWeight: 700,
+                                      }}
+                                    >✕</button>
+                                  </span>
                                 ) : itemsEditable ? (
-                                  <span style={{ cursor: 'pointer' }} onClick={() => startEditItem(it)}>
+                                  <span style={{ cursor: 'pointer' }} onClick={() => startEditCost(it)}>
                                     {costEdited && (
                                       <span style={{ textDecoration: 'line-through', color: '#8c9196', fontSize: '11px', marginRight: '6px' }}>
                                         {Number(it.raw_cost_original).toFixed(2)}
