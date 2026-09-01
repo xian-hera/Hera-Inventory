@@ -76,9 +76,23 @@ router.get('/manager', async (req, res) => {
       // Table may not exist yet
     }
 
+    // PO Receiving: invoices the buyer has sent to this location for
+    // counting, still awaiting the manager's count.
+    let poReceivingCount = 0;
+    try {
+      const poRes = await pool.query(
+        `SELECT COUNT(*) FROM po_invoices WHERE status = 'sent_to_store' AND location = $1`,
+        [location]
+      );
+      poReceivingCount = parseInt(poRes.rows[0].count);
+    } catch (e) {
+      // Table may not exist yet
+    }
+
     res.json({
       weeklyCountingTasks: parseInt(weeklyRes.rows[0].count),
       labelPrintTasks:     labelPrintCount,
+      poReceivingTasks:    poReceivingCount,
     });
   } catch (e) {
     console.error('GET /api/badges/manager error:', e);

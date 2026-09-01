@@ -28,6 +28,8 @@ import BuyerPriceChange from './pages/buyer/BuyerPriceChange';
 import BuyerPriceChangePublished from './pages/buyer/BuyerPriceChangePublished';
 import ManagerPriceChangeDetail from './pages/manager/ManagerPriceChangeDetail';
 import ManagerEmployeeCap from './pages/manager/ManagerEmployeeCap';
+import ManagerPOReceiving from './pages/manager/ManagerPOReceiving';
+import ManagerPOReceivingDetail from './pages/manager/ManagerPOReceivingDetail';
 import CRMHome from './pages/crm/CRMHome';
 import CRMSettings from './pages/crm/CRMSettings';
 import HairdresserList from './pages/crm/HairdresserList';
@@ -95,6 +97,8 @@ function App() {
           <Route path="/manager/label-print/:taskId" element={<ManagerLabelPrintTaskDetail />} />
           <Route path="/manager/price-change/:taskId" element={<ManagerPriceChangeDetail />} />
           <Route path="/manager/employee-cap" element={<ManagerEmployeeCap />} />
+          <Route path="/manager/po-receiving" element={<ManagerPOReceiving />} />
+          <Route path="/manager/po-receiving/:invoiceId" element={<ManagerPOReceivingDetail />} />
 
           {/* CRM */}
           <Route path="/crm" element={<CRMHome />} />

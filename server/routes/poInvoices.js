@@ -571,9 +571,11 @@ router.get('/pending', async (req, res) => {
     // (counted, ready for the buyer to commit) — so an invoice never
     // disappears from the buyer's view once it leaves plain 'pending'.
     let query = `
-      SELECT i.id, i.invoice_number, i.po_number, i.location, i.status, s.name AS supplier_name,
+      SELECT i.id, i.invoice_number, i.po_number, i.location, i.status,
+             s.name AS supplier_name, s.currency AS supplier_currency,
              COALESCE(SUM(it.quantity), 0) AS quantity,
-             COALESCE(SUM(it.quantity * it.effective_cost), 0) AS subtotal_cad
+             COALESCE(SUM(it.quantity * it.effective_cost), 0) AS subtotal_cad,
+             COALESCE(SUM(it.quantity * it.raw_cost) FILTER (WHERE s.currency = 'USD'), 0) AS subtotal_usd
       FROM po_invoices i
       JOIN po_suppliers s ON s.id = i.supplier_id
       LEFT JOIN po_invoice_items it ON it.invoice_id = i.id
@@ -589,7 +591,7 @@ router.get('/pending', async (req, res) => {
           AND (s2.name ILIKE $${params.length} OR i2.location ILIKE $${params.length} OR i2.invoice_number ILIKE $${params.length} OR i2.po_number ILIKE $${params.length} OR it2.sku ILIKE $${params.length} OR it2.code ILIKE $${params.length})
       )`;
     }
-    query += ` GROUP BY i.id, i.invoice_number, i.po_number, i.location, i.status, s.name ORDER BY i.created_at DESC`;
+    query += ` GROUP BY i.id, i.invoice_number, i.po_number, i.location, i.status, s.name, s.currency ORDER BY i.created_at DESC`;
     const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (e) {
@@ -1115,9 +1117,11 @@ async function commitInvoice(invoiceId) {
   if (invRes.rows.length === 0) throw new Error('Invoice not found');
   const invoice = invRes.rows[0];
   if (invoice.status === 'committed') return { alreadyCommitted: true };
-  if (invoice.status === 'sent_to_store') {
-    throw new Error('This invoice has been sent to store and must be counted by the manager before it can be committed');
-  }
+  // Deliberately NOT blocked on 'sent_to_store': the buyer can commit at any
+  // time regardless of whether the manager has counted it yet — commitInvoice
+  // already falls back to item.quantity when store_count is still null (see
+  // actualQty below), so an uncounted invoice commits using the original
+  // invoice quantities, same as before this feature existed.
   if (invoice.has_missing_sku) throw new Error('Invoice has line item(s) missing SKU');
   if (invoice.has_sku_collision) throw new Error('Invoice has line item(s) with a SKU collision');
   // has_missing_cost no longer blocks commit — a line item with no cost

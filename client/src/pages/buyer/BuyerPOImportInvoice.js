@@ -837,7 +837,10 @@ function BuyerPOImportInvoice() {
     setActionsMenuOpen(false);
     if (hasMissing) { window.alert('There are line item(s) missing SKU. Please resolve them before committing.'); return; }
     if (hasCollision) { window.alert('There are line item(s) with a SKU collision. Please resolve them before committing.'); return; }
-    if (status === 'sent_to_store') { window.alert('This invoice has been sent to store and must be counted by the manager before it can be committed.'); return; }
+    // The buyer can commit a 'sent_to_store' invoice at any time — it does
+    // not have to wait for the manager's count. commitInvoice() on the
+    // server falls back to the original invoice quantity for any line item
+    // that hasn't been counted yet.
     setCommitting(true);
     setError('');
     try {
@@ -1174,7 +1177,10 @@ function BuyerPOImportInvoice() {
                     </Popover>
                   )}
                   {status === 'sent_to_store' && (
-                    <Text tone="subdued" variant="bodySm">Waiting for the store to count this invoice.</Text>
+                    <InlineStack gap="200" blockAlign="center">
+                      <Text tone="subdued" variant="bodySm">Waiting for the store to count this invoice.</Text>
+                      <Button variant="primary" onClick={handleCommitNow} loading={committing}>Commit now</Button>
+                    </InlineStack>
                   )}
                   {status === 'store_counted' && (
                     <Button variant="primary" onClick={handleCommitNow} loading={committing}>Commit now</Button>
