@@ -16,7 +16,7 @@ function BuyerPOInvoiceDetail() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [exportingCsv, setExportingCsv] = useState(false);
+  const [exportingPdf, setExportingPdf] = useState(false);
   // Which stored cost field ('invoice_cost' | 'effective_cost') to compare
   // against Supplier cost for the highlight treatment — configured in
   // Settings, separately per supplier currency. Read at render time, so a
@@ -55,18 +55,18 @@ function BuyerPOInvoiceDetail() {
     }
   };
 
-  const handleExportCsv = async () => {
+  const handleExportPdf = async () => {
     if (!invoiceId) return;
-    setExportingCsv(true);
+    setExportingPdf(true);
     setError('');
     try {
-      const res = await fetch(`/api/po-invoices/${invoiceId}/export-csv`);
+      const res = await fetch(`/api/po-invoices/${invoiceId}/export-pdf`);
       if (!res.ok) throw new Error('Export failed');
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${(invoice && (invoice.po_number || invoice.invoice_number)) || 'invoice'}-export.csv`;
+      a.download = `${(invoice && (invoice.po_number || invoice.invoice_number)) || 'invoice'}-export.pdf`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -74,7 +74,7 @@ function BuyerPOInvoiceDetail() {
     } catch (e) {
       setError(e.message);
     } finally {
-      setExportingCsv(false);
+      setExportingPdf(false);
     }
   };
 
@@ -132,7 +132,7 @@ function BuyerPOInvoiceDetail() {
       }
       backAction={{ onAction: () => navigate('/buyer/po-receiving') }}
       secondaryActions={[
-        { content: 'Export CSV', onAction: handleExportCsv, loading: exportingCsv, disabled: exportingCsv },
+        { content: 'Export PDF', onAction: handleExportPdf, loading: exportingPdf, disabled: exportingPdf },
         { content: 'Delete', destructive: true, onAction: handleDelete },
       ]}
     >
@@ -151,6 +151,9 @@ function BuyerPOInvoiceDetail() {
               <Text tone="subdued">{invoice.supplier_currency === 'USD' ? invoice.fx_rate : '/'}</Text>
               <Text tone="subdued">{(invoice.product_types || []).join(', ')}</Text>
               <Text tone="subdued">{invoice.location}</Text>
+              {invoice.invoice_date && (
+                <Text tone="subdued">{String(invoice.invoice_date).slice(0, 10)}</Text>
+              )}
             </InlineStack>
             {invoice.adjustment_type && (
               <Text tone="subdued">

@@ -200,7 +200,7 @@ async function generatePoNumber(client) {
 router.get('/recent', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT i.id, i.invoice_number, i.po_number, i.committed_at, i.is_promotional, s.name AS supplier_name,
+      `SELECT i.id, i.invoice_number, i.po_number, i.committed_at, i.invoice_date, i.is_promotional, s.name AS supplier_name,
               COALESCE(SUM(it.quantity * it.effective_cost), 0) AS subtotal_cad
        FROM po_invoices i
        JOIN po_suppliers s ON s.id = i.supplier_id
@@ -566,14 +566,18 @@ router.get('/pending', async (req, res) => {
   try {
     const { q } = req.query;
     const params = [];
+    // Covers every not-yet-committed status — 'pending' (Commit later),
+    // 'sent_to_store' (awaiting the manager's count), and 'store_counted'
+    // (counted, ready for the buyer to commit) — so an invoice never
+    // disappears from the buyer's view once it leaves plain 'pending'.
     let query = `
-      SELECT i.id, i.invoice_number, i.po_number, i.location, s.name AS supplier_name,
+      SELECT i.id, i.invoice_number, i.po_number, i.location, i.status, s.name AS supplier_name,
              COALESCE(SUM(it.quantity), 0) AS quantity,
              COALESCE(SUM(it.quantity * it.effective_cost), 0) AS subtotal_cad
       FROM po_invoices i
       JOIN po_suppliers s ON s.id = i.supplier_id
       LEFT JOIN po_invoice_items it ON it.invoice_id = i.id
-      WHERE i.status = 'pending'`;
+      WHERE i.status IN ('pending', 'sent_to_store', 'store_counted')`;
     if (q) {
       params.push(`%${q}%`);
       query += ` AND i.id IN (
@@ -581,11 +585,11 @@ router.get('/pending', async (req, res) => {
         FROM po_invoices i2
         JOIN po_suppliers s2 ON s2.id = i2.supplier_id
         LEFT JOIN po_invoice_items it2 ON it2.invoice_id = i2.id
-        WHERE i2.status = 'pending'
+        WHERE i2.status IN ('pending', 'sent_to_store', 'store_counted')
           AND (s2.name ILIKE $${params.length} OR i2.location ILIKE $${params.length} OR i2.invoice_number ILIKE $${params.length} OR i2.po_number ILIKE $${params.length} OR it2.sku ILIKE $${params.length} OR it2.code ILIKE $${params.length})
       )`;
     }
-    query += ` GROUP BY i.id, i.invoice_number, i.po_number, i.location, s.name ORDER BY i.created_at DESC`;
+    query += ` GROUP BY i.id, i.invoice_number, i.po_number, i.location, i.status, s.name ORDER BY i.created_at DESC`;
     const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (e) {
@@ -659,12 +663,26 @@ router.get('/pending/:id', async (req, res) => {
 router.patch('/pending/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { isPromotional } = req.body;
-    if (isPromotional === undefined) return res.status(400).json({ error: 'Nothing to update' });
+    const { isPromotional, invoiceDate } = req.body;
+    if (isPromotional === undefined && invoiceDate === undefined) {
+      return res.status(400).json({ error: 'Nothing to update' });
+    }
+
+    const sets = [];
+    const params = [];
+    if (isPromotional !== undefined) {
+      params.push(isPromotional);
+      sets.push(`is_promotional = $${params.length}`);
+    }
+    if (invoiceDate !== undefined) {
+      params.push(invoiceDate || null);
+      sets.push(`invoice_date = $${params.length}`);
+    }
+    params.push(id);
 
     const result = await pool.query(
-      `UPDATE po_invoices SET is_promotional = $1, updated_at = NOW() WHERE id = $2 AND status = 'pending' RETURNING *`,
-      [isPromotional, id]
+      `UPDATE po_invoices SET ${sets.join(', ')}, updated_at = NOW() WHERE id = $${params.length} AND status = 'pending' RETURNING *`,
+      params
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Invoice not found or already committed' });
     res.json(result.rows[0]);
@@ -1278,7 +1296,7 @@ router.delete('/committed/:id', async (req, res) => {
 
 // ─── Export CSV ───────────────────────────────────────────────────────────
 
-// GET /api/po-invoices/:id/export-csv — works for a pending or committed
+// GET /api/po-invoices/:id/export-pdf — works for a pending or committed
 // invoice alike. Columns: Code, Wig number, SKU, Name, Qty.
 //
 // Name is ALWAYS the variant's live custom.name metafield value, not
@@ -1292,7 +1310,11 @@ router.delete('/committed/:id', async (req, res) => {
 // blank and no per-item product-type lookup happens — keeps the common case
 // fast. For one that does, each item's product type is checked and only the
 // WIG ones get their custom.wig_number metafield pulled.
-router.get('/:id/export-csv', async (req, res) => {
+//
+// Replaced the old CSV export with a PDF export (same underlying data/
+// lookups, just rendered as a table on a page) per Hera's request — the
+// route path also changed from /export-csv to /export-pdf accordingly.
+router.get('/:id/export-pdf', async (req, res) => {
   try {
     const { id } = req.params;
     const invRes = await pool.query(
@@ -1343,24 +1365,66 @@ router.get('/:id/export-csv', async (req, res) => {
             wigNumber = node?.product?.wigNumber?.value || '';
           }
         } catch (e) {
-          console.error(`export-csv: metafield lookup failed for SKU ${item.sku}:`, e.message);
+          console.error(`export-pdf: metafield lookup failed for SKU ${item.sku}:`, e.message);
         }
       }
-      rows.push([item.code || '', wigNumber, item.sku || '', name, item.quantity]);
+      rows.push([item.code || '', wigNumber, item.sku || '', name, String(item.quantity)]);
     }
 
-    const escapeCsv = (v) => {
-      const s = String(v ?? '');
-      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-    };
-    const csv = ['Code,Wig number,SKU,Name,Qty', ...rows.map(r => r.map(escapeCsv).join(','))].join('\n');
-
-    const filename = `${invoice.po_number || invoice.invoice_number || 'invoice'}-export.csv`;
-    res.set('Content-Type', 'text/csv; charset=utf-8');
+    const PDFDocument = require('pdfkit');
+    const filename = `${invoice.po_number || invoice.invoice_number || 'invoice'}-export.pdf`;
+    res.set('Content-Type', 'application/pdf');
     res.set('Content-Disposition', `attachment; filename="${filename}"`);
-    res.send(csv);
+
+    const doc = new PDFDocument({ size: 'LETTER', margin: 40 });
+    doc.pipe(res);
+
+    doc.fontSize(16).text(invoice.po_number || invoice.invoice_number || 'Invoice', { continued: false });
+    if (invoice.po_number && invoice.invoice_number) {
+      doc.fontSize(9).fillColor('#6d7175').text(`Ref: ${invoice.invoice_number}`);
+    }
+    doc.moveDown(0.5);
+
+    const cols = [
+      { label: 'Code', width: 90 },
+      { label: 'Wig number', width: 90 },
+      { label: 'SKU', width: 110 },
+      { label: 'Name', width: 160 },
+      { label: 'Qty', width: 50 },
+    ];
+    const startX = doc.page.margins.left;
+    const rowHeight = 20;
+
+    const drawHeader = (y) => {
+      let x = startX;
+      doc.fontSize(9).fillColor('#6d7175');
+      cols.forEach(c => { doc.text(c.label, x, y, { width: c.width }); x += c.width; });
+      doc.moveTo(startX, y + 14).lineTo(startX + cols.reduce((s, c) => s + c.width, 0), y + 14)
+        .strokeColor('#e1e3e5').stroke();
+    };
+
+    let y = doc.y;
+    drawHeader(y);
+    y += 20;
+    doc.fillColor('#000');
+
+    rows.forEach((r) => {
+      if (y + rowHeight > doc.page.height - doc.page.margins.bottom) {
+        doc.addPage();
+        y = doc.page.margins.top;
+        drawHeader(y);
+        y += 20;
+        doc.fillColor('#000');
+      }
+      let x = startX;
+      doc.fontSize(9);
+      r.forEach((cell, i) => { doc.text(cell, x, y, { width: cols[i].width }); x += cols[i].width; });
+      y += rowHeight;
+    });
+
+    doc.end();
   } catch (e) {
-    console.error('GET /api/po-invoices/:id/export-csv error:', e);
+    console.error('GET /api/po-invoices/:id/export-pdf error:', e);
     res.status(500).json({ error: e.message });
   }
 });

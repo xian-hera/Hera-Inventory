@@ -11,6 +11,18 @@ function formatDate(dateStr) {
   return `${d.getFullYear()}.${months[d.getMonth()]}.${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
 }
 
+// invoice_date is a plain DATE column (no time-of-day) — parse it as a
+// calendar date rather than through the JS Date/UTC pipeline so it can't
+// shift to the previous/next day depending on the viewer's timezone.
+function formatDateOnly(dateStr) {
+  if (!dateStr) return '';
+  const s = String(dateStr).slice(0, 10);
+  const [y, m, d] = s.split('-');
+  const months = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+  if (!y || !m || !d) return '';
+  return `${y}.${months[Number(m) - 1]}.${d}`;
+}
+
 function BuyerPOReceiving() {
   const navigate = useNavigate();
   const [recent, setRecent] = useState([]);
@@ -50,36 +62,46 @@ function BuyerPOReceiving() {
                 ) : recent.length === 0 ? (
                   <Text tone="subdued">No committed invoices yet.</Text>
                 ) : (
-                  recent.map(inv => (
-                    <InlineStack key={inv.id} align="space-between" blockAlign="center">
-                      <InlineStack gap="300" blockAlign="center">
-                        <Text variant="bodySm" tone="subdued">{formatDate(inv.committed_at)}</Text>
-                        <Text variant="bodySm" tone="subdued">{inv.supplier_name}</Text>
-                        <BlockStack gap="0">
-                          <Text
-                            variant="bodySm"
-                            as="span"
-                            fontWeight="medium"
-                            tone="interactive"
-                          >
-                            <span
-                              style={{ cursor: 'pointer', textDecoration: 'underline' }}
-                              onClick={() => navigate(`/buyer/po-receiving/committed/${inv.id}`)}
+                  recent.map((inv, idx) => (
+                    <div
+                      key={inv.id}
+                      style={idx > 0 ? { borderTop: '1px solid #f1f1f1', paddingTop: '12px' } : undefined}
+                    >
+                      <InlineStack align="space-between" blockAlign="center">
+                        <InlineStack gap="300" blockAlign="center">
+                          <Text variant="bodySm" tone="subdued">{formatDate(inv.committed_at)}</Text>
+                          <BlockStack gap="0">
+                            <Text variant="bodySm" tone="subdued">{inv.supplier_name}</Text>
+                            {inv.invoice_date && (
+                              <Text variant="bodySm" tone="subdued">{formatDateOnly(inv.invoice_date)}</Text>
+                            )}
+                          </BlockStack>
+                          <InlineStack gap="150" blockAlign="baseline" wrap={false}>
+                            <Text
+                              variant="bodySm"
+                              as="span"
+                              fontWeight="medium"
+                              tone="interactive"
                             >
-                              {inv.po_number || inv.invoice_number}
-                            </span>
-                          </Text>
-                          {inv.po_number && inv.invoice_number && (
-                            <Text variant="bodySm" tone="subdued">Ref: {inv.invoice_number}</Text>
-                          )}
-                        </BlockStack>
-                        <Text variant="bodySm" tone="subdued">committed</Text>
-                        {inv.is_promotional && <Badge>Promotional</Badge>}
+                              <span
+                                style={{ cursor: 'pointer', textDecoration: 'underline', whiteSpace: 'nowrap' }}
+                                onClick={() => navigate(`/buyer/po-receiving/committed/${inv.id}`)}
+                              >
+                                {inv.po_number || inv.invoice_number}
+                              </span>
+                            </Text>
+                            {inv.po_number && inv.invoice_number && (
+                              <Text variant="bodySm" tone="subdued">Ref: {inv.invoice_number}</Text>
+                            )}
+                          </InlineStack>
+                          <Text variant="bodySm" tone="subdued">committed</Text>
+                          {inv.is_promotional && <Badge>Promotional</Badge>}
+                        </InlineStack>
+                        <Text variant="bodySm" tone="subdued">
+                          Subtotal: {Number(inv.subtotal_cad || 0).toFixed(2)}
+                        </Text>
                       </InlineStack>
-                      <Text variant="bodySm" tone="subdued">
-                        Subtotal: {Number(inv.subtotal_cad || 0).toFixed(2)}
-                      </Text>
-                    </InlineStack>
+                    </div>
                   ))
                 )}
                 {!loading && recent.length > 0 && (

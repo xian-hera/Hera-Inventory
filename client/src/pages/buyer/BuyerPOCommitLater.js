@@ -1,8 +1,14 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Page, Layout, Card, Button, BlockStack, InlineStack, Text, TextField, Checkbox, Banner, Spinner
+  Page, Layout, Card, Button, BlockStack, InlineStack, Text, TextField, Checkbox, Banner, Spinner, Badge
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
+
+const STATUS_PILLS = {
+  pending: { label: 'Commit later', tone: 'attention' },
+  sent_to_store: { label: 'Sent to store', tone: 'info' },
+  store_counted: { label: 'Store counted', tone: 'success' },
+};
 
 function BuyerPOCommitLater() {
   const navigate = useNavigate();
@@ -102,6 +108,7 @@ function BuyerPOCommitLater() {
     inv.location,
     inv.quantity,
     Number(inv.subtotal_cad || 0).toFixed(2),
+    (() => { const p = STATUS_PILLS[inv.status] || STATUS_PILLS.pending; return <Badge tone={p.tone}>{p.label}</Badge>; })(),
   ]);
 
   return (
@@ -160,7 +167,7 @@ function BuyerPOCommitLater() {
                             onChange={toggleSelectAll}
                           />
                         </th>
-                        {['PO number', 'Supplier', 'Location', 'Quantity', 'Subtotal'].map((h, i) => (
+                        {['PO number', 'Supplier', 'Location', 'Quantity', 'Subtotal', 'Status'].map((h, i) => (
                           <th key={i} style={{ padding: '8px 10px', textAlign: 'left', fontWeight: '600', color: '#6d7175', whiteSpace: 'nowrap' }}>
                             {h}
                           </th>
