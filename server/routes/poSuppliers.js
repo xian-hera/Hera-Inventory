@@ -93,12 +93,7 @@ router.get('/:id', async (req, res) => {
     skuQuery += ' ORDER BY name ASC';
 
     const skuRes = await pool.query(skuQuery, params);
-    const skus = skuRes.rows.map(r => ({
-      ...r,
-      average_cost: r.cost_count > 0 ? Number(r.cost_sum) / r.cost_count : null,
-    }));
-
-    res.json({ supplier: supplierRes.rows[0], skus });
+    res.json({ supplier: supplierRes.rows[0], skus: skuRes.rows });
   } catch (e) {
     console.error('GET /api/po-suppliers/:id error:', e);
     res.status(500).json({ error: e.message });

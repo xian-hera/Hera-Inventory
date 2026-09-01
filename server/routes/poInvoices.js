@@ -650,6 +650,11 @@ async function getVariantSnapshot(client, barcode) {
 // Commits a single invoice: updates Shopify cost (moving weighted average,
 // skipped entirely for promotional invoices) and adds the received quantity
 // to the specified location. Throws on any blocking condition or Shopify error.
+// Promotional invoices are excluded from both the Shopify moving weighted
+// average AND this supplier's own average_cost (cost_sum/cost_count) — but
+// last_cost still reflects the most recent cost received, promotional or
+// not, since it's meant to show "what did we last pay", not "what should
+// count toward the average".
 async function commitInvoice(invoiceId) {
   const invRes = await pool.query('SELECT * FROM po_invoices WHERE id = $1', [invoiceId]);
   if (invRes.rows.length === 0) throw new Error('Invoice not found');
@@ -698,26 +703,17 @@ async function commitInvoice(invoiceId) {
       if (costErrors.length > 0) {
         throw new Error(`SKU ${item.sku}: cost update failed — ${costErrors.map(e => e.message).join('; ')}`);
       }
-
-      // Keyed by sku, not code: cost is a property of the physical SKU that
-      // was actually received, not of the (possibly shared) code label on
-      // the invoice line. Keying by code would apply this SKU's cost to
-      // every other SKU sharing that code, and would silently update
-      // nothing at all for a line item resolved directly by SKU with no
-      // code on it (item.code is null there).
-      await pool.query(
-        `UPDATE po_supplier_skus SET
-           last_cost = $1, cost_sum = cost_sum + $1, cost_count = cost_count + 1,
-           name = $2, updated_at = NOW()
-         WHERE supplier_id = $3 AND sku = $4`,
-        [item.effective_cost, item.name, invoice.supplier_id, item.sku]
-      );
-    } else {
-      await pool.query(
-        `UPDATE po_supplier_skus SET name = $1, updated_at = NOW() WHERE supplier_id = $2 AND sku = $3`,
-        [item.name, invoice.supplier_id, item.sku]
-      );
     }
+
+    // po_supplier_skus write-back — cost bookkeeping (last_cost/cost_sum/
+    // cost_count) was dropped from this table entirely; all that's left to
+    // keep fresh here is name. Keyed by sku, not code: name is a property of
+    // the physical SKU, and code can now legitimately be shared by several
+    // SKUs of the same product.
+    await pool.query(
+      `UPDATE po_supplier_skus SET name = $1, updated_at = NOW() WHERE supplier_id = $2 AND sku = $3`,
+      [item.name, invoice.supplier_id, item.sku]
+    );
 
     const invResp = await shopifyRequest(client, `
       mutation adjustInventory($input: InventoryAdjustQuantitiesInput!) {

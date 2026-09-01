@@ -301,10 +301,9 @@ function BuyerPOSupplierDetail() {
                         <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>SKU</th>
                         <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Type</th>
                         <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Pack size</th>
-                        <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Last cost</th>
                         <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>
-                          <InfoTooltip text="This value equals to the average of all the past effective cost.">
-                            Average cost
+                          <InfoTooltip text="value in variant metafield custom.supplier_a/b/c_cost">
+                            Supplier cost
                           </InfoTooltip>
                         </th>
                       </tr>
@@ -317,8 +316,7 @@ function BuyerPOSupplierDetail() {
                           <td style={{ padding: '10px' }}>{s.sku}</td>
                           <td style={{ padding: '10px' }}>{s.product_type || '-'}</td>
                           <td style={{ padding: '10px' }}>{s.pack_size ?? '-'}</td>
-                          <td style={{ padding: '10px' }}>{formatCost(s.last_cost)}</td>
-                          <td style={{ padding: '10px' }}>{formatCost(s.average_cost)}</td>
+                          <td style={{ padding: '10px' }}>{formatCost(s.metafield_cost)}</td>
                         </tr>
                       ))}
                     </tbody>

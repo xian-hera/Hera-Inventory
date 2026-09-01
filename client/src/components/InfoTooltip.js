@@ -87,16 +87,22 @@ function InfoTooltip({ text, children }) {
   }, [open]);
 
   return (
-    <span ref={triggerRef} style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+    // alignItems: 'baseline' (not 'center') plus a small relative nudge on
+    // the icon itself is what actually tucks the "i" circle up against the
+    // last character of the label instead of floating at the row's vertical
+    // center — visually reads as part of the text, like a trailing glyph,
+    // rather than a separate element off to the side.
+    <span ref={triggerRef} style={{ position: 'relative', display: 'inline-flex', alignItems: 'baseline', gap: '3px' }}>
       <span style={{ cursor: 'pointer' }} onClick={toggle}>
         {children}
       </span>
       <span
         onClick={toggle}
         style={{
-          cursor: 'pointer', fontSize: '13px', color: '#6d7175', borderRadius: '50%',
-          border: '1px solid #6d7175', width: '15px', height: '15px', display: 'inline-flex',
+          cursor: 'pointer', fontSize: '10px', color: '#6d7175', borderRadius: '50%',
+          border: '1px solid #6d7175', width: '13px', height: '13px', display: 'inline-flex',
           alignItems: 'center', justifyContent: 'center', lineHeight: 1,
+          position: 'relative', top: '1px', flexShrink: 0,
         }}
         title=""
       >

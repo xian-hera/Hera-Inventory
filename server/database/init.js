@@ -463,9 +463,6 @@ const initDatabase = async () => {
         name          TEXT,
         product_type  TEXT,
         pack_size     INTEGER,
-        last_cost     NUMERIC(12,4),
-        cost_sum      NUMERIC(14,4) NOT NULL DEFAULT 0,
-        cost_count    INTEGER NOT NULL DEFAULT 0,
         metafield_cost NUMERIC(12,4),
         created_at    TIMESTAMPTZ DEFAULT NOW(),
         updated_at    TIMESTAMPTZ DEFAULT NOW(),
@@ -478,6 +475,15 @@ const initDatabase = async () => {
     // the CSV cost-column fallback and as the "Cost" comparison column in the
     // invoice line item list — see server/routes/poInvoices.js.
     await client.query(`ALTER TABLE po_supplier_skus ADD COLUMN IF NOT EXISTS metafield_cost NUMERIC(12,4)`).catch(() => {});
+
+    // Migration: Supplier management's SKU list now shows only Supplier cost
+    // (metafield_cost) — Last cost / Average cost and the bookkeeping behind
+    // them (last_cost/cost_sum/cost_count, written on every commit) are
+    // dropped entirely per Hera's request; this data won't be used going
+    // forward. DROP COLUMN IF EXISTS is safe to re-run.
+    await client.query(`ALTER TABLE po_supplier_skus DROP COLUMN IF EXISTS last_cost`).catch(() => {});
+    await client.query(`ALTER TABLE po_supplier_skus DROP COLUMN IF EXISTS cost_sum`).catch(() => {});
+    await client.query(`ALTER TABLE po_supplier_skus DROP COLUMN IF EXISTS cost_count`).catch(() => {});
 
     // Migration: a CSV line item given directly as SKU (no code) looks up its
     // fallback cost/name by (supplier_id, sku) — this is a plain index, NOT
@@ -526,11 +532,19 @@ const initDatabase = async () => {
         adjustment_type     TEXT CHECK (adjustment_type IN ('amount','percentage')),
         adjustment_value    NUMERIC(12,4),
         is_promotional      BOOLEAN NOT NULL DEFAULT FALSE,
-        status              TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','committed')),
+        status              TEXT NOT NULL DEFAULT 'pending'
+                             CHECK (status IN ('pending','sent_to_store','store_counted','committed')),
         has_missing_sku     BOOLEAN NOT NULL DEFAULT FALSE,
         has_sku_collision   BOOLEAN NOT NULL DEFAULT FALSE,
         has_missing_cost    BOOLEAN NOT NULL DEFAULT FALSE,
         po_number           TEXT,
+        invoice_date        DATE,
+        sent_to_store_at    TIMESTAMPTZ,
+        store_counted_at    TIMESTAMPTZ,
+        buyer_note          TEXT,
+        buyer_note_at       TIMESTAMPTZ,
+        manager_note        TEXT,
+        manager_note_at     TIMESTAMPTZ,
         committed_at        TIMESTAMPTZ,
         created_at          TIMESTAMPTZ DEFAULT NOW(),
         updated_at          TIMESTAMPTZ DEFAULT NOW()
@@ -554,6 +568,37 @@ const initDatabase = async () => {
     // missing SKU is — blocks commit, rather than silently writing a 0 or
     // NULL cost into Shopify's moving-average cost calculation.
     await client.query(`ALTER TABLE po_invoices ADD COLUMN IF NOT EXISTS has_missing_cost BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
+
+    // Migration: PO Receiving "Send to store" workflow — an invoice can now
+    // pass through 'sent_to_store' (buyer sent it to the receiving location,
+    // manager hasn't finished counting) and 'store_counted' (manager
+    // submitted counts, buyer hasn't committed yet) between 'pending'
+    // ("Commit later") and 'committed'. DROP+ADD on the CHECK constraint is
+    // safe to re-run: DROP ... IF EXISTS is a no-op when already dropped by a
+    // prior deploy, and ADD only runs after that, so there's never a
+    // duplicate-constraint error to poison the transaction.
+    await client.query(`ALTER TABLE po_invoices DROP CONSTRAINT IF EXISTS po_invoices_status_check`).catch(() => {});
+    await client.query(`
+      ALTER TABLE po_invoices ADD CONSTRAINT po_invoices_status_check
+        CHECK (status IN ('pending','sent_to_store','store_counted','committed'))
+    `);
+    // invoice_date: the date on the supplier's invoice itself (entered by the
+    // buyer alongside Supplier/Location), distinct from created_at/committed_at
+    // which are about when WE processed/committed it, not when the goods were
+    // actually invoiced.
+    await client.query(`ALTER TABLE po_invoices ADD COLUMN IF NOT EXISTS invoice_date DATE`).catch(() => {});
+    // sent_to_store_at / store_counted_at: timestamps for the two new
+    // mid-flow statuses above — sent_to_store_at is the manager-side
+    // "publish date".
+    await client.query(`ALTER TABLE po_invoices ADD COLUMN IF NOT EXISTS sent_to_store_at TIMESTAMPTZ`).catch(() => {});
+    await client.query(`ALTER TABLE po_invoices ADD COLUMN IF NOT EXISTS store_counted_at TIMESTAMPTZ`).catch(() => {});
+    // Notes: at most one each side (buyer / manager-as-reply), so plain
+    // columns rather than a separate table — matches the "only 1 note, add
+    // again to replace after deleting" rule on both sides.
+    await client.query(`ALTER TABLE po_invoices ADD COLUMN IF NOT EXISTS buyer_note TEXT`).catch(() => {});
+    await client.query(`ALTER TABLE po_invoices ADD COLUMN IF NOT EXISTS buyer_note_at TIMESTAMPTZ`).catch(() => {});
+    await client.query(`ALTER TABLE po_invoices ADD COLUMN IF NOT EXISTS manager_note TEXT`).catch(() => {});
+    await client.query(`ALTER TABLE po_invoices ADD COLUMN IF NOT EXISTS manager_note_at TIMESTAMPTZ`).catch(() => {});
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS po_number_counter (
@@ -626,6 +671,29 @@ const initDatabase = async () => {
     await client.query(`ALTER TABLE po_invoice_items ALTER COLUMN raw_cost DROP NOT NULL`).catch(() => {});
     await client.query(`ALTER TABLE po_invoice_items ALTER COLUMN cost_before_adjustment DROP NOT NULL`).catch(() => {});
     await client.query(`ALTER TABLE po_invoice_items ALTER COLUMN effective_cost DROP NOT NULL`).catch(() => {});
+
+    // Migration: buyer-side inline editing of quantity/invoice cost on a
+    // not-yet-committed invoice. quantity/raw_cost above are now the
+    // CURRENT (possibly edited) values used for display and math;
+    // quantity_original/raw_cost_original snapshot what the CSV (or Add
+    // item modal) actually produced, set once and never touched again —
+    // that's what the UI strikes through next to an edited value. Backfill
+    // sets both originals equal to the current value for any row that
+    // predates this column (nothing has been edited yet at that point).
+    await client.query(`ALTER TABLE po_invoice_items ADD COLUMN IF NOT EXISTS quantity_original INTEGER`).catch(() => {});
+    await client.query(`ALTER TABLE po_invoice_items ADD COLUMN IF NOT EXISTS raw_cost_original NUMERIC(12,4)`).catch(() => {});
+    await client.query(`UPDATE po_invoice_items SET quantity_original = quantity WHERE quantity_original IS NULL`);
+    await client.query(`
+      UPDATE po_invoice_items SET raw_cost_original = raw_cost
+      WHERE raw_cost_original IS NULL AND raw_cost IS NOT NULL
+    `);
+    // Migration: manager's Store count (PO Receiving "Send to store" flow).
+    // NULL = not yet counted by the manager (0 is a legitimate real count,
+    // so it can't double as the "uncounted" sentinel). This is the absolute
+    // count the manager entered — the buyer-facing "+1/-1" correction value
+    // shown on the buyer side is store_count - quantity, computed at
+    // display time, not stored separately.
+    await client.query(`ALTER TABLE po_invoice_items ADD COLUMN IF NOT EXISTS store_count INTEGER`).catch(() => {});
 
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_po_invoice_items_invoice_id ON po_invoice_items (invoice_id)
