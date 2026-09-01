@@ -822,16 +822,21 @@ function BuyerPOImportInvoice() {
     }
   };
 
-  // ── Top-right page action: Discard ──────────────────────────────────────
-  // Stays red "Discard" the whole way from the first field being touched
-  // through to a successful commit — it never turns into "Commit later".
-  // The only ways to end up in Commit Later are the explicit "Commit later"
-  // action or simply leaving the page after Start to process has succeeded.
-  // So Discard must actively delete the invoice row if one has already been
-  // persisted (i.e. once Start to process has created it) — otherwise it's
-  // just a plain navigate-away.
+  // ── Top-right page action ────────────────────────────────────────────────
+  // Its label, meaning, and even whether it appears at all depend on the
+  // invoice's current status, per Hera's spec:
+  //   - not yet processed, or 'pending' (Commit later): "Discard" — deletes
+  //     the invoice outright (or, before Start to process has created a row
+  //     at all, is just a plain navigate-away).
+  //   - 'sent_to_store': "Cancel Store Task" — pulls it back without any
+  //     store cooperation, reverting to 'pending' as if never sent, and
+  //     discarding whatever counting the manager has already done.
+  //   - 'store_counted': "Discard" — deletes the invoice outright, same as
+  //     the pending case.
+  //   - 'committed': no button at all (this page is left before that status
+  //     is ever seen here — see handleCommitNow's navigate).
   const handleDiscard = async () => {
-    if (!window.confirm('Discard this invoice? This cannot be undone, and it will not be saved to Commit Later.')) return;
+    if (!window.confirm('Discard this invoice? This will permanently delete it and cannot be undone.')) return;
     try {
       if (invoiceId) {
         const res = await fetch('/api/po-invoices/pending', {
@@ -842,6 +847,20 @@ function BuyerPOImportInvoice() {
         if (!res.ok) throw new Error('Failed to discard this invoice. Please try again.');
       }
       navigate('/buyer/po-receiving');
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const handleCancelStoreTask = async () => {
+    if (!window.confirm('Cancel this store task? The invoice will return to Commit Later, and any counting the manager has already entered will be discarded.')) return;
+    setError('');
+    try {
+      const res = await fetch(`/api/po-invoices/pending/${invoiceId}/cancel-store-task`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setStatus(data.status);
+      setItems(prev => prev.map(it => ({ ...it, store_count: null })));
     } catch (e) {
       setError(e.message);
     }
@@ -913,9 +932,11 @@ function BuyerPOImportInvoice() {
 
   const pill = STATUS_PILLS[status] || STATUS_PILLS.pending;
 
-  const headerActions = invoiceId || items.length > 0
-    ? [{ content: 'Discard', destructive: true, onAction: handleDiscard, disabled }]
-    : undefined;
+  const headerActions = status === 'sent_to_store'
+    ? [{ content: 'Cancel Store Task', destructive: true, onAction: handleCancelStoreTask, disabled }]
+    : status === 'committed'
+      ? undefined
+      : [{ content: 'Discard', destructive: true, onAction: handleDiscard, disabled }];
 
   return (
     <Page

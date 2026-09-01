@@ -1062,15 +1062,52 @@ router.post('/manager/receiving/:id/submit', async (req, res) => {
 });
 
 // DELETE /api/po-invoices/pending — body: { ids: [...] }
+// Deletable from 'pending' (the ordinary Commit Later / not-yet-processed
+// case) and from 'store_counted' (Hera's spec: a fully counted invoice can
+// still be discarded outright). NOT deletable from 'sent_to_store' — that
+// one has to go through Cancel Store Task first (see below), since deleting
+// it outright would leave the manager mid-count with no invoice to submit.
 router.delete('/pending', async (req, res) => {
   try {
     const { ids } = req.body;
     if (!ids || ids.length === 0) return res.status(400).json({ error: 'No ids provided' });
-    await pool.query(`DELETE FROM po_invoices WHERE id = ANY($1) AND status = 'pending'`, [ids]);
+    await pool.query(`DELETE FROM po_invoices WHERE id = ANY($1) AND status IN ('pending', 'store_counted')`, [ids]);
     res.json({ success: true });
   } catch (e) {
     console.error('DELETE /api/po-invoices/pending error:', e);
     res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/po-invoices/pending/:id/cancel-store-task
+// 'sent_to_store' → 'pending', as if it had never been sent — for a buyer's
+// manual mistake or a change of plan, no store cooperation needed. Any
+// counting the manager has already entered is discarded (store_count reset
+// to NULL on every line item), since a re-sent invoice should start its
+// count from scratch, not resume a stale one.
+router.post('/pending/:id/cancel-store-task', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { id } = req.params;
+    await client.query('BEGIN');
+    const result = await client.query(
+      `UPDATE po_invoices SET status = 'pending', sent_to_store_at = NULL, updated_at = NOW()
+       WHERE id = $1 AND status = 'sent_to_store' RETURNING *`,
+      [id]
+    );
+    if (result.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Invoice not found, or not in a state that can be cancelled' });
+    }
+    await client.query(`UPDATE po_invoice_items SET store_count = NULL WHERE invoice_id = $1`, [id]);
+    await client.query('COMMIT');
+    res.json(result.rows[0]);
+  } catch (e) {
+    await client.query('ROLLBACK');
+    console.error('POST /api/po-invoices/pending/:id/cancel-store-task error:', e);
+    res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
   }
 });
 
