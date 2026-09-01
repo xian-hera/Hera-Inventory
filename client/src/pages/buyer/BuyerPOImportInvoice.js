@@ -1171,34 +1171,51 @@ function BuyerPOImportInvoice() {
                     Note{(buyerNote || managerNote) ? ' •' : ''}
                   </Button>
                   <Button onClick={handleExportPdf} loading={exportingPdf} disabled={exportingPdf}>Export PDF</Button>
-                  {status === 'pending' && (
-                    <Popover
-                      active={actionsMenuOpen}
-                      onClose={() => setActionsMenuOpen(false)}
-                      activator={
-                        <ButtonGroup variant="segmented">
-                          <Button variant="primary" onClick={handleCommitNow} loading={committing}>Commit now</Button>
-                          <Button variant="primary" onClick={() => setActionsMenuOpen(v => !v)} disclosure disabled={disabled} />
-                        </ButtonGroup>
-                      }
-                    >
-                      <ActionList
-                        items={[
-                          { content: 'Send to store', onAction: handleSendToStore, disabled: sendingToStore },
-                          { content: 'Commit later', onAction: handleCommitLater },
-                        ]}
-                      />
-                    </Popover>
-                  )}
                   {status === 'sent_to_store' && (
-                    <InlineStack gap="200" blockAlign="center">
-                      <Text tone="subdued" variant="bodySm">Waiting for the store to count this invoice.</Text>
-                      <Button variant="primary" onClick={handleCommitNow} loading={committing}>Commit now</Button>
-                    </InlineStack>
+                    <Text tone="subdued" variant="bodySm">Waiting for the store to count this invoice.</Text>
                   )}
-                  {status === 'store_counted' && (
-                    <Button variant="primary" onClick={handleCommitNow} loading={committing}>Commit now</Button>
-                  )}
+                  {(() => {
+                    // The merged action button's default (main) action and
+                    // its collapsed dropdown options both depend on the
+                    // invoice's current status — per Hera's spec:
+                    //   pending        → default Send to store, dropdown [Commit later, Commit]
+                    //   sent_to_store  → default Commit later,  dropdown [Commit]
+                    //   store_counted  → default Commit,        dropdown [Commit later]
+                    const ACTIONS = {
+                      send_to_store: { content: 'Send to store', onAction: handleSendToStore, loading: sendingToStore },
+                      commit_later: { content: 'Commit later', onAction: handleCommitLater },
+                      commit: { content: 'Commit', onAction: handleCommitNow, loading: committing },
+                    };
+                    const CONFIG = {
+                      pending: { default: 'send_to_store', dropdown: ['commit_later', 'commit'] },
+                      sent_to_store: { default: 'commit_later', dropdown: ['commit'] },
+                      store_counted: { default: 'commit', dropdown: ['commit_later'] },
+                    };
+                    const config = CONFIG[status] || CONFIG.pending;
+                    const defaultAction = ACTIONS[config.default];
+                    const dropdownActions = config.dropdown.map(key => ACTIONS[key]);
+                    return (
+                      <Popover
+                        active={actionsMenuOpen}
+                        onClose={() => setActionsMenuOpen(false)}
+                        activator={
+                          <ButtonGroup variant="segmented">
+                            <Button variant="primary" onClick={defaultAction.onAction} loading={defaultAction.loading}>
+                              {defaultAction.content}
+                            </Button>
+                            <Button variant="primary" onClick={() => setActionsMenuOpen(v => !v)} disclosure disabled={disabled} />
+                          </ButtonGroup>
+                        }
+                      >
+                        <ActionList
+                          items={dropdownActions.map(a => ({
+                            content: a.content,
+                            onAction: () => { setActionsMenuOpen(false); a.onAction(); },
+                          }))}
+                        />
+                      </Popover>
+                    );
+                  })()}
                 </InlineStack>
               </InlineStack>
             )}
