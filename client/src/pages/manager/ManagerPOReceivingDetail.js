@@ -51,6 +51,8 @@ function ManagerPOReceivingDetail() {
   const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
+  const [exportingPdf, setExportingPdf] = useState(false);
+
   const barcodeBuffer = useRef('');
   const barcodeTimer = useRef(null);
   const popupRef = useRef(null);
@@ -216,6 +218,35 @@ function ManagerPOReceivingDetail() {
     }
   };
 
+  // Export PDF — same endpoint and output as the buyer side's Export PDF
+  // (GET /api/po-invoices/:id/export-pdf). That route always builds its
+  // rows from item.quantity and leaves a blank hand-fill "Count" column —
+  // it never reads store_count at all — so a manager's export here is
+  // already byte-for-byte identical to the buyer's, ignoring whatever
+  // counting progress exists on this invoice so far, with no separate
+  // backend logic needed.
+  const handleExportPdf = async () => {
+    setExportingPdf(true);
+    setError('');
+    try {
+      const res = await fetch(`/api/po-invoices/${invoiceId}/export-pdf`);
+      if (!res.ok) throw new Error('Export failed');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${invoice.po_number || invoice.invoice_number || 'invoice'}-export.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setExportingPdf(false);
+    }
+  };
+
   const handleSubmitInvoice = async () => {
     setSubmitting(true);
     setError('');
@@ -256,7 +287,13 @@ function ManagerPOReceivingDetail() {
     // point being that a modal opening/closing never leaves the page in a
     // state that needs horizontal scrolling.
     <div style={{ maxWidth: '100vw', overflowX: 'hidden' }}>
-      <Page title={invoice.po_number || invoice.invoice_number} backAction={{ onAction: () => navigate('/manager/po-receiving') }}>
+      <Page
+        title={invoice.po_number || invoice.invoice_number}
+        backAction={{ onAction: () => navigate('/manager/po-receiving') }}
+        secondaryActions={[
+          { content: 'Export PDF', onAction: handleExportPdf, loading: exportingPdf, disabled: exportingPdf },
+        ]}
+      >
         <Layout>
           <Layout.Section>
             <BlockStack gap="400">
