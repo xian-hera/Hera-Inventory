@@ -153,9 +153,8 @@ function BuyerPOImportInvoice() {
   const [addItemCost, setAddItemCost] = useState('');
   const [addingItem, setAddingItem] = useState(false);
 
-  // Store count (buyer view of the manager's count, once counted) — the
-  // buyer edits a correction *delta* (e.g. -1, +2); it's translated to/from
-  // the absolute store_count the manager's endpoint stores.
+  // Store count (buyer view of the manager's count, once counted) — shows
+  // and edits the actual counted quantity itself, not a correction delta.
   const [editingStoreCountId, setEditingStoreCountId] = useState(null);
   const [storeCountDraft, setStoreCountDraft] = useState('');
   const [savingStoreCount, setSavingStoreCount] = useState(false);
@@ -675,26 +674,18 @@ function BuyerPOImportInvoice() {
     }
   };
 
-  // ── Store count (buyer-side correction-delta view/edit) ─────────────────
-  // store_count is the manager's absolute counted quantity; the buyer edits
-  // a signed *delta* against the original invoice quantity instead — this
-  // is purely a display/edit transformation, translated back to an absolute
-  // count before saving (delta = store_count - quantity).
-  const storeCountDelta = (item) => (item.store_count === null || item.store_count === undefined)
-    ? null
-    : Number(item.store_count) - Number(item.quantity);
-
+  // ── Store count (buyer-side view/edit) ───────────────────────────────────
+  // Shows the manager's actual counted quantity as-is — quantity 10, counted
+  // 9 shows "9", not a "-1" correction delta. Editing here saves that same
+  // absolute number straight through to the manager's count endpoint.
   const startEditStoreCount = (item) => {
-    const delta = storeCountDelta(item);
     setEditingStoreCountId(item.id);
-    setStoreCountDraft(delta === null ? '0' : String(delta));
+    setStoreCountDraft(item.store_count !== null && item.store_count !== undefined ? String(item.store_count) : '');
   };
 
   const saveStoreCount = async (item) => {
-    const delta = parseInt(storeCountDraft, 10);
-    if (isNaN(delta)) { setError('Invalid correction value'); return; }
-    const absolute = Number(item.quantity) + delta;
-    if (absolute < 0) { setError('Store count cannot be negative'); return; }
+    const absolute = parseInt(storeCountDraft, 10);
+    if (isNaN(absolute) || absolute < 0) { setError('Invalid count'); return; }
     setSavingStoreCount(true);
     setError('');
     try {
@@ -918,12 +909,22 @@ function BuyerPOImportInvoice() {
     return Number(compareField).toFixed(2) !== Number(it.supplier_cost_raw).toFixed(2);
   };
 
+  // A store-counted quantity that doesn't match the invoice quantity — only
+  // meaningful once the Store count column is showing and this item has
+  // actually been counted.
+  const isQtyMismatch = (it) => showStoreCountColumn
+    && it.store_count !== null && it.store_count !== undefined
+    && Number(it.store_count) !== Number(it.quantity);
+
   // Priority: missing SKU first, then a cost mismatch highlighted row, then
-  // everything else — same relative order the rest of the list keeps.
+  // a store-count mismatch row (lower priority than cost — a row that's
+  // both stays sorted as a cost mismatch), then everything else.
   const sortedItems = [...items].sort((a, b) => {
     const missingDiff = (b.is_missing ? 1 : 0) - (a.is_missing ? 1 : 0);
     if (missingDiff !== 0) return missingDiff;
-    return (isHighlighted(b) ? 1 : 0) - (isHighlighted(a) ? 1 : 0);
+    const costDiff = (isHighlighted(b) ? 1 : 0) - (isHighlighted(a) ? 1 : 0);
+    if (costDiff !== 0) return costDiff;
+    return (isQtyMismatch(b) ? 1 : 0) - (isQtyMismatch(a) ? 1 : 0);
   });
   const subtotalCad = items.reduce((sum, it) => sum + (Number(it.quantity) || 0) * (Number(it.effective_cost) || 0), 0);
   const subtotalUsd = isUsdSupplier
@@ -1308,9 +1309,13 @@ function BuyerPOImportInvoice() {
                             && Number(it.quantity_original) !== Number(it.quantity);
                           const costEdited = it.raw_cost_original !== null && it.raw_cost_original !== undefined
                             && hasRawCost && Number(it.raw_cost_original) !== Number(it.raw_cost);
-                          const delta = showStoreCountColumn ? storeCountDelta(it) : null;
+                          const qtyMismatch = isQtyMismatch(it);
+                          // Cost mismatch (yellow) always wins when a row is both —
+                          // the store-count mismatch still gets its red bold value,
+                          // just not the row-wide highlight color.
+                          const rowBackground = highlighted ? '#fff8e1' : (qtyMismatch ? '#fdeceb' : undefined);
                           return (
-                            <tr key={it.id} style={{ borderBottom: '1px solid #f1f1f1', background: highlighted ? '#fff8e1' : undefined }}>
+                            <tr key={it.id} style={{ borderBottom: '1px solid #f1f1f1', background: rowBackground }}>
                               {itemsEditable && (
                                 <td style={{ padding: '10px 6px' }}>
                                   <input type="checkbox" checked={selectedIds.has(it.id)} onChange={() => toggleSelectItem(it.id)} />
@@ -1462,11 +1467,18 @@ function BuyerPOImportInvoice() {
                                       <Button size="slim" onClick={() => saveStoreCount(it)} loading={savingStoreCount}>Save</Button>
                                       <Button size="slim" onClick={() => setEditingStoreCountId(null)} disabled={savingStoreCount}>Cancel</Button>
                                     </InlineStack>
-                                  ) : delta === null ? (
+                                  ) : (it.store_count === null || it.store_count === undefined) ? (
                                     <Text tone="subdued">not counted yet</Text>
                                   ) : (
-                                    <span style={{ cursor: 'pointer' }} onClick={() => startEditStoreCount(it)}>
-                                      {delta === 0 ? '0' : (delta > 0 ? `+${delta}` : String(delta))}
+                                    <span
+                                      style={{
+                                        cursor: 'pointer',
+                                        color: qtyMismatch ? '#d72c0d' : undefined,
+                                        fontWeight: qtyMismatch ? 700 : undefined,
+                                      }}
+                                      onClick={() => startEditStoreCount(it)}
+                                    >
+                                      {it.store_count}
                                     </span>
                                   )}
                                 </td>
