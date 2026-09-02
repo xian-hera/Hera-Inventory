@@ -12,6 +12,15 @@
 // "Package size" is a single global metafield (not per-group) read at the
 // same time and stored on po_supplier_skus.pack_size.
 //
+// The code metafield may be blank — the SKU is still stored (code = '',
+// the same "no code" convention CSV import already uses for a blank code
+// cell), so a supplier can be searched/added by SKU alone even without a
+// code assigned. po_supplier_skus.code stays TEXT NOT NULL (not NULL) on
+// purpose: NULL values don't collide against each other under a UNIQUE
+// constraint, which would let duplicate blank-code rows for the same SKU
+// pile up across repeated runs — '' collides normally, so ON CONFLICT still
+// dedupes correctly.
+//
 // Each Update SKU run is a full wipe-and-rebuild within its own scope, not
 // an incremental upsert: a single-supplier run first deletes every existing
 // (supplier_id, code) mapping for that supplier (regardless of type), then
@@ -253,8 +262,10 @@ async function runSingleSupplierUpdate(supplierId) {
         const nameVal = readAliasValue(product, variant, `grp${i}Name`);
         if (nameVal === null || nameVal === '') continue;
         if (nameVal !== supplier.name) continue; // exact, case-sensitive
-        const codeVal = readAliasValue(product, variant, `grp${i}Code`);
-        if (!codeVal) break; // matched name but no code value — nothing to map, don't check other groups either
+        // A blank code is allowed — the SKU still gets stored (code = ''),
+        // just without a supplier code to key off of. This lets a supplier
+        // be searched/added by SKU alone when no code metafield is set.
+        const codeVal = readAliasValue(product, variant, `grp${i}Code`) || '';
         matches.push({
           supplierId,
           code: codeVal,
@@ -335,8 +346,10 @@ async function runGlobalUpdate(types) {
           if (!unregistered.has(nameVal)) unregistered.set(nameVal, product.productType || '');
           continue;
         }
-        const codeVal = readAliasValue(product, variant, `grp${i}Code`);
-        if (!codeVal) continue;
+        // A blank code is allowed — same rule as the single-supplier run:
+        // the SKU still gets stored (code = ''), just without a supplier
+        // code to key off of.
+        const codeVal = readAliasValue(product, variant, `grp${i}Code`) || '';
         matches.push({
           supplierId,
           code: codeVal,
