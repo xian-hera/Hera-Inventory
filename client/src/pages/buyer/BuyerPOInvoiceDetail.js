@@ -108,13 +108,30 @@ function BuyerPOInvoiceDetail() {
     return Number(compareField).toFixed(2) !== Number(it.supplier_cost_raw).toFixed(2);
   };
 
+  // Committed qty — the quantity actually applied to Shopify at commit time:
+  // the manager's store count when this item went through store counting,
+  // otherwise the original invoice quantity unchanged (same actualQty
+  // fallback commitInvoice() itself uses). store_count is never cleared once
+  // a committed item has it, so this stays accurate for the item's whole
+  // history.
+  const committedQty = (it) => (it.store_count !== null && it.store_count !== undefined) ? it.store_count : it.quantity;
+  // A row whose committed qty ended up different from the original invoice
+  // quantity — same red-bold-value / light-red-row treatment, and same
+  // below-cost-mismatch sort/highlight priority, as the store_counted
+  // mismatch styling on the pending invoice page.
+  const isQtyMismatch = (it) => Number(committedQty(it)) !== Number(it.quantity);
+
   // Priority: missing SKU first (shouldn't occur on a committed invoice, but
   // kept for consistency with the Import page's ordering), then a cost
-  // mismatch highlighted row, then everything else.
+  // mismatch highlighted row, then a committed-qty mismatch (lower priority
+  // than cost — a row that's both stays sorted/highlighted as a cost
+  // mismatch), then everything else.
   const sortedItems = [...items].sort((a, b) => {
     const missingDiff = (b.is_missing ? 1 : 0) - (a.is_missing ? 1 : 0);
     if (missingDiff !== 0) return missingDiff;
-    return (isHighlighted(b) ? 1 : 0) - (isHighlighted(a) ? 1 : 0);
+    const costDiff = (isHighlighted(b) ? 1 : 0) - (isHighlighted(a) ? 1 : 0);
+    if (costDiff !== 0) return costDiff;
+    return (isQtyMismatch(b) ? 1 : 0) - (isQtyMismatch(a) ? 1 : 0);
   });
   const subtotalCad = items.reduce((sum, it) => sum + (Number(it.quantity) || 0) * (Number(it.effective_cost) || 0), 0);
   const subtotalUsd = isUsdSupplier
@@ -173,9 +190,10 @@ function BuyerPOInvoiceDetail() {
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                     <thead>
                       <tr style={{ borderBottom: '2px solid #e1e3e5' }}>
-                        {['SKU', 'code', 'name', 'quantity'].map(h => (
+                        {['SKU', 'code', 'name', 'Qty'].map(h => (
                           <th key={h} style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>{h}</th>
                         ))}
+                        <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Committed qty</th>
                         <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Invoice cost</th>
                         <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>
                           <InfoTooltip text={isUsdSupplier ? EFFECTIVE_COST_TOOLTIP_USD : EFFECTIVE_COST_TOOLTIP_CAD}>
@@ -194,12 +212,24 @@ function BuyerPOInvoiceDetail() {
                         const rawCostCad = isUsdSupplier && hasRawCost ? Number(it.raw_cost) * Number(invoice.fx_rate || 1) : null;
                         const showStrike = isUsdSupplier && rawCostCad !== null && hasEffectiveCost
                           && rawCostCad.toFixed(2) !== Number(it.effective_cost).toFixed(2);
+                        const qtyMismatch = isQtyMismatch(it);
+                        // Cost mismatch (yellow) always wins when a row is both —
+                        // the committed-qty mismatch still gets its red bold
+                        // value, just not the row-wide highlight color.
+                        const rowBackground = highlighted ? '#fff8e1' : (qtyMismatch ? '#fdeceb' : undefined);
                         return (
-                          <tr key={it.id} style={{ borderBottom: '1px solid #f1f1f1', background: highlighted ? '#fff8e1' : undefined }}>
+                          <tr key={it.id} style={{ borderBottom: '1px solid #f1f1f1', background: rowBackground }}>
                             <td style={{ padding: '10px' }}>{it.sku}</td>
                             <td style={{ padding: '10px' }}>{it.code}</td>
                             <td style={{ padding: '10px' }}>{it.name}</td>
                             <td style={{ padding: '10px' }}>{it.quantity}</td>
+                            <td style={{
+                              padding: '10px',
+                              color: qtyMismatch ? '#d72c0d' : undefined,
+                              fontWeight: qtyMismatch ? 700 : undefined,
+                            }}>
+                              {committedQty(it)}
+                            </td>
                             <td style={{ padding: '10px', fontWeight: highlighted && compareMode === 'invoice_cost' ? 'bold' : undefined }}>
                               {hasRawCost ? Number(it.raw_cost).toFixed(2) : '—'}
                             </td>
