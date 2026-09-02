@@ -379,9 +379,36 @@ router.post('/process', async (req, res) => {
     const supplierSkuByCode = new Map(byCodeRes.rows.map(r => [r.code, r]));
     const supplierSkuBySku = new Map(bySkuRes.rows.map(r => [r.sku, r]));
 
+    // A row that gives a SKU directly is excluded outright when that SKU
+    // isn't in THIS supplier's saved SKU database at all — it never becomes
+    // a line item, and the buyer sees a red summary of what got excluded
+    // instead. This only checks our own database (not Shopify) — a supplier
+    // must run Update SKU to keep it fresh; a SKU that's since gone stale in
+    // Shopify (deleted/rebarcoded there after being synced here) can still
+    // slip through and fail later at commit, same as before this check.
+    // Rows resolved purely by code (no SKU given) are NOT touched here —
+    // those keep going through the existing code→SKU lookup below, which
+    // already turns an unresolvable code into a visible, commit-blocking
+    // "missing SKU" line item rather than silently dropping it. Only a row
+    // that gives BOTH a SKU and a code, where the SKU isn't found, is
+    // excluded here too — the code is not used as a fallback in that case.
+    const excludedSkus = [];
+    const keptRows = [];
+    for (const row of validRows) {
+      const skuGiven = String(row.sku || '').trim();
+      if (skuGiven && !supplierSkuBySku.has(skuGiven)) {
+        excludedSkus.push(skuGiven);
+        continue;
+      }
+      keptRows.push(row);
+    }
+    if (keptRows.length === 0) {
+      return res.status(400).json({ error: 'Excluded all SKUs: not found in supplier database' });
+    }
+
     const fx = supplier.currency === 'USD' ? Number(supplier.fx_rate) : 1;
 
-    const resolved = validRows.map(row => {
+    const resolved = keptRows.map(row => {
       const skuGiven = String(row.sku || '').trim();
       const codeGiven = String(row.code || '').trim();
       let sku, isMissing, supplierRow, viaCode;
@@ -544,7 +571,14 @@ router.post('/process', async (req, res) => {
 
     await client.query('COMMIT');
 
-    res.json({ invoice: invoiceRow, items: finalItems, hasMissing, hasCollision, hasMissingCost });
+    res.json({
+      invoice: invoiceRow, items: finalItems, hasMissing, hasCollision, hasMissingCost,
+      // Deduped — a SKU repeated across several excluded rows is only named
+      // once in the buyer-facing summary. Not persisted anywhere: this is a
+      // one-time notice for the process pass that just ran, not something
+      // that reappears if the buyer reopens this pending invoice later.
+      excludedSkus: [...new Set(excludedSkus)],
+    });
   } catch (e) {
     await client.query('ROLLBACK');
     console.error('POST /api/po-invoices/process error:', e);

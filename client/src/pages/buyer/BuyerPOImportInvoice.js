@@ -137,6 +137,11 @@ function BuyerPOImportInvoice() {
   const [hasMissing, setHasMissing] = useState(false);
   const [hasCollision, setHasCollision] = useState(false);
   const [hasMissingCost, setHasMissingCost] = useState(false);
+  // One-time notice from the last CSV process pass — rows whose given SKU
+  // wasn't found in this supplier's SKU database at all got dropped before
+  // ever becoming a line item. Not persisted anywhere server-side, so this
+  // is only shown for the process that just ran; it's gone on reload.
+  const [excludedSkus, setExcludedSkus] = useState([]);
   const [isPromotional, setIsPromotional] = useState(false);
 
   // Card 4 — inline editing / selection / add-item
@@ -546,6 +551,7 @@ function BuyerPOImportInvoice() {
       setHasMissing(data.hasMissing);
       setHasCollision(data.hasCollision);
       setHasMissingCost(data.hasMissingCost);
+      setExcludedSkus(data.excludedSkus || []);
       setPoNumber(data.invoice.po_number);
       setStatus(data.invoice.status || 'pending');
       if (!invoiceId) {
@@ -1159,6 +1165,12 @@ function BuyerPOImportInvoice() {
                 ))}
                 {processing && <Text tone="subdued" variant="bodySm">Processing…</Text>}
               </BlockStack>
+            )}
+
+            {excludedSkus.length > 0 && (
+              <Text tone="critical" variant="bodySm">
+                Excluded SKU {excludedSkus.join(', ')}: not found in supplier database
+              </Text>
             )}
 
             {items.length > 0 && (
