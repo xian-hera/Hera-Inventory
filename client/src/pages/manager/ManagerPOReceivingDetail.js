@@ -352,6 +352,11 @@ function ManagerPOReceivingDetail() {
                     <thead>
                       <tr style={{ borderBottom: '2px solid #e1e3e5' }}>
                         <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Name / SKU</th>
+                        {/* Wig number — no header per Hera's spec; blank for a
+                            non-WIG line item, so this column carries no label
+                            of its own and just sits quietly empty for those
+                            rows. */}
+                        <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}></th>
                         <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Qty</th>
                         <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Count</th>
                       </tr>
@@ -370,6 +375,7 @@ function ManagerPOReceivingDetail() {
                               <div style={{ fontWeight: 500 }}>{item.name || '-'}</div>
                               <div style={{ fontSize: '12px', color: '#6d7175' }}>{item.sku || '-'}</div>
                             </td>
+                            <td style={{ padding: '10px', color: '#6d7175' }}>{item.wig_number || ''}</td>
                             <td style={{ padding: '10px' }}>{item.quantity}</td>
                             <td style={{ padding: '10px' }}>
                               {!counted ? (

@@ -1033,17 +1033,62 @@ router.get('/manager/receiving', async (req, res) => {
 });
 
 // GET /api/po-invoices/manager/receiving/:id
+//
+// Same Wig number lookup as GET /:id/export-pdf (kept in sync with that
+// route's comment): only attempted at all when this invoice's supplier
+// carries the WIG type (Supplier management → Types carrying), and even
+// then only actually filled in for a line item whose own Shopify product
+// type is 'WIG' — every other item's wig_number is left blank ('') rather
+// than omitted, so the manager-side table always has a value to render (or
+// not) without special-casing missing fields. Not persisted anywhere —
+// re-read live from Shopify on every load, same live-read rationale as the
+// export's Name column.
 router.get('/manager/receiving/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const invRes = await pool.query(
-      `SELECT i.*, s.name AS supplier_name FROM po_invoices i JOIN po_suppliers s ON s.id = i.supplier_id
+      `SELECT i.*, s.name AS supplier_name, s.types_carrying FROM po_invoices i JOIN po_suppliers s ON s.id = i.supplier_id
        WHERE i.id = $1 AND i.status = 'sent_to_store'`,
       [id]
     );
     if (invRes.rows.length === 0) return res.status(404).json({ error: 'Invoice not found' });
+    const invoice = invRes.rows[0];
     const itemsRes = await pool.query('SELECT * FROM po_invoice_items WHERE invoice_id = $1 ORDER BY id ASC', [id]);
-    res.json({ invoice: invRes.rows[0], items: itemsRes.rows });
+    const items = itemsRes.rows;
+
+    const supplierCarriesWig = (invoice.types_carrying || []).includes('WIG');
+    if (supplierCarriesWig) {
+      const { getShopify, getSession } = require('../shopify');
+      const session = await getSession();
+      const shopify = getShopify();
+      const client = new shopify.clients.Graphql({ session });
+
+      for (const item of items) {
+        item.wig_number = '';
+        if (!item.sku) continue;
+        try {
+          const query = `{
+            productVariants(first: 1, query: "barcode:${item.sku}") {
+              edges { node {
+                product {
+                  productType
+                  wigNumber: metafield(namespace: "custom", key: "wig_number") { value }
+                }
+              } }
+            }
+          }`;
+          const response = await shopifyRequest(client, query);
+          const node = response?.data?.productVariants?.edges?.[0]?.node;
+          if (node?.product?.productType === 'WIG') {
+            item.wig_number = node?.product?.wigNumber?.value || '';
+          }
+        } catch (e) {
+          console.error(`GET /manager/receiving/:id: wig_number lookup failed for SKU ${item.sku}:`, e.message);
+        }
+      }
+    }
+
+    res.json({ invoice, items });
   } catch (e) {
     console.error('GET /api/po-invoices/manager/receiving/:id error:', e);
     res.status(500).json({ error: e.message });
