@@ -1058,33 +1058,59 @@ router.get('/manager/receiving/:id', async (req, res) => {
 
     const supplierCarriesWig = (invoice.types_carrying || []).includes('WIG');
     if (supplierCarriesWig) {
-      const { getShopify, getSession } = require('../shopify');
-      const session = await getSession();
-      const shopify = getShopify();
-      const client = new shopify.clients.Graphql({ session });
+      items.forEach(item => { item.wig_number = ''; });
+      const skus = [...new Set(items.map(item => item.sku).filter(Boolean))];
+      if (skus.length > 0) {
+        const { getShopify, getSession } = require('../shopify');
+        const session = await getSession();
+        const shopify = getShopify();
+        const client = new shopify.clients.Graphql({ session });
 
-      for (const item of items) {
-        item.wig_number = '';
-        if (!item.sku) continue;
+        // Batched instead of one Shopify request per line item — an
+        // invoice with, say, 40 items used to mean 40 sequential
+        // round-trips here, and hitting Shopify's GraphQL rate limit partway
+        // through added on top of that via shopifyRequest()'s 429 backoff
+        // (1s, 2s...), which is what made opening a WIG invoice on the
+        // manager side take close to 10 seconds. One OR'd `query` filter
+        // (chunked to stay well under Shopify's search-query length limits)
+        // resolves a whole invoice's worth of SKUs in a small, constant
+        // number of requests instead. The filter itself is passed as a
+        // GraphQL variable so no manual string-escaping of SKUs is needed.
+        const CHUNK_SIZE = 50;
+        const wigNumberBySku = new Map();
         try {
-          const query = `{
-            productVariants(first: 1, query: "barcode:${item.sku}") {
-              edges { node {
-                product {
-                  productType
-                  wigNumber: metafield(namespace: "custom", key: "wig_number") { value }
+          for (let i = 0; i < skus.length; i += CHUNK_SIZE) {
+            const chunk = skus.slice(i, i + CHUNK_SIZE);
+            const filter = chunk.map(s => `barcode:${s}`).join(' OR ');
+            const query = `
+              query wigNumbers($filter: String!) {
+                productVariants(first: ${chunk.length}, query: $filter) {
+                  edges { node {
+                    barcode
+                    product {
+                      productType
+                      wigNumber: metafield(namespace: "custom", key: "wig_number") { value }
+                    }
+                  } }
                 }
-              } }
-            }
-          }`;
-          const response = await shopifyRequest(client, query);
-          const node = response?.data?.productVariants?.edges?.[0]?.node;
-          if (node?.product?.productType === 'WIG') {
-            item.wig_number = node?.product?.wigNumber?.value || '';
+              }
+            `;
+            const response = await shopifyRequest(client, query, { filter });
+            const edges = response?.data?.productVariants?.edges || [];
+            edges.forEach(({ node }) => {
+              if (node?.barcode && node?.product?.productType === 'WIG') {
+                wigNumberBySku.set(node.barcode, node.product.wigNumber?.value || '');
+              }
+            });
           }
         } catch (e) {
-          console.error(`GET /manager/receiving/:id: wig_number lookup failed for SKU ${item.sku}:`, e.message);
+          console.error('GET /manager/receiving/:id: batched wig_number lookup failed:', e.message);
         }
+        items.forEach(item => {
+          if (item.sku && wigNumberBySku.has(item.sku)) {
+            item.wig_number = wigNumberBySku.get(item.sku);
+          }
+        });
       }
     }
 
