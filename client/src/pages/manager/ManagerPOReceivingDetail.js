@@ -157,7 +157,13 @@ function ManagerPOReceivingDetail() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      setItems(prev => prev.map(i => (i.id === item.id ? data : i)));
+      // Merge rather than replace: this PATCH's response is a plain DB row
+      // (RETURNING *), which has no wig_number field at all — that's a
+      // client-side-only value fetched live by the initial GET and never
+      // stored in the DB. A straight replace would wipe it out the moment
+      // an item is counted; spreading the fresh DB fields over the existing
+      // item keeps wig_number (and anything else not in the DB row) intact.
+      setItems(prev => prev.map(i => (i.id === item.id ? { ...i, ...data } : i)));
       closePopup();
     } catch (e) {
       setCountError(e.message);
