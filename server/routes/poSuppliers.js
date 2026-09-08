@@ -100,6 +100,55 @@ router.get('/:id', async (req, res) => {
   }
 });
 
+// GET /api/po-suppliers/:id/lineitem-search?q=... — used by the "Import an
+// invoice" page's search-and-add flow (search this supplier's own SKU
+// library directly, independent of any CSV). Waterfall: try SKU first (input
+// as a substring of the SKU — e.g. "1234" matches "123456", "561234",
+// "812349"); if that finds nothing, try Code the same way; if that also
+// finds nothing, fall back to Name, word-tokenized on whitespace and
+// case-insensitive — every token in the query must appear somewhere in the
+// name (in any order), so "ABC Shampoo" matches "happy ABC oil shampoo",
+// "ABC happy shampoo", "happy shampoo of ABC", etc. Does not touch the
+// existing GET /:id?q= route, which is a simpler combined OR search used
+// elsewhere (Supplier management).
+router.get('/:id/lineitem-search', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { q } = req.query;
+    if (!q || !q.trim()) return res.json([]);
+    const term = q.trim();
+
+    let result = await pool.query(
+      'SELECT * FROM po_supplier_skus WHERE supplier_id = $1 AND sku ILIKE $2 ORDER BY sku ASC LIMIT 50',
+      [id, `%${term}%`]
+    );
+
+    if (result.rows.length === 0) {
+      result = await pool.query(
+        'SELECT * FROM po_supplier_skus WHERE supplier_id = $1 AND code ILIKE $2 ORDER BY code ASC LIMIT 50',
+        [id, `%${term}%`]
+      );
+    }
+
+    if (result.rows.length === 0) {
+      const tokens = term.split(/\s+/).filter(Boolean);
+      if (tokens.length > 0) {
+        const conditions = tokens.map((_, i) => `name ILIKE $${i + 2}`).join(' AND ');
+        const params = [id, ...tokens.map(t => `%${t}%`)];
+        result = await pool.query(
+          `SELECT * FROM po_supplier_skus WHERE supplier_id = $1 AND ${conditions} ORDER BY name ASC LIMIT 50`,
+          params
+        );
+      }
+    }
+
+    res.json(result.rows);
+  } catch (e) {
+    console.error('GET /api/po-suppliers/:id/lineitem-search error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // PATCH /api/po-suppliers/:id — single-field edit (name / currency+fxRate / typesCarrying)
 router.patch('/:id', async (req, res) => {
   try {

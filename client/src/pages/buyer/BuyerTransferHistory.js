@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Page, Layout, Card, Button, BlockStack, InlineStack, Text, TextField, Banner, Spinner, Badge
+  Page, Layout, Card, Button, BlockStack, InlineStack, Text, TextField, Banner, Spinner
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 
@@ -11,7 +11,7 @@ function formatDate(dateStr) {
   return `${d.getFullYear()}.${months[d.getMonth()]}.${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
 }
 
-function BuyerPOReceivingHistory() {
+function BuyerTransferHistory() {
   const navigate = useNavigate();
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -21,7 +21,7 @@ function BuyerPOReceivingHistory() {
     setLoading(true);
     try {
       const params = q ? `?q=${encodeURIComponent(q)}` : '';
-      const res = await fetch(`/api/po-invoices/history${params}`);
+      const res = await fetch(`/api/transfers/history${params}`);
       const data = await res.json();
       setHistory(Array.isArray(data) ? data : []);
     } catch (e) {
@@ -39,12 +39,12 @@ function BuyerPOReceivingHistory() {
   };
 
   return (
-    <Page title="Committed invoice history" backAction={{ onAction: () => navigate('/buyer/po-receiving') }}>
+    <Page title="Committed transfer history" backAction={{ onAction: () => navigate('/buyer/transfer') }}>
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">
             <Banner tone="info">
-              Only the most recent 200 committed invoices are kept. Older ones are automatically cleared.
+              Only the most recent 200 transfers are kept. Older ones are automatically cleared.
             </Banner>
 
             <Card>
@@ -54,7 +54,7 @@ function BuyerPOReceivingHistory() {
                     <TextField
                       label=""
                       labelHidden
-                      placeholder="Search by Supplier name, Receiving location, PO number, invoice number, SKU or code"
+                      placeholder="Search by SKU or Name"
                       value={search}
                       onChange={setSearch}
                       onKeyDown={(e) => { if (e.key === 'Enter') fetchHistory(search); }}
@@ -74,13 +74,13 @@ function BuyerPOReceivingHistory() {
                 {loading ? (
                   <InlineStack align="center"><Spinner /></InlineStack>
                 ) : history.length === 0 ? (
-                  <Text tone="subdued">{search ? 'No matching invoice found.' : 'No committed invoices yet.'}</Text>
+                  <Text tone="subdued">{search ? 'No matching transfer found.' : 'No committed transfers yet.'}</Text>
                 ) : (
                   <div style={{ overflowX: 'auto' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                       <thead>
                         <tr style={{ borderBottom: '2px solid #e1e3e5' }}>
-                          {['Date', 'Time', 'Supplier', 'Location', 'PO number', 'Subtotal', ''].map((h, i) => (
+                          {['Date', 'Time', 'Transfer number', 'Transfer ID', 'From', 'To'].map((h, i) => (
                             <th key={i} style={{ padding: '8px 10px', textAlign: 'left', fontWeight: '600', color: '#6d7175', whiteSpace: 'nowrap' }}>
                               {h}
                             </th>
@@ -88,32 +88,36 @@ function BuyerPOReceivingHistory() {
                         </tr>
                       </thead>
                       <tbody>
-                        {history.map(inv => {
-                          const [date, time] = formatDate(inv.committed_at).split(' ');
+                        {history.map(tr => {
+                          const [date, time] = formatDate(tr.committed_at).split(' ');
                           return (
-                            <tr key={inv.id} style={{ borderBottom: '1px solid #f1f1f1' }}>
+                            <tr key={tr.id} style={{ borderBottom: '1px solid #f1f1f1' }}>
                               <td style={{ padding: '10px' }}>{date}</td>
                               <td style={{ padding: '10px' }}>{time}</td>
-                              <td style={{ padding: '10px' }}>{inv.supplier_name}</td>
-                              <td style={{ padding: '10px' }}>{inv.location}</td>
                               <td style={{ padding: '10px' }}>
                                 <span
                                   style={{ cursor: 'pointer', textDecoration: 'underline' }}
-                                  onClick={() => navigate(`/buyer/po-receiving/committed/${inv.id}`)}
+                                  onClick={() => navigate(`/buyer/transfer/${tr.id}`)}
                                 >
-                                  {inv.po_number || inv.invoice_number}
-                                </span>{' '}
-                                committed
-                                {inv.po_number && inv.invoice_number && (
-                                  <div>
-                                    <Text variant="bodySm" tone="subdued">Ref: {inv.invoice_number}</Text>
-                                  </div>
+                                  {tr.transfer_no}
+                                </span>
+                              </td>
+                              <td style={{ padding: '10px' }}>
+                                {tr.shopify_transfer_url ? (
+                                  <a
+                                    href={tr.shopify_transfer_url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    style={{ textDecoration: 'underline' }}
+                                  >
+                                    {tr.shopify_transfer_id}
+                                  </a>
+                                ) : (
+                                  tr.shopify_transfer_id
                                 )}
                               </td>
-                              <td style={{ padding: '10px' }}>{Number(inv.subtotal_cad || 0).toFixed(2)}</td>
-                              <td style={{ padding: '10px' }}>
-                                {inv.is_promotional && <Badge>Promotional</Badge>}
-                              </td>
+                              <td style={{ padding: '10px' }}>{tr.from_location}</td>
+                              <td style={{ padding: '10px' }}>{tr.to_location}</td>
                             </tr>
                           );
                         })}
@@ -130,4 +134,4 @@ function BuyerPOReceivingHistory() {
   );
 }
 
-export default BuyerPOReceivingHistory;
+export default BuyerTransferHistory;

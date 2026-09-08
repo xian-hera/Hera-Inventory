@@ -5,6 +5,32 @@ import { useNavigate } from 'react-router-dom';
 const PIN_VERIFIED_KEY = 'buyer_pin_verified';  // { expiry: timestamp }
 const PIN_EXPIRY_DAYS  = 30;
 
+const TILE_STYLE = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  aspectRatio: '1 / 1',
+  width: '100%',
+  background: '#fff',
+  border: '1px solid #c9cccf',
+  borderRadius: '12px',
+  fontSize: '15px',
+  fontWeight: 500,
+  color: 'inherit',
+  cursor: 'pointer',
+  padding: '16px',
+  textAlign: 'center',
+  WebkitTapHighlightColor: 'transparent',
+};
+
+function Tile({ label, onClick }) {
+  return (
+    <button type="button" style={TILE_STYLE} onClick={onClick}>
+      {label}
+    </button>
+  );
+}
+
 function Home() {
   const navigate = useNavigate();
   const [showModal, setShowModal] = useState(false);
@@ -85,9 +111,12 @@ function Home() {
             <Button size="large" fullWidth onClick={handleBuyerClick}>
               Purchasing
             </Button>
-            <Button size="large" fullWidth onClick={() => navigate('/manager')}>
-              Store
-            </Button>
+
+            {/* Warehouse / Store — large touch-friendly tiles for mobile use */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+              <Tile label="Warehouse" onClick={() => navigate('/warehouse')} />
+              <Tile label="Store" onClick={() => navigate('/manager')} />
+            </div>
           </BlockStack>
         </Layout.Section>
       </Layout>

@@ -3,10 +3,11 @@ import {
   Page, Layout, Card, Button, BlockStack, InlineStack, Text, TextField, Banner, Spinner
 } from '@shopify/polaris';
 import { useNavigate, useParams } from 'react-router-dom';
+import { StatusBadge } from '../shared/transferStatus';
 
-// Same keydown-buffer barcode-scanner listening pattern used by
-// ManagerTaskDetail.js / ManagerRestockPlan.js — kept as its own local copy
-// since this codebase doesn't share a scanner-utils module between pages.
+// Same keydown-buffer barcode-scanner listening pattern as
+// ManagerPOReceivingDetail.js — kept as its own local copy per this
+// codebase's convention (no shared scanner-utils module).
 function resolveKey(e) {
   if (e.key && e.key !== 'Unidentified' && e.key.length === 1) return e.key;
   if (e.code) {
@@ -28,34 +29,35 @@ function cleanBarcode(raw) {
   return raw.replace(/^[^0-9]+/, '');
 }
 
-function ManagerPOReceivingDetail() {
+// Manager's Receiving-side detail page — handles both In transit (read-only,
+// black "Delivered" button) and Receiving (full counting page modeled on
+// ManagerPOReceivingDetail.js: scanner, count popup, All/Uncounted/Off-qty
+// filter pills, Wig Number column, notes). Spec doc section 6.
+function ManagerTransferReceivingDetail() {
   const navigate = useNavigate();
-  const { invoiceId } = useParams();
+  const { transferId } = useParams();
 
-  const [invoice, setInvoice] = useState(null);
+  const [transfer, setTransfer] = useState(null);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+
+  const [delivering, setDelivering] = useState(false);
 
   const [popupItem, setPopupItem] = useState(null);
   const [countInput, setCountInput] = useState('');
   const [countError, setCountError] = useState('');
   const [savingCount, setSavingCount] = useState(false);
-
   const [notFoundBarcode, setNotFoundBarcode] = useState('');
 
   const [showNoteInput, setShowNoteInput] = useState(false);
-  const [noteInput, setNoteInput] = useState('');
+  const [noteDraft, setNoteDraft] = useState('');
   const [savingNote, setSavingNote] = useState(false);
 
   const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState('');
 
-  const [exportingPdf, setExportingPdf] = useState(false);
-
-  // Line-item list filter (All / Not counted / Off qty) — single-select,
-  // defaults to All. Purely a client-side view filter over `items`; doesn't
-  // touch the server or the counted/total summary line above the table.
   const [itemFilter, setItemFilter] = useState('all');
 
   const barcodeBuffer = useRef('');
@@ -67,38 +69,34 @@ function ManagerPOReceivingDetail() {
   useEffect(() => { popupRef.current = popupItem; }, [popupItem]);
   useEffect(() => { itemsRef.current = items; }, [items]);
 
-  const fetchInvoice = useCallback(async () => {
+  const fetchTransfer = useCallback(async () => {
     setLoading(true);
+    setError('');
     try {
-      const res = await fetch(`/api/po-invoices/manager/receiving/${invoiceId}`);
+      const res = await fetch(`/api/transfers/${transferId}?role=manager`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      setInvoice(data.invoice);
+      setTransfer(data.transfer);
       setItems(data.items);
     } catch (e) {
       setError(e.message);
     } finally {
       setLoading(false);
     }
-  }, [invoiceId]);
+  }, [transferId]);
 
-  useEffect(() => { fetchInvoice(); }, [fetchInvoice]);
+  useEffect(() => { fetchTransfer(); }, [fetchTransfer]);
 
-  // Body-scroll lock while any modal is open — never let a modal's presence
-  // widen the page such that closing it leaves the page needing horizontal
-  // scroll (an explicit past bug Hera flagged). The page content itself
-  // never exceeds 100% width (see the wrapping div's overflowX below), so
-  // this is just belt-and-suspenders.
   useEffect(() => {
     const anyOpen = !!(popupItem || showSubmitConfirm);
     document.body.style.overflow = anyOpen ? 'hidden' : '';
     return () => { document.body.style.overflow = ''; };
   }, [popupItem, showSubmitConfirm]);
 
-  // Scanner listening — SKU not found shows a popup that auto-dismisses
-  // after 2 seconds (no tap needed), per spec, rather than the tap-to-
-  // dismiss error popup used elsewhere in the manager app.
+  const isReceiving = transfer?.status === 'receiving';
+
   useEffect(() => {
+    if (!isReceiving) return;
     const handleKeyDown = (e) => {
       if (popupRef.current) return;
       const activeTag = document.activeElement?.tagName;
@@ -135,40 +133,31 @@ function ManagerPOReceivingDetail() {
       clearTimeout(notFoundTimer.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [isReceiving]);
 
   const openPopup = (item) => {
     setPopupItem(item);
     setCountInput('');
     setCountError('');
   };
-
   const closePopup = () => {
     setPopupItem(null);
     setCountInput('');
     setCountError('');
   };
 
-  // Persisted immediately on every submit (Correct button or manual count) —
-  // never batched — so leaving/closing mid-count never loses progress.
   const saveCount = async (item, count) => {
     setSavingCount(true);
     setCountError('');
     try {
-      const res = await fetch(`/api/po-invoices/manager/receiving/${invoiceId}/items/${item.id}/count`, {
-        method: 'PATCH',
+      const res = await fetch(`/api/transfers/${transferId}/count`, {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ count }),
+        body: JSON.stringify({ itemId: item.id, count }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      // Merge rather than replace: this PATCH's response is a plain DB row
-      // (RETURNING *), which has no wig_number field at all — that's a
-      // client-side-only value fetched live by the initial GET and never
-      // stored in the DB. A straight replace would wipe it out the moment
-      // an item is counted; spreading the fresh DB fields over the existing
-      // item keeps wig_number (and anything else not in the DB row) intact.
-      setItems(prev => prev.map(i => (i.id === item.id ? { ...i, ...data } : i)));
+      setItems(prev => prev.map(i => (i.id === item.id ? { ...i, received_quantity: count, counted_confirmed: true } : i)));
       closePopup();
     } catch (e) {
       setCountError(e.message);
@@ -190,22 +179,20 @@ function ManagerPOReceivingDetail() {
     saveCount(popupItem, value);
   };
 
-  // ── Notes — manager can reply even without a buyer note; same "one note
-  //    already exists" gate as the buyer side. ──────────────────────────────
-  const saveManagerNote = async () => {
-    if (!noteInput.trim()) return;
+  const saveNote = async () => {
+    if (!noteDraft.trim()) return;
     setSavingNote(true);
     setError('');
     try {
-      const res = await fetch(`/api/po-invoices/pending/${invoiceId}/notes/manager`, {
+      const res = await fetch(`/api/transfers/${transferId}/note`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: noteInput.trim() }),
+        body: JSON.stringify({ role: 'manager', text: noteDraft.trim() }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      setInvoice(prev => ({ ...prev, manager_note: data.manager_note, manager_note_at: data.manager_note_at }));
-      setNoteInput('');
+      setTransfer(prev => ({ ...prev, note: noteDraft.trim(), note_by: 'manager' }));
+      setNoteDraft('');
       setShowNoteInput(false);
     } catch (e) {
       setError(e.message);
@@ -214,14 +201,14 @@ function ManagerPOReceivingDetail() {
     }
   };
 
-  const deleteManagerNote = async () => {
+  const deleteNote = async () => {
     setSavingNote(true);
     setError('');
     try {
-      const res = await fetch(`/api/po-invoices/pending/${invoiceId}/notes/manager`, { method: 'DELETE' });
+      const res = await fetch(`/api/transfers/${transferId}/note`, { method: 'DELETE' });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      setInvoice(prev => ({ ...prev, manager_note: null, manager_note_at: null }));
+      setTransfer(prev => ({ ...prev, note: null, note_by: null }));
     } catch (e) {
       setError(e.message);
     } finally {
@@ -229,45 +216,31 @@ function ManagerPOReceivingDetail() {
     }
   };
 
-  // Export PDF — same endpoint and output as the buyer side's Export PDF
-  // (GET /api/po-invoices/:id/export-pdf). That route always builds its
-  // rows from item.quantity and leaves a blank hand-fill "Count" column —
-  // it never reads store_count at all — so a manager's export here is
-  // already byte-for-byte identical to the buyer's, ignoring whatever
-  // counting progress exists on this invoice so far, with no separate
-  // backend logic needed.
-  const handleExportPdf = async () => {
-    setExportingPdf(true);
+  const handleDelivered = async () => {
+    setDelivering(true);
     setError('');
     try {
-      const res = await fetch(`/api/po-invoices/${invoiceId}/export-pdf`);
-      if (!res.ok) throw new Error('Export failed');
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${invoice.po_number || invoice.invoice_number || 'invoice'}-export.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      const res = await fetch(`/api/transfers/${transferId}/delivered`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      await fetchTransfer();
     } catch (e) {
       setError(e.message);
     } finally {
-      setExportingPdf(false);
+      setDelivering(false);
     }
   };
 
   const handleSubmitInvoice = async () => {
     setSubmitting(true);
-    setError('');
+    setSubmitError('');
     try {
-      const res = await fetch(`/api/po-invoices/manager/receiving/${invoiceId}/submit`, { method: 'POST' });
+      const res = await fetch(`/api/transfers/${transferId}/submit-count`, { method: 'POST' });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      navigate('/manager/po-receiving');
+      navigate('/manager/transfer');
     } catch (e) {
-      setError(e.message);
+      setSubmitError(e.message);
       setShowSubmitConfirm(false);
     } finally {
       setSubmitting(false);
@@ -276,70 +249,133 @@ function ManagerPOReceivingDetail() {
 
   if (loading) {
     return (
-      <Page title="PO Receiving" backAction={{ onAction: () => navigate('/manager/po-receiving') }}>
+      <Page title="Transfer" backAction={{ onAction: () => navigate('/manager/transfer') }}>
         <Layout><Layout.Section><InlineStack align="center"><Spinner /></InlineStack></Layout.Section></Layout>
       </Page>
     );
   }
-  if (!invoice) {
+  if (!transfer) {
     return (
-      <Page title="PO Receiving" backAction={{ onAction: () => navigate('/manager/po-receiving') }}>
+      <Page title="Transfer" backAction={{ onAction: () => navigate('/manager/transfer') }}>
         <Layout><Layout.Section>{error && <Banner tone="critical">{error}</Banner>}</Layout.Section></Layout>
       </Page>
     );
   }
 
+  // ── In transit — read-only, Delivered button ─────────────────────────────
+  if (transfer.status === 'in_transit') {
+    return (
+      <div style={{ maxWidth: '100vw', overflowX: 'hidden' }}>
+        <Page
+          title={transfer.transfer_no}
+          backAction={{ onAction: () => navigate('/manager/transfer') }}
+          titleMetadata={<StatusBadge status={transfer.status} />}
+        >
+          <Layout>
+            <Layout.Section>
+              <BlockStack gap="400">
+                {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
+                <InlineStack align="space-between" blockAlign="center" wrap>
+                  <InlineStack gap="600" wrap>
+                    <BlockStack gap="050">
+                      <Text variant="bodySm" tone="subdued">From</Text>
+                      <Text fontWeight="bold">{transfer.from_location}</Text>
+                    </BlockStack>
+                    <BlockStack gap="050">
+                      <Text variant="bodySm" tone="subdued">To</Text>
+                      <Text fontWeight="bold">{transfer.to_location}</Text>
+                    </BlockStack>
+                  </InlineStack>
+                  <Button
+                    onClick={handleDelivered}
+                    loading={delivering}
+                    fullWidth={false}
+                  >
+                    Delivered
+                  </Button>
+                </InlineStack>
+
+                <Card>
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                      <thead>
+                        <tr style={{ borderBottom: '2px solid #e1e3e5' }}>
+                          <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>SKU</th>
+                          <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Name</th>
+                          <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Wig Number</th>
+                          <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Transfer qty</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {items.map(item => (
+                          <tr key={item.id} style={{ borderBottom: '1px solid #f1f1f1' }}>
+                            <td style={{ padding: '10px' }}>{item.sku}</td>
+                            <td style={{ padding: '10px' }}>{item.name}</td>
+                            <td style={{ padding: '10px', color: '#6d7175' }}>{item.wig_number || ''}</td>
+                            <td style={{ padding: '10px' }}>{item.quantity}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </Card>
+                <div style={{ height: 'var(--shopify-safe-area-inset-bottom, 80px)' }} />
+              </BlockStack>
+            </Layout.Section>
+          </Layout>
+        </Page>
+      </div>
+    );
+  }
+
+  // ── Receiving — full counting page ───────────────────────────────────────
   const totalCount = items.length;
-  const countedCount = items.filter(i => i.store_count !== null && i.store_count !== undefined).length;
+  const countedCount = items.filter(i => i.counted_confirmed).length;
   const allCounted = totalCount > 0 && countedCount === totalCount;
   const notCountedCount = totalCount - countedCount;
-  const offQtyCount = items.filter(i => {
-    const counted = i.store_count !== null && i.store_count !== undefined;
-    return counted && Number(i.store_count) !== Number(i.quantity);
-  }).length;
+  const offQtyCount = items.filter(i => i.counted_confirmed && Number(i.received_quantity) !== Number(i.quantity)).length;
 
   const ITEM_FILTERS = [
     { key: 'all', label: 'All', count: totalCount },
-    { key: 'not_counted', label: 'Not counted', count: notCountedCount },
-    { key: 'off_qty', label: 'Off qty', count: offQtyCount },
+    { key: 'not_counted', label: 'Uncounted', count: notCountedCount },
+    { key: 'off_qty', label: 'Off Qty', count: offQtyCount },
   ];
 
-  const filteredItems = items.filter(item => {
+  // Off-qty rows always pinned to top (spec doc section 6: "始终置顶显示"),
+  // regardless of which filter pill is active.
+  const isOffQty = (item) => item.counted_confirmed && Number(item.received_quantity) !== Number(item.quantity);
+  const sortedItems = [...items].sort((a, b) => (isOffQty(b) ? 1 : 0) - (isOffQty(a) ? 1 : 0));
+
+  const filteredItems = sortedItems.filter(item => {
     if (itemFilter === 'all') return true;
-    const counted = item.store_count !== null && item.store_count !== undefined;
-    if (itemFilter === 'not_counted') return !counted;
-    if (itemFilter === 'off_qty') return counted && Number(item.store_count) !== Number(item.quantity);
+    if (itemFilter === 'not_counted') return !item.counted_confirmed;
+    if (itemFilter === 'off_qty') return isOffQty(item);
     return true;
   });
 
   return (
-    // Wrapper caps width at 100% of the viewport at all times — the whole
-    // point being that a modal opening/closing never leaves the page in a
-    // state that needs horizontal scrolling.
     <div style={{ maxWidth: '100vw', overflowX: 'hidden' }}>
       <Page
-        title={invoice.po_number || invoice.invoice_number}
-        backAction={{ onAction: () => navigate('/manager/po-receiving') }}
-        secondaryActions={[
-          { content: 'Export PDF', onAction: handleExportPdf, loading: exportingPdf, disabled: exportingPdf },
-        ]}
+        title={transfer.transfer_no}
+        backAction={{ onAction: () => navigate('/manager/transfer') }}
+        titleMetadata={<StatusBadge status={transfer.status} />}
       >
         <Layout>
           <Layout.Section>
             <BlockStack gap="400">
               {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
+              {submitError && <Banner tone="critical" onDismiss={() => setSubmitError('')}>{submitError}</Banner>}
 
               <InlineStack gap="300" wrap blockAlign="center">
-                <Text fontWeight="semibold">{invoice.supplier_name}</Text>
-                <Text tone="subdued" variant="bodySm">{invoice.location}</Text>
+                <Text fontWeight="semibold">{transfer.from_location} to {transfer.to_location}</Text>
                 <Text tone="subdued" variant="bodySm">{countedCount}/{totalCount} counted</Text>
               </InlineStack>
 
               <Card>
                 <BlockStack gap="300">
                   <InlineStack gap="200" wrap align="end">
-                    <Button onClick={() => setShowNoteInput(true)}>
-                      Note{(invoice.buyer_note || invoice.manager_note) ? ' •' : ''}
+                    <Button onClick={() => setShowNoteInput(v => !v)}>
+                      Add note{transfer.note ? ' •' : ''}
                     </Button>
                     <Button variant="primary" onClick={() => setShowSubmitConfirm(true)} disabled={!allCounted}>
                       Submit
@@ -348,27 +384,17 @@ function ManagerPOReceivingDetail() {
 
                   {showNoteInput && (
                     <BlockStack gap="200">
-                      {invoice.buyer_note && (
-                        <BlockStack gap="050">
-                          <Text variant="bodySm" tone="subdued">Buyer's note</Text>
-                          <Text>{invoice.buyer_note}</Text>
-                        </BlockStack>
-                      )}
-                      {invoice.manager_note ? (
-                        <BlockStack gap="050">
-                          <Text variant="bodySm" tone="subdued">Your reply</Text>
-                          <Text>{invoice.manager_note}</Text>
-                          <div>
-                            <Button size="slim" tone="critical" onClick={deleteManagerNote} loading={savingNote}>Delete</Button>
-                          </div>
+                      {transfer.note ? (
+                        <BlockStack gap="150">
+                          <Text>{transfer.note}</Text>
+                          <div><Button size="slim" tone="critical" onClick={deleteNote} loading={savingNote}>Delete</Button></div>
                         </BlockStack>
                       ) : (
                         <InlineStack gap="200">
                           <div style={{ flex: 1 }}>
-                            <TextField label="" labelHidden placeholder="Reply..." value={noteInput} onChange={setNoteInput} autoComplete="off" />
+                            <TextField label="" labelHidden placeholder="Note..." value={noteDraft} onChange={setNoteDraft} autoComplete="off" />
                           </div>
-                          <Button onClick={saveManagerNote} loading={savingNote}>Save</Button>
-                          <Button onClick={() => { setShowNoteInput(false); setNoteInput(''); }} disabled={savingNote}>Cancel</Button>
+                          <Button onClick={saveNote} loading={savingNote}>Save</Button>
                         </InlineStack>
                       )}
                     </BlockStack>
@@ -376,9 +402,6 @@ function ManagerPOReceivingDetail() {
                 </BlockStack>
               </Card>
 
-              {/* Line-item filter — All / Not counted / Off qty, single-select
-                  pill buttons, defaults to All. Lets the manager tap "Not
-                  counted" while counting to only see what's left. */}
               <InlineStack gap="200" wrap>
                 {ITEM_FILTERS.map(f => {
                   const active = itemFilter === f.key;
@@ -409,10 +432,6 @@ function ManagerPOReceivingDetail() {
                     <thead>
                       <tr style={{ borderBottom: '2px solid #e1e3e5' }}>
                         <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Name / SKU</th>
-                        {/* Wig number — no header per Hera's spec; blank for a
-                            non-WIG line item, so this column carries no label
-                            of its own and just sits quietly empty for those
-                            rows. */}
                         <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}></th>
                         <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Qty</th>
                         <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Count</th>
@@ -420,8 +439,8 @@ function ManagerPOReceivingDetail() {
                     </thead>
                     <tbody>
                       {filteredItems.map(item => {
-                        const counted = item.store_count !== null && item.store_count !== undefined;
-                        const matches = counted && Number(item.store_count) === Number(item.quantity);
+                        const counted = item.counted_confirmed;
+                        const matches = counted && Number(item.received_quantity) === Number(item.quantity);
                         return (
                           <tr
                             key={item.id}
@@ -438,9 +457,9 @@ function ManagerPOReceivingDetail() {
                               {!counted ? (
                                 <Text tone="subdued">not counted</Text>
                               ) : matches ? (
-                                <span style={{ color: '#008060', fontWeight: 700 }}>✓ {item.store_count}</span>
+                                <span style={{ color: '#008060', fontWeight: 700 }}>✓ {item.received_quantity}</span>
                               ) : (
-                                <span style={{ color: '#d72c0d', fontWeight: 700 }}>{item.store_count}</span>
+                                <span style={{ color: '#d72c0d', fontWeight: 700 }}>{item.received_quantity}</span>
                               )}
                             </td>
                           </tr>
@@ -450,13 +469,11 @@ function ManagerPOReceivingDetail() {
                   </table>
                 </div>
               </Card>
-              {/* Bottom nav-bar safe area, same convention as ManagerTaskDetail.js */}
               <div style={{ height: 'var(--shopify-safe-area-inset-bottom, 80px)' }} />
             </BlockStack>
           </Layout.Section>
         </Layout>
 
-        {/* SKU not found — auto-dismisses after 2s, no tap needed */}
         {notFoundBarcode && (
           <div style={{
             position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
@@ -469,12 +486,11 @@ function ManagerPOReceivingDetail() {
               boxShadow: '0 8px 24px rgba(0,0,0,0.2)',
             }}>
               <div style={{ fontSize: '32px', marginBottom: '12px' }}>⚠️</div>
-              <Text variant="bodyLg" fontWeight="bold">SKU "{notFoundBarcode}" not found in this invoice.</Text>
+              <Text variant="bodyLg" fontWeight="bold">SKU "{notFoundBarcode}" not found in this transfer.</Text>
             </div>
           </div>
         )}
 
-        {/* Count popup — click-to-open alternative to scanning */}
         {popupItem && (
           <div style={{
             position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
@@ -536,7 +552,6 @@ function ManagerPOReceivingDetail() {
           </div>
         )}
 
-        {/* Submit confirm */}
         {showSubmitConfirm && (
           <div style={{
             position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
@@ -547,7 +562,7 @@ function ManagerPOReceivingDetail() {
               <BlockStack gap="300">
                 <Text variant="headingMd" fontWeight="bold">Submit this count?</Text>
                 <Text variant="bodyMd" tone="subdued">
-                  This invoice will be removed from your PO Receiving list and marked as counted for the buyer.
+                  This transfer will move to Counted and be removed from your Receiving list.
                 </Text>
                 <InlineStack gap="200" align="center">
                   <button
@@ -582,4 +597,4 @@ function ManagerPOReceivingDetail() {
   );
 }
 
-export default ManagerPOReceivingDetail;
+export default ManagerTransferReceivingDetail;

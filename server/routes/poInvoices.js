@@ -200,7 +200,7 @@ async function generatePoNumber(client) {
 router.get('/recent', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT i.id, i.invoice_number, i.po_number, i.committed_at, i.invoice_date, i.is_promotional, s.name AS supplier_name,
+      `SELECT i.id, i.invoice_number, i.po_number, i.committed_at, i.invoice_date, i.is_promotional, i.location, s.name AS supplier_name,
               COALESCE(SUM(it.quantity * it.effective_cost), 0) AS subtotal_cad
        FROM po_invoices i
        JOIN po_suppliers s ON s.id = i.supplier_id
@@ -535,7 +535,10 @@ router.post('/process', async (req, res) => {
       );
       if (updated.rows.length === 0) throw new Error('Invoice not found or already committed');
       invoiceRow = updated.rows[0];
-      await client.query('DELETE FROM po_invoice_items WHERE invoice_id = $1', [invoiceId]);
+      // Only wipe the rows this CSV pass itself produced — rows the buyer
+      // added manually (via the SKU-search "+ item" flow) are excluded from
+      // this DELETE so a reprocess never silently discards them.
+      await client.query('DELETE FROM po_invoice_items WHERE invoice_id = $1 AND added_manually = FALSE', [invoiceId]);
     } else {
       const poNumber = await generatePoNumber(client);
       const inserted = await client.query(
@@ -569,10 +572,37 @@ router.post('/process', async (req, res) => {
       );
     }
 
+    // Recompute cost fields + has_missing_sku/collision/cost across the FULL
+    // current item set — the CSV rows just inserted, plus any added_manually
+    // rows that survived the scoped DELETE above — since a manually-added
+    // row can itself be missing a cost or collide on SKU with a CSV row, and
+    // the invoice-level adjustment (if any) has to be re-spread across all of
+    // them together, not just the freshly-inserted CSV rows.
+    await recalculateInvoice(client, invoiceRow.id);
+
     await client.query('COMMIT');
 
+    // Re-read fresh from the DB for the response rather than returning the
+    // locally-built finalItems/invoiceRow — those reflect only the CSV rows
+    // from this pass (no ids, no added_manually rows, and now-stale
+    // has_missing_*/effective_cost values after recalculateInvoice ran).
+    const freshInvoiceRes = await client.query(
+      `SELECT i.*, s.name AS supplier_name, s.currency AS supplier_currency, s.fx_rate
+       FROM po_invoices i JOIN po_suppliers s ON s.id = i.supplier_id WHERE i.id = $1`,
+      [invoiceRow.id]
+    );
+    const freshItemsRes = await client.query(
+      'SELECT * FROM po_invoice_items WHERE invoice_id = $1 ORDER BY is_missing DESC, added_manually DESC, id ASC',
+      [invoiceRow.id]
+    );
+    const freshInvoice = freshInvoiceRes.rows[0];
+
     res.json({
-      invoice: invoiceRow, items: finalItems, hasMissing, hasCollision, hasMissingCost,
+      invoice: freshInvoice,
+      items: freshItemsRes.rows,
+      hasMissing: freshInvoice.has_missing_sku,
+      hasCollision: freshInvoice.has_sku_collision,
+      hasMissingCost: freshInvoice.has_missing_cost,
       // Deduped — a SKU repeated across several excluded rows is only named
       // once in the buyer-facing summary. Not persisted anywhere: this is a
       // one-time notice for the process pass that just ran, not something
@@ -582,6 +612,54 @@ router.post('/process', async (req, res) => {
   } catch (e) {
     await client.query('ROLLBACK');
     console.error('POST /api/po-invoices/process error:', e);
+    res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
+  }
+});
+
+// POST /api/po-invoices/pending — creates an empty pending invoice shell
+// (no line items yet). Used when the buyer adds the invoice's first line
+// item via the SKU-search "+ item" flow, before ever uploading a CSV — the
+// existing POST /process always requires at least one CSV row, so it can't
+// be reused for this. Mirrors the invoice-creation half of POST /process
+// (supplier/location validation, PO number assignment) without touching
+// po_invoice_items at all.
+router.post('/pending', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { invoiceNumber, supplierId, location, invoiceDate } = req.body;
+    if (!supplierId || !location) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    const supplierRes = await pool.query('SELECT id FROM po_suppliers WHERE id = $1', [supplierId]);
+    if (supplierRes.rows.length === 0) return res.status(404).json({ error: 'Supplier not found' });
+
+    const locRes = await pool.query('SELECT shopify_location_id FROM location_map WHERE location_name = $1', [location]);
+    if (locRes.rows.length === 0) return res.status(400).json({ error: 'Unknown location' });
+    const shopifyLocationId = locRes.rows[0].shopify_location_id;
+
+    await client.query('BEGIN');
+    const poNumber = await generatePoNumber(client);
+    const inserted = await client.query(
+      `INSERT INTO po_invoices
+         (invoice_number, supplier_id, location, shopify_location_id,
+          has_missing_sku, has_sku_collision, has_missing_cost, po_number, invoice_date, status, updated_at)
+       VALUES ($1,$2,$3,$4,FALSE,FALSE,FALSE,$5,$6,'pending',NOW()) RETURNING *`,
+      [invoiceNumber || null, supplierId, location, shopifyLocationId, poNumber, invoiceDate || null]
+    );
+    await client.query('COMMIT');
+
+    const invoiceRes = await pool.query(
+      `SELECT i.*, s.name AS supplier_name, s.currency AS supplier_currency, s.fx_rate
+       FROM po_invoices i JOIN po_suppliers s ON s.id = i.supplier_id WHERE i.id = $1`,
+      [inserted.rows[0].id]
+    );
+    res.json({ invoice: invoiceRes.rows[0], items: [] });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    console.error('POST /api/po-invoices/pending error:', e);
     res.status(500).json({ error: e.message });
   } finally {
     client.release();
@@ -866,8 +944,8 @@ router.post('/pending/:id/items', async (req, res) => {
 
     const inserted = await client.query(
       `INSERT INTO po_invoice_items
-         (invoice_id, code, sku, name, quantity, raw_cost, supplier_cost_raw, is_missing, quantity_original, raw_cost_original)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,FALSE,$8,$9) RETURNING id`,
+         (invoice_id, code, sku, name, quantity, raw_cost, supplier_cost_raw, is_missing, quantity_original, raw_cost_original, added_manually)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,FALSE,$8,$9,TRUE) RETURNING id`,
       [id, matchRow.code, matchRow.sku, matchRow.name || null, qty, rawCost, supplierCostRaw, qty, rawCost]
     );
 

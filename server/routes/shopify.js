@@ -752,6 +752,75 @@ router.get('/variant-by-sku', async (req, res) => {
   }
 });
 
+// GET /api/shopify/inventory-by-sku?sku=XXX&fromLocationId=gid://shopify/Location/1&toLocationId=gid://shopify/Location/2
+// Used by Buyer Transfer's Create Transfer page (search-add and CSV upload):
+// resolves a SKU to its variant name plus "available" quantity at both the
+// origin and destination location in one call. Same GraphQL shape as
+// fetchInventoryForBarcode above, just keyed by sku (like /variant-by-sku)
+// and reading both locations' levels instead of one.
+router.get('/inventory-by-sku', async (req, res) => {
+  try {
+    const { sku, fromLocationId, toLocationId } = req.query;
+    if (!sku || !fromLocationId || !toLocationId) {
+      return res.status(400).json({ error: 'sku, fromLocationId and toLocationId are required' });
+    }
+
+    const session = await getSession();
+    if (!session) return res.status(401).json({ error: 'No session' });
+
+    const shopify = getShopify();
+    const client = new shopify.clients.Graphql({ session });
+
+    const query = `{
+      productVariants(first: 1, query: "sku:${sku.replace(/"/g, '')}") {
+        edges {
+          node {
+            id sku
+            inventoryItem {
+              id
+              inventoryLevels(first: 20) {
+                edges {
+                  node {
+                    location { id }
+                    quantities(names: ["available"]) { name quantity }
+                  }
+                }
+              }
+            }
+            metafield(namespace: "custom", key: "name") { value }
+            product { title }
+          }
+        }
+      }
+    }`;
+
+    const response = await shopifyRequest(client, query);
+    const edge = response?.data?.productVariants?.edges?.[0];
+    if (!edge) return res.status(404).json({ error: 'SKU not found' });
+
+    const v = edge.node;
+    const levels = v.inventoryItem.inventoryLevels.edges;
+    const decodedFrom = decodeURIComponent(fromLocationId);
+    const decodedTo = decodeURIComponent(toLocationId);
+    const fromLevel = levels.find(e => e.node.location.id === decodedFrom);
+    const toLevel = levels.find(e => e.node.location.id === decodedTo);
+    const fromQty = fromLevel?.node.quantities.find(q => q.name === 'available')?.quantity ?? 0;
+    const toQty = toLevel?.node.quantities.find(q => q.name === 'available')?.quantity ?? 0;
+
+    res.json({
+      sku: v.sku,
+      name: v.metafield?.value || v.product.title,
+      variantId: v.id,
+      inventoryItemId: v.inventoryItem.id,
+      fromQty,
+      toQty,
+    });
+  } catch (e) {
+    console.error('GET /api/shopify/inventory-by-sku error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // GET /api/shopify/inventory-history/:barcode?locationId=gid://shopify/Location/xxx
 router.get('/inventory-history/:barcode', async (req, res) => {
   try {

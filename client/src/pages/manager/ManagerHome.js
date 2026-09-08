@@ -142,6 +142,10 @@ function ManagerHome() {
               </span>
             </Button>
 
+            <Button size="large" fullWidth onClick={() => handleNavigate('/manager/transfer')}>
+              Transfer
+            </Button>
+
             <Button size="large" fullWidth onClick={() => handleNavigate('/manager/label-print')}>
               <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 Label Print

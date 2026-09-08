@@ -43,6 +43,11 @@ const CSV_HEADER_ALIASES = {
   'unit discount': 'unitDiscount',
 };
 
+const LINEITEM_SEARCH_TOOLTIP = `Search this supplier's own SKU library directly — independent of any CSV. Lets you build an invoice purely by search-adding items, with no CSV required.
+SKU: matches any SKU containing what you typed (e.g. "1234" matches "123456", "561234").
+No SKU match → falls back to Code, same way.
+No Code match either → falls back to Name: enter words separated by spaces (e.g. "ABC Shampoo") to match any name containing all of those words, in any order, case-insensitive.`;
+
 const COMMITTING_RULE_TOOLTIP = `Committing will update cost field, new cost = (current qty × current cost + invoice qty × invoice unit cost) ÷ (current qty + invoice qty)`;
 
 const MISSING_SKU_TOOLTIP = `Go to Supplier management to add the missing SKU mapping first, then restart this importing, or add this to Commit later, and commit it after SKU added.`;
@@ -153,10 +158,23 @@ function BuyerPOImportInvoice() {
   const [savingItemEdit, setSavingItemEdit] = useState(false);
   const [deletingItems, setDeletingItems] = useState(false);
   const [addItemModalOpen, setAddItemModalOpen] = useState(false);
-  const [addItemInput, setAddItemInput] = useState('');
   const [addItemQty, setAddItemQty] = useState('1');
   const [addItemCost, setAddItemCost] = useState('');
   const [addingItem, setAddingItem] = useState(false);
+  // The line item chosen from the search-results dropdown below — replaces
+  // the old free-text "SKU or code" input in the add-item modal, since a
+  // search result is already a resolved exact SKU. { code, sku, name }.
+  const [selectedSearchResult, setSelectedSearchResult] = useState(null);
+
+  // Card 2 — "search this supplier's SKU library" (search-and-add flow).
+  // Lets the buyer add line items by search before/without ever uploading a
+  // CSV, so an invoice can be built purely from manual search-adds.
+  const [lineitemSearchQuery, setLineitemSearchQuery] = useState('');
+  const [lineitemSearchResults, setLineitemSearchResults] = useState([]);
+  const [lineitemSearchOpen, setLineitemSearchOpen] = useState(false);
+  const [lineitemSearchStyle, setLineitemSearchStyle] = useState({});
+  const lineitemSearchFieldRef = useRef(null);
+  const [searchingLineitems, setSearchingLineitems] = useState(false);
 
   // Store count (buyer view of the manager's count, once counted) — shows
   // and edits the actual counted quantity itself, not a correction delta.
@@ -296,6 +314,62 @@ function BuyerPOImportInvoice() {
   const filteredSuppliers = supplierQuery
     ? allSuppliers.filter(s => s.name.includes(supplierQuery))
     : allSuppliers;
+
+  // ── Card 2: line-item search dropdown ───────────────────────────────────
+  // Same portal-positioning + outside-click-close pattern as the supplier
+  // dropdown above.
+  const openLineitemSearchDropdown = () => {
+    if (lineitemSearchFieldRef.current) {
+      const rect = lineitemSearchFieldRef.current.getBoundingClientRect();
+      setLineitemSearchStyle({
+        position: 'fixed',
+        top: rect.bottom + 4,
+        left: rect.left,
+        minWidth: rect.width,
+        zIndex: 99999,
+        background: 'white',
+        border: '1px solid #e1e3e5',
+        borderRadius: '8px',
+        maxHeight: '260px',
+        overflowY: 'auto',
+        boxShadow: '0 4px 16px rgba(0,0,0,0.18)',
+      });
+    }
+    setLineitemSearchOpen(true);
+  };
+
+  useEffect(() => {
+    if (!lineitemSearchOpen) return;
+    const handleClick = (e) => {
+      const field = lineitemSearchFieldRef.current;
+      const drop = document.querySelector('[data-lineitem-search-drop="true"]');
+      if (field && !field.contains(e.target) && drop && !drop.contains(e.target)) {
+        setLineitemSearchOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [lineitemSearchOpen]);
+
+  // SKU → Code → Name waterfall, delegated entirely to the backend (see
+  // GET /api/po-suppliers/:id/lineitem-search). Only searches this
+  // supplier's own SKU library — nothing to do with the CSV.
+  const runLineitemSearch = async () => {
+    if (!lineitemSearchQuery.trim() || !supplierId) return;
+    setSearchingLineitems(true);
+    setError('');
+    try {
+      const res = await fetch(`/api/po-suppliers/${supplierId}/lineitem-search?q=${encodeURIComponent(lineitemSearchQuery.trim())}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setLineitemSearchResults(Array.isArray(data) ? data : []);
+      openLineitemSearchDropdown();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSearchingLineitems(false);
+    }
+  };
 
   const handleSupplierQueryChange = (val) => {
     guardEdit(() => {
@@ -652,27 +726,52 @@ function BuyerPOImportInvoice() {
     }
   };
 
-  const openAddItemModal = () => {
-    setAddItemInput('');
+  // Opens the add-item modal for one chosen search result — result is
+  // { code, sku, name } from GET .../lineitem-search.
+  const openAddItemModal = (result) => {
+    setSelectedSearchResult(result);
     setAddItemQty('1');
     setAddItemCost('');
+    setLineitemSearchOpen(false);
     setAddItemModalOpen(true);
   };
 
+  // Adds the chosen search result as a new line item. If no invoice exists
+  // yet at all (buyer is search-adding before ever uploading a CSV), an
+  // empty pending invoice shell is created first via POST /pending, then the
+  // item is added to it — mirroring how handleStartToProcess creates the
+  // invoice + navigates on first CSV process.
   const handleAddItem = async () => {
-    if (!addItemInput.trim()) { setError('Enter a SKU or code'); return; }
+    if (!selectedSearchResult) return;
     setAddingItem(true);
     setError('');
     try {
-      const res = await fetch(`/api/po-invoices/pending/${invoiceId}/items`, {
+      let targetInvoiceId = invoiceId;
+      if (!targetInvoiceId) {
+        const createRes = await fetch('/api/po-invoices/pending', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ invoiceNumber, supplierId, location, invoiceDate: invoiceDate || null }),
+        });
+        const createData = await createRes.json();
+        if (!createRes.ok) throw new Error(createData.error);
+        targetInvoiceId = createData.invoice.id;
+        setInvoiceId(targetInvoiceId);
+        setPoNumber(createData.invoice.po_number);
+        setStatus(createData.invoice.status || 'pending');
+        navigate(`/buyer/po-receiving/pending/${targetInvoiceId}`, { replace: true });
+      }
+
+      const res = await fetch(`/api/po-invoices/pending/${targetInvoiceId}/items`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ codeOrSku: addItemInput.trim(), quantity: addItemQty, cost: addItemCost || null }),
+        body: JSON.stringify({ codeOrSku: selectedSearchResult.sku, quantity: addItemQty, cost: addItemCost || null }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       refreshAfterItemsChange(data);
       setAddItemModalOpen(false);
+      setSelectedSearchResult(null);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -922,12 +1021,15 @@ function BuyerPOImportInvoice() {
     && it.store_count !== null && it.store_count !== undefined
     && Number(it.store_count) !== Number(it.quantity);
 
-  // Priority: missing SKU first, then a cost mismatch highlighted row, then
-  // a store-count mismatch row (lower priority than cost — a row that's
-  // both stays sorted as a cost mismatch), then everything else.
+  // Priority: missing SKU first, then a manually-added (search-add) row,
+  // then a cost mismatch highlighted row, then a store-count mismatch row
+  // (lower priority than cost — a row that's both stays sorted as a cost
+  // mismatch), then everything else.
   const sortedItems = [...items].sort((a, b) => {
     const missingDiff = (b.is_missing ? 1 : 0) - (a.is_missing ? 1 : 0);
     if (missingDiff !== 0) return missingDiff;
+    const manualDiff = (b.added_manually ? 1 : 0) - (a.added_manually ? 1 : 0);
+    if (manualDiff !== 0) return manualDiff;
     const costDiff = (isHighlighted(b) ? 1 : 0) - (isHighlighted(a) ? 1 : 0);
     if (costDiff !== 0) return costDiff;
     return (isQtyMismatch(b) ? 1 : 0) - (isQtyMismatch(a) ? 1 : 0);
@@ -1117,6 +1219,11 @@ function BuyerPOImportInvoice() {
                       <Text variant="bodySm">CSV construction requirement</Text>
                     </InfoTooltip>
                   </div>
+                  <div style={{ gridColumn: '2', gridRow: '1' }}>
+                    <InfoTooltip text={LINEITEM_SEARCH_TOOLTIP}>
+                      <Text variant="bodySm">Search line item</Text>
+                    </InfoTooltip>
+                  </div>
                   <div style={{ gridColumn: '3', gridRow: '1' }}>
                     <InfoTooltip text={ADJUSTMENT_TOOLTIP}>
                       <Text variant="bodySm">Add adjustment</Text>
@@ -1132,6 +1239,50 @@ function BuyerPOImportInvoice() {
                       onChange={handleCsvUpload}
                     />
                     <Button fullWidth onClick={() => csvInputRef.current.click()} disabled={disabled}>Upload CSV</Button>
+                  </div>
+                  <div style={{ gridColumn: '2', gridRow: '2' }}>
+                    <div ref={lineitemSearchFieldRef} style={{ position: 'relative' }}>
+                      <InlineStack gap="150" blockAlign="center" wrap={false}>
+                        <div style={{ flex: 1 }}>
+                          <TextField
+                            label="" labelHidden
+                            placeholder="SKU, Code or Name"
+                            value={lineitemSearchQuery}
+                            onChange={setLineitemSearchQuery}
+                            autoComplete="off"
+                            disabled={disabled || !supplierId}
+                          />
+                        </div>
+                        <Button
+                          onClick={runLineitemSearch}
+                          loading={searchingLineitems}
+                          disabled={disabled || !supplierId || !lineitemSearchQuery.trim()}
+                        >
+                          Search
+                        </Button>
+                      </InlineStack>
+                    </div>
+                    {lineitemSearchOpen && ReactDOM.createPortal(
+                      <div data-lineitem-search-drop="true" style={lineitemSearchStyle}>
+                        {lineitemSearchResults.length === 0 ? (
+                          <div style={{ padding: '10px 12px', color: '#6d7175' }}>No matches</div>
+                        ) : (
+                          lineitemSearchResults.map(r => (
+                            <div
+                              key={`${r.code || ''}-${r.sku}`}
+                              style={{
+                                padding: '8px 12px', display: 'flex', justifyContent: 'space-between',
+                                alignItems: 'center', gap: '12px', borderBottom: '1px solid #f1f2f3',
+                              }}
+                            >
+                              <span>{r.sku} — {r.name || '(no name)'}</span>
+                              <Button size="slim" onClick={() => openAddItemModal(r)} disabled={disabled}>+</Button>
+                            </div>
+                          ))
+                        )}
+                      </div>,
+                      document.body
+                    )}
                   </div>
                   <div style={{ gridColumn: '3', gridRow: '2' }}>
                     {adjustmentSaved ? (
@@ -1256,7 +1407,6 @@ function BuyerPOImportInvoice() {
 
             {itemsEditable && items.length > 0 && (
               <InlineStack gap="200" blockAlign="center">
-                <Button onClick={openAddItemModal} disabled={disabled}>+ item</Button>
                 <Button
                   tone="critical"
                   onClick={handleDeleteSelected}
@@ -1508,17 +1658,24 @@ function BuyerPOImportInvoice() {
         </Layout.Section>
       </Layout>
 
-      {/* + item modal */}
+      {/* Add-item modal — opened by clicking "+" on a search result row above.
+          The SKU is already resolved by the search, so it's shown read-only
+          here instead of the old free-text "SKU or code" input. */}
       <Modal
         open={addItemModalOpen}
-        onClose={() => setAddItemModalOpen(false)}
+        onClose={() => { setAddItemModalOpen(false); setSelectedSearchResult(null); }}
         title="Add a line item"
         primaryAction={{ content: 'Add', onAction: handleAddItem, loading: addingItem }}
-        secondaryActions={[{ content: 'Cancel', onAction: () => setAddItemModalOpen(false) }]}
+        secondaryActions={[{ content: 'Cancel', onAction: () => { setAddItemModalOpen(false); setSelectedSearchResult(null); } }]}
       >
         <Modal.Section>
           <BlockStack gap="300">
-            <TextField label="SKU or code" value={addItemInput} onChange={setAddItemInput} autoComplete="off" />
+            <TextField
+              label="SKU"
+              value={selectedSearchResult ? `${selectedSearchResult.sku} — ${selectedSearchResult.name || '(no name)'}` : ''}
+              disabled
+              autoComplete="off"
+            />
             <TextField label="Quantity" type="number" value={addItemQty} onChange={setAddItemQty} autoComplete="off" />
             <TextField label="Cost (blank = use Supplier cost)" type="number" value={addItemCost} onChange={setAddItemCost} autoComplete="off" />
           </BlockStack>

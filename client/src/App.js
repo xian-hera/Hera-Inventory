@@ -25,7 +25,6 @@ import ManagerStockLosses from './pages/manager/ManagerStockLosses';
 import ManagerLabelPrintTasks from './pages/manager/ManagerLabelPrintTasks';
 import ManagerLabelPrintTaskDetail from './pages/manager/ManagerLabelPrintTaskDetail';
 import BuyerPriceChange from './pages/buyer/BuyerPriceChange';
-import BuyerPriceChangePublished from './pages/buyer/BuyerPriceChangePublished';
 import ManagerPriceChangeDetail from './pages/manager/ManagerPriceChangeDetail';
 import ManagerEmployeeCap from './pages/manager/ManagerEmployeeCap';
 import ManagerPOReceiving from './pages/manager/ManagerPOReceiving';
@@ -50,6 +49,17 @@ import BuyerPOSuppliers from './pages/buyer/BuyerPOSuppliers';
 import BuyerPOSupplierAdd from './pages/buyer/BuyerPOSupplierAdd';
 import BuyerPOSupplierDetail from './pages/buyer/BuyerPOSupplierDetail';
 import BuyerPOSettings from './pages/buyer/BuyerPOSettings';
+import BuyerTransfer from './pages/buyer/BuyerTransfer';
+import BuyerTransferHistory from './pages/buyer/BuyerTransferHistory';
+import BuyerTransferCreate from './pages/buyer/BuyerTransferCreate';
+import BuyerTransferOngoing from './pages/buyer/BuyerTransferOngoing';
+import BuyerTransferSettings from './pages/buyer/BuyerTransferSettings';
+import BuyerTransferDetail from './pages/buyer/BuyerTransferDetail';
+import WarehouseHome from './pages/warehouse/WarehouseHome';
+import WarehouseTransferDetail from './pages/warehouse/WarehouseTransferDetail';
+import ManagerTransferHome from './pages/manager/ManagerTransferHome';
+import ManagerTransferSendingDetail from './pages/manager/ManagerTransferSendingDetail';
+import ManagerTransferReceivingDetail from './pages/manager/ManagerTransferReceivingDetail';
 
 function App() {
   return (
@@ -72,7 +82,6 @@ function App() {
           <Route path="/buyer/label-templates" element={<BuyerLabelTemplates />} />
           <Route path="/buyer/label-templates/:id" element={<BuyerLabelEditor />} />
           <Route path="/buyer/price-change" element={<BuyerPriceChange />} />
-          <Route path="/buyer/price-change/published" element={<BuyerPriceChangePublished />} />
           <Route path="/buyer/product-database" element={<ProductDatabaseSettings />} />
           <Route path="/buyer/po-receiving" element={<BuyerPOReceiving />} />
           <Route path="/buyer/po-receiving/history" element={<BuyerPOReceivingHistory />} />
@@ -84,9 +93,22 @@ function App() {
           <Route path="/buyer/po-receiving/suppliers/new" element={<BuyerPOSupplierAdd />} />
           <Route path="/buyer/po-receiving/suppliers/:supplierId" element={<BuyerPOSupplierDetail />} />
           <Route path="/buyer/po-receiving/settings" element={<BuyerPOSettings />} />
+          <Route path="/buyer/transfer" element={<BuyerTransfer />} />
+          <Route path="/buyer/transfer/history" element={<BuyerTransferHistory />} />
+          <Route path="/buyer/transfer/create" element={<BuyerTransferCreate />} />
+          <Route path="/buyer/transfer/ongoing" element={<BuyerTransferOngoing />} />
+          <Route path="/buyer/transfer/settings" element={<BuyerTransferSettings />} />
+          <Route path="/buyer/transfer/:transferId" element={<BuyerTransferDetail />} />
+
+          {/* Warehouse */}
+          <Route path="/warehouse" element={<WarehouseHome />} />
+          <Route path="/warehouse/transfer/:transferId" element={<WarehouseTransferDetail />} />
 
           {/* Manager */}
           <Route path="/manager" element={<ManagerHome />} />
+          <Route path="/manager/transfer" element={<ManagerTransferHome />} />
+          <Route path="/manager/transfer/sending/:transferId" element={<ManagerTransferSendingDetail />} />
+          <Route path="/manager/transfer/receiving/:transferId" element={<ManagerTransferReceivingDetail />} />
           <Route path="/manager/inventory-count" element={<ManagerInventoryCount />} />
           <Route path="/manager/counting-tasks" element={<ManagerCountingTasksList />} />
           <Route path="/manager/counting-tasks/:taskId" element={<ManagerTaskDetail />} />

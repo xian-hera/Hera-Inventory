@@ -1,7 +1,7 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   Page, Layout, Card, Button, BlockStack, InlineStack,
-  Text, Banner, Spinner, DataTable, Checkbox, TextField
+  Text, Banner, Spinner, DataTable, Checkbox, TextField, Badge
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import MultiSelectDropdown from '../../components/MultiSelectDropdown';
@@ -18,6 +18,13 @@ const LABEL_TYPE_OPTIONS = [
   { value: 'Wig',           label: 'Wig' },
 ];
 
+function formatDate(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  const months = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+  return `${d.getFullYear()}.${months[d.getMonth()]}.${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+}
+
 function BuyerPriceChange() {
   const navigate = useNavigate();
   const csvInputRef = useRef(null);
@@ -33,6 +40,33 @@ function BuyerPriceChange() {
   const [noteInput, setNoteInput]         = useState('');
   const [labelType, setLabelType]         = useState('Regular price');
   const [pendingPublishAll, setPendingPublishAll] = useState(false);
+
+  // Published tasks (merged in from the former standalone "Published Tasks" page)
+  const [tasks, setTasks]                 = useState([]);
+  const [tasksLoading, setTasksLoading]    = useState(false);
+  const [tasksError, setTasksError]        = useState('');
+  const [selectedTaskIds, setSelectedTaskIds] = useState([]);
+
+  const [detailTask, setDetailTask]       = useState(null);
+  const [detailItems, setDetailItems]     = useState([]);
+  const [detailLoading, setDetailLoading] = useState(false);
+
+  const fetchTasks = useCallback(async () => {
+    setTasksLoading(true);
+    setTasksError('');
+    try {
+      const res = await fetch('/api/price-change-tasks');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setTasks(data);
+    } catch (e) {
+      setTasksError('Failed to load tasks');
+    } finally {
+      setTasksLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { fetchTasks(); }, [fetchTasks]);
 
   const handleCSVUpload = async (e) => {
     const file = e.target.files[0];
@@ -135,6 +169,7 @@ function BuyerPriceChange() {
       if (!res.ok) throw new Error(data.error);
       setItems(prev => prev.filter(i => !skusToPublish.includes(i.sku)));
       setSelectedSkus([]);
+      fetchTasks();
     } catch (e) {
       setError(e.message);
     } finally {
@@ -174,14 +209,69 @@ function BuyerPriceChange() {
     item.price ? `$${item.price}` : '-',
   ]);
 
+  // ── Published tasks (merged in from the former standalone "Published Tasks" page) ──
+
+  const handleDeleteSelectedTasks = async () => {
+    if (selectedTaskIds.length === 0) return;
+    if (!window.confirm(`Delete ${selectedTaskIds.length} task(s)?`)) return;
+    await fetch('/api/price-change-tasks', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: selectedTaskIds }),
+    });
+    setSelectedTaskIds([]);
+    fetchTasks();
+  };
+
+  const handleDeleteAllTasks = async () => {
+    if (!window.confirm('Delete all tasks?')) return;
+    const ids = tasks.map(t => t.id);
+    await fetch('/api/price-change-tasks', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    });
+    setSelectedTaskIds([]);
+    fetchTasks();
+  };
+
+  const openTaskDetail = async (task) => {
+    setDetailTask(task);
+    setDetailLoading(true);
+    try {
+      const res = await fetch(`/api/price-change-tasks/${task.id}/items`);
+      const data = await res.json();
+      setDetailItems(data);
+    } catch (e) {
+      setDetailItems([]);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  const toggleTaskSelectOne = (id) => {
+    setSelectedTaskIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+  const toggleTaskSelectAll = () => {
+    setSelectedTaskIds(selectedTaskIds.length === tasks.length ? [] : tasks.map(t => t.id));
+  };
+
+  const taskRows = tasks.map(task => {
+    const unfinished = task.unfinished_locations?.filter(Boolean) || [];
+    return [
+      <Checkbox checked={selectedTaskIds.includes(task.id)} onChange={() => toggleTaskSelectOne(task.id)} />,
+      <Button variant="plain" onClick={() => openTaskDetail(task)}>{task.task_no}</Button>,
+      String(task.item_count || 0),
+      unfinished.length > 0
+        ? <div style={{ fontSize: '13px', color: '#d72c0d' }}>{unfinished.join(', ')}</div>
+        : <Badge tone="success">All done</Badge>,
+    ];
+  });
+
   return (
     <Page
       title="Price Change Task"
       backAction={{ onAction: () => navigate('/buyer') }}
-      secondaryActions={[{
-        content: 'Published Tasks',
-        onAction: () => navigate('/buyer/price-change/published'),
-      }]}
     >
       <Layout>
         <Layout.Section>
@@ -260,6 +350,48 @@ function BuyerPriceChange() {
                 </BlockStack>
               </Card>
             )}
+
+            {/* Published Tasks — merged in from the former standalone page */}
+            <Card>
+              <BlockStack gap="300">
+                <InlineStack align="space-between">
+                  <Text variant="headingMd" fontWeight="bold">Published Tasks</Text>
+                  <InlineStack gap="200">
+                    <Button
+                      destructive
+                      disabled={selectedTaskIds.length === 0}
+                      onClick={handleDeleteSelectedTasks}
+                    >
+                      Delete selected
+                    </Button>
+                    <Button
+                      destructive
+                      disabled={tasks.length === 0}
+                      onClick={handleDeleteAllTasks}
+                    >
+                      Delete all
+                    </Button>
+                  </InlineStack>
+                </InlineStack>
+
+                {tasksError && <Banner tone="critical" onDismiss={() => setTasksError('')}>{tasksError}</Banner>}
+
+                {tasksLoading ? <Spinner /> : (
+                  <DataTable
+                    columnContentTypes={['text','text','text','text']}
+                    headings={[
+                      <Checkbox
+                        checked={selectedTaskIds.length === tasks.length && tasks.length > 0}
+                        indeterminate={selectedTaskIds.length > 0 && selectedTaskIds.length < tasks.length}
+                        onChange={toggleTaskSelectAll}
+                      />,
+                      'Task', 'Items', 'Unfinished stores',
+                    ]}
+                    rows={taskRows}
+                  />
+                )}
+              </BlockStack>
+            </Card>
           </BlockStack>
         </Layout.Section>
       </Layout>
@@ -314,6 +446,64 @@ function BuyerPriceChange() {
                 </Button>
               </InlineStack>
             </BlockStack>
+          </div>
+        </div>
+      )}
+
+      {/* Published task item detail popup */}
+      {detailTask && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.5)', zIndex: 1000,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px',
+        }}>
+          <div style={{
+            background: 'white', borderRadius: '12px', padding: '24px',
+            width: '100%', maxWidth: '680px', maxHeight: '80vh', overflowY: 'auto',
+          }}>
+            <InlineStack align="space-between">
+              {/* Task name · label type */}
+              <Text variant="headingMd" fontWeight="bold">
+                Task {detailTask.task_no}
+                {detailTask.label_type && (
+                  <span style={{ fontWeight: 400, color: '#6d7175' }}>
+                    {' · '}{detailTask.label_type}
+                  </span>
+                )}
+              </Text>
+              <button onClick={() => setDetailTask(null)} style={{
+                background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer',
+              }}>✕</button>
+            </InlineStack>
+
+            {/* Assigned locations */}
+            {detailTask.locations && detailTask.locations.length > 0 && (
+              <div style={{ marginTop: '6px' }}>
+                <Text variant="bodySm" tone="subdued">
+                  {detailTask.locations.join(', ')}
+                </Text>
+              </div>
+            )}
+
+            {detailTask.note && (
+              <div style={{ marginTop: '6px' }}>
+                <Text tone="subdued" variant="bodySm">{detailTask.note}</Text>
+              </div>
+            )}
+
+            <div style={{ marginTop: '16px' }}>
+              {detailLoading ? <Spinner /> : (
+                <DataTable
+                  columnContentTypes={['text','text','text']}
+                  headings={['SKU', 'Name', 'Price']}
+                  rows={detailItems.map(item => [
+                    item.sku,
+                    item.name || '-',
+                    item.price ? `$${item.price}` : '-',
+                  ])}
+                />
+              )}
+            </div>
           </div>
         </div>
       )}

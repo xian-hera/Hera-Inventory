@@ -52,6 +52,7 @@ app.use('/api/employees', require('./routes/employees'));
 app.use('/api/po-suppliers', require('./routes/poSuppliers'));
 app.use('/api/po-invoices', require('./routes/poInvoices'));
 app.use('/api/po-settings', require('./routes/poSettings'));
+app.use('/api/transfers', require('./routes/transfers'));
 
 // Serve static files in production
 if (process.env.NODE_ENV === 'production') {

@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Home preview</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #f6f6f7; /* Polaris page background */
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  }
+  /* Mirrors Polaris <Page>: fluid, but capped at its default max content width on wide screens */
+  .frame {
+    width: 100%;
+    max-width: 998px;
+    margin: 0 auto;
+    padding: 24px 20px;
+  }
+  .page-title {
+    font-size: 20px;
+    font-weight: 700;
+    color: #202223;
+    margin: 4px 0 20px;
+  }
+  .stack {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .bar-button {
+    width: 100%;
+    padding: 14px 16px;
+    background: #fff;
+    border: 1px solid #c9cccf;
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: 500;
+    color: #202223;
+    text-align: center;
+    cursor: pointer;
+  }
+  .tile-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  .tile {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    aspect-ratio: 1 / 1;
+    width: 100%;
+    background: #fff;
+    border: 1px solid #c9cccf;
+    border-radius: 12px;
+    font-size: 20px;
+    font-weight: 600;
+    color: #202223;
+    cursor: pointer;
+    padding: 16px;
+    text-align: center;
+  }
+  .note {
+    margin-top: 20px;
+    font-size: 12px;
+    color: #6d7175;
+    text-align: center;
+  }
+  .ruler {
+    position: fixed;
+    top: 8px;
+    right: 12px;
+    font-size: 11px;
+    color: #8c9196;
+    background: #fff;
+    border: 1px solid #e1e3e5;
+    border-radius: 6px;
+    padding: 4px 8px;
+  }
+</style>
+</head>
+<body>
+  <div class="ruler" id="ruler"></div>
+  <div class="frame">
+    <div class="page-title">User</div>
+    <div class="stack">
+      <button class="bar-button">CRM / Growth</button>
+      <button class="bar-button">Purchasing</button>
+      <div class="tile-row">
+        <button class="tile">Warehouse</button>
+        <button class="tile">Store</button>
+      </div>
+    </div>
+    <div class="note">Resize the window — this layout is fluid, same as the real Page component (max content width 998px)</div>
+  </div>
+  <script>
+    const r = document.getElementById('ruler');
+    const update = () => { r.textContent = window.innerWidth + 'px'; };
+    window.addEventListener('resize', update);
+    update();
+  </script>
+</body>
+</html>

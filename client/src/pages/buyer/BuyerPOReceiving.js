@@ -70,6 +70,7 @@ function BuyerPOReceiving() {
                       <InlineStack align="space-between" blockAlign="center">
                         <InlineStack gap="300" blockAlign="center">
                           <Text variant="bodySm" tone="subdued">{formatDate(inv.committed_at)}</Text>
+                          <Text variant="bodySm" tone="subdued">{inv.location}</Text>
                           <Text variant="bodySm" tone="subdued">{inv.supplier_name}</Text>
                           <InlineStack gap="150" blockAlign="baseline" wrap={false}>
                             <Text

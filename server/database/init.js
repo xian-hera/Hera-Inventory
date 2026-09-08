@@ -695,11 +695,150 @@ const initDatabase = async () => {
     // display time, not stored separately.
     await client.query(`ALTER TABLE po_invoice_items ADD COLUMN IF NOT EXISTS store_count INTEGER`).catch(() => {});
 
+    // Migration: distinguishes a line item the buyer added by searching this
+    // supplier's SKU library directly (TRUE) from one that came in through a
+    // CSV upload/reprocess (FALSE, the default). Lets POST /process preserve
+    // manually-added rows instead of wiping them on reprocess, and lets the
+    // buyer-side UI sort manually-added rows above ordinary CSV rows.
+    await client.query(`ALTER TABLE po_invoice_items ADD COLUMN IF NOT EXISTS added_manually BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
+
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_po_invoice_items_invoice_id ON po_invoice_items (invoice_id)
     `);
 
     // ────────────────────────────────────────────────────────────────────────────
+
+    // Warehouse Transfer feature: Buyer creates/manages transfer plans between
+    // locations; Warehouse + Manager execute (prep, ship, receive, count);
+    // Buyer does the final commit. Every step syncs to a Shopify Inventory
+    // Transfer via the Admin API. This first pass only needs enough schema to
+    // support the Transfer home page's recent list and its "View all"
+    // history page — status values and columns here are provisional and will
+    // likely grow once the Create/Ongoing Transfer flows and the exact
+    // Shopify sync are specified.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS transfer_number_counter (
+        id          INTEGER PRIMARY KEY DEFAULT 1,
+        last_number INTEGER NOT NULL DEFAULT 0
+      )
+    `);
+    await client.query(`
+      INSERT INTO transfer_number_counter (id, last_number)
+      VALUES (1, 0)
+      ON CONFLICT (id) DO NOTHING
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS transfers (
+        id                   SERIAL PRIMARY KEY,
+        transfer_no          TEXT UNIQUE NOT NULL,
+        shopify_transfer_id  TEXT,
+        shopify_transfer_url TEXT,
+        from_location        TEXT NOT NULL,
+        to_location          TEXT NOT NULL,
+        status               TEXT NOT NULL DEFAULT 'draft'
+                              CHECK (status IN ('draft','ready_to_ship','in_transit','received','committed')),
+        note                 TEXT,
+        created_at           TIMESTAMPTZ DEFAULT NOW(),
+        committed_at         TIMESTAMPTZ,
+        updated_at           TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS transfer_items (
+        id                SERIAL PRIMARY KEY,
+        transfer_id       INTEGER NOT NULL REFERENCES transfers(id) ON DELETE CASCADE,
+        sku               TEXT,
+        name              TEXT,
+        quantity          INTEGER NOT NULL,
+        received_quantity INTEGER,
+        created_at        TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_transfer_items_transfer_id ON transfer_items (transfer_id)
+    `);
+
+    // Migration: Create Transfer page — reference name and tags are set once
+    // at creation (Card 1, before Confirm) and sent straight through to
+    // Shopify's inventoryTransferCreate mutation as referenceName/tags.
+    // tags has no management UI yet (see server/routes/transfers.js); the
+    // Create Transfer page currently offers a placeholder fixed tag list.
+    await client.query(`ALTER TABLE transfers ADD COLUMN IF NOT EXISTS reference_name TEXT`).catch(() => {});
+    await client.query(`ALTER TABLE transfers ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}'`).catch(() => {});
+
+    // ── Migration: full 7-status Ongoing Transfer lifecycle (Buyer/Warehouse/
+    // Manager) — see claude/TRANSFER_FEATURE_SPEC.md in the project's Claude
+    // knowledge base for the complete narrated spec this implements. Replaces
+    // the provisional 'draft/ready_to_ship/in_transit/received/committed'
+    // status set with the real 7 statuses, and adds the columns each stage
+    // of the flow needs to read/write.
+
+    // 1. transfer_number_counter: T-A0001 letter-carry scheme (same family as
+    // po_number_counter — see generatePoNumber in poInvoices.js), replacing
+    // the old plain-numeric TR-000001 placeholder.
+    await client.query(`ALTER TABLE transfer_number_counter ADD COLUMN IF NOT EXISTS last_letter TEXT NOT NULL DEFAULT 'A'`).catch(() => {});
+
+    // 2. transfers: location IDs (needed to call Shopify inventory/shipment
+    // mutations against a specific location — the original schema only kept
+    // display names), the created InventoryShipment's id (a transfer's real
+    // ship/receive lifecycle lives on this child object, not on the transfer
+    // itself — see spec doc section 2), and which role's note is currently
+    // stored (Note visibility differs by role — see spec doc section 0).
+    await client.query(`ALTER TABLE transfers ADD COLUMN IF NOT EXISTS from_location_id TEXT`).catch(() => {});
+    await client.query(`ALTER TABLE transfers ADD COLUMN IF NOT EXISTS to_location_id TEXT`).catch(() => {});
+    await client.query(`ALTER TABLE transfers ADD COLUMN IF NOT EXISTS shopify_shipment_id TEXT`).catch(() => {});
+    await client.query(`ALTER TABLE transfers ADD COLUMN IF NOT EXISTS note_by TEXT`).catch(() => {});
+    await client.query(`ALTER TABLE transfers ADD COLUMN IF NOT EXISTS dispatched_at TIMESTAMPTZ`).catch(() => {});
+    await client.query(`ALTER TABLE transfers ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ`).catch(() => {});
+    await client.query(`ALTER TABLE transfers ADD COLUMN IF NOT EXISTS counted_at TIMESTAMPTZ`).catch(() => {});
+
+    // Remap any existing rows off the old placeholder status values before
+    // swapping the CHECK constraint to the real 7 statuses, so the
+    // constraint add below doesn't fail against pre-existing data.
+    await client.query(`UPDATE transfers SET status = 'loading' WHERE status = 'draft'`).catch(() => {});
+    await client.query(`UPDATE transfers SET status = 'good_to_go' WHERE status = 'ready_to_ship'`).catch(() => {});
+    await client.query(`UPDATE transfers SET status = 'counted' WHERE status = 'received'`).catch(() => {});
+    await client.query(`ALTER TABLE transfers ALTER COLUMN status SET DEFAULT 'loading'`).catch(() => {});
+    await client.query(`ALTER TABLE transfers DROP CONSTRAINT IF EXISTS transfers_status_check`).catch(() => {});
+    await client.query(`
+      ALTER TABLE transfers ADD CONSTRAINT transfers_status_check
+        CHECK (status IN ('loading','pending','good_to_go','in_transit','receiving','counted','committed'))
+    `).catch(() => {});
+
+    // 3. transfer_items: the Shopify inventory item id (needed for every
+    // per-item Shopify call — inventory adjust, shipment line items), the
+    // Warehouse/Manager "Qty loaded" stepper+checkmark state (see spec doc
+    // section 5), and the shipment line item id once a shipment exists (set
+    // when the shipment is created at Good to go — see the Shipment-sync
+    // design note in transfers.js).
+    await client.query(`ALTER TABLE transfer_items ADD COLUMN IF NOT EXISTS inventory_item_id TEXT`).catch(() => {});
+    await client.query(`ALTER TABLE transfer_items ADD COLUMN IF NOT EXISTS qty_loaded INTEGER`).catch(() => {});
+    await client.query(`ALTER TABLE transfer_items ADD COLUMN IF NOT EXISTS loaded_confirmed BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
+    await client.query(`ALTER TABLE transfer_items ADD COLUMN IF NOT EXISTS shipment_line_item_id TEXT`).catch(() => {});
+    // Manager's Receiving-side counting (spec doc section 6): counted_confirmed
+    // tracks whether this line item has gone through the count modal yet —
+    // received_quantity (pre-existing column) holds the actual counted value,
+    // reused as-is since it already means exactly "what the to-location
+    // actually received", which is also what the Buyer sees/edits at Counted.
+    await client.query(`ALTER TABLE transfer_items ADD COLUMN IF NOT EXISTS counted_confirmed BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
+
+    // 4. Transfer Settings' Tag pool (spec doc section 3, BuyerTransferSettings.js):
+    // name uniqueness is case-insensitive, length <= 20 chars. Deleting a tag
+    // here never touches any existing/published transfer — the pool is only
+    // ever read as the candidate list Create Transfer's Tags picker shows.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS transfer_tag_pool (
+        id         SERIAL PRIMARY KEY,
+        tag        TEXT NOT NULL CHECK (char_length(tag) <= 20),
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_transfer_tag_pool_lower ON transfer_tag_pool (LOWER(tag))
+    `);
 
     await client.query('COMMIT');
     console.log('✓ Database initialized successfully');
