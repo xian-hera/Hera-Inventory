@@ -18,6 +18,7 @@ function BuyerTransferCreate() {
   const [toLocationId, setToLocationId] = useState('');
   const [referenceName, setReferenceName] = useState('');
   const [selectedTags, setSelectedTags] = useState([]);
+  const [tagInput, setTagInput] = useState('');
   const [confirmed, setConfirmed] = useState(false);
   const [confirmError, setConfirmError] = useState('');
 
@@ -77,6 +78,22 @@ function BuyerTransferCreate() {
 
   const toggleTag = (tag) => {
     setSelectedTags(prev => prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]);
+  };
+
+  // Manually typed tag, submitted with Enter — this transfer only, never
+  // written to the Tag pool (that's Settings' job; confirmed with Hera
+  // 2026-09-08 that ad hoc tags here stay local to the transfer being created).
+  const handleTagInputSubmit = () => {
+    const trimmed = tagInput.trim();
+    if (!trimmed) return;
+    if (trimmed.length > 20) {
+      setConfirmError('Tag must be 20 characters or fewer.');
+      return;
+    }
+    setSelectedTags(prev =>
+      prev.some(t => t.toLowerCase() === trimmed.toLowerCase()) ? prev : [...prev, trimmed]
+    );
+    setTagInput('');
   };
 
   const nextOrder = () => { orderCounter.current += 1; return orderCounter.current; };
@@ -313,8 +330,32 @@ function BuyerTransferCreate() {
                             </span>
                           ))}
                         </InlineStack>
+                        {/* Manual entry — type a tag and press Enter to add it to
+                            this transfer only (not written to the Tag pool). */}
+                        <div style={{ width: '140px' }}>
+                          <TextField
+                            label=""
+                            labelHidden
+                            value={tagInput}
+                            onChange={setTagInput}
+                            placeholder="New tag"
+                            maxLength={20}
+                            autoComplete="off"
+                            helpText="Press Enter to submit a tag"
+                            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleTagInputSubmit(); } }}
+                          />
+                        </div>
                       </BlockStack>
-                      <Button variant="primary" onClick={handleConfirm}>Confirm</Button>
+                      {/* Wrapped in a label-spacer BlockStack, matching the other
+                          fields' <Text label> + <control> shape — otherwise this
+                          is the only item in the row with no label above it, and
+                          the InlineStack's default stretch alignment makes the
+                          button grow to match the tallest sibling column's full
+                          height instead of sitting at its normal Polaris size. */}
+                      <BlockStack gap="100">
+                        <Text variant="bodySm" tone="subdued">&nbsp;</Text>
+                        <Button variant="primary" onClick={handleConfirm}>Confirm</Button>
+                      </BlockStack>
                     </InlineStack>
                   )}
                 </BlockStack>

@@ -158,6 +158,54 @@ function applyNoteVisibility(transfer, role) {
   return out;
 }
 
+// Wig Number (spec doc section 6, new §6 "Wig Number 列的显示规则"): every
+// Manager-facing transfer page shows a Wig Number column, populated live from
+// Shopify (never persisted) for any line item whose product is productType
+// 'WIG' — read from the custom.wig_number metafield. Unlike PO Invoices'
+// version of this same lookup (poInvoices.js, GET /manager/receiving/:id),
+// there's no "does this supplier carry WIG" gate here since transfers don't
+// have suppliers — every item is just checked directly. Batched by SKU
+// (barcode), 50 at a time, for the same rate-limit reason documented there.
+// Warehouse pages never call this (confirmed with Hera — Wig Number is
+// Manager-only).
+async function attachWigNumbers(shopifyClient, items) {
+  const skus = [...new Set(items.map(i => i.sku).filter(Boolean))];
+  if (skus.length === 0) return;
+  const wigNumberBySku = new Map();
+  const CHUNK_SIZE = 50;
+  for (let i = 0; i < skus.length; i += CHUNK_SIZE) {
+    const chunk = skus.slice(i, i + CHUNK_SIZE);
+    const filter = chunk.map(s => `barcode:${s}`).join(' OR ');
+    const query = `
+      query wigNumbers($filter: String!) {
+        productVariants(first: ${chunk.length}, query: $filter) {
+          edges { node {
+            barcode
+            product {
+              productType
+              wigNumber: metafield(namespace: "custom", key: "wig_number") { value }
+            }
+          } }
+        }
+      }
+    `;
+    try {
+      const data = await graphql(shopifyClient, query, { filter });
+      const edges = data?.productVariants?.edges || [];
+      edges.forEach(({ node }) => {
+        if (node?.barcode && node?.product?.productType === 'WIG') {
+          wigNumberBySku.set(node.barcode, node.product.wigNumber?.value || '');
+        }
+      });
+    } catch (e) {
+      console.error('attachWigNumbers: batched lookup failed:', e.message);
+    }
+  }
+  items.forEach(item => {
+    item.wig_number = item.sku && wigNumberBySku.has(item.sku) ? wigNumberBySku.get(item.sku) : '';
+  });
+}
+
 async function fetchTransferWithItems(id) {
   const transferRes = await pool.query('SELECT * FROM transfers WHERE id = $1', [id]);
   if (transferRes.rows.length === 0) return null;
@@ -395,6 +443,51 @@ router.get('/manager/home', async (req, res) => {
   }
 });
 
+// ─── Tag pool (BuyerTransferSettings.js, spec doc section 3) ────────────────
+// Must be registered before GET /:id below — otherwise GET /api/transfers/tags
+// matches the /:id pattern first (with id="tags") and fails with
+// "invalid input syntax for type integer" when that literal string is used
+// in the SQL query for fetchTransferWithItems.
+
+router.get('/tags', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT id, tag FROM transfer_tag_pool ORDER BY tag ASC');
+    res.json(result.rows);
+  } catch (e) {
+    console.error('GET /api/transfers/tags error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post('/tags', async (req, res) => {
+  try {
+    const { tag } = req.body;
+    const trimmed = (tag || '').trim();
+    if (!trimmed) return res.status(400).json({ error: 'Tag is required' });
+    if (trimmed.length > 20) return res.status(400).json({ error: 'Tag must be 20 characters or fewer' });
+    const existing = await pool.query('SELECT id FROM transfer_tag_pool WHERE LOWER(tag) = LOWER($1)', [trimmed]);
+    if (existing.rows.length > 0) return res.status(400).json({ error: 'A tag with this name already exists' });
+    const result = await pool.query('INSERT INTO transfer_tag_pool (tag) VALUES ($1) RETURNING id, tag', [trimmed]);
+    res.json(result.rows[0]);
+  } catch (e) {
+    console.error('POST /api/transfers/tags error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.delete('/tags/:tagId', async (req, res) => {
+  try {
+    // Deleting a Tag pool entry never touches published transfers (spec doc
+    // section 3): the pool is only ever read as Create Transfer's candidate
+    // list, never linked back to an existing transfer's own tags.
+    await pool.query('DELETE FROM transfer_tag_pool WHERE id = $1', [req.params.tagId]);
+    res.json({ success: true });
+  } catch (e) {
+    console.error('DELETE /api/transfers/tags/:tagId error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ─── Detail ──────────────────────────────────────────────────────────────────
 
 // GET /api/transfers/:id?role=buyer|warehouse|manager
@@ -403,6 +496,20 @@ router.get('/:id', async (req, res) => {
     const { role } = req.query;
     const found = await fetchTransferWithItems(req.params.id);
     if (!found) return res.status(404).json({ error: 'Transfer not found' });
+
+    if (role === 'manager') {
+      const session = await getSession();
+      if (session) {
+        try {
+          const shopify = getShopify();
+          const client = new shopify.clients.Graphql({ session });
+          await attachWigNumbers(client, found.items);
+        } catch (e) {
+          console.error('GET /api/transfers/:id: wig number lookup failed:', e.message);
+        }
+      }
+    }
+
     res.json({
       transfer: applyNoteVisibility(found.transfer, role || 'buyer'),
       items: found.items,
@@ -899,45 +1006,5 @@ router.post('/delete-selected', async (req, res) => {
   }
 });
 
-// ─── Tag pool (BuyerTransferSettings.js, spec doc section 3) ────────────────
-
-router.get('/tags', async (req, res) => {
-  try {
-    const result = await pool.query('SELECT id, tag FROM transfer_tag_pool ORDER BY tag ASC');
-    res.json(result.rows);
-  } catch (e) {
-    console.error('GET /api/transfers/tags error:', e);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-router.post('/tags', async (req, res) => {
-  try {
-    const { tag } = req.body;
-    const trimmed = (tag || '').trim();
-    if (!trimmed) return res.status(400).json({ error: 'Tag is required' });
-    if (trimmed.length > 20) return res.status(400).json({ error: 'Tag must be 20 characters or fewer' });
-    const existing = await pool.query('SELECT id FROM transfer_tag_pool WHERE LOWER(tag) = LOWER($1)', [trimmed]);
-    if (existing.rows.length > 0) return res.status(400).json({ error: 'A tag with this name already exists' });
-    const result = await pool.query('INSERT INTO transfer_tag_pool (tag) VALUES ($1) RETURNING id, tag', [trimmed]);
-    res.json(result.rows[0]);
-  } catch (e) {
-    console.error('POST /api/transfers/tags error:', e);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-router.delete('/tags/:tagId', async (req, res) => {
-  try {
-    // Deleting a Tag pool entry never touches published transfers (spec doc
-    // section 3): the pool is only ever read as Create Transfer's candidate
-    // list, never linked back to an existing transfer's own tags.
-    await pool.query('DELETE FROM transfer_tag_pool WHERE id = $1', [req.params.tagId]);
-    res.json({ success: true });
-  } catch (e) {
-    console.error('DELETE /api/transfers/tags/:tagId error:', e);
-    res.status(500).json({ error: e.message });
-  }
-});
 
 module.exports = router;

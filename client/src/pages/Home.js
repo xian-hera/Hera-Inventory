@@ -102,22 +102,55 @@ function Home() {
 
   return (
     <Page title="User">
+      {/* Layout switches purely on viewport width (768px breakpoint) — no
+          device/user-agent sniffing. Below 768px: today's mobile-first
+          version (two long buttons + a 2-up tile row for Warehouse/Store).
+          At/above 768px: all four as equal-height Polaris buttons stacked
+          vertically, same style as CRM/Purchasing already use. Both markups
+          are always rendered; the media query just toggles which is visible,
+          so there's no JS layout logic or resize listener involved. */}
+      <style>{`
+        .home-nav-desktop { display: none; }
+        @media (min-width: 768px) {
+          .home-nav-mobile { display: none; }
+          .home-nav-desktop { display: block; }
+        }
+      `}</style>
       <Layout>
         <Layout.Section>
-          <BlockStack gap="400">
-            <Button size="large" fullWidth onClick={() => navigate('/crm')}>
-              CRM / Growth
-            </Button>
-            <Button size="large" fullWidth onClick={handleBuyerClick}>
-              Purchasing
-            </Button>
+          <div className="home-nav-mobile">
+            <BlockStack gap="400">
+              <Button size="large" fullWidth onClick={() => navigate('/crm')}>
+                CRM / Growth
+              </Button>
+              <Button size="large" fullWidth onClick={handleBuyerClick}>
+                Purchasing
+              </Button>
 
-            {/* Warehouse / Store — large touch-friendly tiles for mobile use */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-              <Tile label="Warehouse" onClick={() => navigate('/warehouse')} />
-              <Tile label="Store" onClick={() => navigate('/manager')} />
-            </div>
-          </BlockStack>
+              {/* Warehouse / Store — large touch-friendly tiles for mobile use */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <Tile label="Warehouse" onClick={() => navigate('/warehouse')} />
+                <Tile label="Store" onClick={() => navigate('/manager')} />
+              </div>
+            </BlockStack>
+          </div>
+
+          <div className="home-nav-desktop">
+            <BlockStack gap="400">
+              <Button size="large" fullWidth onClick={() => navigate('/crm')}>
+                CRM / Growth
+              </Button>
+              <Button size="large" fullWidth onClick={handleBuyerClick}>
+                Purchasing
+              </Button>
+              <Button size="large" fullWidth onClick={() => navigate('/warehouse')}>
+                Warehouse
+              </Button>
+              <Button size="large" fullWidth onClick={() => navigate('/manager')}>
+                Store
+              </Button>
+            </BlockStack>
+          </div>
         </Layout.Section>
       </Layout>
 
