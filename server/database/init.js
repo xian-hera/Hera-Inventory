@@ -551,9 +551,17 @@ const initDatabase = async () => {
       )
     `);
 
-    await client.query(`
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_po_invoices_number_lower ON po_invoices (LOWER(invoice_number))
-    `);
+    // (The unique index that used to be created here — idx_po_invoices_number_lower
+    // on LOWER(invoice_number) — was removed. It was only ever superseded dead
+    // weight: the very next migration below drops it again on every single
+    // startup, because invoice_number was redesigned to be a free-text,
+    // non-unique reference field. Recreating-then-dropping it every restart
+    // was harmless while invoice_number happened to stay unique in practice,
+    // but once real rows had a duplicate invoice_number (case-insensitively —
+    // e.g. two invoices both noted "fix old sku"), the CREATE UNIQUE INDEX
+    // started failing with a 23505 duplicate-key error, which rolled back the
+    // whole initDatabase() transaction and crashed the server on every boot.
+    // Nothing else in the codebase reads or relies on this index.)
 
     // Migration: invoice_number becomes a free-text, non-unique reference —
     // the auto-assigned po_number below (format PO-A000, sequential via
