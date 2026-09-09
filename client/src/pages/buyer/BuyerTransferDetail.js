@@ -282,7 +282,16 @@ function BuyerTransferDetail() {
       <Page
         title={transfer.transfer_no}
         backAction={{ onAction: () => (isCommitted ? navigate(-1) : navigate('/buyer/transfer/ongoing')) }}
-        titleMetadata={<StatusBadge status={status} />}
+        titleMetadata={
+          <InlineStack gap="200" blockAlign="center">
+            <StatusBadge status={status} />
+            {transfer.shopify_transfer_url && (
+              <a href={transfer.shopify_transfer_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: '13px', fontWeight: 600, textDecoration: 'underline' }}>
+                {transfer.shopify_transfer_name || transfer.shopify_transfer_id}
+              </a>
+            )}
+          </InlineStack>
+        }
       >
         <Layout>
           <Layout.Section>
@@ -299,11 +308,6 @@ function BuyerTransferDetail() {
                     <Text variant="bodySm" tone="subdued">To</Text>
                     <Text fontWeight="bold">{transfer.to_location}</Text>
                   </BlockStack>
-                  {transfer.shopify_transfer_url && (
-                    <a href={transfer.shopify_transfer_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: '13px', fontWeight: 600, textDecoration: 'underline' }}>
-                      {transfer.shopify_transfer_id}
-                    </a>
-                  )}
                 </InlineStack>
 
                 <InlineStack gap="200" wrap>

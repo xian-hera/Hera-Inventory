@@ -795,6 +795,12 @@ const initDatabase = async () => {
     await client.query(`ALTER TABLE transfers ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ`).catch(() => {});
     await client.query(`ALTER TABLE transfers ADD COLUMN IF NOT EXISTS counted_at TIMESTAMPTZ`).catch(() => {});
 
+    // Migration: Shopify's InventoryTransfer.name (e.g. "#T4866") is the
+    // human-readable identifier shown in Shopify admin — distinct from
+    // shopify_transfer_id (the GID used for mutations). Buyer pages display
+    // this instead of the raw GID/URL (2026-09-08 fix).
+    await client.query(`ALTER TABLE transfers ADD COLUMN IF NOT EXISTS shopify_transfer_name TEXT`).catch(() => {});
+
     // Remap any existing rows off the old placeholder status values before
     // swapping the CHECK constraint to the real 7 statuses, so the
     // constraint add below doesn't fail against pre-existing data.
@@ -838,6 +844,71 @@ const initDatabase = async () => {
     `);
     await client.query(`
       CREATE UNIQUE INDEX IF NOT EXISTS idx_transfer_tag_pool_lower ON transfer_tag_pool (LOWER(tag))
+    `);
+
+    // ────────────────────────────────────────────────────────────────────────────
+
+    // BOX PO feature (Buyer creates, Warehouse counts/submits, Buyer confirms —
+    // see claude/BOX_PO_FEATURE_SPEC.md in the project's Claude knowledge base
+    // for the full narrated spec). Purely internal — no Shopify API calls
+    // anywhere in this feature. Numbering scheme mirrors transfer_number_counter
+    // (letter-carry, but format is BOX_A0001 — underscore, not hyphen).
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS box_po_number_counter (
+        id          INTEGER PRIMARY KEY DEFAULT 1,
+        last_number INTEGER NOT NULL DEFAULT 0,
+        last_letter CHAR(1) NOT NULL DEFAULT 'A'
+      )
+    `);
+    await client.query(`
+      INSERT INTO box_po_number_counter (id, last_number, last_letter)
+      VALUES (1, 0, 'A')
+      ON CONFLICT (id) DO NOTHING
+    `);
+
+    // 3 statuses: incoming (just created, Warehouse can see/count it) →
+    // received (Warehouse submitted its count, Warehouse can no longer see
+    // it, Buyer sees Box received column + Confirm button) → confirmed
+    // (Buyer confirmed, read-only, kept for 90 days from confirmed_at then
+    // lazily deleted — see box-po routes). buyer_note/warehouse_note are two
+    // independent single-note fields (unlike Transfer's single shared note) —
+    // each role can have at most 1 of their own, both can exist at once.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS box_pos (
+        id             SERIAL PRIMARY KEY,
+        box_po_number  TEXT UNIQUE NOT NULL,
+        supplier_id    INTEGER REFERENCES po_suppliers(id),
+        supplier_name  TEXT NOT NULL,
+        total_boxes    INTEGER NOT NULL,
+        box_date       DATE,
+        buyer_note     TEXT,
+        warehouse_note TEXT,
+        status         TEXT NOT NULL DEFAULT 'incoming'
+                        CHECK (status IN ('incoming','received','confirmed')),
+        created_at     TIMESTAMPTZ DEFAULT NOW(),
+        received_at    TIMESTAMPTZ,
+        confirmed_at   TIMESTAMPTZ
+      )
+    `);
+
+    // Location is stored as plain text (the location name from
+    // /api/shopify/locations) since nothing here ever calls Shopify — no
+    // need for the location GID. box_received is null until Warehouse
+    // confirms that row; counted_confirmed tracks whether it's gone through
+    // the check-button yet (same pattern as transfer_items.loaded_confirmed).
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS box_po_items (
+        id                SERIAL PRIMARY KEY,
+        box_po_id         INTEGER NOT NULL REFERENCES box_pos(id) ON DELETE CASCADE,
+        location          TEXT NOT NULL,
+        box_qty           INTEGER NOT NULL,
+        box_received      INTEGER,
+        counted_confirmed BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at        TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_box_po_items_box_po_id ON box_po_items (box_po_id)
     `);
 
     await client.query('COMMIT');

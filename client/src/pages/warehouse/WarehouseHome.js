@@ -4,8 +4,14 @@ import {
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import { StatusBadge, warehouseStatusLabel } from '../shared/transferStatus';
+import { StatusBadge as BoxPoStatusBadge } from '../shared/boxPoStatus';
 
-// Warehouse Home — Card 1: HQ-origin transfers (Loading/Pending/Good to go/
+// Warehouse Home — a new "BOX PO" section at the very top (see
+// claude/BOX_PO_FEATURE_SPEC.md section 9), showing only status='incoming'
+// tasks — once a task becomes Received it disappears from here entirely.
+// Uses the SAME Card-internal-heading style as the sections below
+// (<Text variant="headingSm">), confirmed with Hera — not a divider style.
+// Then Card 1: HQ-origin transfers (Loading/Pending/Good to go/
 // In transit), clickable, checkbox only on Good to go rows (for batch
 // dispatch), header select-all + "Dispatch selected" / "Dispatch all Good
 // to go" buttons. Card 2: "Pick up from store" transfers (non-HQ origin) —
@@ -19,6 +25,17 @@ function WarehouseHome() {
   const [error, setError] = useState('');
   const [selectedIds, setSelectedIds] = useState([]);
   const [dispatching, setDispatching] = useState(false);
+
+  const [boxPos, setBoxPos] = useState([]);
+  const [boxPosLoading, setBoxPosLoading] = useState(true);
+
+  useEffect(() => {
+    fetch('/api/box-po/warehouse/home')
+      .then(r => r.json())
+      .then(data => setBoxPos(Array.isArray(data) ? data : []))
+      .catch(() => setBoxPos([]))
+      .finally(() => setBoxPosLoading(false));
+  }, []);
 
   const fetchHome = useCallback(async () => {
     setLoading(true);
@@ -97,6 +114,44 @@ function WarehouseHome() {
               <InlineStack align="center"><Spinner /></InlineStack>
             ) : (
               <>
+                <Card>
+                  <BlockStack gap="300">
+                    <Text variant="headingSm">BOX PO</Text>
+                    {boxPosLoading ? (
+                      <InlineStack align="center"><Spinner size="small" /></InlineStack>
+                    ) : boxPos.length === 0 ? (
+                      <Text tone="subdued">No BOX PO tasks right now.</Text>
+                    ) : (
+                      <div style={{ overflowX: 'auto' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                          <thead>
+                            <tr style={{ borderBottom: '2px solid #e1e3e5' }}>
+                              <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>BOX PO number</th>
+                              <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Supplier</th>
+                              <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Total Boxes</th>
+                              <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Status</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {boxPos.map(bp => (
+                              <tr
+                                key={bp.id}
+                                style={{ borderBottom: '1px solid #f1f1f1', cursor: 'pointer' }}
+                                onClick={() => navigate(`/warehouse/box-po/${bp.id}`)}
+                              >
+                                <td style={{ padding: '10px', textDecoration: 'underline' }}>{bp.box_po_number}</td>
+                                <td style={{ padding: '10px' }}>{bp.supplier_name}</td>
+                                <td style={{ padding: '10px' }}>{bp.total_boxes}</td>
+                                <td style={{ padding: '10px' }}><BoxPoStatusBadge status={bp.status} /></td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </BlockStack>
+                </Card>
+
                 <Card>
                   <BlockStack gap="300">
                     <InlineStack align="space-between" blockAlign="center" wrap>

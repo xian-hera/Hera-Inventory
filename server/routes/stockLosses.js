@@ -255,14 +255,14 @@ router.patch('/:id/commit', async (req, res) => {
 
     if (row.status === 'committed') return res.json({ success: true, alreadyCommitted: true });
 
-    const { getShopify, getSession } = require('../shopify');
+    const { getShopify, getSession, activeFilter } = require('../shopify');
     const session = await getSession();
     const shopify = getShopify();
     const client = new shopify.clients.Graphql({ session });
 
     const variantRes = await client.request(`
       query {
-        productVariants(first: 1, query: "barcode:${row.barcode}") {
+        productVariants(first: 1, query: "${activeFilter(`barcode:${row.barcode}`)}") {
           edges { node { inventoryItem { id } } }
         }
       }
@@ -328,7 +328,7 @@ router.patch('/commit-many', async (req, res) => {
     const { ids } = req.body;
     if (!ids || ids.length === 0) return res.status(400).json({ error: 'No ids provided' });
 
-    const { getShopify, getSession } = require('../shopify');
+    const { getShopify, getSession, activeFilter } = require('../shopify');
     const session = await getSession();
     const shopify = getShopify();
     const client = new shopify.clients.Graphql({ session });
@@ -344,7 +344,7 @@ router.patch('/commit-many', async (req, res) => {
 
         const variantRes = await client.request(`
           query {
-            productVariants(first: 1, query: "barcode:${row.barcode}") {
+            productVariants(first: 1, query: "${activeFilter(`barcode:${row.barcode}`)}") {
               edges { node { inventoryItem { id } } }
             }
           }

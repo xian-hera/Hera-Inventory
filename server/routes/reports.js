@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { pool } = require('../database/init');
-const { getShopify, getSession } = require('../shopify');
+const { getShopify, getSession, activeFilter } = require('../shopify');
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ZERO QTY REPORTS  (buyer-side)
@@ -189,12 +189,12 @@ async function commitReport(id, customAdjustment) {
     // Step 1: fetch inventoryItem id and current on_hand in a single query
     const variantRes = await shopifyRequest(() =>
       client.request(`{
-        productVariants(first: 1, query: "barcode:${r.barcode}") {
+        productVariants(first: 1, query: "${activeFilter(`barcode:${r.barcode}`)}") {
           edges {
             node {
               inventoryItem {
                 id
-                inventoryLevel(locationId: "${r.shopify_location_id}") {
+                inventoryLevel(locationId: "${r.shopify_location_id}", includeInactive: true) {
                   quantities(names: ["on_hand"]) { name quantity }
                 }
               }

@@ -122,7 +122,7 @@ async function fetchVariantsForTypes(client, types, packageSize, groups) {
   const { productFields, variantFields } = buildMetafieldAliases(packageSize, groups);
 
   const typeQuery = types.length > 0
-    ? `(${types.map(t => `product_type:"${t}"`).join(' OR ')})`
+    ? `(${types.map(t => `product_type:"${t}"`).join(' OR ')}) AND status:active`
     : 'status:active';
 
   // Products-per-page is intentionally small (not 100): each product+variant

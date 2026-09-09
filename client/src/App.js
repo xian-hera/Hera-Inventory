@@ -55,8 +55,14 @@ import BuyerTransferCreate from './pages/buyer/BuyerTransferCreate';
 import BuyerTransferOngoing from './pages/buyer/BuyerTransferOngoing';
 import BuyerTransferSettings from './pages/buyer/BuyerTransferSettings';
 import BuyerTransferDetail from './pages/buyer/BuyerTransferDetail';
+import BuyerBoxPO from './pages/buyer/BuyerBoxPO';
+import BuyerBoxPOCreate from './pages/buyer/BuyerBoxPOCreate';
+import BuyerBoxPOOngoing from './pages/buyer/BuyerBoxPOOngoing';
+import BuyerBoxPOPast from './pages/buyer/BuyerBoxPOPast';
+import BuyerBoxPODetail from './pages/buyer/BuyerBoxPODetail';
 import WarehouseHome from './pages/warehouse/WarehouseHome';
 import WarehouseTransferDetail from './pages/warehouse/WarehouseTransferDetail';
+import WarehouseBoxPODetail from './pages/warehouse/WarehouseBoxPODetail';
 import ManagerTransferHome from './pages/manager/ManagerTransferHome';
 import ManagerTransferSendingDetail from './pages/manager/ManagerTransferSendingDetail';
 import ManagerTransferReceivingDetail from './pages/manager/ManagerTransferReceivingDetail';
@@ -99,10 +105,19 @@ function App() {
           <Route path="/buyer/transfer/ongoing" element={<BuyerTransferOngoing />} />
           <Route path="/buyer/transfer/settings" element={<BuyerTransferSettings />} />
           <Route path="/buyer/transfer/:transferId" element={<BuyerTransferDetail />} />
+          {/* BOX PO — fixed-path routes registered before the :id route so
+              react-router's ordering can't shadow "create"/"ongoing"/"past"
+              as an :id value (same lesson learned server-side in boxPo.js). */}
+          <Route path="/buyer/po-receiving/box-po" element={<BuyerBoxPO />} />
+          <Route path="/buyer/po-receiving/box-po/create" element={<BuyerBoxPOCreate />} />
+          <Route path="/buyer/po-receiving/box-po/ongoing" element={<BuyerBoxPOOngoing />} />
+          <Route path="/buyer/po-receiving/box-po/past" element={<BuyerBoxPOPast />} />
+          <Route path="/buyer/po-receiving/box-po/:id" element={<BuyerBoxPODetail />} />
 
           {/* Warehouse */}
           <Route path="/warehouse" element={<WarehouseHome />} />
           <Route path="/warehouse/transfer/:transferId" element={<WarehouseTransferDetail />} />
+          <Route path="/warehouse/box-po/:id" element={<WarehouseBoxPODetail />} />
 
           {/* Manager */}
           <Route path="/manager" element={<ManagerHome />} />

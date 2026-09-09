@@ -27,9 +27,16 @@ async function syncVariantIndex() {
     const shopify = getShopify();
     const client = new shopify.clients.Graphql({ session });
 
+    // Active-only: an Archived variant (e.g. a historical "OLD-<sku>" duplicate
+    // left over from a SKU migration) must never enter this local index, since
+    // GET /api/shopify/search reads straight from it for the app's SKU/name
+    // search boxes. The existing stale-row cleanup below (variants not
+    // touched by this run get deleted) means this filter is also
+    // self-cleaning: the next successful sync removes any already-indexed
+    // Archived rows automatically, no manual DB cleanup needed.
     const gqlQuery = `
       query getVariants($cursor: String) {
-        productVariants(first: 250, after: $cursor) {
+        productVariants(first: 250, query: "product_status:active", after: $cursor) {
           pageInfo { hasNextPage endCursor }
           edges {
             node {

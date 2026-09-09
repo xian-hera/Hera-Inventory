@@ -122,4 +122,17 @@ const getSession = async () => {
 
 const getShopify = () => shopify;
 
-module.exports = { setupShopify, getSession, getShopify };
+// Narrows a Shopify Admin GraphQL search filter (the `query:` argument on
+// productVariants/products) to Active-status products only. Wrap the
+// existing filter expression with this before sending it, e.g.
+// activeFilter(`sku:${sku}`) -> "(sku:12345) AND product_status:active".
+//
+// Added 2026-09 after an incident where a SKU lookup like `sku:806993607871`
+// or `barcode:806993607871` matched an old, Archived duplicate variant
+// (SKU "OLD-806993607871") whose barcode field had never been changed when
+// the product was retired, instead of the live Active one — so a PO
+// invoice commit added received quantity and cost to the wrong (archived)
+// variant. See Hera Hub project notes for the full incident writeup.
+const activeFilter = (fieldExpr) => `(${fieldExpr}) AND product_status:active`;
+
+module.exports = { setupShopify, getSession, getShopify, activeFilter };

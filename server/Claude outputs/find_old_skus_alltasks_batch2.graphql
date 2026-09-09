@@ -1,0 +1,1172 @@
+query FindOldSkuDuplicatesBatch2 {
+  s806993599862: productVariants(first: 1, query: "sku:OLD-806993599862") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993599879: productVariants(first: 1, query: "sku:OLD-806993599879") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993599886: productVariants(first: 1, query: "sku:OLD-806993599886") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993599893: productVariants(first: 1, query: "sku:OLD-806993599893") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993599909: productVariants(first: 1, query: "sku:OLD-806993599909") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993599916: productVariants(first: 1, query: "sku:OLD-806993599916") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993599923: productVariants(first: 1, query: "sku:OLD-806993599923") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993599954: productVariants(first: 1, query: "sku:OLD-806993599954") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993599961: productVariants(first: 1, query: "sku:OLD-806993599961") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993599978: productVariants(first: 1, query: "sku:OLD-806993599978") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993599985: productVariants(first: 1, query: "sku:OLD-806993599985") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993599992: productVariants(first: 1, query: "sku:OLD-806993599992") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993600001: productVariants(first: 1, query: "sku:OLD-806993600001") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993600506: productVariants(first: 1, query: "sku:OLD-806993600506") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993600513: productVariants(first: 1, query: "sku:OLD-806993600513") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993600520: productVariants(first: 1, query: "sku:OLD-806993600520") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993600704: productVariants(first: 1, query: "sku:OLD-806993600704") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993600728: productVariants(first: 1, query: "sku:OLD-806993600728") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993600735: productVariants(first: 1, query: "sku:OLD-806993600735") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993601022: productVariants(first: 1, query: "sku:OLD-806993601022") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993601039: productVariants(first: 1, query: "sku:OLD-806993601039") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993601046: productVariants(first: 1, query: "sku:OLD-806993601046") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993601060: productVariants(first: 1, query: "sku:OLD-806993601060") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993601077: productVariants(first: 1, query: "sku:OLD-806993601077") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993601312: productVariants(first: 1, query: "sku:OLD-806993601312") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993601329: productVariants(first: 1, query: "sku:OLD-806993601329") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993601336: productVariants(first: 1, query: "sku:OLD-806993601336") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993601343: productVariants(first: 1, query: "sku:OLD-806993601343") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993601374: productVariants(first: 1, query: "sku:OLD-806993601374") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993601404: productVariants(first: 1, query: "sku:OLD-806993601404") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993601428: productVariants(first: 1, query: "sku:OLD-806993601428") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993601435: productVariants(first: 1, query: "sku:OLD-806993601435") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993601459: productVariants(first: 1, query: "sku:OLD-806993601459") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993601473: productVariants(first: 1, query: "sku:OLD-806993601473") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993601480: productVariants(first: 1, query: "sku:OLD-806993601480") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993601497: productVariants(first: 1, query: "sku:OLD-806993601497") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993601534: productVariants(first: 1, query: "sku:OLD-806993601534") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993601558: productVariants(first: 1, query: "sku:OLD-806993601558") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993601565: productVariants(first: 1, query: "sku:OLD-806993601565") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993601572: productVariants(first: 1, query: "sku:OLD-806993601572") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993601619: productVariants(first: 1, query: "sku:OLD-806993601619") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993604597: productVariants(first: 1, query: "sku:OLD-806993604597") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993607871: productVariants(first: 1, query: "sku:OLD-806993607871") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993607888: productVariants(first: 1, query: "sku:OLD-806993607888") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993607918: productVariants(first: 1, query: "sku:OLD-806993607918") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993607925: productVariants(first: 1, query: "sku:OLD-806993607925") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993607956: productVariants(first: 1, query: "sku:OLD-806993607956") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993607963: productVariants(first: 1, query: "sku:OLD-806993607963") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993607994: productVariants(first: 1, query: "sku:OLD-806993607994") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993608007: productVariants(first: 1, query: "sku:OLD-806993608007") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993609080: productVariants(first: 1, query: "sku:OLD-806993609080") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993609097: productVariants(first: 1, query: "sku:OLD-806993609097") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993610130: productVariants(first: 1, query: "sku:OLD-806993610130") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993610147: productVariants(first: 1, query: "sku:OLD-806993610147") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993610178: productVariants(first: 1, query: "sku:OLD-806993610178") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993610215: productVariants(first: 1, query: "sku:OLD-806993610215") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993610239: productVariants(first: 1, query: "sku:OLD-806993610239") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993610659: productVariants(first: 1, query: "sku:OLD-806993610659") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993610666: productVariants(first: 1, query: "sku:OLD-806993610666") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993610772: productVariants(first: 1, query: "sku:OLD-806993610772") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993610789: productVariants(first: 1, query: "sku:OLD-806993610789") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993610833: productVariants(first: 1, query: "sku:OLD-806993610833") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993610840: productVariants(first: 1, query: "sku:OLD-806993610840") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993611380: productVariants(first: 1, query: "sku:OLD-806993611380") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993611397: productVariants(first: 1, query: "sku:OLD-806993611397") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993611403: productVariants(first: 1, query: "sku:OLD-806993611403") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993611434: productVariants(first: 1, query: "sku:OLD-806993611434") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993611441: productVariants(first: 1, query: "sku:OLD-806993611441") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993611854: productVariants(first: 1, query: "sku:OLD-806993611854") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993611878: productVariants(first: 1, query: "sku:OLD-806993611878") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993612714: productVariants(first: 1, query: "sku:OLD-806993612714") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993612943: productVariants(first: 1, query: "sku:OLD-806993612943") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993612950: productVariants(first: 1, query: "sku:OLD-806993612950") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993612981: productVariants(first: 1, query: "sku:OLD-806993612981") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993614497: productVariants(first: 1, query: "sku:OLD-806993614497") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993614503: productVariants(first: 1, query: "sku:OLD-806993614503") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993615708: productVariants(first: 1, query: "sku:OLD-806993615708") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993615715: productVariants(first: 1, query: "sku:OLD-806993615715") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993615722: productVariants(first: 1, query: "sku:OLD-806993615722") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993615739: productVariants(first: 1, query: "sku:OLD-806993615739") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993615746: productVariants(first: 1, query: "sku:OLD-806993615746") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993615760: productVariants(first: 1, query: "sku:OLD-806993615760") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993615814: productVariants(first: 1, query: "sku:OLD-806993615814") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993615821: productVariants(first: 1, query: "sku:OLD-806993615821") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993618686: productVariants(first: 1, query: "sku:OLD-806993618686") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993618693: productVariants(first: 1, query: "sku:OLD-806993618693") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993618723: productVariants(first: 1, query: "sku:OLD-806993618723") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993618761: productVariants(first: 1, query: "sku:OLD-806993618761") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993618778: productVariants(first: 1, query: "sku:OLD-806993618778") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993618808: productVariants(first: 1, query: "sku:OLD-806993618808") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993621464: productVariants(first: 1, query: "sku:OLD-806993621464") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993624779: productVariants(first: 1, query: "sku:OLD-806993624779") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993624786: productVariants(first: 1, query: "sku:OLD-806993624786") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993624793: productVariants(first: 1, query: "sku:OLD-806993624793") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993624809: productVariants(first: 1, query: "sku:OLD-806993624809") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993624816: productVariants(first: 1, query: "sku:OLD-806993624816") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993624830: productVariants(first: 1, query: "sku:OLD-806993624830") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993625004: productVariants(first: 1, query: "sku:OLD-806993625004") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993625011: productVariants(first: 1, query: "sku:OLD-806993625011") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993625196: productVariants(first: 1, query: "sku:OLD-806993625196") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993625202: productVariants(first: 1, query: "sku:OLD-806993625202") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993625219: productVariants(first: 1, query: "sku:OLD-806993625219") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993625226: productVariants(first: 1, query: "sku:OLD-806993625226") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993625233: productVariants(first: 1, query: "sku:OLD-806993625233") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993625240: productVariants(first: 1, query: "sku:OLD-806993625240") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993625257: productVariants(first: 1, query: "sku:OLD-806993625257") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993625264: productVariants(first: 1, query: "sku:OLD-806993625264") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993625271: productVariants(first: 1, query: "sku:OLD-806993625271") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993625288: productVariants(first: 1, query: "sku:OLD-806993625288") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993625295: productVariants(first: 1, query: "sku:OLD-806993625295") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993625301: productVariants(first: 1, query: "sku:OLD-806993625301") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993625318: productVariants(first: 1, query: "sku:OLD-806993625318") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993625325: productVariants(first: 1, query: "sku:OLD-806993625325") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993625332: productVariants(first: 1, query: "sku:OLD-806993625332") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993625349: productVariants(first: 1, query: "sku:OLD-806993625349") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993625356: productVariants(first: 1, query: "sku:OLD-806993625356") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993625363: productVariants(first: 1, query: "sku:OLD-806993625363") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993625370: productVariants(first: 1, query: "sku:OLD-806993625370") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993625387: productVariants(first: 1, query: "sku:OLD-806993625387") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993625394: productVariants(first: 1, query: "sku:OLD-806993625394") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993625400: productVariants(first: 1, query: "sku:OLD-806993625400") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993625417: productVariants(first: 1, query: "sku:OLD-806993625417") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993625424: productVariants(first: 1, query: "sku:OLD-806993625424") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993625431: productVariants(first: 1, query: "sku:OLD-806993625431") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993625448: productVariants(first: 1, query: "sku:OLD-806993625448") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993625455: productVariants(first: 1, query: "sku:OLD-806993625455") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993625462: productVariants(first: 1, query: "sku:OLD-806993625462") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993625479: productVariants(first: 1, query: "sku:OLD-806993625479") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993625486: productVariants(first: 1, query: "sku:OLD-806993625486") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993625493: productVariants(first: 1, query: "sku:OLD-806993625493") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+}

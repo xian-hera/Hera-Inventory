@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { pool } = require('../database/init');
+const { activeFilter } = require('../shopify');
 
 const HISTORY_LIMIT = 200;
 const RECENT_LIMIT = 20;
@@ -1139,7 +1140,7 @@ router.get('/manager/receiving/:id', async (req, res) => {
       items.forEach(item => { item.wig_number = ''; });
       const skus = [...new Set(items.map(item => item.sku).filter(Boolean))];
       if (skus.length > 0) {
-        const { getShopify, getSession } = require('../shopify');
+        const { getShopify, getSession, activeFilter } = require('../shopify');
         const session = await getSession();
         const shopify = getShopify();
         const client = new shopify.clients.Graphql({ session });
@@ -1159,7 +1160,7 @@ router.get('/manager/receiving/:id', async (req, res) => {
         try {
           for (let i = 0; i < skus.length; i += CHUNK_SIZE) {
             const chunk = skus.slice(i, i + CHUNK_SIZE);
-            const filter = chunk.map(s => `barcode:${s}`).join(' OR ');
+            const filter = activeFilter(chunk.map(s => `barcode:${s}`).join(' OR '));
             const query = `
               query wigNumbers($filter: String!) {
                 productVariants(first: ${chunk.length}, query: $filter) {
@@ -1306,7 +1307,7 @@ async function getVariantSnapshot(client, barcode) {
             inventoryItem {
               id
               unitCost { amount }
-              inventoryLevels(first: 50) {
+              inventoryLevels(first: 50, includeInactive: true) {
                 edges { node { quantities(names: ["available"]) { name quantity } } }
               }
             }
@@ -1315,7 +1316,7 @@ async function getVariantSnapshot(client, barcode) {
       }
     }
   `;
-  const response = await shopifyRequest(client, query, { barcode: `barcode:${barcode}` });
+  const response = await shopifyRequest(client, query, { barcode: activeFilter(`barcode:${barcode}`) });
   const node = response?.data?.productVariants?.edges?.[0]?.node;
   if (!node) return null;
   const currentQty = (node.inventoryItem.inventoryLevels?.edges || [])
@@ -1565,7 +1566,7 @@ router.get('/:id/export-pdf', async (req, res) => {
         try {
           const query = supplierCarriesWig
             ? `{
-                productVariants(first: 1, query: "barcode:${item.sku}") {
+                productVariants(first: 1, query: "${activeFilter(`barcode:${item.sku}`)}") {
                   edges { node {
                     customName: metafield(namespace: "custom", key: "name") { value }
                     product {
@@ -1576,7 +1577,7 @@ router.get('/:id/export-pdf', async (req, res) => {
                 }
               }`
             : `{
-                productVariants(first: 1, query: "barcode:${item.sku}") {
+                productVariants(first: 1, query: "${activeFilter(`barcode:${item.sku}`)}") {
                   edges { node {
                     customName: metafield(namespace: "custom", key: "name") { value }
                   } }

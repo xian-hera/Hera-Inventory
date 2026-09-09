@@ -110,10 +110,10 @@ function BuyerTransferHistory() {
                                     rel="noopener noreferrer"
                                     style={{ textDecoration: 'underline' }}
                                   >
-                                    {tr.shopify_transfer_id}
+                                    {tr.shopify_transfer_name || tr.shopify_transfer_id}
                                   </a>
                                 ) : (
-                                  tr.shopify_transfer_id
+                                  tr.shopify_transfer_name || tr.shopify_transfer_id
                                 )}
                               </td>
                               <td style={{ padding: '10px' }}>{tr.from_location}</td>

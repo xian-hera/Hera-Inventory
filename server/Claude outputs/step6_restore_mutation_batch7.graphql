@@ -1,0 +1,422 @@
+mutation RestoreOldSkuInventoryBatch7 {
+  m1: inventoryAdjustQuantities(input: {
+    reason: "correction",
+    name: "available",
+    changes: [{
+      inventoryItemId: "gid://shopify/InventoryItem/55716723982646",
+      locationId: "gid://shopify/Location/35316498505",
+      delta: 10
+    }]
+  }) {
+    inventoryAdjustmentGroup { id }
+    userErrors { field message code }
+  }
+  m2: inventoryAdjustQuantities(input: {
+    reason: "correction",
+    name: "available",
+    changes: [{
+      inventoryItemId: "gid://shopify/InventoryItem/55716724015414",
+      locationId: "gid://shopify/Location/107681448246",
+      delta: 10
+    }]
+  }) {
+    inventoryAdjustmentGroup { id }
+    userErrors { field message code }
+  }
+  m3: inventoryAdjustQuantities(input: {
+    reason: "correction",
+    name: "available",
+    changes: [{
+      inventoryItemId: "gid://shopify/InventoryItem/55716724015414",
+      locationId: "gid://shopify/Location/60899721289",
+      delta: 10
+    }]
+  }) {
+    inventoryAdjustmentGroup { id }
+    userErrors { field message code }
+  }
+  m4: inventoryAdjustQuantities(input: {
+    reason: "correction",
+    name: "available",
+    changes: [{
+      inventoryItemId: "gid://shopify/InventoryItem/55716724048182",
+      locationId: "gid://shopify/Location/107681448246",
+      delta: 10
+    }]
+  }) {
+    inventoryAdjustmentGroup { id }
+    userErrors { field message code }
+  }
+  m5: inventoryAdjustQuantities(input: {
+    reason: "correction",
+    name: "available",
+    changes: [{
+      inventoryItemId: "gid://shopify/InventoryItem/55716724048182",
+      locationId: "gid://shopify/Location/107681874230",
+      delta: 10
+    }]
+  }) {
+    inventoryAdjustmentGroup { id }
+    userErrors { field message code }
+  }
+  m6: inventoryAdjustQuantities(input: {
+    reason: "correction",
+    name: "available",
+    changes: [{
+      inventoryItemId: "gid://shopify/InventoryItem/55716724048182",
+      locationId: "gid://shopify/Location/107681939766",
+      delta: 10
+    }]
+  }) {
+    inventoryAdjustmentGroup { id }
+    userErrors { field message code }
+  }
+  m7: inventoryAdjustQuantities(input: {
+    reason: "correction",
+    name: "available",
+    changes: [{
+      inventoryItemId: "gid://shopify/InventoryItem/55716724048182",
+      locationId: "gid://shopify/Location/60899721289",
+      delta: 10
+    }]
+  }) {
+    inventoryAdjustmentGroup { id }
+    userErrors { field message code }
+  }
+  m8: inventoryAdjustQuantities(input: {
+    reason: "correction",
+    name: "available",
+    changes: [{
+      inventoryItemId: "gid://shopify/InventoryItem/55716724048182",
+      locationId: "gid://shopify/Location/107682201910",
+      delta: 10
+    }]
+  }) {
+    inventoryAdjustmentGroup { id }
+    userErrors { field message code }
+  }
+  m9: inventoryAdjustQuantities(input: {
+    reason: "correction",
+    name: "available",
+    changes: [{
+      inventoryItemId: "gid://shopify/InventoryItem/55716724080950",
+      locationId: "gid://shopify/Location/60899721289",
+      delta: 10
+    }]
+  }) {
+    inventoryAdjustmentGroup { id }
+    userErrors { field message code }
+  }
+  m10: inventoryAdjustQuantities(input: {
+    reason: "correction",
+    name: "available",
+    changes: [{
+      inventoryItemId: "gid://shopify/InventoryItem/55716724113718",
+      locationId: "gid://shopify/Location/107681874230",
+      delta: 10
+    }]
+  }) {
+    inventoryAdjustmentGroup { id }
+    userErrors { field message code }
+  }
+  m11: inventoryAdjustQuantities(input: {
+    reason: "correction",
+    name: "available",
+    changes: [{
+      inventoryItemId: "gid://shopify/InventoryItem/55716724146486",
+      locationId: "gid://shopify/Location/107681382710",
+      delta: 10
+    }]
+  }) {
+    inventoryAdjustmentGroup { id }
+    userErrors { field message code }
+  }
+  m12: inventoryAdjustQuantities(input: {
+    reason: "correction",
+    name: "available",
+    changes: [{
+      inventoryItemId: "gid://shopify/InventoryItem/55716724146486",
+      locationId: "gid://shopify/Location/107681841462",
+      delta: 10
+    }]
+  }) {
+    inventoryAdjustmentGroup { id }
+    userErrors { field message code }
+  }
+  m13: inventoryAdjustQuantities(input: {
+    reason: "correction",
+    name: "available",
+    changes: [{
+      inventoryItemId: "gid://shopify/InventoryItem/55716724146486",
+      locationId: "gid://shopify/Location/107681874230",
+      delta: 10
+    }]
+  }) {
+    inventoryAdjustmentGroup { id }
+    userErrors { field message code }
+  }
+  m14: inventoryAdjustQuantities(input: {
+    reason: "correction",
+    name: "available",
+    changes: [{
+      inventoryItemId: "gid://shopify/InventoryItem/55716724146486",
+      locationId: "gid://shopify/Location/60899721289",
+      delta: 10
+    }]
+  }) {
+    inventoryAdjustmentGroup { id }
+    userErrors { field message code }
+  }
+  m15: inventoryAdjustQuantities(input: {
+    reason: "correction",
+    name: "available",
+    changes: [{
+      inventoryItemId: "gid://shopify/InventoryItem/55716724212022",
+      locationId: "gid://shopify/Location/35316531273",
+      delta: 10
+    }]
+  }) {
+    inventoryAdjustmentGroup { id }
+    userErrors { field message code }
+  }
+  m16: inventoryAdjustQuantities(input: {
+    reason: "correction",
+    name: "available",
+    changes: [{
+      inventoryItemId: "gid://shopify/InventoryItem/55716724212022",
+      locationId: "gid://shopify/Location/107681874230",
+      delta: 10
+    }]
+  }) {
+    inventoryAdjustmentGroup { id }
+    userErrors { field message code }
+  }
+  m17: inventoryAdjustQuantities(input: {
+    reason: "correction",
+    name: "available",
+    changes: [{
+      inventoryItemId: "gid://shopify/InventoryItem/55716724212022",
+      locationId: "gid://shopify/Location/60899721289",
+      delta: 10
+    }]
+  }) {
+    inventoryAdjustmentGroup { id }
+    userErrors { field message code }
+  }
+  m18: inventoryAdjustQuantities(input: {
+    reason: "correction",
+    name: "available",
+    changes: [{
+      inventoryItemId: "gid://shopify/InventoryItem/55716623712566",
+      locationId: "gid://shopify/Location/107681349942",
+      delta: 3
+    }]
+  }) {
+    inventoryAdjustmentGroup { id }
+    userErrors { field message code }
+  }
+  m19: inventoryAdjustQuantities(input: {
+    reason: "correction",
+    name: "available",
+    changes: [{
+      inventoryItemId: "gid://shopify/InventoryItem/55716623712566",
+      locationId: "gid://shopify/Location/35316498505",
+      delta: 3
+    }]
+  }) {
+    inventoryAdjustmentGroup { id }
+    userErrors { field message code }
+  }
+  m20: inventoryAdjustQuantities(input: {
+    reason: "correction",
+    name: "available",
+    changes: [{
+      inventoryItemId: "gid://shopify/InventoryItem/55716671521078",
+      locationId: "gid://shopify/Location/110138032438",
+      delta: 10
+    }]
+  }) {
+    inventoryAdjustmentGroup { id }
+    userErrors { field message code }
+  }
+  m21: inventoryAdjustQuantities(input: {
+    reason: "correction",
+    name: "available",
+    changes: [{
+      inventoryItemId: "gid://shopify/InventoryItem/55716671521078",
+      locationId: "gid://shopify/Location/107681874230",
+      delta: 3
+    }]
+  }) {
+    inventoryAdjustmentGroup { id }
+    userErrors { field message code }
+  }
+  m22: inventoryAdjustQuantities(input: {
+    reason: "correction",
+    name: "available",
+    changes: [{
+      inventoryItemId: "gid://shopify/InventoryItem/55716671521078",
+      locationId: "gid://shopify/Location/107681972534",
+      delta: 3
+    }]
+  }) {
+    inventoryAdjustmentGroup { id }
+    userErrors { field message code }
+  }
+  m23: inventoryAdjustQuantities(input: {
+    reason: "correction",
+    name: "available",
+    changes: [{
+      inventoryItemId: "gid://shopify/InventoryItem/55716671553846",
+      locationId: "gid://shopify/Location/110138032438",
+      delta: 10
+    }]
+  }) {
+    inventoryAdjustmentGroup { id }
+    userErrors { field message code }
+  }
+  m24: inventoryAdjustQuantities(input: {
+    reason: "correction",
+    name: "available",
+    changes: [{
+      inventoryItemId: "gid://shopify/InventoryItem/55716671553846",
+      locationId: "gid://shopify/Location/107681972534",
+      delta: 3
+    }]
+  }) {
+    inventoryAdjustmentGroup { id }
+    userErrors { field message code }
+  }
+  m25: inventoryAdjustQuantities(input: {
+    reason: "correction",
+    name: "available",
+    changes: [{
+      inventoryItemId: "gid://shopify/InventoryItem/55716671586614",
+      locationId: "gid://shopify/Location/110138032438",
+      delta: 10
+    }]
+  }) {
+    inventoryAdjustmentGroup { id }
+    userErrors { field message code }
+  }
+  m26: inventoryAdjustQuantities(input: {
+    reason: "correction",
+    name: "available",
+    changes: [{
+      inventoryItemId: "gid://shopify/InventoryItem/55716671586614",
+      locationId: "gid://shopify/Location/60899721289",
+      delta: 3
+    }]
+  }) {
+    inventoryAdjustmentGroup { id }
+    userErrors { field message code }
+  }
+  m27: inventoryAdjustQuantities(input: {
+    reason: "correction",
+    name: "available",
+    changes: [{
+      inventoryItemId: "gid://shopify/InventoryItem/55716671619382",
+      locationId: "gid://shopify/Location/110138032438",
+      delta: 10
+    }]
+  }) {
+    inventoryAdjustmentGroup { id }
+    userErrors { field message code }
+  }
+  m28: inventoryAdjustQuantities(input: {
+    reason: "correction",
+    name: "available",
+    changes: [{
+      inventoryItemId: "gid://shopify/InventoryItem/55716671619382",
+      locationId: "gid://shopify/Location/107681448246",
+      delta: 3
+    }]
+  }) {
+    inventoryAdjustmentGroup { id }
+    userErrors { field message code }
+  }
+  m29: inventoryAdjustQuantities(input: {
+    reason: "correction",
+    name: "available",
+    changes: [{
+      inventoryItemId: "gid://shopify/InventoryItem/55716671619382",
+      locationId: "gid://shopify/Location/35316531273",
+      delta: 3
+    }]
+  }) {
+    inventoryAdjustmentGroup { id }
+    userErrors { field message code }
+  }
+  m30: inventoryAdjustQuantities(input: {
+    reason: "correction",
+    name: "available",
+    changes: [{
+      inventoryItemId: "gid://shopify/InventoryItem/55716676108598",
+      locationId: "gid://shopify/Location/110138032438",
+      delta: 10
+    }]
+  }) {
+    inventoryAdjustmentGroup { id }
+    userErrors { field message code }
+  }
+  m31: inventoryAdjustQuantities(input: {
+    reason: "correction",
+    name: "available",
+    changes: [{
+      inventoryItemId: "gid://shopify/InventoryItem/55716676141366",
+      locationId: "gid://shopify/Location/110138032438",
+      delta: 10
+    }]
+  }) {
+    inventoryAdjustmentGroup { id }
+    userErrors { field message code }
+  }
+  m32: inventoryAdjustQuantities(input: {
+    reason: "correction",
+    name: "available",
+    changes: [{
+      inventoryItemId: "gid://shopify/InventoryItem/55716676141366",
+      locationId: "gid://shopify/Location/107682201910",
+      delta: 3
+    }]
+  }) {
+    inventoryAdjustmentGroup { id }
+    userErrors { field message code }
+  }
+  m33: inventoryAdjustQuantities(input: {
+    reason: "correction",
+    name: "available",
+    changes: [{
+      inventoryItemId: "gid://shopify/InventoryItem/55716676174134",
+      locationId: "gid://shopify/Location/110138032438",
+      delta: 10
+    }]
+  }) {
+    inventoryAdjustmentGroup { id }
+    userErrors { field message code }
+  }
+  m34: inventoryAdjustQuantities(input: {
+    reason: "correction",
+    name: "available",
+    changes: [{
+      inventoryItemId: "gid://shopify/InventoryItem/55716676174134",
+      locationId: "gid://shopify/Location/107681382710",
+      delta: 3
+    }]
+  }) {
+    inventoryAdjustmentGroup { id }
+    userErrors { field message code }
+  }
+  m35: inventoryAdjustQuantities(input: {
+    reason: "correction",
+    name: "available",
+    changes: [{
+      inventoryItemId: "gid://shopify/InventoryItem/55716676206902",
+      locationId: "gid://shopify/Location/110138032438",
+      delta: 10
+    }]
+  }) {
+    inventoryAdjustmentGroup { id }
+    userErrors { field message code }
+  }
+}

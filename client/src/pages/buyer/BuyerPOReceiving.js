@@ -40,6 +40,7 @@ function BuyerPOReceiving() {
     <Page
       title="Receiving PO"
       backAction={{ onAction: () => navigate('/buyer') }}
+      secondaryActions={[{ content: 'BOX PO', onAction: () => navigate('/buyer/po-receiving/box-po') }]}
       primaryAction={{ content: 'Settings', onAction: () => navigate('/buyer/po-receiving/settings') }}
     >
       <Layout>

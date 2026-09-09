@@ -221,7 +221,7 @@ router.patch('/:id/commit', async (req, res) => {
         )
       : { rows: [] };
 
-    const { getShopify, getSession } = require('../shopify');
+    const { getShopify, getSession, activeFilter } = require('../shopify');
     const session = await getSession();
     const shopify = getShopify();
     const client = new shopify.clients.Graphql({ session });
@@ -260,12 +260,12 @@ router.patch('/:id/commit', async (req, res) => {
         // Step 1: fetch inventoryItem id and current on_hand in a single query
         const variantRes = await shopifyRequest(() =>
           client.request(`{
-            productVariants(first: 1, query: "barcode:${item.barcode}") {
+            productVariants(first: 1, query: "${activeFilter(`barcode:${item.barcode}`)}") {
               edges {
                 node {
                   inventoryItem {
                     id
-                    inventoryLevel(locationId: "${shopifyLocationId}") {
+                    inventoryLevel(locationId: "${shopifyLocationId}", includeInactive: true) {
                       quantities(names: ["on_hand"]) { name quantity }
                     }
                   }

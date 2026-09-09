@@ -1,0 +1,14 @@
+query TestMultiBarcodeMatch {
+  byMainBarcode: productVariants(first: 5, query: "barcode:041388812694") {
+    edges { node { id sku barcode product { id title status } } }
+  }
+  bySecondBarcode: productVariants(first: 5, query: "barcode:04138860") {
+    edges { node { id sku barcode product { id title status } } }
+  }
+  byThirdBarcode: productVariants(first: 5, query: "barcode:04138877") {
+    edges { node { id sku barcode product { id title status } } }
+  }
+  byFourthBarcode: productVariants(first: 5, query: "barcode:04138884") {
+    edges { node { id sku barcode product { id title status } } }
+  }
+}

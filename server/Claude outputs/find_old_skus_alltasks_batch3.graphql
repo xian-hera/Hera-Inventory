@@ -1,0 +1,47 @@
+query FindOldSkuDuplicatesBatch3 {
+  s806993625509: productVariants(first: 1, query: "sku:OLD-806993625509") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993625516: productVariants(first: 1, query: "sku:OLD-806993625516") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993625523: productVariants(first: 1, query: "sku:OLD-806993625523") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993625530: productVariants(first: 1, query: "sku:OLD-806993625530") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+  s806993625547: productVariants(first: 1, query: "sku:OLD-806993625547") {
+    edges {
+      node {
+        id
+        sku
+        product { title status }
+      }
+    }
+  }
+}

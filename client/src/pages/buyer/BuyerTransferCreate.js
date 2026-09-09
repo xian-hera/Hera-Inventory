@@ -315,14 +315,28 @@ function BuyerTransferCreate() {
                       </BlockStack>
                       <BlockStack gap="100">
                         <Text variant="bodySm" tone="subdued">Tags</Text>
-                        <InlineStack gap="150" wrap>
+                        {/* Single "textbox" look, selected tags shown as pills
+                            inside it — type + Enter adds a tag (this transfer
+                            only, not written to the Tag pool); clicking a
+                            candidate below does the same. */}
+                        <div style={TAG_INPUT_BOX_STYLE}>
                           {selectedTags.map(tag => (
                             <span key={tag} style={TAG_CHIP_STYLE}>
                               {tag}
                               <span style={{ cursor: 'pointer', marginLeft: '6px' }} onClick={() => toggleTag(tag)}>×</span>
                             </span>
                           ))}
-                        </InlineStack>
+                          <input
+                            type="text"
+                            value={tagInput}
+                            onChange={(e) => setTagInput(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleTagInputSubmit(); } }}
+                            placeholder={selectedTags.length ? '' : 'New tag'}
+                            maxLength={20}
+                            style={TAG_INPUT_STYLE}
+                          />
+                        </div>
+                        <Text variant="bodySm" tone="subdued">Press Enter to submit a tag</Text>
                         <InlineStack gap="150" wrap>
                           {tagOptions.filter(t => !selectedTags.includes(t)).map(tag => (
                             <span key={tag} style={TAG_OPTION_STYLE} onClick={() => toggleTag(tag)}>
@@ -330,32 +344,20 @@ function BuyerTransferCreate() {
                             </span>
                           ))}
                         </InlineStack>
-                        {/* Manual entry — type a tag and press Enter to add it to
-                            this transfer only (not written to the Tag pool). */}
-                        <div style={{ width: '140px' }}>
-                          <TextField
-                            label=""
-                            labelHidden
-                            value={tagInput}
-                            onChange={setTagInput}
-                            placeholder="New tag"
-                            maxLength={20}
-                            autoComplete="off"
-                            helpText="Press Enter to submit a tag"
-                            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleTagInputSubmit(); } }}
-                          />
-                        </div>
                       </BlockStack>
                       {/* Wrapped in a label-spacer BlockStack, matching the other
                           fields' <Text label> + <control> shape — otherwise this
                           is the only item in the row with no label above it, and
                           the InlineStack's default stretch alignment makes the
                           button grow to match the tallest sibling column's full
-                          height instead of sitting at its normal Polaris size. */}
-                      <BlockStack gap="100">
-                        <Text variant="bodySm" tone="subdued">&nbsp;</Text>
-                        <Button variant="primary" onClick={handleConfirm}>Confirm</Button>
-                      </BlockStack>
+                          height instead of sitting at its normal Polaris size.
+                          marginLeft:auto pushes it to the far right of the row. */}
+                      <div style={{ marginLeft: 'auto' }}>
+                        <BlockStack gap="100">
+                          <Text variant="bodySm" tone="subdued">&nbsp;</Text>
+                          <Button variant="primary" onClick={handleConfirm}>Confirm</Button>
+                        </BlockStack>
+                      </div>
                     </InlineStack>
                   )}
                 </BlockStack>
@@ -536,6 +538,19 @@ const TAG_CHIP_STYLE = {
   display: 'inline-flex', alignItems: 'center',
   padding: '2px 8px', borderRadius: '12px',
   background: '#e4e5e7', fontSize: '12px', cursor: 'default',
+};
+
+// The "textbox" that holds selected-tag pills plus the bare <input> for
+// manual entry — width is 2x the old 140px input per Hera's request.
+const TAG_INPUT_BOX_STYLE = {
+  display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px',
+  width: '280px', minHeight: '36px', padding: '4px 8px',
+  borderRadius: '8px', border: '1px solid #c9cccf', background: '#fff',
+};
+
+const TAG_INPUT_STYLE = {
+  flex: '1 1 60px', minWidth: '60px', border: 'none', outline: 'none',
+  fontSize: '14px', fontFamily: 'inherit', background: 'transparent',
 };
 
 const TAG_OPTION_STYLE = {

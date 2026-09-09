@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
 const { pool } = require('../database/init');
-const { getShopify, getSession } = require('../shopify');
+const { getShopify, getSession, activeFilter } = require('../shopify');
 
 const RECENT_LIMIT = 20;
 const HISTORY_LIMIT = 200;
@@ -175,7 +175,7 @@ async function attachWigNumbers(shopifyClient, items) {
   const CHUNK_SIZE = 50;
   for (let i = 0; i < skus.length; i += CHUNK_SIZE) {
     const chunk = skus.slice(i, i + CHUNK_SIZE);
-    const filter = chunk.map(s => `barcode:${s}`).join(' OR ');
+    const filter = activeFilter(chunk.map(s => `barcode:${s}`).join(' OR '));
     const query = `
       query wigNumbers($filter: String!) {
         productVariants(first: ${chunk.length}, query: $filter) {
@@ -248,7 +248,7 @@ router.post('/', async (req, res) => {
     const mutation = `
       mutation inventoryTransferCreate($input: InventoryTransferCreateInput!, $idempotencyKey: String!) {
         inventoryTransferCreate(input: $input) @idempotent(key: $idempotencyKey) {
-          inventoryTransfer { id status }
+          inventoryTransfer { id status name }
           userErrors { field message }
         }
       }
@@ -279,12 +279,12 @@ router.post('/', async (req, res) => {
       const transferNo = await generateTransferNo(dbClient);
       const transferRes = await dbClient.query(
         `INSERT INTO transfers
-           (transfer_no, shopify_transfer_id, shopify_transfer_url, from_location, to_location,
+           (transfer_no, shopify_transfer_id, shopify_transfer_name, shopify_transfer_url, from_location, to_location,
             from_location_id, to_location_id, status, note, note_by, reference_name, tags)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'loading', $8, $9, $10, $11)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'loading', $9, $10, $11, $12)
          RETURNING *`,
         [
-          transferNo, shopifyTransfer.id, buildTransferAdminUrl(shopifyTransfer.id),
+          transferNo, shopifyTransfer.id, shopifyTransfer.name || null, buildTransferAdminUrl(shopifyTransfer.id),
           fromLocationName || fromLocationId, toLocationName || toLocationId,
           fromLocationId, toLocationId,
           note || null, note ? 'buyer' : null, referenceName || null, Array.isArray(tags) ? tags : [],
@@ -322,7 +322,7 @@ router.post('/', async (req, res) => {
 router.get('/recent', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id, transfer_no, shopify_transfer_id, shopify_transfer_url,
+      `SELECT id, transfer_no, shopify_transfer_id, shopify_transfer_name, shopify_transfer_url,
               from_location, to_location, committed_at
        FROM transfers
        WHERE status = 'committed'
@@ -342,7 +342,7 @@ router.get('/history', async (req, res) => {
     const { q } = req.query;
     const params = [];
     let query = `
-      SELECT id, transfer_no, shopify_transfer_id, shopify_transfer_url,
+      SELECT id, transfer_no, shopify_transfer_id, shopify_transfer_name, shopify_transfer_url,
              from_location, to_location, committed_at
       FROM transfers
       WHERE status = 'committed'`;
@@ -371,7 +371,7 @@ router.get('/history', async (req, res) => {
 router.get('/ongoing', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id, transfer_no, shopify_transfer_id, shopify_transfer_url,
+      `SELECT id, transfer_no, shopify_transfer_id, shopify_transfer_name, shopify_transfer_url,
               from_location, to_location, status, created_at
        FROM transfers
        WHERE status != 'committed'

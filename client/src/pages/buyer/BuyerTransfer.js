@@ -76,10 +76,10 @@ function BuyerTransfer() {
                             rel="noopener noreferrer"
                             style={{ fontSize: '13px', fontWeight: 600, textDecoration: 'underline', whiteSpace: 'nowrap' }}
                           >
-                            {tr.shopify_transfer_id}
+                            {tr.shopify_transfer_name || tr.shopify_transfer_id}
                           </a>
                         ) : (
-                          <Text variant="bodySm" tone="subdued">{tr.shopify_transfer_id}</Text>
+                          <Text variant="bodySm" tone="subdued">{tr.shopify_transfer_name || tr.shopify_transfer_id}</Text>
                         )}
                         <Text variant="bodySm" tone="subdued">committed</Text>
                       </InlineStack>
