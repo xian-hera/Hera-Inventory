@@ -58,6 +58,8 @@ function ManagerTransferReceivingDetail() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
 
+  const [exportingPdf, setExportingPdf] = useState(false);
+
   const [itemFilter, setItemFilter] = useState('all');
 
   const barcodeBuffer = useRef('');
@@ -231,6 +233,33 @@ function ManagerTransferReceivingDetail() {
     }
   };
 
+  // Export PDF (2026-09-10 addendum) — available in every status this page
+  // renders (In transit read-only + Receiving), using this location's own
+  // (to-location) qty column, per Hera's column spec. Same download pattern
+  // as BuyerPOImportInvoice.js's handleExportPdf / TransferPrepDetail.js's
+  // exportPdf.
+  const exportPdf = async () => {
+    setExportingPdf(true);
+    setError('');
+    try {
+      const res = await fetch(`/api/transfers/${transferId}/export-pdf?qtySide=to`);
+      if (!res.ok) throw new Error('Export failed');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${transfer?.transfer_no || 'transfer'}-export.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setExportingPdf(false);
+    }
+  };
+
   const handleSubmitInvoice = async () => {
     setSubmitting(true);
     setSubmitError('');
@@ -286,13 +315,16 @@ function ManagerTransferReceivingDetail() {
                       <Text fontWeight="bold">{transfer.to_location}</Text>
                     </BlockStack>
                   </InlineStack>
-                  <Button
-                    onClick={handleDelivered}
-                    loading={delivering}
-                    fullWidth={false}
-                  >
-                    Delivered
-                  </Button>
+                  <InlineStack gap="200">
+                    <Button onClick={exportPdf} loading={exportingPdf} disabled={exportingPdf}>Export PDF</Button>
+                    <Button
+                      onClick={handleDelivered}
+                      loading={delivering}
+                      fullWidth={false}
+                    >
+                      Delivered
+                    </Button>
+                  </InlineStack>
                 </InlineStack>
 
                 <Card>
@@ -307,7 +339,7 @@ function ManagerTransferReceivingDetail() {
                         </tr>
                       </thead>
                       <tbody>
-                        {items.map(item => (
+                        {[...items].sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(item => (
                           <tr key={item.id} style={{ borderBottom: '1px solid #f1f1f1' }}>
                             <td style={{ padding: '10px' }}>{item.sku}</td>
                             <td style={{ padding: '10px' }}>{item.name}</td>
@@ -342,9 +374,14 @@ function ManagerTransferReceivingDetail() {
   ];
 
   // Off-qty rows always pinned to top (spec doc section 6: "始终置顶显示"),
-  // regardless of which filter pill is active.
+  // regardless of which filter pill is active — alphabetical by name
+  // otherwise, and within that pinned group too (2026-09-10 addendum).
   const isOffQty = (item) => item.counted_confirmed && Number(item.received_quantity) !== Number(item.quantity);
-  const sortedItems = [...items].sort((a, b) => (isOffQty(b) ? 1 : 0) - (isOffQty(a) ? 1 : 0));
+  const byName = (a, b) => (a.name || '').localeCompare(b.name || '');
+  const sortedItems = [...items].sort((a, b) => {
+    const diff = (isOffQty(b) ? 1 : 0) - (isOffQty(a) ? 1 : 0);
+    return diff !== 0 ? diff : byName(a, b);
+  });
 
   const filteredItems = sortedItems.filter(item => {
     if (itemFilter === 'all') return true;
@@ -374,6 +411,7 @@ function ManagerTransferReceivingDetail() {
               <Card>
                 <BlockStack gap="300">
                   <InlineStack gap="200" wrap align="end">
+                    <Button onClick={exportPdf} loading={exportingPdf} disabled={exportingPdf}>Export PDF</Button>
                     <Button onClick={() => setShowNoteInput(v => !v)}>
                       Add note{transfer.note ? ' •' : ''}
                     </Button>

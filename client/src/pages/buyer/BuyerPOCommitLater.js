@@ -31,8 +31,10 @@ function BuyerPOCommitLater() {
   const [locationFilter, setLocationFilter] = useState([]);
   const [supplierFilter, setSupplierFilter] = useState([]);
 
-  const fetchInvoices = useCallback(async (q) => {
-    setLoading(true);
+  // quiet=true skips the full-page loading spinner — used while polling for
+  // commit progress so the table doesn't flicker every couple seconds.
+  const fetchInvoices = useCallback(async (q, quiet = false) => {
+    if (!quiet) setLoading(true);
     try {
       const params = q ? `?q=${encodeURIComponent(q)}` : '';
       const res = await fetch(`/api/po-invoices/pending${params}`);
@@ -41,11 +43,25 @@ function BuyerPOCommitLater() {
     } catch (e) {
       setError('Failed to load invoices');
     } finally {
-      setLoading(false);
+      if (!quiet) setLoading(false);
     }
   }, []);
 
   useEffect(() => { fetchInvoices(''); }, [fetchInvoices]);
+
+  // Each invoice locks its own commit independently (see
+  // acquireInvoiceCommitLock in server/routes/poInvoices.js) — there's no
+  // single global "is anything committing" lock — so this only drives the
+  // page-wide "It is OK to leave this page" note and the live per-row
+  // progress polling; it does NOT block committing OTHER, not-currently-
+  // committing invoices.
+  const anyCommitting = useMemo(() => invoices.some(inv => inv.committing), [invoices]);
+
+  useEffect(() => {
+    if (!anyCommitting) return;
+    const interval = setInterval(() => fetchInvoices(search, true), 1500);
+    return () => clearInterval(interval);
+  }, [anyCommitting, search, fetchInvoices]);
 
   const handleClearSearch = () => {
     setSearch('');
@@ -73,16 +89,24 @@ function BuyerPOCommitLater() {
     return true;
   }), [invoices, statusFilter, locationFilter, supplierFilter]);
 
+  // Committing rows can't be (de)selected — they're already locked into the
+  // commit that's running for them.
+  const selectableInvoices = useMemo(() => filteredInvoices.filter(i => !i.committing), [filteredInvoices]);
+
   const toggleSelectOne = (id) =>
     setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   const toggleSelectAll = () =>
-    setSelectedIds(selectedIds.length === filteredInvoices.length ? [] : filteredInvoices.map(i => i.id));
+    setSelectedIds(selectedIds.length === selectableInvoices.length ? [] : selectableInvoices.map(i => i.id));
 
   const handleCommit = async (ids) => {
     if (ids.length === 0) return;
     setCommitting(true);
     setError('');
     try {
+      // Starts a commit for each eligible invoice and returns immediately —
+      // the actual work runs in the background on the server (see POST
+      // /api/po-invoices/pending/commit-many). Progress is picked up by the
+      // polling effect above, driven off each row's own `committing` flag.
       const res = await fetch('/api/po-invoices/pending/commit-many', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -90,10 +114,10 @@ function BuyerPOCommitLater() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      if (data.skipped?.length > 0) {
+      if (data.rejected?.length > 0) {
         setError(
-          `Skipped ${data.skipped.length} invoice(s) because of missing SKU or a SKU collision: ` +
-          data.skipped.map(s => s.invoiceNumber).join(', ')
+          `${data.rejected.length} invoice(s) could not be started: ` +
+          data.rejected.map(s => `${s.invoiceNumber} (${s.reason})`).join(', ')
         );
       }
       setSelectedIds([]);
@@ -123,7 +147,11 @@ function BuyerPOCommitLater() {
   };
 
   const rows = filteredInvoices.map(inv => [
-    <Checkbox checked={selectedIds.includes(inv.id)} onChange={() => toggleSelectOne(inv.id)} />,
+    <Checkbox
+      checked={selectedIds.includes(inv.id)}
+      onChange={() => toggleSelectOne(inv.id)}
+      disabled={inv.committing}
+    />,
     <BlockStack gap="0">
       <span
         style={{ cursor: 'pointer', textDecoration: 'underline' }}
@@ -148,7 +176,13 @@ function BuyerPOCommitLater() {
         {Number(inv.subtotal_cad || 0).toFixed(2)}
       </span>
     ),
-    (() => { const p = STATUS_PILLS[inv.status] || STATUS_PILLS.pending; return <Badge tone={p.tone}>{p.label}</Badge>; })(),
+    (() => {
+      if (inv.committing) {
+        return <Text variant="bodySm">{`Committing ${inv.committed_count || 0} / ${inv.item_count || 0}`}</Text>;
+      }
+      const p = STATUS_PILLS[inv.status] || STATUS_PILLS.pending;
+      return <Badge tone={p.tone}>{p.label}</Badge>;
+    })(),
   ]);
 
   return (
@@ -157,7 +191,7 @@ function BuyerPOCommitLater() {
       backAction={{ onAction: () => navigate('/buyer/po-receiving') }}
       secondaryActions={[
         { content: 'Delete selected', destructive: true, disabled: selectedIds.length === 0, onAction: handleDelete },
-        { content: 'Commit all', disabled: filteredInvoices.length === 0 || committing, onAction: () => handleCommit(filteredInvoices.map(i => i.id)) },
+        { content: 'Commit all', disabled: selectableInvoices.length === 0 || committing, onAction: () => handleCommit(selectableInvoices.map(i => i.id)) },
         { content: 'Commit selected', disabled: selectedIds.length === 0 || committing, onAction: () => handleCommit(selectedIds) },
       ]}
     >
@@ -165,6 +199,7 @@ function BuyerPOCommitLater() {
         <Layout.Section>
           <BlockStack gap="400">
             {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
+            {anyCommitting && <Text variant="bodySm" tone="subdued">It is OK to leave this page</Text>}
 
             <Card>
               <BlockStack gap="200">
@@ -238,8 +273,8 @@ function BuyerPOCommitLater() {
                       <tr style={{ borderBottom: '2px solid #e1e3e5' }}>
                         <th style={{ padding: '8px', textAlign: 'left', width: '32px' }}>
                           <Checkbox
-                            checked={selectedIds.length === filteredInvoices.length && filteredInvoices.length > 0}
-                            indeterminate={selectedIds.length > 0 && selectedIds.length < filteredInvoices.length}
+                            checked={selectedIds.length === selectableInvoices.length && selectableInvoices.length > 0}
+                            indeterminate={selectedIds.length > 0 && selectedIds.length < selectableInvoices.length}
                             onChange={toggleSelectAll}
                           />
                         </th>

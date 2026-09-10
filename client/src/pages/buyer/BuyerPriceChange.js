@@ -77,18 +77,33 @@ function BuyerPriceChange() {
     reader.onload = async (evt) => {
       const lines = evt.target.result.split('\n').filter(l => l.trim());
 
-      const dataLines = lines.filter(l => {
-        const cols = l.split(',').map(c => c.trim().replace(/"/g, '').toLowerCase());
-        return !(cols[0] === 'sku' || cols[0] === 'name' || cols[0] === 'barcode' ||
-                 cols[1] === 'sku' || cols[1] === 'name' || cols[1] === 'barcode');
-      });
+      if (lines.length === 0) { setError('No data found in CSV.'); return; }
+
+      // Find the header row: the first row with a cell whose value is
+      // exactly "SKU" (case-insensitive, quotes/whitespace stripped).
+      // Everything at or before that row is ignored, and that column is the
+      // only one read from every row after it — no more guessing which
+      // column holds the SKU by whether it looks numeric.
+      let skuCol = -1;
+      let headerRowIndex = -1;
+      for (let i = 0; i < lines.length; i++) {
+        const cols = lines[i].split(',').map(c => c.trim().replace(/"/g, ''));
+        const idx = cols.findIndex(c => c.toLowerCase() === 'sku');
+        if (idx !== -1) {
+          skuCol = idx;
+          headerRowIndex = i;
+          break;
+        }
+      }
+
+      if (skuCol === -1) {
+        setError('CSV must have a column with header "SKU".');
+        return;
+      }
+
+      const dataLines = lines.slice(headerRowIndex + 1);
 
       if (dataLines.length === 0) { setError('No data found in CSV.'); return; }
-
-      const sample = dataLines.slice(0, 20);
-      const col0AllNumeric = sample.every(l => /^\d+$/.test(l.split(',')[0]?.trim().replace(/"/g, '') || ''));
-      const col1AllNumeric = sample.every(l => /^\d+$/.test(l.split(',')[1]?.trim().replace(/"/g, '') || ''));
-      const skuCol = col0AllNumeric ? 0 : col1AllNumeric ? 1 : 0;
 
       const skus = [...new Set(
         dataLines
@@ -293,9 +308,14 @@ function BuyerPriceChange() {
                     type="file" accept=".csv" ref={csvInputRef}
                     style={{ display: 'none' }} onChange={handleCSVUpload}
                   />
-                  <Button onClick={() => csvInputRef.current.click()} loading={loading}>
-                    Upload CSV
-                  </Button>
+                  <InlineStack gap="200" blockAlign="center">
+                    <Button onClick={() => csvInputRef.current.click()} loading={loading}>
+                      Upload CSV
+                    </Button>
+                    <Text variant="bodySm" tone="subdued">
+                      Only SKU column is needed. MUST have header &quot;SKU&quot;.
+                    </Text>
+                  </InlineStack>
                 </BlockStack>
               </InlineStack>
             </Card>

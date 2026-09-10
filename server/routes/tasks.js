@@ -206,28 +206,40 @@ router.patch('/:id/notes', async (req, res) => {
   }
 });
 
-// PATCH /api/tasks/:id/commit
-router.patch('/:id/commit', async (req, res) => {
+// A commit that's been sitting in `committing = TRUE` longer than this is
+// treated as abandoned (e.g. the server restarted mid-commit, such as a
+// Render redeploy) rather than genuinely in progress, and can be reclaimed
+// by a fresh commit request. Safe to reclaim: task_items.is_committed is
+// per-item and already-applied items are skipped on the retry, so reclaiming
+// a stale lock never re-applies a Shopify change that already went through.
+const TASK_COMMIT_STALE_MS = 5 * 60 * 1000;
+
+// The actual commit work, run in the background (not awaited by the PATCH
+// handler below) so the request can return immediately and the frontend can
+// poll GET /api/tasks/:id for live progress instead of blocking on one long
+// request. This is the same per-item logic the route used to run inline;
+// only the "how the caller finds out what happened" part changed — results
+// now land on the task row (`commit_warnings`, `committing`) instead of in
+// the original HTTP response, since by the time this finishes nobody may
+// still be listening on that response.
+async function runTaskCommit(id, itemIds) {
+  const errors = [];
   try {
-    const { id } = req.params;
-    const { itemIds } = req.body;
+    const taskRes = await pool.query('SELECT * FROM tasks WHERE id = $1', [id]);
+    const task = taskRes.rows[0];
+    if (!task) return; // task deleted mid-flight — nothing to do
 
-    const task = await pool.query('SELECT * FROM tasks WHERE id = $1', [id]);
-    if (task.rows.length === 0) return res.status(404).json({ error: 'Task not found' });
-
-    const items = itemIds && itemIds.length > 0
-      ? await pool.query(
-          'SELECT * FROM task_items WHERE id = ANY($1) AND task_id = $2',
-          [itemIds, id]
-        )
-      : { rows: [] };
+    const items = await pool.query(
+      'SELECT * FROM task_items WHERE id = ANY($1) AND task_id = $2',
+      [itemIds, id]
+    );
 
     const { getShopify, getSession, activeFilter } = require('../shopify');
     const session = await getSession();
     const shopify = getShopify();
     const client = new shopify.clients.Graphql({ session });
 
-    const shopifyLocationId = task.rows[0].shopify_location_id;
+    const shopifyLocationId = task.shopify_location_id;
 
     const shopifyRequest = async (fn, retries = 2) => {
       for (let attempt = 0; attempt <= retries; attempt++) {
@@ -244,8 +256,6 @@ router.patch('/:id/commit', async (req, res) => {
         }
       }
     };
-
-    const errors = [];
 
     for (const item of items.rows) {
       if (item.is_correct || item.poh === null || item.soh === null) continue;
@@ -333,7 +343,7 @@ router.patch('/:id/commit', async (req, res) => {
 
     // Check if all inaccurate items are committed
     const remaining = await pool.query(
-      `SELECT COUNT(*) FROM task_items 
+      `SELECT COUNT(*) FROM task_items
        WHERE task_id = $1 AND is_correct = FALSE AND poh IS NOT NULL AND is_committed = FALSE`,
       [id]
     );
@@ -361,9 +371,56 @@ router.patch('/:id/commit', async (req, res) => {
         );
       }
     }
+  } catch (e) {
+    console.error(`runTaskCommit fatal error for task ${id}:`, e.message);
+    errors.push(`Commit failed: ${e.message}`);
+  } finally {
+    // Always clear the lock, even on a fatal (non-per-item) error, so the
+    // buyer isn't left staring at a permanently-disabled Commit button.
+    await pool.query(
+      `UPDATE tasks SET committing = FALSE, commit_warnings = $1, updated_at = NOW() WHERE id = $2`,
+      [JSON.stringify(errors), id]
+    ).catch(e => console.error(`Failed to clear committing flag for task ${id}:`, e.message));
+  }
+}
 
-    if (errors.length > 0) return res.json({ success: true, warnings: errors });
-    res.json({ success: true });
+// PATCH /api/tasks/:id/commit — starts a commit and returns immediately;
+// the frontend polls GET /api/tasks/:id (committing / commit_total /
+// commit_item_ids / items[].is_committed / commit_warnings) for progress.
+// See runTaskCommit above for the actual work.
+router.patch('/:id/commit', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { itemIds } = req.body;
+    if (!itemIds || itemIds.length === 0) {
+      return res.status(400).json({ error: 'No items to commit.' });
+    }
+
+    const taskRes = await pool.query('SELECT * FROM tasks WHERE id = $1', [id]);
+    if (taskRes.rows.length === 0) return res.status(404).json({ error: 'Task not found' });
+    const task = taskRes.rows[0];
+
+    if (task.status === 'counting') {
+      return res.status(400).json({ error: 'Counting not finished yet.' });
+    }
+
+    if (task.committing) {
+      const startedAt = task.commit_started_at ? new Date(task.commit_started_at).getTime() : 0;
+      if (Date.now() - startedAt < TASK_COMMIT_STALE_MS) {
+        return res.status(409).json({ error: 'This task is already being committed — please wait for it to finish.' });
+      }
+      // Stale lock (server likely restarted mid-commit) — safe to reclaim,
+      // see TASK_COMMIT_STALE_MS comment above.
+    }
+
+    await pool.query(
+      `UPDATE tasks SET committing = TRUE, commit_started_at = NOW(), commit_total = $1, commit_item_ids = $2, commit_warnings = NULL WHERE id = $3`,
+      [itemIds.length, itemIds, id]
+    );
+
+    res.json({ started: true, total: itemIds.length });
+
+    runTaskCommit(id, itemIds); // fire-and-forget — intentionally not awaited
   } catch (e) {
     console.error('PATCH /api/tasks/:id/commit error:', e);
     res.status(500).json({ error: e.message });

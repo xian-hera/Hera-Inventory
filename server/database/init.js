@@ -45,6 +45,21 @@ const initDatabase = async () => {
     // completely unaffected — see server/routes/tasks.js for how this branches.
     await client.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS scan_count_mode BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
 
+    // Migration: async commit-with-progress support. `committing` is the lock
+    // that prevents a second commit from starting while one is in flight (and
+    // is treated as stale/reclaimable after TASK_COMMIT_STALE_MS in
+    // server/routes/tasks.js, so a server restart mid-commit can't wedge it
+    // forever); `commit_started_at`/`commit_total`/`commit_item_ids` let the
+    // frontend resume showing live progress after a reload; `commit_warnings`
+    // persists the per-item result of the last commit attempt so it's still
+    // visible to anyone who opens the task later, even after the background
+    // job has finished and everyone has left the page.
+    await client.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS committing BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
+    await client.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS commit_started_at TIMESTAMPTZ`).catch(() => {});
+    await client.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS commit_total INTEGER`).catch(() => {});
+    await client.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS commit_item_ids INTEGER[]`).catch(() => {});
+    await client.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS commit_warnings JSONB`).catch(() => {});
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS task_items (
         id SERIAL PRIMARY KEY,
@@ -608,6 +623,19 @@ const initDatabase = async () => {
     await client.query(`ALTER TABLE po_invoices ADD COLUMN IF NOT EXISTS manager_note TEXT`).catch(() => {});
     await client.query(`ALTER TABLE po_invoices ADD COLUMN IF NOT EXISTS manager_note_at TIMESTAMPTZ`).catch(() => {});
 
+    // Migration: async commit-with-progress support (mirrors the `tasks`
+    // columns above). `committing` is the lock that prevents a second commit
+    // from starting while one is in flight (treated as stale/reclaimable
+    // after COMMIT_STALE_MS in server/routes/poInvoices.js, so a server
+    // restart mid-commit can't wedge it forever); `commit_started_at` lets
+    // the frontend resume showing live progress after a reload — progress
+    // itself is derived from po_invoice_items.committed, no separate total
+    // needed; `commit_error` persists the last commit attempt's fatal error
+    // (if any) so it's still visible to anyone who opens the invoice later.
+    await client.query(`ALTER TABLE po_invoices ADD COLUMN IF NOT EXISTS committing BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
+    await client.query(`ALTER TABLE po_invoices ADD COLUMN IF NOT EXISTS commit_started_at TIMESTAMPTZ`).catch(() => {});
+    await client.query(`ALTER TABLE po_invoices ADD COLUMN IF NOT EXISTS commit_error TEXT`).catch(() => {});
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS po_number_counter (
         id          INTEGER PRIMARY KEY DEFAULT 1,
@@ -838,6 +866,18 @@ const initDatabase = async () => {
     // reused as-is since it already means exactly "what the to-location
     // actually received", which is also what the Buyer sees/edits at Counted.
     await client.query(`ALTER TABLE transfer_items ADD COLUMN IF NOT EXISTS counted_confirmed BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
+    // from_qty_snapshot / to_qty_snapshot (2026-09-10 addendum): a cached
+    // "last known" Available quantity at the from/to location for this line
+    // item. Previously the from/to qty shown on every Transfer detail page
+    // was queried live from Shopify on every page load (one Shopify call per
+    // SKU, every time — this is what made "Refresh qty" spin every time a
+    // Loading transfer was opened). Now it's queried once at Create Transfer
+    // time (populated straight from the values Create Transfer already had
+    // in hand) and re-queried only when the user explicitly taps "Refresh
+    // qty" (see POST /:id/refresh-qty in transfers.js) — the detail pages
+    // just display whatever is currently stored here.
+    await client.query(`ALTER TABLE transfer_items ADD COLUMN IF NOT EXISTS from_qty_snapshot INTEGER`).catch(() => {});
+    await client.query(`ALTER TABLE transfer_items ADD COLUMN IF NOT EXISTS to_qty_snapshot INTEGER`).catch(() => {});
 
     // 4. Transfer Settings' Tag pool (spec doc section 3, BuyerTransferSettings.js):
     // name uniqueness is case-insensitive, length <= 20 chars. Deleting a tag

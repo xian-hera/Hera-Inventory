@@ -27,7 +27,6 @@ function TransferPrepDetail({ role, showWigNumber, backPath, dispatchLabel }) {
   const [notProcessedOnly, setNotProcessedOnly] = useState(false);
 
   const [refreshing, setRefreshing] = useState(false);
-  const [fromQtyBySku, setFromQtyBySku] = useState({});
 
   const [showNoteInput, setShowNoteInput] = useState(false);
   const [noteDraft, setNoteDraft] = useState('');
@@ -35,6 +34,7 @@ function TransferPrepDetail({ role, showWigNumber, backPath, dispatchLabel }) {
 
   const [submitting, setSubmitting] = useState(false);
   const [dispatching, setDispatching] = useState(false);
+  const [exportingPdf, setExportingPdf] = useState(false);
 
   const fetchTransfer = useCallback(async () => {
     setLoading(true);
@@ -57,22 +57,19 @@ function TransferPrepDetail({ role, showWigNumber, backPath, dispatchLabel }) {
 
   useEffect(() => { fetchTransfer(); }, [fetchTransfer]);
 
+  // Re-queries Shopify for every item's from/to qty and persists it as this
+  // transfer's snapshot (transfer_items.from_qty_snapshot/to_qty_snapshot) —
+  // no longer runs automatically on page load, only on an explicit click
+  // (2026-09-10 addendum — this used to fire on every mount, which is why
+  // this page used to spin every time a Loading transfer was opened).
   const refreshQty = async () => {
-    if (!transfer) return;
     setRefreshing(true);
+    setError('');
     try {
-      const next = {};
-      for (const item of items) {
-        if (!item.sku) continue;
-        const res = await fetch(
-          `/api/shopify/inventory-by-sku?sku=${encodeURIComponent(item.sku)}&fromLocationId=${encodeURIComponent(transfer.from_location_id)}&toLocationId=${encodeURIComponent(transfer.to_location_id)}`
-        );
-        if (res.ok) {
-          const data = await res.json();
-          next[item.sku] = data.fromQty;
-        }
-      }
-      setFromQtyBySku(prev => ({ ...prev, ...next }));
+      const res = await fetch(`/api/transfers/${transferId}/refresh-qty`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setItems(data.items);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -80,12 +77,27 @@ function TransferPrepDetail({ role, showWigNumber, backPath, dispatchLabel }) {
     }
   };
 
-  // Populate from-location qty once on load too, same as Refresh — the
-  // column needs something to show even before the user taps Refresh.
-  useEffect(() => {
-    if (!loading && transfer && items.length > 0) { refreshQty(); }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, transfer?.id]);
+  const exportPdf = async () => {
+    setExportingPdf(true);
+    setError('');
+    try {
+      const res = await fetch(`/api/transfers/${transferId}/export-pdf?qtySide=from`);
+      if (!res.ok) throw new Error('Export failed');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${transfer?.transfer_no || 'transfer'}-export.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setExportingPdf(false);
+    }
+  };
 
   const confirmQtyLoaded = async (item) => {
     setSavingItemId(item.id);
@@ -199,11 +211,14 @@ function TransferPrepDetail({ role, showWigNumber, backPath, dispatchLabel }) {
   const hasMismatch = items.some(i => i.qty_loaded != null && i.qty_loaded !== i.quantity);
 
   // Orange-check (mismatched) rows always pinned to top — confirmed for
-  // both Loading and Pending.
+  // both Loading and Pending. Alphabetical by name otherwise, and within
+  // each group too (2026-09-10 addendum).
+  const byName = (a, b) => (a.name || '').localeCompare(b.name || '');
   const sortedItems = [...items].sort((a, b) => {
     const aOff = a.loaded_confirmed && a.qty_loaded !== a.quantity ? 1 : 0;
     const bOff = b.loaded_confirmed && b.qty_loaded !== b.quantity ? 1 : 0;
-    return bOff - aOff;
+    const diff = bOff - aOff;
+    return diff !== 0 ? diff : byName(a, b);
   });
   const visibleItems = notProcessedOnly ? sortedItems.filter(i => !i.loaded_confirmed) : sortedItems;
 
@@ -247,6 +262,10 @@ function TransferPrepDetail({ role, showWigNumber, backPath, dispatchLabel }) {
                   )}
                 </InlineStack>
                 <InlineStack gap="200" wrap>
+                  {/* Export PDF is available in every status, for both
+                      Warehouse and Manager-as-from-location (2026-09-10
+                      addendum) — printable copy for physically picking. */}
+                  <Button onClick={exportPdf} loading={exportingPdf} disabled={exportingPdf}>Export PDF</Button>
                   {(isLoading || isPending) && (
                     <Button onClick={refreshQty} loading={refreshing}>Refresh qty</Button>
                   )}
@@ -324,7 +343,7 @@ function TransferPrepDetail({ role, showWigNumber, backPath, dispatchLabel }) {
                             <td style={{ padding: '10px' }}>{item.name}</td>
                             {showWigNumber && <td style={{ padding: '10px', color: '#6d7175' }}>{item.wig_number || ''}</td>}
                             {showFromQtyColumn && (
-                              <td style={{ padding: '10px' }}>{fromQtyBySku[item.sku] ?? '—'}</td>
+                              <td style={{ padding: '10px' }}>{item.from_qty_snapshot ?? '—'}</td>
                             )}
                             <td style={{ padding: '10px' }}>{item.quantity}</td>
                             <td style={{ padding: '10px' }}>

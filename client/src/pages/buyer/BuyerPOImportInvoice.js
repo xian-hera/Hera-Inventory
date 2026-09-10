@@ -91,7 +91,14 @@ function BuyerPOImportInvoice() {
   const [loading, setLoading] = useState(!!invoiceIdParam);
   const [error, setError] = useState('');
   const [processing, setProcessing] = useState(false);
+  // `committing` covers only the brief gap between clicking Commit and the
+  // server confirming the commit started (POST response). Once it has
+  // started, `invoiceCommitting` — mirrored from the server via polling — is
+  // what actually drives the progress UI, since the commit itself runs
+  // server-side and must be visible to EVERY viewer (not just whoever
+  // clicked), including one who reloads this page mid-commit.
   const [committing, setCommitting] = useState(false);
+  const [invoiceCommitting, setInvoiceCommitting] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
   const [sendingToStore, setSendingToStore] = useState(false);
   const [status, setStatus] = useState('pending');
@@ -238,25 +245,50 @@ function BuyerPOImportInvoice() {
     setHasCollision(inv.has_sku_collision);
     setHasMissingCost(inv.has_missing_cost);
     setSelectedIds(new Set());
+    setInvoiceCommitting(!!inv.committing);
   };
 
-  // ── Load an existing pending invoice ────────────────────────────────────
+  // ── Load an existing pending invoice (quiet=true skips the full-page
+  // loading spinner — used while polling for commit progress) ─────────────
+  const loadInvoiceDetail = useCallback(async (id, quiet = false) => {
+    try {
+      const res = await fetch(`/api/po-invoices/pending/${id}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      applyInvoicePayload(data.invoice, data.items);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      if (!quiet) setLoading(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     if (!invoiceIdParam) return;
-    (async () => {
-      try {
-        const res = await fetch(`/api/po-invoices/pending/${invoiceIdParam}`);
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error);
-        applyInvoicePayload(data.invoice, data.items);
-      } catch (e) {
-        setError(e.message);
-      } finally {
-        setLoading(false);
-      }
-    })();
+    loadInvoiceDetail(invoiceIdParam);
+  }, [invoiceIdParam, loadInvoiceDetail]);
+
+  // While a commit is in progress (whether this viewer started it, or it was
+  // already running when this page loaded — e.g. someone else started it, or
+  // this viewer navigated back to it), poll for live progress. The commit
+  // itself runs server-side regardless of whether anyone is polling, which
+  // is what makes "It is OK to leave this page" true.
+  useEffect(() => {
+    if (!invoiceCommitting || !invoiceId) return;
+    const interval = setInterval(() => loadInvoiceDetail(invoiceId, true), 1500);
+    return () => clearInterval(interval);
+  }, [invoiceCommitting, invoiceId, loadInvoiceDetail]);
+
+  // Once the background commit finishes (status flips to 'committed'),
+  // move on to the committed-detail page — same destination the old
+  // synchronous flow navigated to immediately after a successful commit.
+  useEffect(() => {
+    if (status === 'committed' && invoiceId) {
+      navigate(`/buyer/po-receiving/committed/${invoiceId}`, { replace: true });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [invoiceIdParam]);
+  }, [status, invoiceId]);
 
   // ── Discard-and-reprocess guard ─────────────────────────────────────────
   const guardEdit = useCallback((applyChange) => {
@@ -974,10 +1006,20 @@ function BuyerPOImportInvoice() {
     setError('');
     try {
       await persistPromotionalFlag(isPromotional);
+      // The commit itself now runs in the background on the server — this
+      // request only starts it and returns immediately (see POST
+      // /api/po-invoices/pending/:id/commit). Progress is picked up by the
+      // polling effect above, driven off invoiceCommitting; the navigate to
+      // the committed-detail page happens once polling shows status flip to
+      // 'committed' (see the effect watching `status`).
       const res = await fetch(`/api/po-invoices/pending/${invoiceId}/commit`, { method: 'POST' });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      navigate(`/buyer/po-receiving/committed/${invoiceId}`);
+      if (data.alreadyCommitted) {
+        navigate(`/buyer/po-receiving/committed/${invoiceId}`);
+        return;
+      }
+      setInvoiceCommitting(true);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -993,7 +1035,7 @@ function BuyerPOImportInvoice() {
     );
   }
 
-  const disabled = processing || committing || sendingToStore;
+  const disabled = processing || committing || sendingToStore || invoiceCommitting;
   // Line items can only be edited/deleted/added-to while the invoice is
   // still 'pending' (not yet sent to the store for counting).
   const itemsEditable = status === 'pending';
@@ -1359,7 +1401,14 @@ function BuyerPOImportInvoice() {
                   {status === 'sent_to_store' && (
                     <Text tone="subdued" variant="bodySm">Waiting for the store to count this invoice.</Text>
                   )}
-                  {(() => {
+                  {invoiceCommitting ? (
+                    <BlockStack gap="100">
+                      <Button disabled loading>
+                        {`Committing ${items.filter(i => i.committed).length} / ${items.length}`}
+                      </Button>
+                      <Text variant="bodySm" tone="subdued">It is OK to leave this page</Text>
+                    </BlockStack>
+                  ) : (() => {
                     // The merged action button's default (main) action and
                     // its collapsed dropdown options both depend on the
                     // invoice's current status — per Hera's spec:

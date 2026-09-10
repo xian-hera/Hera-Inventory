@@ -50,6 +50,32 @@ const HQ_LOCATION_NAME = 'HQ';
 //                                       REJECTED — ACCEPTED-for-everything is
 //                                       Shopify's "mark as transferred")
 //   - Inventory correction (Confirm) → inventoryAdjustQuantities (delta)
+//
+// ── 2026-09-10 addendum — "Commit from any status" (commitOne() below):
+// Buyer can now hit Commit from Loading/Pending/Good to go/In transit/
+// Receiving, not just Counted. Per Shopify dev support (asked 2026-09-10):
+// there is no documented shortcut mutation to jump an InventoryTransfer
+// straight to TRANSFERRED, and skipping the ready-to-ship/in-transit steps
+// is undocumented behavior that risks incorrect committed/incoming
+// inventory numbers — so commitOne() still walks the same documented state
+// machine, it just does so automatically in one click:
+//   no shipment yet (Loading/Pending)   → inventoryTransferMarkAsReadyToShip
+//                                          (only from these two statuses,
+//                                          matching the existing Confirm/
+//                                          submit-loading logic) →
+//                                          inventoryShipmentCreateInTransit
+//                                          (create + mark-in-transit in one
+//                                          call — see ensureShipmentInTransit())
+//   shipment exists, status Good to go  → inventoryShipmentMarkInTransit
+//                                          (the shipment was created DRAFT
+//                                          by the normal submit-loading/
+//                                          confirm path and never dispatched)
+//   shipment exists, In transit/
+//   Receiving/Counted                   → already in transit, nothing extra
+// ...then the existing mismatch-check + inventoryShipmentReceive logic runs
+// unchanged. Uses whatever quantities are already on the transfer (qty_loaded
+// if set, else the transfer quantity) as the "as received" quantities — a
+// no-discrepancy fast path, not a substitute for Counted's real reconciliation.
 
 async function generateTransferNo(client) {
   const result = await client.query('SELECT last_number, last_letter FROM transfer_number_counter WHERE id = 1 FOR UPDATE');
@@ -134,6 +160,63 @@ async function ensureShipment(shopifyClient, transferRow, items) {
   return result.inventoryShipment.id;
 }
 
+// "Commit immediately" fast path (spec doc addendum, 2026-09-10): Buyer can
+// hit Commit from ANY status (Loading/Pending/Good to go/In transit/
+// Receiving/Counted), not just Counted. Per Shopify dev support's guidance
+// obtained 2026-09-10 (documented state machine, no shortcut mutation
+// exists to jump an InventoryTransfer straight to TRANSFERRED, and skipping
+// ready-to-ship/in-transit is undocumented behavior that risks incorrect
+// committed/incoming inventory numbers), the safe sequence is still
+// ready-to-ship -> shipment in transit -> receive — this just chains those
+// steps automatically in commitOne() below instead of requiring the Buyer
+// to click through Loading -> Good to go -> In transit -> Receiving ->
+// Counted manually. Creates the shipment already IN_TRANSIT in one call
+// (inventoryShipmentCreateInTransit) rather than ensureShipment()'s
+// create-as-DRAFT-then-dispatch-later — same defensive "read back an
+// existing shipment if create fails" fallback as ensureShipment(), for the
+// same reason (guards against the still-unconfirmed "does Shopify
+// auto-create a shipment" question noted at the top of this file).
+async function ensureShipmentInTransit(shopifyClient, transferRow, items) {
+  if (transferRow.shopify_shipment_id) return transferRow.shopify_shipment_id;
+
+  const createMutation = `
+    mutation inventoryShipmentCreateInTransit($input: InventoryShipmentCreateInput!, $idempotencyKey: String!) {
+      inventoryShipmentCreateInTransit(input: $input) @idempotent(key: $idempotencyKey) {
+        inventoryShipment { id lineItems(first: 250) { edges { node { id inventoryItem { id } } } } }
+        userErrors { field message }
+      }
+    }
+  `;
+  const input = {
+    transferId: transferRow.shopify_transfer_id,
+    lineItems: items.map(i => ({
+      inventoryItemId: i.inventory_item_id,
+      quantity: i.qty_loaded != null ? i.qty_loaded : i.quantity,
+    })),
+  };
+  const data = await graphql(shopifyClient, createMutation, { input, idempotencyKey: crypto.randomUUID() });
+  const result = data?.inventoryShipmentCreateInTransit;
+  const userErrors = result?.userErrors || [];
+  if (userErrors.length > 0 || !result?.inventoryShipment?.id) {
+    const lookup = `
+      query transferShipments($id: ID!) {
+        inventoryTransfer(id: $id) {
+          shipments(first: 5) { edges { node { id lineItems(first: 250) { edges { node { id inventoryItem { id } } } } } } }
+        }
+      }
+    `;
+    const lookupData = await graphql(shopifyClient, lookup, { id: transferRow.shopify_transfer_id });
+    const existing = lookupData?.inventoryTransfer?.shipments?.edges?.[0]?.node;
+    if (!existing) {
+      throw new Error(`Failed to create in-transit shipment: ${userErrors.map(e => e.message).join('; ') || 'unknown error'}`);
+    }
+    await mapShipmentLineItems(existing, items);
+    return existing.id;
+  }
+  await mapShipmentLineItems(result.inventoryShipment, items);
+  return result.inventoryShipment.id;
+}
+
 // Records each item's shipmentLineItemId so later per-item shipment
 // mutations (update quantities, receive) can target the right line.
 async function mapShipmentLineItems(shipment, items) {
@@ -204,6 +287,48 @@ async function attachWigNumbers(shopifyClient, items) {
   items.forEach(item => {
     item.wig_number = item.sku && wigNumberBySku.has(item.sku) ? wigNumberBySku.get(item.sku) : '';
   });
+}
+
+// Refresh from/to location qty snapshot for every SKU on a transfer — the
+// backing logic for the "Refresh qty" button (Buyer/Warehouse/Manager).
+// Same one-SKU-at-a-time GraphQL lookup as shopify.js's GET
+// /inventory-by-sku, just run server-side against every line item in one
+// request and written straight into transfer_items.from_qty_snapshot /
+// to_qty_snapshot, instead of the frontend firing one fetch per SKU and
+// holding the result only in memory (see the from_qty_snapshot column
+// comment in init.js for why this replaced the old "query on every page
+// load" behavior).
+async function refreshQtySnapshots(shopifyClient, transferRow, items) {
+  for (const item of items) {
+    if (!item.sku) continue;
+    try {
+      const query = `{
+        productVariants(first: 1, query: "${activeFilter(`sku:${item.sku.replace(/"/g, '')}`)}") {
+          edges { node {
+            inventoryItem {
+              inventoryLevels(first: 20, includeInactive: true) {
+                edges { node { location { id } quantities(names: ["available"]) { name quantity } } }
+              }
+            }
+          } }
+        }
+      }`;
+      const data = await graphql(shopifyClient, query);
+      const edge = data?.productVariants?.edges?.[0];
+      if (!edge) continue;
+      const levels = edge.node.inventoryItem.inventoryLevels.edges;
+      const fromLevel = levels.find(e => e.node.location.id === transferRow.from_location_id);
+      const toLevel = levels.find(e => e.node.location.id === transferRow.to_location_id);
+      const fromQty = fromLevel?.node.quantities.find(q => q.name === 'available')?.quantity;
+      const toQty = toLevel?.node.quantities.find(q => q.name === 'available')?.quantity;
+      await pool.query(
+        'UPDATE transfer_items SET from_qty_snapshot = $1, to_qty_snapshot = $2 WHERE id = $3',
+        [fromQty ?? null, toQty ?? null, item.id]
+      );
+    } catch (e) {
+      console.error(`refreshQtySnapshots: lookup failed for SKU ${item.sku}:`, e.message);
+    }
+  }
 }
 
 async function fetchTransferWithItems(id) {
@@ -294,9 +419,13 @@ router.post('/', async (req, res) => {
 
       for (const item of items) {
         await dbClient.query(
-          `INSERT INTO transfer_items (transfer_id, sku, name, quantity, inventory_item_id)
-           VALUES ($1, $2, $3, $4, $5)`,
-          [transfer.id, item.sku, item.name || null, Number(item.quantity), item.inventoryItemId || null]
+          `INSERT INTO transfer_items (transfer_id, sku, name, quantity, inventory_item_id, from_qty_snapshot, to_qty_snapshot)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [
+            transfer.id, item.sku, item.name || null, Number(item.quantity), item.inventoryItemId || null,
+            item.fromQty != null ? Number(item.fromQty) : null,
+            item.toQty != null ? Number(item.toQty) : null,
+          ]
         );
       }
 
@@ -544,6 +673,33 @@ router.delete('/:id/note', async (req, res) => {
     res.json({ success: true });
   } catch (e) {
     console.error('DELETE /api/transfers/:id/note error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── Refresh qty (Buyer/Warehouse/Manager "Refresh qty" button) ─────────────
+
+// POST /api/transfers/:id/refresh-qty — re-queries Shopify for every line
+// item's from/to location Available qty and writes it into
+// transfer_items.from_qty_snapshot/to_qty_snapshot (see init.js's column
+// comment). Returns the refreshed items so the caller can just replace its
+// items state with the response instead of re-fetching the whole transfer.
+router.post('/:id/refresh-qty', async (req, res) => {
+  try {
+    const found = await fetchTransferWithItems(req.params.id);
+    if (!found) return res.status(404).json({ error: 'Transfer not found' });
+    const { transfer, items } = found;
+
+    const session = await getSession();
+    if (!session) return res.status(401).json({ error: 'No session' });
+    const shopify = getShopify();
+    const client = new shopify.clients.Graphql({ session });
+
+    await refreshQtySnapshots(client, transfer, items);
+    const refreshed = await fetchTransferWithItems(transfer.id);
+    res.json({ success: true, items: refreshed.items });
+  } catch (e) {
+    console.error('POST /api/transfers/:id/refresh-qty error:', e);
     res.status(500).json({ error: e.message });
   }
 });
@@ -913,16 +1069,65 @@ router.post('/:id/submit-count', async (req, res) => {
 
 // Shared by /:id/commit and /commit-selected — see spec doc section 4's
 // "已更正" Commit logic and section 2's Shipment-level mutation table.
+//
+// 2026-09-10 addendum: Buyer can now hit Commit from ANY status, not just
+// Counted (see ensureShipmentInTransit() above for the reasoning). Before
+// the shared mismatch/receive logic below can run, this first makes sure a
+// shipment exists and is IN_TRANSIT on Shopify's side, fast-forwarding
+// through whatever steps this transfer hasn't been through yet:
+//   - no shopify_shipment_id at all (Loading/Pending)  -> mark ready to
+//     ship (only needed from these two, pre-ship, statuses), then create
+//     the shipment already in transit.
+//   - has a shipment, but status is still Good to go   -> that shipment
+//     was created as DRAFT by the normal submit-loading/confirm path and
+//     never dispatched — mark it in transit.
+//   - has a shipment, status is In transit/Receiving/Counted -> already
+//     in transit on Shopify's side, nothing to do here.
 async function commitOne(id) {
   const found = await fetchTransferWithItems(id);
   if (!found) throw new Error('Transfer not found');
   const { transfer, items } = found;
-  if (!transfer.shopify_shipment_id) throw new Error('No shipment on this transfer');
 
   const session = await getSession();
   if (!session) throw new Error('No session');
   const shopify = getShopify();
   const client = new shopify.clients.Graphql({ session });
+
+  let shipmentId = transfer.shopify_shipment_id;
+
+  if (!shipmentId) {
+    if (transfer.status === 'loading' || transfer.status === 'pending') {
+      const markReadyMutation = `
+        mutation inventoryTransferMarkAsReadyToShip($input: InventoryTransferMarkAsReadyToShipInput!, $idempotencyKey: String!) {
+          inventoryTransferMarkAsReadyToShip(input: $input) @idempotent(key: $idempotencyKey) {
+            inventoryTransfer { id }
+            userErrors { field message }
+          }
+        }
+      `;
+      const markData = await graphql(client, markReadyMutation, {
+        input: { id: transfer.shopify_transfer_id },
+        idempotencyKey: crypto.randomUUID(),
+      });
+      const markErrors = markData?.inventoryTransferMarkAsReadyToShip?.userErrors || [];
+      if (markErrors.length > 0) throw new Error(markErrors.map(e => e.message).join('; '));
+    }
+    shipmentId = await ensureShipmentInTransit(client, transfer, items);
+    await pool.query('UPDATE transfers SET shopify_shipment_id = $1, updated_at = NOW() WHERE id = $2', [shipmentId, transfer.id]);
+  } else if (transfer.status === 'good_to_go') {
+    const inTransitMutation = `
+      mutation inventoryShipmentMarkInTransit($id: ID!, $idempotencyKey: String!) {
+        inventoryShipmentMarkInTransit(id: $id) @idempotent(key: $idempotencyKey) {
+          inventoryShipment { id }
+          userErrors { field message }
+        }
+      }
+    `;
+    const inTransitData = await graphql(client, inTransitMutation, { id: shipmentId, idempotencyKey: crypto.randomUUID() });
+    const inTransitErrors = inTransitData?.inventoryShipmentMarkInTransit?.userErrors || [];
+    if (inTransitErrors.length > 0) throw new Error(inTransitErrors.map(e => e.message).join('; '));
+  }
+  // in_transit / receiving / counted: shipment is already in transit — nothing to do above.
 
   const mismatched = items.filter(i => i.received_quantity != null && i.received_quantity !== i.quantity);
   if (mismatched.length > 0) {
@@ -936,7 +1141,7 @@ async function commitOne(id) {
     `;
     const data = await graphql(client, updateMutation, {
       input: {
-        id: transfer.shopify_shipment_id,
+        id: shipmentId,
         items: mismatched.map(i => ({ shipmentLineItemId: i.shipment_line_item_id, quantity: i.received_quantity })),
       },
       idempotencyKey: crypto.randomUUID(),
@@ -954,7 +1159,7 @@ async function commitOne(id) {
     }
   `;
   const receiveData = await graphql(client, receiveMutation, {
-    id: transfer.shopify_shipment_id,
+    id: shipmentId,
     bulkReceiveAction: 'ACCEPTED',
     idempotencyKey: crypto.randomUUID(),
   });
@@ -964,7 +1169,10 @@ async function commitOne(id) {
   for (const item of mismatched) {
     await pool.query('UPDATE transfer_items SET quantity = $1 WHERE id = $2', [item.received_quantity, item.id]);
   }
-  await pool.query("UPDATE transfers SET status = 'committed', committed_at = NOW(), updated_at = NOW() WHERE id = $1", [id]);
+  await pool.query(
+    "UPDATE transfers SET status = 'committed', committed_at = NOW(), shopify_shipment_id = $1, updated_at = NOW() WHERE id = $2",
+    [shipmentId, id]
+  );
 }
 
 router.post('/:id/commit', async (req, res) => {
@@ -992,6 +1200,114 @@ router.post('/commit-selected', async (req, res) => {
     }
   }
   res.json({ results });
+});
+
+// ─── Export PDF (Warehouse / Manager, any status) ───────────────────────────
+
+// GET /api/transfers/:id/export-pdf?qtySide=from|to — Warehouse and
+// Manager-as-from-location always pass qtySide=from; Manager-as-to-location
+// (Receiving side) passes qtySide=to. Columns per Hera's spec (2026-09-10):
+// Wig number / SKU / Name / {from or to location} qty / Transfer qty — Wig
+// number is included even for Warehouse's printout here, unlike the on-screen
+// table which never shows it for Warehouse (this is a deliberate difference
+// for the printed copy). Same pdfkit table-drawing approach as
+// poInvoices.js's GET /:id/export-pdf (kept as its own local copy per this
+// codebase's convention — no shared pdf-table-utils module).
+router.get('/:id/export-pdf', async (req, res) => {
+  try {
+    const { qtySide } = req.query;
+    const found = await fetchTransferWithItems(req.params.id);
+    if (!found) return res.status(404).json({ error: 'Transfer not found' });
+    const { transfer, items } = found;
+
+    const session = await getSession();
+    if (session) {
+      try {
+        const shopify = getShopify();
+        const client = new shopify.clients.Graphql({ session });
+        await attachWigNumbers(client, items);
+      } catch (e) {
+        console.error('export-pdf: wig number lookup failed:', e.message);
+      }
+    }
+
+    const useTo = qtySide === 'to';
+    const qtyLabel = `${useTo ? transfer.to_location : transfer.from_location} qty`;
+    const rows = items.map(item => [
+      item.wig_number || '',
+      item.sku || '',
+      item.name || '',
+      String((useTo ? item.to_qty_snapshot : item.from_qty_snapshot) ?? ''),
+      String(item.quantity),
+    ]);
+
+    const PDFDocument = require('pdfkit');
+    const filename = `${transfer.transfer_no || 'transfer'}-export.pdf`;
+    res.set('Content-Type', 'application/pdf');
+    res.set('Content-Disposition', `attachment; filename="${filename}"`);
+
+    const doc = new PDFDocument({ size: 'LETTER', margin: 40 });
+    doc.pipe(res);
+
+    doc.fontSize(16).text(`${transfer.transfer_no || ''}  ${transfer.from_location} to ${transfer.to_location}`, { continued: false });
+    doc.moveDown(0.5);
+
+    const cols = [
+      { label: 'Wig number', width: 80, key: 0 },
+      { label: 'SKU', width: 100, key: 1 },
+      { label: 'Name', width: 170, key: 2 },
+      { label: qtyLabel, width: 80, key: 3 },
+      { label: 'Transfer qty', width: 80, key: 4 },
+    ];
+    const startX = doc.page.margins.left;
+    const tableWidth = cols.reduce((s, c) => s + c.width, 0);
+    const rowVPad = 8;
+    const headerHeight = 20;
+
+    const drawHeader = (y) => {
+      let x = startX;
+      doc.fontSize(9).fillColor('#6d7175');
+      cols.forEach(c => { doc.text(c.label, x, y, { width: c.width }); x += c.width; });
+      doc.moveTo(startX, y + headerHeight - 6).lineTo(startX + tableWidth, y + headerHeight - 6)
+        .strokeColor('#c9cccf').lineWidth(1).stroke();
+    };
+
+    let y = doc.y;
+    drawHeader(y);
+    y += headerHeight;
+    doc.fillColor('#000');
+
+    rows.forEach((r) => {
+      doc.fontSize(9);
+      const cellHeights = cols.map(c => doc.heightOfString(r[c.key] || '', { width: c.width }));
+      const contentHeight = Math.max(...cellHeights, 10);
+      const rowHeight = contentHeight + rowVPad;
+
+      if (y + rowHeight > doc.page.height - doc.page.margins.bottom) {
+        doc.addPage();
+        y = doc.page.margins.top;
+        drawHeader(y);
+        y += headerHeight;
+        doc.fillColor('#000');
+      }
+
+      let x = startX;
+      cols.forEach((c) => {
+        doc.text(r[c.key] || '', x, y, { width: c.width });
+        x += c.width;
+      });
+      y += rowHeight;
+
+      doc.moveTo(startX, y - 4).lineTo(startX + tableWidth, y - 4)
+        .strokeColor('#f1f1f1').lineWidth(0.5).stroke();
+      doc.fillColor('#000');
+    });
+
+    doc.end();
+  } catch (e) {
+    console.error('GET /api/transfers/:id/export-pdf error:', e);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ─── Delete selected (Buyer, Ongoing list / Pending line items) ─────────────

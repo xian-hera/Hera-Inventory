@@ -686,10 +686,13 @@ router.get('/pending', async (req, res) => {
     // disappears from the buyer's view once it leaves plain 'pending'.
     let query = `
       SELECT i.id, i.invoice_number, i.po_number, i.location, i.status,
+             i.committing, i.commit_error,
              s.name AS supplier_name, s.currency AS supplier_currency,
              COALESCE(SUM(it.quantity), 0) AS quantity,
              COALESCE(SUM(it.quantity * it.effective_cost), 0) AS subtotal_cad,
-             COALESCE(SUM(it.quantity * it.raw_cost) FILTER (WHERE s.currency = 'USD'), 0) AS subtotal_usd
+             COALESCE(SUM(it.quantity * it.raw_cost) FILTER (WHERE s.currency = 'USD'), 0) AS subtotal_usd,
+             COUNT(it.id) AS item_count,
+             COALESCE(SUM(CASE WHEN it.committed THEN 1 ELSE 0 END), 0) AS committed_count
       FROM po_invoices i
       JOIN po_suppliers s ON s.id = i.supplier_id
       LEFT JOIN po_invoice_items it ON it.invoice_id = i.id
@@ -705,7 +708,7 @@ router.get('/pending', async (req, res) => {
           AND (s2.name ILIKE $${params.length} OR i2.location ILIKE $${params.length} OR i2.invoice_number ILIKE $${params.length} OR i2.po_number ILIKE $${params.length} OR it2.sku ILIKE $${params.length} OR it2.code ILIKE $${params.length})
       )`;
     }
-    query += ` GROUP BY i.id, i.invoice_number, i.po_number, i.location, i.status, s.name, s.currency ORDER BY i.created_at DESC`;
+    query += ` GROUP BY i.id, i.invoice_number, i.po_number, i.location, i.status, i.committing, i.commit_error, s.name, s.currency ORDER BY i.created_at DESC`;
     const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (e) {
@@ -1471,11 +1474,77 @@ async function commitInvoice(invoiceId) {
   return { success: true };
 }
 
-// POST /api/po-invoices/pending/:id/commit
+// A commit that's been sitting in `committing = TRUE` longer than this is
+// treated as abandoned (e.g. the server restarted mid-commit, such as a
+// Render redeploy) rather than genuinely in progress, and can be reclaimed
+// by a fresh commit request. Safe to reclaim: po_invoice_items.committed is
+// per-item and already-applied items are skipped on the retry (see
+// commitInvoice above), so reclaiming a stale lock never re-applies a
+// Shopify change that already went through.
+const COMMIT_STALE_MS = 5 * 60 * 1000;
+
+// Attempts to acquire the commit lock on an invoice. Returns one of:
+//   { ok: true }               — lock acquired, caller may now run commitInvoice
+//   { alreadyCommitted: true } — nothing to do, invoice is already committed
+//   { busy: true, reason }     — another commit is genuinely in progress right now
+// Throws if the invoice doesn't exist.
+async function acquireInvoiceCommitLock(id) {
+  const invRes = await pool.query('SELECT status, committing, commit_started_at FROM po_invoices WHERE id = $1', [id]);
+  if (invRes.rows.length === 0) throw new Error('Invoice not found');
+  const invoice = invRes.rows[0];
+
+  if (invoice.status === 'committed') return { alreadyCommitted: true };
+
+  if (invoice.committing) {
+    const startedAt = invoice.commit_started_at ? new Date(invoice.commit_started_at).getTime() : 0;
+    if (Date.now() - startedAt < COMMIT_STALE_MS) {
+      return { busy: true, reason: 'This invoice is already being committed — please wait for it to finish.' };
+    }
+    // Stale lock (server likely restarted mid-commit) — safe to reclaim, see
+    // COMMIT_STALE_MS comment above.
+  }
+
+  await pool.query(
+    `UPDATE po_invoices SET committing = TRUE, commit_started_at = NOW(), commit_error = NULL WHERE id = $1`,
+    [id]
+  );
+  return { ok: true };
+}
+
+// The actual commit work, run in the background (not awaited by the route
+// handlers below) so the request can return immediately and the frontend can
+// poll GET /pending/:id (single invoice) or GET /pending (bulk list) for
+// live progress — driven off po_invoice_items.committed per item — instead
+// of blocking on one long request. Always clears the `committing` lock when
+// done, even on failure, so the Commit button isn't left permanently
+// disabled; on failure the error is persisted on the invoice (commit_error)
+// so it's still visible to whoever opens it later, even after the
+// background job has finished and everyone has left the page.
+async function runInvoiceCommit(id) {
+  try {
+    await commitInvoice(id);
+    await pool.query(`UPDATE po_invoices SET committing = FALSE, commit_error = NULL WHERE id = $1`, [id]);
+  } catch (e) {
+    console.error(`runInvoiceCommit error for invoice ${id}:`, e.message);
+    await pool.query(`UPDATE po_invoices SET committing = FALSE, commit_error = $1 WHERE id = $2`, [e.message, id])
+      .catch(err => console.error(`Failed to clear committing flag for invoice ${id}:`, err.message));
+  }
+}
+
+// POST /api/po-invoices/pending/:id/commit — starts a commit and returns
+// immediately; the frontend polls GET /api/po-invoices/pending/:id
+// (committing / commit_error / items[].committed) for progress. See
+// runInvoiceCommit above for the actual work.
 router.post('/pending/:id/commit', async (req, res) => {
   try {
-    const result = await commitInvoice(Number(req.params.id));
-    res.json(result);
+    const id = Number(req.params.id);
+    const lock = await acquireInvoiceCommitLock(id);
+    if (lock.alreadyCommitted) return res.json({ alreadyCommitted: true });
+    if (lock.busy) return res.status(409).json({ error: lock.reason });
+
+    res.json({ started: true });
+
+    runInvoiceCommit(id); // fire-and-forget — intentionally not awaited
   } catch (e) {
     console.error('POST /api/po-invoices/pending/:id/commit error:', e);
     res.status(500).json({ error: e.message });
@@ -1483,23 +1552,43 @@ router.post('/pending/:id/commit', async (req, res) => {
 });
 
 // POST /api/po-invoices/pending/commit-many — body: { ids: [...] }
-// Skips invoices with missing SKU / collisions and reports which were skipped.
+// Acquires the commit lock for every eligible invoice up front, responds
+// immediately, then runs the acquired commits sequentially in the
+// background. The frontend polls GET /api/po-invoices/pending (committing /
+// commit_error / committed_count / item_count per row) for live progress —
+// see runInvoiceCommit above for the actual work.
 router.post('/pending/commit-many', async (req, res) => {
   try {
     const { ids } = req.body;
     if (!ids || ids.length === 0) return res.status(400).json({ error: 'No ids provided' });
 
-    const skipped = [];
+    const acquired = [];
+    const rejected = [];
     for (const id of ids) {
       try {
-        await commitInvoice(id);
+        const lock = await acquireInvoiceCommitLock(id);
+        if (lock.ok) {
+          acquired.push(id);
+        } else if (lock.busy) {
+          const numRes = await pool.query('SELECT invoice_number FROM po_invoices WHERE id = $1', [id]);
+          rejected.push({ id, invoiceNumber: numRes.rows[0]?.invoice_number || id, reason: lock.reason });
+        }
+        // alreadyCommitted: nothing to do, not worth reporting as rejected.
       } catch (e) {
-        const numRes = await pool.query('SELECT invoice_number FROM po_invoices WHERE id = $1', [id]);
-        skipped.push({ id, invoiceNumber: numRes.rows[0]?.invoice_number || id, reason: e.message });
+        rejected.push({ id, invoiceNumber: id, reason: e.message });
       }
     }
 
-    res.json({ success: true, skipped });
+    res.json({ started: true, ids: acquired, rejected });
+
+    // Fire-and-forget: run the acquired commits sequentially in the
+    // background (matches the previous synchronous behavior's ordering/rate
+    // assumptions — not parallelized).
+    (async () => {
+      for (const id of acquired) {
+        await runInvoiceCommit(id);
+      }
+    })();
   } catch (e) {
     console.error('POST /api/po-invoices/pending/commit-many error:', e);
     res.status(500).json({ error: e.message });

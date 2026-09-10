@@ -42,6 +42,11 @@ function TaskDetail() {
   const [notes, setNotes] = useState([]);
   const [noteInput, setNoteInput] = useState('');
   const [showNoteInput, setShowNoteInput] = useState(false);
+  // `committing` here only covers the brief gap between clicking Commit and
+  // the server confirming the lock was acquired (POST response) — the actual
+  // in-progress state (shown to EVERY viewer, not just whoever clicked) comes
+  // from task.committing, which is persisted server-side so it also survives
+  // a page reload or someone else opening this task while a commit is running.
   const [committing, setCommitting] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [publishing, setPublishing] = useState(false);
@@ -49,8 +54,10 @@ function TaskDetail() {
   const [editingItemId, setEditingItemId] = useState(null);
   const [editingValue, setEditingValue] = useState('');
 
-  const fetchTask = useCallback(async () => {
-    setLoading(true);
+  // quiet=true skips the full-page loading spinner — used while polling for
+  // commit progress so the table doesn't flicker every couple seconds.
+  const fetchTask = useCallback(async (quiet = false) => {
+    if (!quiet) setLoading(true);
     try {
       const res = await fetch(`/api/tasks/${taskId}`);
       const data = await res.json();
@@ -60,11 +67,22 @@ function TaskDetail() {
     } catch (e) {
       setError(e.message);
     } finally {
-      setLoading(false);
+      if (!quiet) setLoading(false);
     }
   }, [taskId]);
 
   useEffect(() => { fetchTask(); }, [fetchTask]);
+
+  // While a commit is in progress (whether this viewer started it, or it was
+  // already running when this page loaded — e.g. someone else started it, or
+  // this viewer navigated back to it), poll for live progress. This is what
+  // makes "It is OK to leave this page" true: the commit itself runs
+  // server-side regardless of whether anyone is polling.
+  useEffect(() => {
+    if (!task?.committing) return;
+    const interval = setInterval(() => fetchTask(true), 1500);
+    return () => clearInterval(interval);
+  }, [task?.committing, fetchTask]);
 
   const handleAddNote = async () => {
     if (!noteInput.trim()) return;
@@ -113,6 +131,10 @@ function TaskDetail() {
         return;
       }
 
+      // The commit itself now runs in the background on the server — this
+      // request only starts it and returns immediately (see PATCH
+      // /api/tasks/:id/commit). Progress is picked up by the polling effect
+      // above, driven off task.committing.
       const res = await fetch(`/api/tasks/${taskId}/commit`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -120,11 +142,17 @@ function TaskDetail() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      if (data.warnings && data.warnings.length > 0) {
-        setError(`Some items could not be committed:\n${data.warnings.join('\n')}`);
-      }
+
       setSelectedItemIds([]);
-      fetchTask();
+      // Optimistic update so the button switches to "Committing 0 / N"
+      // immediately, without waiting for the next poll.
+      setTask(prev => prev ? {
+        ...prev,
+        committing: true,
+        commit_total: itemIds.length,
+        commit_item_ids: itemIds,
+        commit_warnings: null,
+      } : prev);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -235,6 +263,15 @@ function TaskDetail() {
   const typesLabel = Array.isArray(task.types) && task.types.length > 0
     ? task.types.map(typeDisplay).join(', ')
     : '';
+
+  // Progress for the in-flight commit (if any): counted among exactly the
+  // items this commit run started with (task.commit_item_ids), so it isn't
+  // thrown off by items that were already committed before this run started.
+  const isCommittingOnServer = !!task.committing;
+  const commitTotal = task.commit_total ?? (task.commit_item_ids ? task.commit_item_ids.length : 0);
+  const commitDone = task.commit_item_ids
+    ? task.items.filter(i => task.commit_item_ids.includes(i.id) && i.is_committed).length
+    : 0;
 
   const renderEditingCell = (itemId) => (
     <InlineStack gap="100">
@@ -399,20 +436,31 @@ function TaskDetail() {
                       </Button>
                     </>
                   )}
-                  <Button
-                    disabled={selectedItemIds.length === 0 || committing}
-                    onClick={() => handleCommit(false)}
-                    loading={committing}
-                  >
-                    Commit selected
-                  </Button>
-                  <Button
-                    variant="primary"
-                    onClick={() => handleCommit(true)}
-                    loading={committing}
-                  >
-                    Commit all
-                  </Button>
+                  {isCommittingOnServer ? (
+                    <BlockStack gap="100">
+                      <Button disabled loading>
+                        {`Committing ${commitDone} / ${commitTotal}`}
+                      </Button>
+                      <Text variant="bodySm" tone="subdued">It is OK to leave this page</Text>
+                    </BlockStack>
+                  ) : (
+                    <>
+                      <Button
+                        disabled={selectedItemIds.length === 0 || committing}
+                        onClick={() => handleCommit(false)}
+                        loading={committing}
+                      >
+                        Commit selected
+                      </Button>
+                      <Button
+                        variant="primary"
+                        onClick={() => handleCommit(true)}
+                        loading={committing}
+                      >
+                        Commit all
+                      </Button>
+                    </>
+                  )}
                 </InlineStack>
 
                 {showNoteInput && (

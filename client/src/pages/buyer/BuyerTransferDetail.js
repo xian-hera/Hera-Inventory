@@ -1,24 +1,38 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Page, Layout, Card, Button, BlockStack, InlineStack, Text, Banner, Spinner
+  Page, Layout, Card, Button, ButtonGroup, BlockStack, InlineStack, Text, Banner, Spinner,
+  Popover, ActionList,
 } from '@shopify/polaris';
 import { useNavigate, useParams } from 'react-router-dom';
 import { StatusBadge } from '../shared/transferStatus';
 
 // Buyer's Transfer detail page — five render modes keyed off transfer.status
-// (spec doc section 4):
-//   Loading      — read-only, Cancel + Refresh location qty. Over-stock rows
-//                  (transfer qty > current from-location qty) are highlighted
-//                  and pinned to top, but not editable here.
+// (spec doc section 4, plus the 2026-09-10 addendum below):
+//   Loading      — read-only, Cancel + Refresh location qty + Commit. Over-stock
+//                  rows (transfer qty > from-location qty) are highlighted and
+//                  pinned to top, but not editable here.
 //   Pending      — only the over-stock rows get a checkbox + editable
 //                  stepper (defaulting to the current from-location qty);
 //                  everything else stays a plain read-only number. Delete
-//                  selected line items, Confirm.
-//   Good to go / In transit / Receiving — shared read-only render with an
-//                  extra {to_location} qty column
+//                  selected line items, Refresh, and a merged Confirm/Commit
+//                  split button (Confirm is the default action, Commit is
+//                  the dropdown option — same Popover+ActionList pattern as
+//                  BuyerPOImportInvoice.js's status-driven action button).
+//   Good to go / In transit / Receiving — shared read-only render, plus Commit
 //   Counted      — editable Received qty (reuses the count endpoint),
 //                  mismatched rows highlighted + pinned to top, Refresh + Commit
 //   Committed    — read-only, last column renamed "Transferred qty"
+//
+// 2026-09-10 addendum: from/to location qty columns are now shown in EVERY
+// status (previously only from Good to go onward) and Refresh qty is
+// available in every status too — both from/to qty are now a per-item
+// snapshot (transfer_items.from_qty_snapshot/to_qty_snapshot) captured once
+// at Create Transfer time and re-queried only on an explicit Refresh qty
+// click (POST /:id/refresh-qty), instead of being live-queried from Shopify
+// on every page load. And Commit is now available from every status, not
+// just Counted — see commitOne()'s comment in transfers.js for how it
+// fast-forwards through whatever Shopify-side steps this transfer hasn't
+// been through yet.
 //
 // Note: unlike Warehouse's Loading page and Manager's Receiving page, the
 // spec's Buyer-side status walkthrough never lists an "Add note" button for
@@ -35,12 +49,11 @@ function BuyerTransferDetail() {
   const [error, setError] = useState('');
 
   const [refreshing, setRefreshing] = useState(false);
-  const [fromQtyBySku, setFromQtyBySku] = useState({});
-  const [toQtyBySku, setToQtyBySku] = useState({});
 
   const [draftQty, setDraftQty] = useState({}); // Pending: itemId -> stepper draft (only for over-stock rows)
   const [selectedItemIds, setSelectedItemIds] = useState([]);
   const [deletingItems, setDeletingItems] = useState(false);
+  const [actionsMenuOpen, setActionsMenuOpen] = useState(false); // Pending's Confirm/Commit split button
 
   const [receivedDraft, setReceivedDraft] = useState({}); // Counted: itemId -> draft
   const [savingItemId, setSavingItemId] = useState(null);
@@ -75,36 +88,23 @@ function BuyerTransferDetail() {
 
   useEffect(() => { fetchTransfer(); }, [fetchTransfer]);
 
+  // Re-queries Shopify for every item's from/to qty and persists the result
+  // as this transfer's snapshot (see the file-level comment above) — no
+  // longer runs automatically on page load, only on an explicit click.
   const refreshQty = useCallback(async () => {
-    if (!transfer) return;
     setRefreshing(true);
+    setError('');
     try {
-      const nextFrom = {};
-      const nextTo = {};
-      for (const item of items) {
-        if (!item.sku) continue;
-        const res = await fetch(
-          `/api/shopify/inventory-by-sku?sku=${encodeURIComponent(item.sku)}&fromLocationId=${encodeURIComponent(transfer.from_location_id)}&toLocationId=${encodeURIComponent(transfer.to_location_id)}`
-        );
-        if (res.ok) {
-          const data = await res.json();
-          nextFrom[item.sku] = data.fromQty;
-          nextTo[item.sku] = data.toQty;
-        }
-      }
-      setFromQtyBySku(prev => ({ ...prev, ...nextFrom }));
-      setToQtyBySku(prev => ({ ...prev, ...nextTo }));
+      const res = await fetch(`/api/transfers/${transferId}/refresh-qty`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setItems(data.items);
     } catch (e) {
       setError(e.message);
     } finally {
       setRefreshing(false);
     }
-  }, [transfer, items]);
-
-  useEffect(() => {
-    if (!loading && transfer && items.length > 0) { refreshQty(); }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, transfer?.id]);
+  }, [transferId]);
 
   const deleteNote = async () => {
     setSavingNote(true);
@@ -166,7 +166,7 @@ function BuyerTransferDetail() {
   // rows that get a checkbox + editable stepper on the Pending page, and the
   // only rows highlighted/pinned to top on both Loading and Pending.
   const isOverStock = (item) => {
-    const fromQty = fromQtyBySku[item.sku];
+    const fromQty = item.from_qty_snapshot;
     return fromQty != null && Number(item.quantity) > Number(fromQty);
   };
 
@@ -177,13 +177,13 @@ function BuyerTransferDetail() {
       const payload = {
         items: items.map(i => {
           const overStock = isOverStock(i);
-          const defaultQty = overStock ? fromQtyBySku[i.sku] : i.quantity;
+          const defaultQty = overStock ? i.from_qty_snapshot : i.quantity;
           const qty = overStock && draftQty[i.id] != null ? draftQty[i.id] : defaultQty;
           return {
             itemId: i.id,
             inventoryItemId: i.inventory_item_id,
             quantity: Number(qty),
-            availableQty: fromQtyBySku[i.sku],
+            availableQty: i.from_qty_snapshot,
           };
         }),
       };
@@ -268,13 +268,22 @@ function BuyerTransferDetail() {
   const isReceivedMismatchDraft = (item) => Number(receivedDraft[item.id] ?? item.quantity) !== Number(item.quantity);
   const hasMismatch = isCounted && items.some(isReceivedMismatchDraft);
 
-  // Loading/Pending: over-stock rows pinned to top. Counted: received-qty
-  // mismatch rows pinned to top. Everyone else keeps insertion order.
-  let sortedItems = items;
+  // Items are always alphabetical by name (2026-09-10 addendum) — Loading/
+  // Pending additionally pin over-stock rows to the top (still alphabetical
+  // within that group), Counted pins received-qty mismatch rows to the top
+  // the same way, everyone else is just plain alphabetical.
+  const byName = (a, b) => (a.name || '').localeCompare(b.name || '');
+  let sortedItems = [...items].sort(byName);
   if (isLoading || isPending) {
-    sortedItems = [...items].sort((a, b) => (isOverStock(b) ? 1 : 0) - (isOverStock(a) ? 1 : 0));
+    sortedItems = [...items].sort((a, b) => {
+      const diff = (isOverStock(b) ? 1 : 0) - (isOverStock(a) ? 1 : 0);
+      return diff !== 0 ? diff : byName(a, b);
+    });
   } else if (isCounted) {
-    sortedItems = [...items].sort((a, b) => (isReceivedMismatchSaved(b) ? 1 : 0) - (isReceivedMismatchSaved(a) ? 1 : 0));
+    sortedItems = [...items].sort((a, b) => {
+      const diff = (isReceivedMismatchSaved(b) ? 1 : 0) - (isReceivedMismatchSaved(a) ? 1 : 0);
+      return diff !== 0 ? diff : byName(a, b);
+    });
   }
 
   return (
@@ -316,14 +325,43 @@ function BuyerTransferDetail() {
                       Delete selected ({selectedItemIds.length})
                     </Button>
                   )}
-                  {(isLoading || isPending || isCounted || isCommitted) && (
-                    <Button onClick={refreshQty} loading={refreshing}>Refresh qty</Button>
-                  )}
+                  {/* Refresh qty is available in every status now — from/to
+                      qty are a snapshot (see file-level comment), so every
+                      status needs a way to re-pull it. */}
+                  <Button onClick={refreshQty} loading={refreshing}>Refresh qty</Button>
                   {isLoading && (
                     <Button tone="critical" loading={cancelling} onClick={handleCancel}>Cancel</Button>
                   )}
+                  {/* Commit is now available from every non-committed status
+                      (2026-09-10 addendum) — Loading/Good to go/In transit/
+                      Receiving just get a plain Commit button; Pending's
+                      Confirm stays the default action with Commit tucked
+                      into the dropdown, same split-button pattern as
+                      BuyerPOImportInvoice.js's status-driven action button. */}
+                  {isLoading && (
+                    <Button variant="primary" loading={committing} onClick={handleCommit}>Commit</Button>
+                  )}
                   {isPending && (
-                    <Button variant="primary" loading={confirming} onClick={handleConfirm}>Confirm</Button>
+                    <Popover
+                      active={actionsMenuOpen}
+                      onClose={() => setActionsMenuOpen(false)}
+                      activator={
+                        <ButtonGroup variant="segmented">
+                          <Button variant="primary" loading={confirming} onClick={handleConfirm}>Confirm</Button>
+                          <Button variant="primary" onClick={() => setActionsMenuOpen(v => !v)} disclosure />
+                        </ButtonGroup>
+                      }
+                    >
+                      <ActionList
+                        items={[{
+                          content: 'Commit',
+                          onAction: () => { setActionsMenuOpen(false); handleCommit(); },
+                        }]}
+                      />
+                    </Popover>
+                  )}
+                  {isMidTransit && (
+                    <Button variant="primary" loading={committing} onClick={handleCommit}>Commit</Button>
                   )}
                   {isCounted && (
                     <Button variant="primary" loading={committing} onClick={handleCommit}>Commit</Button>
@@ -351,13 +389,10 @@ function BuyerTransferDetail() {
                         {isPending && <th style={{ padding: '8px 10px', width: '32px' }} />}
                         <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>SKU</th>
                         <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Name</th>
-                        {/* {from location} qty appears in every status per spec doc section 4
-                            (Loading/Pending: from qty only; Good to go/In transit/Receiving/
-                            Counted/Committed: from qty + to qty). */}
+                        {/* from/to qty now shown in every status (2026-09-10 addendum) — see
+                            file-level comment above. */}
                         <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>{transfer.from_location} qty</th>
-                        {(isMidTransit || isCounted || isCommitted) && (
-                          <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>{transfer.to_location} qty</th>
-                        )}
+                        <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>{transfer.to_location} qty</th>
                         <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>
                           {isCommitted ? 'Transferred qty' : 'Transfer qty'}
                         </th>
@@ -393,18 +428,16 @@ function BuyerTransferDetail() {
                             <td style={{ padding: '10px' }}>{item.sku}</td>
                             <td style={{ padding: '10px' }}>{item.name}</td>
                             <td style={{ padding: '10px', color: overStock ? '#d72c0d' : undefined, fontWeight: overStock ? 700 : undefined }}>
-                              {fromQtyBySku[item.sku] ?? '—'}
+                              {item.from_qty_snapshot ?? '—'}
                             </td>
-                            {(isMidTransit || isCounted || isCommitted) && (
-                              <td style={{ padding: '10px' }}>{toQtyBySku[item.sku] ?? '—'}</td>
-                            )}
+                            <td style={{ padding: '10px' }}>{item.to_qty_snapshot ?? '—'}</td>
                             <td style={{ padding: '10px' }}>
                               {isPending && overStock ? (
                                 <input
                                   type="number"
                                   min="0"
-                                  max={fromQtyBySku[item.sku]}
-                                  value={draftQty[item.id] ?? fromQtyBySku[item.sku] ?? item.quantity}
+                                  max={item.from_qty_snapshot}
+                                  value={draftQty[item.id] ?? item.from_qty_snapshot ?? item.quantity}
                                   onChange={e => setDraftQty(prev => ({ ...prev, [item.id]: e.target.value }))}
                                   style={{ width: '72px', padding: '4px 6px', borderRadius: '6px', border: '1px solid #d72c0d', fontSize: '13px', color: '#d72c0d', fontWeight: 700 }}
                                 />

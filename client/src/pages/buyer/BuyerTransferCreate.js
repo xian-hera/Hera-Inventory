@@ -247,13 +247,15 @@ function BuyerTransferCreate() {
           note,
           items: items.map(i => ({
             sku: i.sku, name: i.name, inventoryItemId: i.inventoryItemId,
-            quantity: i.transferQty, fromQty: i.fromQty,
+            quantity: i.transferQty, fromQty: i.fromQty, toQty: i.toQty,
           })),
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to create transfer');
-      navigate('/buyer/transfer');
+      // Go straight into the transfer just created (Loading status) instead
+      // of back to the Transfer home page, per Hera's 2026-09-10 request.
+      navigate(`/buyer/transfer/${data.transfer.id}`);
     } catch (e) {
       setCreateError(e.message);
     } finally {
