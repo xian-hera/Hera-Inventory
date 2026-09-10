@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const crypto = require('crypto');
 const { pool } = require('../database/init');
 
 // GET /api/tasks - get all tasks with filters
@@ -289,7 +290,16 @@ router.patch('/:id/commit', async (req, res) => {
         }
         const newOnHand = currentOnHand + delta;
 
-        // Step 3: set new on_hand as absolute value with compare-and-swap
+        // Step 3: set new on_hand as absolute value with compare-and-swap.
+        // @idempotent(key: ...) is required as of API 2026-04 (a separate
+        // breaking change from the pre-existing changeFromQuantity above —
+        // see Shopify changelog "Making idempotency mandatory for inventory
+        // adjustments and refund mutations"). Generated once outside the
+        // retry closure so a retry after a network timeout reuses the same
+        // key — the whole point of idempotency: if the first attempt
+        // actually succeeded server-side before the response was lost,
+        // Shopify recognizes the retry and doesn't double-apply it.
+        const setOnHandIdempotencyKey = crypto.randomUUID();
         const setRes = await shopifyRequest(() =>
           client.request(`
             mutation {
@@ -301,7 +311,7 @@ router.patch('/:id/commit', async (req, res) => {
                   quantity: ${newOnHand},
                   changeFromQuantity: ${currentOnHand}
                 }]
-              }) {
+              }) @idempotent(key: "${setOnHandIdempotencyKey}") {
                 userErrors { field message }
               }
             }

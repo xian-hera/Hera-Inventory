@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const crypto = require('crypto');
 const { pool } = require('../database/init');
 
 // Poll Shopify until a newly created file finishes processing and has a
@@ -276,6 +277,11 @@ router.patch('/:id/commit', async (req, res) => {
     // so we pass null to explicitly opt out — identical to this mutation's
     // pre-2026-04 behavior, no functional change, just satisfies the new
     // required-argument validation.
+    // Separately, API 2026-04 also requires an idempotency key via the
+    // @idempotent directive on this mutation (a different breaking change —
+    // see Shopify changelog "Making idempotency mandatory for inventory
+    // adjustments and refund mutations"). A fresh UUID per call is correct:
+    // this is a new inventory change each time, not a retry of a prior one.
     await client.request(`
       mutation {
         inventoryAdjustQuantities(input: {
@@ -287,7 +293,7 @@ router.patch('/:id/commit', async (req, res) => {
             delta: ${row.adjustment},
             changeFromQuantity: null
           }]
-        }) {
+        }) @idempotent(key: "${crypto.randomUUID()}") {
           inventoryAdjustmentGroup { id }
           userErrors { field message code }
         }
@@ -362,7 +368,8 @@ router.patch('/commit-many', async (req, res) => {
         // See the single-item /:id/commit route above for why changeFromQuantity
         // is explicitly null here (required as of API 2026-04; null opts out
         // of the compare-and-swap check, matching this mutation's pre-2026-04
-        // behavior).
+        // behavior) and why @idempotent(key: ...) is now required too (a
+        // separate 2026-04 breaking change; fresh UUID per call is correct).
         await client.request(`
           mutation {
             inventoryAdjustQuantities(input: {
@@ -374,7 +381,7 @@ router.patch('/commit-many', async (req, res) => {
                 delta: ${row.adjustment},
                 changeFromQuantity: null
               }]
-            }) {
+            }) @idempotent(key: "${crypto.randomUUID()}") {
               inventoryAdjustmentGroup { id }
               userErrors { field message code }
             }

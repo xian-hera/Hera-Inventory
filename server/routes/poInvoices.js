@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const crypto = require('crypto');
 const { pool } = require('../database/init');
 const { activeFilter } = require('../shopify');
 
@@ -1411,9 +1412,15 @@ async function commitInvoice(invoiceId) {
     // needs no inventory change at all — skip the mutation rather than
     // sending a no-op delta of 0.
     if (actualQty !== 0) {
+      // As of API version 2026-04, Shopify also requires an idempotency key
+      // via the @idempotent directive on this mutation (separate breaking
+      // change from changeFromQuantity above — see Shopify changelog "Making
+      // idempotency mandatory for inventory adjustments and refund
+      // mutations"). A fresh UUID per call is correct here: this is a
+      // genuinely new inventory change each time, not a retry of a prior one.
       const invResp = await shopifyRequest(client, `
-        mutation adjustInventory($input: InventoryAdjustQuantitiesInput!) {
-          inventoryAdjustQuantities(input: $input) {
+        mutation adjustInventory($input: InventoryAdjustQuantitiesInput!, $idempotencyKey: String!) {
+          inventoryAdjustQuantities(input: $input) @idempotent(key: $idempotencyKey) {
             inventoryAdjustmentGroup { id }
             userErrors { field message code }
           }
@@ -1438,6 +1445,7 @@ async function commitInvoice(invoiceId) {
             changeFromQuantity: null,
           }],
         },
+        idempotencyKey: crypto.randomUUID(),
       });
       const invErrors = invResp?.data?.inventoryAdjustQuantities?.userErrors || [];
       if (invErrors.length > 0) {

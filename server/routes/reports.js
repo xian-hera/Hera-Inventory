@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const crypto = require('crypto');
 const { pool } = require('../database/init');
 const { getShopify, getSession, activeFilter } = require('../shopify');
 
@@ -212,7 +213,13 @@ async function commitReport(id, customAdjustment) {
     if (currentOnHand === null) throw new Error(`Barcode ${r.barcode}: could not read current on_hand from Shopify`);
     const newOnHand = currentOnHand + delta;
 
-    // Step 3: set new on_hand as absolute value with compare-and-swap
+    // Step 3: set new on_hand as absolute value with compare-and-swap.
+    // @idempotent(key: ...) required as of API 2026-04 (separate breaking
+    // change from the pre-existing changeFromQuantity above — see Shopify
+    // changelog "Making idempotency mandatory for inventory adjustments and
+    // refund mutations"). Generated once outside the retry closure so a
+    // retry after a network timeout reuses the same key.
+    const setOnHandIdempotencyKey = crypto.randomUUID();
     const setRes = await shopifyRequest(() =>
       client.request(`
         mutation {
@@ -224,7 +231,7 @@ async function commitReport(id, customAdjustment) {
               quantity: ${newOnHand},
               changeFromQuantity: ${currentOnHand}
             }]
-          }) {
+          }) @idempotent(key: "${setOnHandIdempotencyKey}") {
             userErrors { field message }
           }
         }

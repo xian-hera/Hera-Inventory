@@ -694,15 +694,21 @@ router.post('/:id/confirm', async (req, res) => {
             : null,
         };
       });
+      // @idempotent(key: ...) required as of API 2026-04 too (separate
+      // breaking change from changeFromQuantity above — see Shopify
+      // changelog "Making idempotency mandatory for inventory adjustments
+      // and refund mutations"). Fresh UUID per call: this is a new
+      // inventory correction each time, not a retry of a prior one.
       const adjustMutation = `
-        mutation inventoryAdjustQuantities($input: InventoryAdjustQuantitiesInput!) {
-          inventoryAdjustQuantities(input: $input) {
+        mutation inventoryAdjustQuantities($input: InventoryAdjustQuantitiesInput!, $idempotencyKey: String!) {
+          inventoryAdjustQuantities(input: $input) @idempotent(key: $idempotencyKey) {
             userErrors { field message }
           }
         }
       `;
       const adjustData = await graphql(client, adjustMutation, {
         input: { reason: 'correction', name: 'available', changes },
+        idempotencyKey: crypto.randomUUID(),
       });
       const adjustErrors = adjustData?.inventoryAdjustQuantities?.userErrors || [];
       if (adjustErrors.length > 0) {
