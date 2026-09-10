@@ -1016,6 +1016,36 @@ async function dispatchOne(id) {
   const errors = data?.inventoryShipmentMarkInTransit?.userErrors || [];
   if (errors.length > 0) throw new Error(errors.map(e => e.message).join('; '));
   await pool.query("UPDATE transfers SET status = 'in_transit', dispatched_at = NOW(), updated_at = NOW() WHERE id = $1", [transfer.id]);
+
+  // Freeze a snapshot for the manager's own History (Transfer page, Sending
+  // side — "Sent") — see server/routes/managerHistory.js. Only recorded when
+  // the FROM location is a store, not HQ: this is the "Pick up from store"
+  // flow where the from-location manager is the one who actually clicked
+  // "Truck picked up" (same endpoint/action as Warehouse's own "Dispatch" on
+  // an HQ-origin transfer, which has no Manager History page to record into).
+  // A failure here is logged only — it must never block the dispatch itself.
+  if (transfer.from_location !== HQ_LOCATION_NAME) {
+    try {
+      const { items } = found;
+      await attachWigNumbers(client, items);
+      const { insertManagerHistory } = require('./managerHistory');
+      await insertManagerHistory({
+        kind: 'transfer_sending',
+        location: transfer.from_location,
+        ref_no: transfer.transfer_no,
+        label: 'Sent',
+        summary: {},
+        detail: {
+          transfer_no: transfer.transfer_no,
+          from_location: transfer.from_location,
+          to_location: transfer.to_location,
+          items,
+        },
+      });
+    } catch (histErr) {
+      console.error(`Failed to record manager history for transfer ${transfer.id} dispatch:`, histErr.message);
+    }
+  }
 }
 
 // ─── Manager: Receiving side ─────────────────────────────────────────────────
@@ -1058,6 +1088,38 @@ router.post('/:id/submit-count', async (req, res) => {
       return res.status(400).json({ error: 'All line items must be counted before submitting' });
     }
     await pool.query("UPDATE transfers SET status = 'counted', counted_at = NOW(), updated_at = NOW() WHERE id = $1", [req.params.id]);
+
+    // Freeze a snapshot of this transfer's counts for the manager's own
+    // History (Transfer page, Receiving side — "Received") — see
+    // server/routes/managerHistory.js. Independent of whatever happens to
+    // this transfer afterward (buyer commit, etc). A failure here is logged
+    // only — it must never block the manager's actual submit.
+    try {
+      const { transfer, items } = found;
+      const session = await getSession();
+      if (session) {
+        const shopify = getShopify();
+        const client = new shopify.clients.Graphql({ session });
+        await attachWigNumbers(client, items);
+      }
+      const { insertManagerHistory } = require('./managerHistory');
+      await insertManagerHistory({
+        kind: 'transfer_receiving',
+        location: transfer.to_location,
+        ref_no: transfer.transfer_no,
+        label: 'Received',
+        summary: { from_location: transfer.from_location },
+        detail: {
+          transfer_no: transfer.transfer_no,
+          from_location: transfer.from_location,
+          to_location: transfer.to_location,
+          items,
+        },
+      });
+    } catch (histErr) {
+      console.error(`Failed to record manager history for transfer ${req.params.id} submit-count:`, histErr.message);
+    }
+
     res.json({ success: true });
   } catch (e) {
     console.error('POST /api/transfers/:id/submit-count error:', e);

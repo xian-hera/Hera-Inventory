@@ -35,6 +35,14 @@ function ManagerCountingTasksList() {
   const [selectedTypes, setSelectedTypes] = useState([]);
   const [date, setDate]                   = useState('ALL');
 
+  // History in past 15 days — a frozen record of tasks this manager already
+  // submitted, kept below the live table so they can look back at what was
+  // submitted after it leaves the list above. See server/routes/
+  // managerHistory.js. Independent of the Types/Date filters above (those
+  // only affect the live 'counting' list).
+  const [history, setHistory]               = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
   const location = localStorage.getItem('managerLocation') || '';
 
   const fetchTasks = useCallback(async () => {
@@ -61,6 +69,24 @@ function ManagerCountingTasksList() {
 
   useEffect(() => { fetchTasks(); }, [fetchTasks]);
 
+  const fetchHistory = useCallback(async () => {
+    if (!location) return;
+    setHistoryLoading(true);
+    try {
+      const res = await fetch(`/api/manager-history?kind=task&location=${encodeURIComponent(location)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setHistory(data);
+    } catch (e) {
+      // History is a secondary, non-blocking display — a failure here
+      // shouldn't put an error banner over the main task list.
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [location]);
+
+  useEffect(() => { fetchHistory(); }, [fetchHistory]);
+
   const rows = tasks.map(task => {
     const typesDisplay = Array.isArray(task.types) && task.types.length > 0
       ? task.types.map(typeDisplay).join(', ')
@@ -75,6 +101,24 @@ function ManagerCountingTasksList() {
       task.inaccurate_count > 0 ? `${task.inaccurate_count} off qty` : '',
       formatDate(task.created_at),
       `${task.processed_count || 0}/${task.total_count || 0}`,
+    ];
+  });
+
+  const historyRows = history.map(h => {
+    const typesArr = (h.summary && Array.isArray(h.summary.types)) ? h.summary.types : [];
+    const typesDisplay = typesArr.length > 0 ? typesArr.map(typeDisplay).join(', ') : '-';
+    return [
+      <Button variant="plain" onClick={() => navigate(`/manager/counting-tasks/history/${h.id}`)}>
+        {h.ref_no}
+      </Button>,
+      <div style={{ whiteSpace: 'normal', wordBreak: 'break-word', maxWidth: '160px' }}>{typesDisplay}</div>,
+      formatDate(h.created_at),
+      <span style={{
+        display: 'inline-block', padding: '4px 12px', borderRadius: '999px',
+        background: '#E1E3E5', color: '#3F4448', fontSize: '13px', fontWeight: 600, whiteSpace: 'nowrap',
+      }}>
+        {h.label}
+      </span>,
     ];
   });
 
@@ -124,6 +168,25 @@ function ManagerCountingTasksList() {
                   />
                 </div>
               )}
+            </Card>
+
+            {/* History in past 15 days — frozen record of what this manager
+                already submitted; see comment on the `history` state above. */}
+            <Card>
+              <BlockStack gap="300">
+                <Text variant="headingSm">History in past 15 days</Text>
+                {historyLoading ? <Spinner /> : history.length === 0 ? (
+                  <Text tone="subdued">No submitted tasks in the past 15 days.</Text>
+                ) : (
+                  <div style={{ overflowX: 'hidden' }}>
+                    <DataTable
+                      columnContentTypes={['text','text','text','text']}
+                      headings={['No.', 'Types', 'Date', 'Status']}
+                      rows={historyRows}
+                    />
+                  </div>
+                )}
+              </BlockStack>
             </Card>
           </BlockStack>
         </Layout.Section>

@@ -1089,6 +1089,63 @@ router.post('/pending/:id/send-to-store', async (req, res) => {
 
 // ─── Manager: PO Receiving (counting) ───────────────────────────────────────
 
+// Same batched Wig Number lookup as GET /manager/receiving/:id below (kept
+// as its own function so the manager-submit History snapshot — see
+// POST /manager/receiving/:id/submit — can freeze the same Wig Number values
+// the manager was looking at, without duplicating the GET route's own copy
+// of this logic). Only attempted when the supplier carries the WIG type;
+// mutates `items` in place, same as the GET route's inline version.
+async function attachPoWigNumbers(items, typesCarrying) {
+  if (!(typesCarrying || []).includes('WIG')) {
+    items.forEach(item => { item.wig_number = item.wig_number ?? ''; });
+    return;
+  }
+  items.forEach(item => { item.wig_number = ''; });
+  const skus = [...new Set(items.map(item => item.sku).filter(Boolean))];
+  if (skus.length === 0) return;
+
+  const { getShopify, getSession } = require('../shopify');
+  const session = await getSession();
+  const shopify = getShopify();
+  const client = new shopify.clients.Graphql({ session });
+
+  const CHUNK_SIZE = 50;
+  const wigNumberBySku = new Map();
+  try {
+    for (let i = 0; i < skus.length; i += CHUNK_SIZE) {
+      const chunk = skus.slice(i, i + CHUNK_SIZE);
+      const filter = activeFilter(chunk.map(s => `barcode:${s}`).join(' OR '));
+      const query = `
+        query wigNumbers($filter: String!) {
+          productVariants(first: ${chunk.length}, query: $filter) {
+            edges { node {
+              barcode
+              product {
+                productType
+                wigNumber: metafield(namespace: "custom", key: "wig_number") { value }
+              }
+            } }
+          }
+        }
+      `;
+      const response = await shopifyRequest(client, query, { filter });
+      const edges = response?.data?.productVariants?.edges || [];
+      edges.forEach(({ node }) => {
+        if (node?.barcode && node?.product?.productType === 'WIG') {
+          wigNumberBySku.set(node.barcode, node.product.wigNumber?.value || '');
+        }
+      });
+    }
+  } catch (e) {
+    console.error('attachPoWigNumbers: batched lookup failed:', e.message);
+  }
+  items.forEach(item => {
+    if (item.sku && wigNumberBySku.has(item.sku)) {
+      item.wig_number = wigNumberBySku.get(item.sku);
+    }
+  });
+}
+
 // GET /api/po-invoices/manager/receiving?location=...
 // Invoices sent to this location, still awaiting the manager's count.
 router.get('/manager/receiving', async (req, res) => {
@@ -1242,6 +1299,52 @@ router.post('/manager/receiving/:id/submit', async (req, res) => {
       [id]
     );
     if (result.rows.length === 0) return res.status(400).json({ error: 'Invoice not found or not in a countable state' });
+    const invoice = result.rows[0];
+
+    // Freeze a snapshot of this invoice's counts for the manager's own
+    // History (PO Receiving page) — see server/routes/managerHistory.js.
+    // Independent of whatever happens to this invoice afterward (buyer
+    // commit, eventual deletion once committed and past the 200-invoice
+    // retention cap). A failure here is logged only — it must never block
+    // the manager's actual submit.
+    try {
+      const supplierRes = await pool.query(
+        'SELECT name, types_carrying FROM po_suppliers WHERE id = $1',
+        [invoice.supplier_id]
+      );
+      const supplier = supplierRes.rows[0] || {};
+      const fullItemsRes = await pool.query(
+        'SELECT * FROM po_invoice_items WHERE invoice_id = $1 ORDER BY id ASC',
+        [id]
+      );
+      const items = fullItemsRes.rows;
+      await attachPoWigNumbers(items, supplier.types_carrying);
+
+      const { insertManagerHistory } = require('./managerHistory');
+      await insertManagerHistory({
+        kind: 'po_invoice',
+        location: invoice.location,
+        ref_no: invoice.po_number || invoice.invoice_number,
+        label: 'Submitted',
+        summary: { supplier_name: supplier.name || '' },
+        detail: {
+          // invoice_id lets the manager's History detail page reuse the
+          // existing GET /:id/export-pdf route (Hera confirmed Export PDF
+          // should stay available there) — that route reads live
+          // po_invoice_items by invoice id, same as it always has, rather
+          // than from this frozen snapshot.
+          invoice_id: invoice.id,
+          po_number: invoice.po_number,
+          invoice_number: invoice.invoice_number,
+          supplier_name: supplier.name || '',
+          location: invoice.location,
+          items,
+        },
+      });
+    } catch (histErr) {
+      console.error(`Failed to record manager history for invoice ${id} submit:`, histErr.message);
+    }
+
     res.json(result.rows[0]);
   } catch (e) {
     console.error('POST /api/po-invoices/manager/receiving/:id/submit error:', e);

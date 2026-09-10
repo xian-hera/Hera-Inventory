@@ -866,18 +866,6 @@ const initDatabase = async () => {
     // reused as-is since it already means exactly "what the to-location
     // actually received", which is also what the Buyer sees/edits at Counted.
     await client.query(`ALTER TABLE transfer_items ADD COLUMN IF NOT EXISTS counted_confirmed BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
-    // from_qty_snapshot / to_qty_snapshot (2026-09-10 addendum): a cached
-    // "last known" Available quantity at the from/to location for this line
-    // item. Previously the from/to qty shown on every Transfer detail page
-    // was queried live from Shopify on every page load (one Shopify call per
-    // SKU, every time — this is what made "Refresh qty" spin every time a
-    // Loading transfer was opened). Now it's queried once at Create Transfer
-    // time (populated straight from the values Create Transfer already had
-    // in hand) and re-queried only when the user explicitly taps "Refresh
-    // qty" (see POST /:id/refresh-qty in transfers.js) — the detail pages
-    // just display whatever is currently stored here.
-    await client.query(`ALTER TABLE transfer_items ADD COLUMN IF NOT EXISTS from_qty_snapshot INTEGER`).catch(() => {});
-    await client.query(`ALTER TABLE transfer_items ADD COLUMN IF NOT EXISTS to_qty_snapshot INTEGER`).catch(() => {});
 
     // 4. Transfer Settings' Tag pool (spec doc section 3, BuyerTransferSettings.js):
     // name uniqueness is case-insensitive, length <= 20 chars. Deleting a tag
@@ -912,6 +900,40 @@ const initDatabase = async () => {
       INSERT INTO box_po_number_counter (id, last_number, last_letter)
       VALUES (1, 0, 'A')
       ON CONFLICT (id) DO NOTHING
+    `);
+
+    // ────────────────────────────────────────────────────────────────────────────
+
+    // Manager History (server/routes/managerHistory.js) — a frozen record of
+    // manager actions (Weekly Inventory Count submit, PO Receiving submit,
+    // Transfer received/sent) kept for 15 days per location so a manager can
+    // look back at what they submitted after it leaves the live counting-
+    // task/PO-receiving/transfer list. One shared table for all three kinds:
+    // `kind` distinguishes them ('task' / 'po_invoice' / 'transfer_receiving'
+    // / 'transfer_sending'), `summary` holds whatever fields that kind's
+    // History list row needs, `detail` holds the full frozen snapshot the
+    // history detail page renders. Deliberately decoupled from the live
+    // tables it snapshots from — inserted once at the moment of the manager's
+    // action and never updated afterward, so a later edit (e.g. a buyer
+    // editing poh once a task is 'reviewing') or the live row's own eventual
+    // deletion/retention pruning elsewhere can't change or remove a history
+    // entry early. Pruned lazily (15-day cutoff checked on every list read,
+    // same pattern as box_pos' 90-day retention above) rather than via a
+    // scheduled job.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS manager_history (
+        id         SERIAL PRIMARY KEY,
+        kind       TEXT NOT NULL,
+        location   TEXT NOT NULL,
+        ref_no     TEXT,
+        label      TEXT NOT NULL,
+        summary    JSONB NOT NULL DEFAULT '{}',
+        detail     JSONB NOT NULL DEFAULT '{}',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_manager_history_lookup ON manager_history (kind, location, created_at DESC)
     `);
 
     // 3 statuses: incoming (just created, Warehouse can see/count it) →

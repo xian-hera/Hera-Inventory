@@ -5,6 +5,13 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { StatusBadge } from '../shared/transferStatus';
 
+function formatDate(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  const months = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+  return `${d.getFullYear()}.${months[d.getMonth()]}.${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+}
+
 // Manager Transfer Home — two cards: Receiving (this location is the
 // to_location, statuses In transit / Receiving) and Sending (this location
 // is the from_location, statuses Loading / Good to go / Pending). No
@@ -16,6 +23,14 @@ function ManagerTransferHome() {
   const [sending, setSending] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+
+  // History in past 15 days — a frozen record of transfers this manager
+  // already received or sent, kept below the two live cards above. Two
+  // kinds share the section: 'transfer_receiving' (Received) and
+  // 'transfer_sending' (Sent) — merged and sorted by created_at desc. See
+  // server/routes/managerHistory.js.
+  const [history, setHistory] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
 
   const location = localStorage.getItem('managerLocation');
 
@@ -36,7 +51,31 @@ function ManagerTransferHome() {
     }
   }, [location]);
 
+  const fetchHistory = useCallback(async () => {
+    if (!location) { setHistoryLoading(false); return; }
+    setHistoryLoading(true);
+    try {
+      const [recvRes, sendRes] = await Promise.all([
+        fetch(`/api/manager-history?kind=transfer_receiving&location=${encodeURIComponent(location)}`),
+        fetch(`/api/manager-history?kind=transfer_sending&location=${encodeURIComponent(location)}`),
+      ]);
+      const [recvData, sendData] = await Promise.all([recvRes.json(), sendRes.json()]);
+      if (!recvRes.ok) throw new Error(recvData.error);
+      if (!sendRes.ok) throw new Error(sendData.error);
+      const merged = [...recvData, ...sendData].sort(
+        (a, b) => new Date(b.created_at) - new Date(a.created_at)
+      );
+      setHistory(merged);
+    } catch (e) {
+      // Secondary, non-blocking display — don't surface an error banner
+      // over the two live cards for a History load failure.
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [location]);
+
   useEffect(() => { fetchHome(); }, [fetchHome]);
+  useEffect(() => { fetchHistory(); }, [fetchHistory]);
 
   const openTransfer = (tr) => {
     if (tr.status === 'in_transit' || tr.status === 'receiving') {
@@ -58,6 +97,32 @@ function ManagerTransferHome() {
           <Text tone="subdued" variant="bodySm">{tr.from_location} to {tr.to_location}</Text>
         </InlineStack>
         <StatusBadge status={tr.status} />
+      </InlineStack>
+    </div>
+  );
+
+  const renderHistoryRow = (h, idx) => (
+    <div
+      key={h.id}
+      onClick={() => navigate(`/manager/transfer/history/${h.id}`)}
+      style={{
+        cursor: 'pointer',
+        padding: '12px 4px',
+        borderTop: idx > 0 ? '1px solid #f1f1f1' : undefined,
+      }}
+    >
+      <InlineStack gap="200" blockAlign="center" wrap>
+        <span style={{
+          fontWeight: 700,
+          color: h.kind === 'transfer_receiving' ? '#008060' : '#1F3D7A',
+        }}>
+          {h.kind === 'transfer_receiving' ? '[Received]' : '[Sent]'}
+        </span>
+        {h.kind === 'transfer_receiving' && (
+          <Text tone="subdued" variant="bodySm">{h.summary?.from_location}</Text>
+        )}
+        <span style={{ fontWeight: 600, textDecoration: 'underline' }}>{h.ref_no}</span>
+        <Text tone="subdued" variant="bodySm">{formatDate(h.created_at)}</Text>
       </InlineStack>
     </div>
   );
@@ -102,6 +167,22 @@ function ManagerTransferHome() {
                       <Text tone="subdued">Nothing to send right now.</Text>
                     ) : (
                       sending.map(renderRow)
+                    )}
+                  </BlockStack>
+                </Card>
+
+                {/* History in past 15 days — frozen record of transfers this
+                    manager already received or sent; see comment on the
+                    `history` state above. */}
+                <Card>
+                  <BlockStack gap="200">
+                    <Text variant="headingSm">History in past 15 days</Text>
+                    {historyLoading ? (
+                      <InlineStack align="center"><Spinner /></InlineStack>
+                    ) : history.length === 0 ? (
+                      <Text tone="subdued">No transfer activity in the past 15 days.</Text>
+                    ) : (
+                      history.map(renderHistoryRow)
                     )}
                   </BlockStack>
                 </Card>

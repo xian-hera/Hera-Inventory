@@ -66,6 +66,9 @@ import WarehouseBoxPODetail from './pages/warehouse/WarehouseBoxPODetail';
 import ManagerTransferHome from './pages/manager/ManagerTransferHome';
 import ManagerTransferSendingDetail from './pages/manager/ManagerTransferSendingDetail';
 import ManagerTransferReceivingDetail from './pages/manager/ManagerTransferReceivingDetail';
+import ManagerTaskHistoryDetail from './pages/manager/ManagerTaskHistoryDetail';
+import ManagerPOReceivingHistoryDetail from './pages/manager/ManagerPOReceivingHistoryDetail';
+import ManagerTransferHistoryDetail from './pages/manager/ManagerTransferHistoryDetail';
 
 function App() {
   return (
@@ -124,9 +127,13 @@ function App() {
           <Route path="/manager/transfer" element={<ManagerTransferHome />} />
           <Route path="/manager/transfer/sending/:transferId" element={<ManagerTransferSendingDetail />} />
           <Route path="/manager/transfer/receiving/:transferId" element={<ManagerTransferReceivingDetail />} />
+          {/* Transfer History detail — fixed "history" segment can't collide
+              with the :transferId routes above (different segment counts). */}
+          <Route path="/manager/transfer/history/:historyId" element={<ManagerTransferHistoryDetail />} />
           <Route path="/manager/inventory-count" element={<ManagerInventoryCount />} />
           <Route path="/manager/counting-tasks" element={<ManagerCountingTasksList />} />
           <Route path="/manager/counting-tasks/:taskId" element={<ManagerTaskDetail />} />
+          <Route path="/manager/counting-tasks/history/:historyId" element={<ManagerTaskHistoryDetail />} />
           <Route path="/manager/zero-qty-report" element={<ManagerZeroQtyReport />} />
           <Route path="/manager/stock-losses" element={<ManagerStockLosses />} />
           <Route path="/manager/restock-plan" element={<ManagerRestockPlan />} />
@@ -135,6 +142,7 @@ function App() {
           <Route path="/manager/price-change/:taskId" element={<ManagerPriceChangeDetail />} />
           <Route path="/manager/employee-cap" element={<ManagerEmployeeCap />} />
           <Route path="/manager/po-receiving" element={<ManagerPOReceiving />} />
+          <Route path="/manager/po-receiving/history/:historyId" element={<ManagerPOReceivingHistoryDetail />} />
           <Route path="/manager/po-receiving/:invoiceId" element={<ManagerPOReceivingDetail />} />
 
           {/* CRM */}
