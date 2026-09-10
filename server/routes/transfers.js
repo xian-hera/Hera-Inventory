@@ -682,6 +682,16 @@ router.post('/:id/confirm', async (req, res) => {
           inventoryItemId: ci.inventoryItemId,
           locationId: transfer.from_location_id,
           delta: Number(ci.quantity) - dbItem.quantity,
+          // Required as of Shopify API version 2026-04 (compare-and-swap
+          // protection). We already have a freshly-refreshed from-location
+          // Available qty for this item in ci.availableQty (see the route
+          // comment above), so use the real value here instead of opting
+          // out — this actually adds protection against a stale confirm
+          // (e.g. two tabs open) that wasn't possible before this field
+          // existed. Falls back to null (opt-out) if a caller doesn't send it.
+          changeFromQuantity: (ci.availableQty !== undefined && ci.availableQty !== null)
+            ? Number(ci.availableQty)
+            : null,
         };
       });
       const adjustMutation = `

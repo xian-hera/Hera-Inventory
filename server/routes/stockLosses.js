@@ -270,6 +270,12 @@ router.patch('/:id/commit', async (req, res) => {
     const invItemId = variantRes.data?.productVariants?.edges?.[0]?.node?.inventoryItem?.id;
     if (!invItemId) return res.status(404).json({ error: 'Inventory item not found in Shopify' });
 
+    // changeFromQuantity became a required argument as of Shopify API version
+    // 2026-04 (compare-and-swap protection against concurrent inventory
+    // writes). We don't have a fresh location-scoped quantity in hand here,
+    // so we pass null to explicitly opt out — identical to this mutation's
+    // pre-2026-04 behavior, no functional change, just satisfies the new
+    // required-argument validation.
     await client.request(`
       mutation {
         inventoryAdjustQuantities(input: {
@@ -278,7 +284,8 @@ router.patch('/:id/commit', async (req, res) => {
           changes: [{
             inventoryItemId: "${invItemId}",
             locationId: "${row.shopify_location_id}",
-            delta: ${row.adjustment}
+            delta: ${row.adjustment},
+            changeFromQuantity: null
           }]
         }) {
           inventoryAdjustmentGroup { id }
@@ -352,6 +359,10 @@ router.patch('/commit-many', async (req, res) => {
         const invItemId = variantRes.data?.productVariants?.edges?.[0]?.node?.inventoryItem?.id;
         if (!invItemId) { errors.push(`Barcode ${row.barcode}: inventory item not found`); continue; }
 
+        // See the single-item /:id/commit route above for why changeFromQuantity
+        // is explicitly null here (required as of API 2026-04; null opts out
+        // of the compare-and-swap check, matching this mutation's pre-2026-04
+        // behavior).
         await client.request(`
           mutation {
             inventoryAdjustQuantities(input: {
@@ -360,7 +371,8 @@ router.patch('/commit-many', async (req, res) => {
               changes: [{
                 inventoryItemId: "${invItemId}",
                 locationId: "${row.shopify_location_id}",
-                delta: ${row.adjustment}
+                delta: ${row.adjustment},
+                changeFromQuantity: null
               }]
             }) {
               inventoryAdjustmentGroup { id }

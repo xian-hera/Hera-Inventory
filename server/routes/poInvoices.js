@@ -1426,6 +1426,16 @@ async function commitInvoice(invoiceId) {
             inventoryItemId: snapshot.inventoryItemId,
             locationId: invoice.shopify_location_id,
             delta: actualQty,
+            // Shopify made this argument required as of API version 2026-04
+            // (compare-and-swap protection against concurrent inventory
+            // writes). snapshot.currentQty is a sum across ALL locations
+            // (needed for the weighted-average cost math above), not the
+            // quantity at this specific invoice.shopify_location_id, so it
+            // can't be reused here without a second, location-scoped query.
+            // Passing null opts out of the compare-and-swap check, which is
+            // exactly the pre-2026-04 behavior this app already relied on —
+            // no functional change, just unblocks the mutation.
+            changeFromQuantity: null,
           }],
         },
       });
