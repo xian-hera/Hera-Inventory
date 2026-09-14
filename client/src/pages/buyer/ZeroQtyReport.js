@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Page, Layout, Card, Button, BlockStack, InlineStack,
-  Text, DataTable, Checkbox, Banner, Badge, Spinner
+  Text, Checkbox, Banner, Badge, Spinner
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import MultiSelectDropdown from '../../components/MultiSelectDropdown';
@@ -34,7 +34,19 @@ function typeDisplay(type) {
 // LOCATIONS above is already laid out in M/E/C/O/Q/H group order (MTL, EDM,
 // CAL, OTT, QC prefixes; this list has no HQ entries today).
 const LOCATION_ORDER = new Map(LOCATIONS.map((loc, i) => [loc, i]));
-const DIVIDER_STYLE = { borderTop: '2px solid #c9cccf', paddingTop: '8px', marginTop: '8px' };
+
+// Row-level divider styling — needs a plain <table> (not Polaris DataTable)
+// to render as one continuous line: DataTable lays out each cell
+// independently, so a per-cell border comes out broken/segmented rather
+// than a single line spanning the row. Same-location rows keep their normal
+// thin divider and spacing; a location-group boundary gets a
+// darker/thicker divider with 130% of the normal vertical spacing on both
+// sides of it (extra padding-top on the row that starts the new group,
+// extra padding-bottom on the row that ends the previous one).
+const ROW_V_PADDING = 10;
+const GROUP_V_PADDING = Math.round(ROW_V_PADDING * 1.3);
+const ROW_BORDER = '1px solid #f1f1f1';
+const GROUP_BORDER = '2px solid #6d7175';
 
 function formatDate(dateStr) {
   if (!dateStr) return '';
@@ -197,55 +209,35 @@ function ZeroQtyReport() {
     return ai - bi;
   });
 
-  const rows = sortedReports.map((report, idx) => {
+  function renderStatusCell(report) {
     // 改动五.1：archived 状态显示 archived
-    const statusCell = (() => {
-      if (report.status === 'reviewing') return <Badge tone="warning">reviewing</Badge>;
-      if (report.status === 'committed') return <Badge tone="success">committed</Badge>;
-      if (report.status === 'archived')  return <Badge>archived</Badge>;
-      return <Badge>{report.status}</Badge>;
-    })();
+    if (report.status === 'reviewing') return <Badge tone="warning">reviewing</Badge>;
+    if (report.status === 'committed') return <Badge tone="success">committed</Badge>;
+    if (report.status === 'archived')  return <Badge>archived</Badge>;
+    return <Badge>{report.status}</Badge>;
+  }
 
-    // 改动五.3：reviewing 状态显示 adjustment 输入框 + commit 按钮
-    const actionCell = (() => {
-      if (report.status !== 'reviewing') return statusCell;
-      const adj = adjustments[report.id] ?? '';
-      const defaultAdj = (report.poh ?? 0) - (report.soh ?? 0);
-      return (
-        <InlineStack gap="100" align="start">
-          <input
-            type="number"
-            value={adj}
-            onChange={e => setAdjustments(prev => ({ ...prev, [report.id]: e.target.value }))}
-            placeholder={String(defaultAdj)}
-            style={{
-              width: '64px', padding: '4px 6px', border: '1px solid #c9cccf',
-              borderRadius: '6px', fontSize: '13px', textAlign: 'center',
-            }}
-          />
-          <Button size="slim" onClick={() => handleCommitOne(report.id)}>Commit</Button>
-        </InlineStack>
-      );
-    })();
-
-    // Visual divider: a top border on every cell of the first row of a new
-    // location, so it reads as a horizontal line spanning the whole row.
-    const isNewLocationGroup = idx > 0 && report.location !== sortedReports[idx - 1].location;
-    const cellStyle = isNewLocationGroup ? DIVIDER_STYLE : undefined;
-
-    return [
-      <div style={cellStyle}><Checkbox checked={selectedIds.includes(report.id)} onChange={() => toggleSelectOne(report.id)} /></div>,
-      // 改动一：显示 type 而非 department
-      <div style={cellStyle}>{typeDisplay(report.type) || '-'}</div>,
-      <div style={cellStyle}>{report.location || '-'}</div>,
-      <div style={cellStyle}>{formatDate(report.submitted_at)}</div>,
-      <div style={{ ...cellStyle, maxWidth: '200px', wordBreak: 'break-word', whiteSpace: 'normal' }}>{report.name || '-'}</div>,
-      <div style={cellStyle}>{report.barcode || '-'}</div>,
-      <div style={cellStyle}>{report.soh ?? '-'}</div>,
-      <div style={cellStyle}>{report.poh ?? '-'}</div>,
-      <div style={cellStyle}>{actionCell}</div>,
-    ];
-  });
+  // 改动五.3：reviewing 状态显示 adjustment 输入框 + commit 按钮
+  function renderActionCell(report) {
+    if (report.status !== 'reviewing') return renderStatusCell(report);
+    const adj = adjustments[report.id] ?? '';
+    const defaultAdj = (report.poh ?? 0) - (report.soh ?? 0);
+    return (
+      <InlineStack gap="100" align="start">
+        <input
+          type="number"
+          value={adj}
+          onChange={e => setAdjustments(prev => ({ ...prev, [report.id]: e.target.value }))}
+          placeholder={String(defaultAdj)}
+          style={{
+            width: '64px', padding: '4px 6px', border: '1px solid #c9cccf',
+            borderRadius: '6px', fontSize: '13px', textAlign: 'center',
+          }}
+        />
+        <Button size="slim" onClick={() => handleCommitOne(report.id)}>Commit</Button>
+      </InlineStack>
+    );
+  }
 
   return (
     <Page title="Manual Inventory Count" backAction={{ onAction: () => navigate('/buyer/inventory-count') }}>
@@ -303,20 +295,60 @@ function ZeroQtyReport() {
                   <Button disabled={selectedIds.length === 0} onClick={handleArchive}>Archive</Button>
                 </InlineStack>
 
-                {loading ? <Spinner /> : (
-                  <div style={{ overflowX: 'hidden', width: '100%' }}>
-                    <DataTable
-                      columnContentTypes={['text','text','text','text','text','text','numeric','numeric','text']}
-                      headings={[
-                        <Checkbox
-                          checked={selectedIds.length === reports.length && reports.length > 0}
-                          indeterminate={selectedIds.length > 0 && selectedIds.length < reports.length}
-                          onChange={toggleSelectAll}
-                        />,
-                        'Type', 'Location', 'Date', 'Name', 'SKU', 'System', 'Actual', '',
-                      ]}
-                      rows={rows}
-                    />
+                {loading ? (
+                  <InlineStack align="center"><Spinner /></InlineStack>
+                ) : sortedReports.length === 0 ? (
+                  <Text tone="subdued" alignment="center">No reports found.</Text>
+                ) : (
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                      <thead>
+                        <tr style={{ borderBottom: '2px solid #e1e3e5' }}>
+                          <th style={{ padding: '8px', textAlign: 'left', width: '32px' }}>
+                            <Checkbox
+                              checked={selectedIds.length === reports.length && reports.length > 0}
+                              indeterminate={selectedIds.length > 0 && selectedIds.length < reports.length}
+                              onChange={toggleSelectAll}
+                            />
+                          </th>
+                          {['Type', 'Location', 'Date', 'Name', 'SKU', 'System', 'Actual', ''].map((h, i) => (
+                            <th
+                              key={i}
+                              style={{ padding: '8px 10px', textAlign: 'left', fontWeight: '600', color: '#6d7175', whiteSpace: 'nowrap' }}
+                            >
+                              {h}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sortedReports.map((report, idx) => {
+                          const isFirstOfGroup = idx > 0 && report.location !== sortedReports[idx - 1].location;
+                          const isLastOfGroup = idx < sortedReports.length - 1 && report.location !== sortedReports[idx + 1].location;
+                          const rowBorder = idx === 0 ? 'none' : (isFirstOfGroup ? GROUP_BORDER : ROW_BORDER);
+                          const padTop = isFirstOfGroup ? GROUP_V_PADDING : ROW_V_PADDING;
+                          const padBottom = isLastOfGroup ? GROUP_V_PADDING : ROW_V_PADDING;
+                          const tdStyle = { padding: `${padTop}px 10px ${padBottom}px`, verticalAlign: 'top' };
+
+                          return (
+                            <tr key={report.id} style={{ borderTop: rowBorder }}>
+                              <td style={tdStyle}>
+                                <Checkbox checked={selectedIds.includes(report.id)} onChange={() => toggleSelectOne(report.id)} />
+                              </td>
+                              {/* 改动一：显示 type 而非 department */}
+                              <td style={tdStyle}>{typeDisplay(report.type) || '-'}</td>
+                              <td style={tdStyle}>{report.location || '-'}</td>
+                              <td style={tdStyle}>{formatDate(report.submitted_at)}</td>
+                              <td style={{ ...tdStyle, maxWidth: '200px', wordBreak: 'break-word', whiteSpace: 'normal' }}>{report.name || '-'}</td>
+                              <td style={tdStyle}>{report.barcode || '-'}</td>
+                              <td style={tdStyle}>{report.soh ?? '-'}</td>
+                              <td style={tdStyle}>{report.poh ?? '-'}</td>
+                              <td style={tdStyle}>{renderActionCell(report)}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
                   </div>
                 )}
               </BlockStack>

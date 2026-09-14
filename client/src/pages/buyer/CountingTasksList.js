@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Page, Layout, Card, Button, BlockStack, InlineStack,
-  DataTable, Checkbox, Badge, Text, Banner
+  Checkbox, Badge, Text, Banner, Spinner
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import MultiSelectDropdown from '../../components/MultiSelectDropdown';
@@ -56,7 +56,19 @@ function getStatusBadge(status) {
 // follows LOCATIONS' own M/E/C/O/Q/H group sequence (MTL, EDM, CAL, OTT,
 // QC, HQ prefixes), which is already how that array is laid out above.
 const LOCATION_ORDER = new Map(LOCATIONS.map((loc, i) => [loc, i]));
-const DIVIDER_STYLE = { borderTop: '2px solid #c9cccf', paddingTop: '8px', marginTop: '8px' };
+
+// Row-level divider styling — this needs a plain <table> (not Polaris
+// DataTable) to render as one continuous line: DataTable lays out each cell
+// independently, so a per-cell border comes out as a broken/segmented line
+// rather than a single line spanning the row. Same-location rows keep their
+// normal thin divider and spacing; a location-group boundary gets a
+// darker/thicker divider with 130% of the normal vertical spacing on both
+// sides of it (extra padding-top on the row that starts the new group,
+// extra padding-bottom on the row that ends the previous one).
+const ROW_V_PADDING = 10;
+const GROUP_V_PADDING = Math.round(ROW_V_PADDING * 1.3);
+const ROW_BORDER = '1px solid #f1f1f1';
+const GROUP_BORDER = '2px solid #6d7175';
 
 function CountingTasksList() {
   const navigate = useNavigate();
@@ -131,27 +143,6 @@ function CountingTasksList() {
     fetchTasks();
   };
 
-  const rows = displayedTasks.map((task, idx) => {
-    // 显示 task 的 types，多个用 , 分隔，使用缩写
-    const typesDisplay = Array.isArray(task.types) && task.types.length > 0
-      ? task.types.map(typeDisplay).join(', ')
-      : '-';
-
-    // Visual divider: a top border on every cell of the first row of a new
-    // location, so it reads as a horizontal line spanning the whole row.
-    const isNewLocationGroup = idx > 0 && task.location !== displayedTasks[idx - 1].location;
-    const cellStyle = isNewLocationGroup ? DIVIDER_STYLE : undefined;
-
-    return [
-      <div style={cellStyle}><Checkbox checked={selectedIds.includes(task.id)} onChange={() => toggleSelectOne(task.id)} /></div>,
-      <div style={cellStyle}><Button variant="plain" onClick={() => navigate(`/buyer/counting-tasks/${task.id}`)}>{task.task_no}</Button></div>,
-      <div style={{ ...cellStyle, whiteSpace: 'normal', wordBreak: 'break-word', maxWidth: '160px' }}>{typesDisplay}</div>,
-      <div style={cellStyle}>{task.location}</div>,
-      <div style={cellStyle}>{task.inaccurate_count > 0 ? String(task.inaccurate_count) : ''}</div>,
-      <div style={cellStyle}>{formatDate(task.created_at)}</div>,
-      <div style={cellStyle}>{getStatusBadge(task.status)}</div>,
-    ];
-  });
 
   return (
     <Page
@@ -213,19 +204,66 @@ function CountingTasksList() {
                   </Button>
                 </InlineStack>
 
-                <DataTable
-                  columnContentTypes={['text','text','text','text','text','text','text']}
-                  headings={[
-                    <Checkbox
-                      checked={selectedIds.length === tasks.length && tasks.length > 0}
-                      indeterminate={selectedIds.length > 0 && selectedIds.length < tasks.length}
-                      onChange={toggleSelectAll}
-                    />,
-                    'No.', 'Types', 'Location', 'Inaccurate', 'Date', 'Status',
-                  ]}
-                  rows={rows}
-                  loading={loading}
-                />
+                {loading ? (
+                  <InlineStack align="center"><Spinner /></InlineStack>
+                ) : displayedTasks.length === 0 ? (
+                  <Text tone="subdued" alignment="center">No tasks found.</Text>
+                ) : (
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                      <thead>
+                        <tr style={{ borderBottom: '2px solid #e1e3e5' }}>
+                          <th style={{ padding: '8px', textAlign: 'left', width: '32px' }}>
+                            <Checkbox
+                              checked={selectedIds.length === tasks.length && tasks.length > 0}
+                              indeterminate={selectedIds.length > 0 && selectedIds.length < tasks.length}
+                              onChange={toggleSelectAll}
+                            />
+                          </th>
+                          {['No.', 'Types', 'Location', 'Inaccurate', 'Date', 'Status'].map((h, i) => (
+                            <th
+                              key={i}
+                              style={{ padding: '8px 10px', textAlign: 'left', fontWeight: '600', color: '#6d7175', whiteSpace: 'nowrap' }}
+                            >
+                              {h}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {displayedTasks.map((task, idx) => {
+                          // 显示 task 的 types，多个用 , 分隔，使用缩写
+                          const typesDisplay = Array.isArray(task.types) && task.types.length > 0
+                            ? task.types.map(typeDisplay).join(', ')
+                            : '-';
+
+                          const isFirstOfGroup = idx > 0 && task.location !== displayedTasks[idx - 1].location;
+                          const isLastOfGroup = idx < displayedTasks.length - 1 && task.location !== displayedTasks[idx + 1].location;
+                          const rowBorder = idx === 0 ? 'none' : (isFirstOfGroup ? GROUP_BORDER : ROW_BORDER);
+                          const padTop = isFirstOfGroup ? GROUP_V_PADDING : ROW_V_PADDING;
+                          const padBottom = isLastOfGroup ? GROUP_V_PADDING : ROW_V_PADDING;
+                          const tdStyle = { padding: `${padTop}px 10px ${padBottom}px`, verticalAlign: 'top' };
+
+                          return (
+                            <tr key={task.id} style={{ borderTop: rowBorder }}>
+                              <td style={tdStyle}>
+                                <Checkbox checked={selectedIds.includes(task.id)} onChange={() => toggleSelectOne(task.id)} />
+                              </td>
+                              <td style={tdStyle}>
+                                <Button variant="plain" onClick={() => navigate(`/buyer/counting-tasks/${task.id}`)}>{task.task_no}</Button>
+                              </td>
+                              <td style={{ ...tdStyle, whiteSpace: 'normal', wordBreak: 'break-word', maxWidth: '160px' }}>{typesDisplay}</td>
+                              <td style={tdStyle}>{task.location}</td>
+                              <td style={tdStyle}>{task.inaccurate_count > 0 ? String(task.inaccurate_count) : ''}</td>
+                              <td style={tdStyle}>{formatDate(task.created_at)}</td>
+                              <td style={tdStyle}>{getStatusBadge(task.status)}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </BlockStack>
             </Card>
           </BlockStack>
