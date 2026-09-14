@@ -46,7 +46,9 @@ const LOCATION_ORDER = new Map(LOCATIONS.map((loc, i) => [loc, i]));
 const ROW_V_PADDING = 10;
 const GROUP_V_PADDING = Math.round(ROW_V_PADDING * 1.3);
 const ROW_BORDER = '1px solid #f1f1f1';
-const GROUP_BORDER = '2px solid #6d7175';
+// Same 1px weight as ROW_BORDER — only the color darkens to stand out from
+// the light same-location divider (per user feedback: darker, not thicker).
+const GROUP_BORDER = '1px solid #202223';
 
 function formatDate(dateStr) {
   if (!dateStr) return '';
@@ -284,23 +286,33 @@ function ZeroQtyReport() {
               </InlineStack>
             </Card>
 
-            <Card>
+            {/* padding="0" on the Card so the table (and its location-boundary
+                dividers) can be genuinely flush with the card's left/right
+                edges; padding is re-applied manually below to every
+                non-table child so they don't visually touch the edges. */}
+            <Card padding="0">
               <BlockStack gap="300">
-                <InlineStack align="end" gap="200">
-                  <Button disabled={selectedIds.length === 0 || committing} onClick={handleCommitSelected} loading={committing}>
-                    Commit selected
-                  </Button>
-                  <Button onClick={handleCommitAll} loading={committing}>Commit all</Button>
-                  <Button tone="critical" disabled={selectedIds.length === 0} onClick={handleDelete}>Delete</Button>
-                  <Button disabled={selectedIds.length === 0} onClick={handleArchive}>Archive</Button>
-                </InlineStack>
+                <div style={{ padding: '16px 16px 0' }}>
+                  <InlineStack align="end" gap="200">
+                    <Button disabled={selectedIds.length === 0 || committing} onClick={handleCommitSelected} loading={committing}>
+                      Commit selected
+                    </Button>
+                    <Button onClick={handleCommitAll} loading={committing}>Commit all</Button>
+                    <Button tone="critical" disabled={selectedIds.length === 0} onClick={handleDelete}>Delete</Button>
+                    <Button disabled={selectedIds.length === 0} onClick={handleArchive}>Archive</Button>
+                  </InlineStack>
+                </div>
 
                 {loading ? (
-                  <InlineStack align="center"><Spinner /></InlineStack>
+                  <div style={{ padding: '16px' }}>
+                    <InlineStack align="center"><Spinner /></InlineStack>
+                  </div>
                 ) : sortedReports.length === 0 ? (
-                  <Text tone="subdued" alignment="center">No reports found.</Text>
+                  <div style={{ padding: '16px' }}>
+                    <Text tone="subdued" alignment="center">No reports found.</Text>
+                  </div>
                 ) : (
-                  <div style={{ overflowX: 'auto' }}>
+                  <div style={{ overflowX: 'auto', paddingBottom: '16px' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                       <thead>
                         <tr style={{ borderBottom: '2px solid #e1e3e5' }}>
