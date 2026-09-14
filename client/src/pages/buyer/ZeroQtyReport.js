@@ -39,16 +39,23 @@ const LOCATION_ORDER = new Map(LOCATIONS.map((loc, i) => [loc, i]));
 // to render as one continuous line: DataTable lays out each cell
 // independently, so a per-cell border comes out broken/segmented rather
 // than a single line spanning the row. Same-location rows keep their normal
-// thin divider and spacing; a location-group boundary gets a
-// darker/thicker divider with 130% of the normal vertical spacing on both
-// sides of it (extra padding-top on the row that starts the new group,
-// extra padding-bottom on the row that ends the previous one).
+// thin divider, inset from the card edges like the rest of the table; a
+// location-group boundary is a separate full-bleed spacer <tr> (see the
+// "sep-" row below) with a darker divider that spans edge-to-edge and 130%
+// of the normal vertical spacing on both sides of it.
 const ROW_V_PADDING = 10;
 const GROUP_V_PADDING = Math.round(ROW_V_PADDING * 1.3);
 const ROW_BORDER = '1px solid #f1f1f1';
 // Same 1px weight as ROW_BORDER — only the color darkens to stand out from
 // the light same-location divider (per user feedback: darker, not thicker).
 const GROUP_BORDER = '1px solid #202223';
+// Horizontal padding of the table's own container (see the table-wrapping
+// div below). The full-bleed group-boundary spacer row negates exactly
+// this amount with a matching negative margin so it — and only it — can
+// reach the card's true left/right edges while every normal row divider
+// stays inset like before.
+const TABLE_H_PAD = 16;
+const TOTAL_COLUMNS = 9; // checkbox + Type/Location/Date/Name/SKU/System/Actual/action
 
 function formatDate(dateStr) {
   if (!dateStr) return '';
@@ -312,7 +319,7 @@ function ZeroQtyReport() {
                     <Text tone="subdued" alignment="center">No reports found.</Text>
                   </div>
                 ) : (
-                  <div style={{ overflowX: 'auto', paddingBottom: '16px' }}>
+                  <div style={{ overflowX: 'auto', padding: `0 ${TABLE_H_PAD}px ${TABLE_H_PAD}px` }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                       <thead>
                         <tr style={{ borderBottom: '2px solid #e1e3e5' }}>
@@ -334,15 +341,37 @@ function ZeroQtyReport() {
                         </tr>
                       </thead>
                       <tbody>
-                        {sortedReports.map((report, idx) => {
+                        {sortedReports.flatMap((report, idx) => {
                           const isFirstOfGroup = idx > 0 && report.location !== sortedReports[idx - 1].location;
-                          const isLastOfGroup = idx < sortedReports.length - 1 && report.location !== sortedReports[idx + 1].location;
-                          const rowBorder = idx === 0 ? 'none' : (isFirstOfGroup ? GROUP_BORDER : ROW_BORDER);
-                          const padTop = isFirstOfGroup ? GROUP_V_PADDING : ROW_V_PADDING;
-                          const padBottom = isLastOfGroup ? GROUP_V_PADDING : ROW_V_PADDING;
-                          const tdStyle = { padding: `${padTop}px 10px ${padBottom}px`, verticalAlign: 'top' };
+                          // A group boundary is its own full-bleed spacer row (below), so the
+                          // data row itself only carries the plain divider, and only when it's
+                          // not immediately after a boundary (the spacer already drew a line).
+                          const rowBorder = (idx === 0 || isFirstOfGroup) ? 'none' : ROW_BORDER;
+                          const tdStyle = { padding: `${ROW_V_PADDING}px 10px`, verticalAlign: 'top' };
 
-                          return (
+                          const rowEls = [];
+                          if (isFirstOfGroup) {
+                            rowEls.push(
+                              <tr key={`sep-${report.id}`}>
+                                <td colSpan={TOTAL_COLUMNS} style={{ padding: 0 }}>
+                                  {/* Negative margin cancels the table container's own
+                                      TABLE_H_PAD so only this divider reaches the card's
+                                      true left/right edges; normal row dividers above and
+                                      below stay inset as before. */}
+                                  <div
+                                    style={{
+                                      margin: `0 -${TABLE_H_PAD}px`,
+                                      paddingTop: `${GROUP_V_PADDING - ROW_V_PADDING}px`,
+                                      paddingBottom: `${GROUP_V_PADDING - ROW_V_PADDING}px`,
+                                    }}
+                                  >
+                                    <div style={{ borderTop: GROUP_BORDER }} />
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          }
+                          rowEls.push(
                             <tr key={report.id} style={{ borderTop: rowBorder }}>
                               <td style={tdStyle}>
                                 <Checkbox checked={selectedIds.includes(report.id)} onChange={() => toggleSelectOne(report.id)} />
@@ -358,6 +387,7 @@ function ZeroQtyReport() {
                               <td style={tdStyle}>{renderActionCell(report)}</td>
                             </tr>
                           );
+                          return rowEls;
                         })}
                       </tbody>
                     </table>
