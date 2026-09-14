@@ -244,8 +244,12 @@ async function commitReport(id, customAdjustment) {
     }
   }
 
+  // Every commit now auto-archives the report — no separate manual archive
+  // step required. 'archived' was already a valid status here (the existing
+  // manual archive endpoint writes it), so this just writes it directly
+  // instead of 'committed'.
   await pool.query(
-    "UPDATE zero_qty_reports SET status = 'committed', committed_at = NOW() WHERE id = $1",
+    "UPDATE zero_qty_reports SET status = 'archived', committed_at = NOW() WHERE id = $1",
     [id]
   );
 }

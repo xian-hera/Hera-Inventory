@@ -282,7 +282,7 @@ function BuyerStockLosses() {
 
   return (
     <Page
-      title="Stock Losses"
+      title="Stock Loss"
       backAction={{ onAction: () => navigate('/buyer') }}
     >
       <Layout>

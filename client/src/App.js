@@ -41,7 +41,6 @@ import InfluencerDetail from './pages/crm/InfluencerDetail';
 import EmployeeCap from './pages/crm/EmployeeCap';
 import ProductDatabaseSettings from './pages/buyer/ProductDatabaseSettings';
 import BuyerPOReceiving from './pages/buyer/BuyerPOReceiving';
-import BuyerPOReceivingHistory from './pages/buyer/BuyerPOReceivingHistory';
 import BuyerPOImportInvoice from './pages/buyer/BuyerPOImportInvoice';
 import BuyerPOInvoiceDetail from './pages/buyer/BuyerPOInvoiceDetail';
 import BuyerPOCommitLater from './pages/buyer/BuyerPOCommitLater';
@@ -93,7 +92,6 @@ function App() {
           <Route path="/buyer/price-change" element={<BuyerPriceChange />} />
           <Route path="/buyer/product-database" element={<ProductDatabaseSettings />} />
           <Route path="/buyer/po-receiving" element={<BuyerPOReceiving />} />
-          <Route path="/buyer/po-receiving/history" element={<BuyerPOReceivingHistory />} />
           <Route path="/buyer/po-receiving/import" element={<BuyerPOImportInvoice />} />
           <Route path="/buyer/po-receiving/pending/:invoiceId" element={<BuyerPOImportInvoice />} />
           <Route path="/buyer/po-receiving/committed/:invoiceId" element={<BuyerPOInvoiceDetail />} />

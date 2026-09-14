@@ -55,7 +55,16 @@ function MultiSelectDropdown({ label, options, selected, onChange, placeholder =
     }
   };
 
-  const displayText = selected.length === 0 ? placeholder : selected.join(', ');
+  // Show each selected value's label (not its raw value) when options are
+  // {value, label} pairs — falls back to the value itself for plain string
+  // options, where value and label are already the same thing, so this is a
+  // no-op for every other caller of this component.
+  const labelForValue = (value) => {
+    const opt = options.find(o => (typeof o === 'string' ? o : o.value) === value);
+    if (!opt) return value;
+    return typeof opt === 'string' ? opt : opt.label;
+  };
+  const displayText = selected.length === 0 ? placeholder : selected.map(labelForValue).join(', ');
 
   return (
     <div style={{ position: 'relative', minWidth: '140px' }}>

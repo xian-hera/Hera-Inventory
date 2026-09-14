@@ -1,12 +1,14 @@
-import React, { useState, useRef, useLayoutEffect, useEffect } from 'react';
+import React, { useState, useRef, useLayoutEffect } from 'react';
 import ReactDOM from 'react-dom';
 
 const MAX_WIDTH_RATIO = 0.8; // never wider than 80% of the viewport, per Hera's spec
 const VIEWPORT_MARGIN = 16;
 
-// A small click-to-toggle "ⓘ" info tooltip. Matches the PO Receiving mockups:
-// clicking the label or the ⓘ opens a white popover with the given text;
-// clicking anywhere else dismisses it. No hover behavior, on purpose.
+// A small "ⓘ" info tooltip. Hovering the label or the ⓘ opens a white
+// popover with the given text immediately; moving the mouse away closes it
+// immediately. (Every InfoTooltip in the app uses this hover behavior —
+// previously this was click-to-toggle, changed per product decision so all
+// tooltips behave the same way everywhere.)
 //
 // The popover is rendered via a portal into document.body with fixed
 // positioning (computed from the trigger's getBoundingClientRect), the same
@@ -35,8 +37,8 @@ function InfoTooltip({ text, children }) {
     popoverIdRef.current = `info-tooltip-popover-${idCounter}`;
   }
 
-  const toggle = () => {
-    if (!open && triggerRef.current) {
+  const showPopover = () => {
+    if (triggerRef.current) {
       anchorRef.current = triggerRef.current.getBoundingClientRect();
       setMeasured(false);
       // Pass 1: render off-screen (but still laid out, so it takes its
@@ -59,8 +61,10 @@ function InfoTooltip({ text, children }) {
         whiteSpace: 'pre-line',
       });
     }
-    setOpen(prev => !prev);
+    setOpen(true);
   };
+
+  const hidePopover = () => setOpen(false);
 
   useLayoutEffect(() => {
     if (!open || measured || !popoverRef.current || !anchorRef.current) return;
@@ -73,33 +77,24 @@ function InfoTooltip({ text, children }) {
     setMeasured(true);
   }, [open, measured]);
 
-  useEffect(() => {
-    if (!open) return;
-    const handleClickOutside = (e) => {
-      const trigger = triggerRef.current;
-      const popover = document.getElementById(popoverIdRef.current);
-      if (trigger && !trigger.contains(e.target) && popover && !popover.contains(e.target)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [open]);
-
   return (
     // alignItems: 'baseline' (not 'center') plus a small relative nudge on
     // the icon itself is what actually tucks the "i" circle up against the
     // last character of the label instead of floating at the row's vertical
     // center — visually reads as part of the text, like a trailing glyph,
     // rather than a separate element off to the side.
-    <span ref={triggerRef} style={{ position: 'relative', display: 'inline-flex', alignItems: 'baseline', gap: '3px' }}>
-      <span style={{ cursor: 'pointer' }} onClick={toggle}>
+    <span
+      ref={triggerRef}
+      style={{ position: 'relative', display: 'inline-flex', alignItems: 'baseline', gap: '3px' }}
+      onMouseEnter={showPopover}
+      onMouseLeave={hidePopover}
+    >
+      <span style={{ cursor: 'default' }}>
         {children}
       </span>
       <span
-        onClick={toggle}
         style={{
-          cursor: 'pointer', fontSize: '10px', color: '#6d7175', borderRadius: '50%',
+          cursor: 'default', fontSize: '10px', color: '#6d7175', borderRadius: '50%',
           border: '1px solid #6d7175', width: '13px', height: '13px', display: 'inline-flex',
           alignItems: 'center', justifyContent: 'center', lineHeight: 1,
           position: 'relative', top: '1px', flexShrink: 0,

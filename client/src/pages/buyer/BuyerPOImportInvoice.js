@@ -60,10 +60,13 @@ const EFFECTIVE_COST_TOOLTIP_USD = `effective cost = invoice cost + adjustment +
 const EFFECTIVE_COST_TOOLTIP_CAD = `effective cost = invoice cost + adjustment + unit discount`;
 
 const STATUS_PILLS = {
-  pending: { label: 'Commit later', tone: 'attention' },
+  pending: { label: 'Pending', tone: 'attention' },
   sent_to_store: { label: 'Sent to store', tone: 'info' },
   store_counted: { label: 'Store counted', tone: 'success' },
   committed: { label: 'committed', tone: 'success' },
+  // Every invoice auto-archives on commit (item 9) — the archived pill
+  // renders identically to the committed one.
+  archived: { label: 'committed', tone: 'success' },
 };
 
 // Accepts "2026-09-01" (native date input) as-is; also tolerates a bare
@@ -103,12 +106,12 @@ function BuyerPOImportInvoice() {
   const [sendingToStore, setSendingToStore] = useState(false);
   const [status, setStatus] = useState('pending');
 
-  // Reference number is now a free-text, optional field edited inline next
-  // to the title — no more separate "Card 1" wizard step to save/skip it.
+  // Reference Name (item 7) — a free-text, optional field now shown as a
+  // plain text box in Card 1 (between Location and Date), and mirrored in
+  // the post-confirm summary row so it stays editable after confirming too
+  // (same dual-placement pattern already used for Invoice Date below).
   const [invoiceNumber, setInvoiceNumber] = useState('');
   const [poNumber, setPoNumber] = useState(null);
-  const [editingReference, setEditingReference] = useState(false);
-  const [referenceDraft, setReferenceDraft] = useState('');
   const [savingReference, setSavingReference] = useState(false);
 
   // Invoice date — the date printed on the supplier's invoice itself, not
@@ -280,11 +283,12 @@ function BuyerPOImportInvoice() {
     return () => clearInterval(interval);
   }, [invoiceCommitting, invoiceId, loadInvoiceDetail]);
 
-  // Once the background commit finishes (status flips to 'committed'),
-  // move on to the committed-detail page — same destination the old
-  // synchronous flow navigated to immediately after a successful commit.
+  // Once the background commit finishes (status flips to 'committed', or —
+  // now that every commit auto-archives — straight to 'archived'), move on
+  // to the committed-detail page — same destination the old synchronous
+  // flow navigated to immediately after a successful commit.
   useEffect(() => {
-    if (status === 'committed' && invoiceId) {
+    if ((status === 'committed' || status === 'archived') && invoiceId) {
       navigate(`/buyer/po-receiving/committed/${invoiceId}`, { replace: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -293,7 +297,7 @@ function BuyerPOImportInvoice() {
   // ── Discard-and-reprocess guard ─────────────────────────────────────────
   const guardEdit = useCallback((applyChange) => {
     if (items.length > 0) {
-      if (!window.confirm('Editing this will discard the processed result. You will need to click "Start to process" again. Continue?')) {
+      if (!window.confirm('Editing this will discard the processed result. You will need to click "Process" again. Continue?')) {
         return;
       }
       setItems([]);
@@ -464,31 +468,25 @@ function BuyerPOImportInvoice() {
     }
   };
 
-  // ── Reference number (inline, replaces the old Card 1 wizard step) ──────
-  const openReferenceEditor = () => {
-    setReferenceDraft(invoiceNumber || '');
-    setEditingReference(true);
-  };
+  // ── Reference Name (item 7) — plain text box, lives in Card 1 between
+  // Location and Date pre-confirm, and mirrored post-confirm ─────────────
+  // Typing just updates local state; the value is persisted on blur (if an
+  // invoice row already exists) or otherwise goes out with the initial
+  // Process/search-add request, same as before.
+  const handleReferenceChange = (val) => setInvoiceNumber(val);
 
-  const saveReference = async () => {
-    if (!invoiceId) {
-      // Not yet processed — nothing persisted to a server row yet, just keep
-      // it locally; it goes out as part of the Start to process request.
-      setInvoiceNumber(referenceDraft.trim());
-      setEditingReference(false);
-      return;
-    }
+  const saveReferenceOnBlur = async () => {
+    if (!invoiceId) return; // not yet persisted — goes out with the create/process request
     setSavingReference(true);
     try {
       const res = await fetch(`/api/po-invoices/pending/${invoiceId}/reference`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ referenceNumber: referenceDraft.trim() || null }),
+        body: JSON.stringify({ referenceNumber: invoiceNumber.trim() || null }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       setInvoiceNumber(data.invoice_number || '');
-      setEditingReference(false);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -1029,7 +1027,7 @@ function BuyerPOImportInvoice() {
 
   if (loading) {
     return (
-      <Page title="Import an invoice" backAction={{ onAction: () => navigate('/buyer/po-receiving') }}>
+      <Page title="Create New Purchase Order" backAction={{ onAction: () => navigate('/buyer/po-receiving') }}>
         <Layout><Layout.Section><InlineStack align="center"><Spinner /></InlineStack></Layout.Section></Layout>
       </Page>
     );
@@ -1074,7 +1072,11 @@ function BuyerPOImportInvoice() {
     if (manualDiff !== 0) return manualDiff;
     const costDiff = (isHighlighted(b) ? 1 : 0) - (isHighlighted(a) ? 1 : 0);
     if (costDiff !== 0) return costDiff;
-    return (isQtyMismatch(b) ? 1 : 0) - (isQtyMismatch(a) ? 1 : 0);
+    const qtyDiff = (isQtyMismatch(b) ? 1 : 0) - (isQtyMismatch(a) ? 1 : 0);
+    if (qtyDiff !== 0) return qtyDiff;
+    // Lowest-priority tiebreaker (item 8): alphabetical by Name, only once
+    // every highlight/pin-to-top rule above is satisfied.
+    return (a.name || '').localeCompare(b.name || '');
   });
   const subtotalCad = items.reduce((sum, it) => sum + (Number(it.quantity) || 0) * (Number(it.effective_cost) || 0), 0);
   const subtotalUsd = isUsdSupplier
@@ -1085,13 +1087,13 @@ function BuyerPOImportInvoice() {
 
   const headerActions = status === 'sent_to_store'
     ? [{ content: 'Cancel Store Task', destructive: true, onAction: handleCancelStoreTask, disabled }]
-    : status === 'committed'
+    : (status === 'committed' || status === 'archived')
       ? undefined
       : [{ content: 'Discard', destructive: true, onAction: handleDiscard, disabled }];
 
   return (
     <Page
-      title={invoiceId ? (poNumber || invoiceNumber || 'Invoice') : 'Import an invoice'}
+      title={invoiceId ? (poNumber || invoiceNumber || 'Invoice') : 'Create New Purchase Order'}
       titleMetadata={invoiceId ? <Badge tone={pill.tone}>{pill.label}</Badge> : undefined}
       backAction={{ onAction: () => navigate('/buyer/po-receiving') }}
       secondaryActions={headerActions}
@@ -1104,36 +1106,6 @@ function BuyerPOImportInvoice() {
                 <div style={{ whiteSpace: 'pre-line' }}>{error}</div>
               </Banner>
             )}
-
-            {/* Reference number — inline, next to the title area, replacing
-                the old separate wizard step. */}
-            <InlineStack gap="200" blockAlign="center">
-              {editingReference ? (
-                <InlineStack gap="150" blockAlign="center">
-                  <div style={{ width: 220 }}>
-                    <TextField
-                      label="" labelHidden
-                      placeholder="reference number (optional)"
-                      value={referenceDraft}
-                      onChange={setReferenceDraft}
-                      autoComplete="off"
-                      disabled={savingReference}
-                    />
-                  </div>
-                  <Button size="slim" onClick={saveReference} loading={savingReference}>Save</Button>
-                  <Button size="slim" onClick={() => setEditingReference(false)} disabled={savingReference}>Cancel</Button>
-                </InlineStack>
-              ) : invoiceNumber ? (
-                <Text tone="subdued" variant="bodySm">
-                  Ref: {invoiceNumber}{' '}
-                  <span style={{ cursor: 'pointer', textDecoration: 'underline' }} onClick={openReferenceEditor}>edit</span>
-                </Text>
-              ) : (
-                <span style={{ cursor: 'pointer', textDecoration: 'underline', fontSize: '13px', color: '#6d7175' }} onClick={openReferenceEditor}>
-                  + add reference number
-                </span>
-              )}
-            </InlineStack>
 
             {!invoiceId && items.length === 0 && (
               <Text tone="subdued" variant="bodySm">if you leave this page before processing, all input info will be discarded.</Text>
@@ -1175,7 +1147,7 @@ function BuyerPOImportInvoice() {
                     </div>
 
                     <div style={{ minWidth: 160 }}>
-                      <div style={{ fontSize: '13px', color: '#6d7175', marginBottom: '4px', lineHeight: '1.4', fontWeight: '400' }}>Receiving to</div>
+                      <div style={{ fontSize: '13px', color: '#6d7175', marginBottom: '4px', lineHeight: '1.4', fontWeight: '400' }}>Receiving Location</div>
                       <select
                         value={location}
                         onChange={(e) => setLocation(e.target.value)}
@@ -1189,6 +1161,18 @@ function BuyerPOImportInvoice() {
                         <option value="">location</option>
                         {LOCATIONS.map(l => <option key={l} value={l}>{l}</option>)}
                       </select>
+                    </div>
+
+                    <div style={{ minWidth: 180 }}>
+                      <TextField
+                        label="Reference Name"
+                        placeholder="optional"
+                        value={invoiceNumber}
+                        onChange={handleReferenceChange}
+                        onBlur={saveReferenceOnBlur}
+                        autoComplete="off"
+                        disabled={disabled}
+                      />
                     </div>
 
                     <div style={{ minWidth: 160 }}>
@@ -1217,8 +1201,11 @@ function BuyerPOImportInvoice() {
                 </BlockStack>
               </Card>
             ) : (
-              <InlineStack gap="600" blockAlign="center" wrap>
-                <Text fontWeight="semibold">{supplier.name}</Text>
+              <InlineStack gap="600" blockAlign="end" wrap>
+                <BlockStack gap="050">
+                  <Text variant="bodySm" tone="subdued">Supplier</Text>
+                  <Text fontWeight="semibold">{supplier.name}</Text>
+                </BlockStack>
                 <Text tone="subdued">{supplier.currency}</Text>
                 {editingFxRate ? (
                   <InlineStack gap="150" blockAlign="center">
@@ -1233,10 +1220,22 @@ function BuyerPOImportInvoice() {
                 <Button size="slim" onClick={() => setEditingFxRate(v => !v)} disabled={supplier.currency !== 'USD'}>
                   {editingFxRate ? 'Cancel' : 'Edit'}
                 </Button>
-                <Text tone="subdued">Receiving to: {location}</Text>
+                <Text tone="subdued">Receiving Location: {location}</Text>
+                <div style={{ width: 180 }}>
+                  <TextField
+                    label="Reference Name"
+                    placeholder="optional"
+                    value={invoiceNumber}
+                    onChange={handleReferenceChange}
+                    onBlur={saveReferenceOnBlur}
+                    autoComplete="off"
+                    disabled={disabled || !itemsEditable}
+                  />
+                </div>
+                {savingReference && <Spinner size="small" />}
                 <div style={{ width: 160 }}>
                   <TextField
-                    label="Invoice date" labelHidden
+                    label="Invoice Date"
                     type="date"
                     value={invoiceDate}
                     onChange={handleDateChange}
@@ -1258,17 +1257,17 @@ function BuyerPOImportInvoice() {
                 <div style={{ display: 'grid', gridTemplateColumns: '20% 1fr 20% 20%', columnGap: '16px', rowGap: '8px' }}>
                   <div style={{ gridColumn: '1', gridRow: '1' }}>
                     <InfoTooltip text={CSV_FORMAT_TOOLTIP}>
-                      <Text variant="bodySm">CSV construction requirement</Text>
+                      <Text variant="bodySm">CSV Headers</Text>
                     </InfoTooltip>
                   </div>
                   <div style={{ gridColumn: '2', gridRow: '1' }}>
                     <InfoTooltip text={LINEITEM_SEARCH_TOOLTIP}>
-                      <Text variant="bodySm">Search line item</Text>
+                      <Text variant="bodySm">Search Logic</Text>
                     </InfoTooltip>
                   </div>
                   <div style={{ gridColumn: '3', gridRow: '1' }}>
                     <InfoTooltip text={ADJUSTMENT_TOOLTIP}>
-                      <Text variant="bodySm">Add adjustment</Text>
+                      <Text variant="bodySm">Adjustment</Text>
                     </InfoTooltip>
                   </div>
 
@@ -1343,7 +1342,7 @@ function BuyerPOImportInvoice() {
                   </div>
                   <div style={{ gridColumn: '4', gridRow: '2' }}>
                     <Button variant="primary" fullWidth onClick={handleStartToProcess} loading={processing} disabled={disabled}>
-                      Start to process
+                      Process
                     </Button>
                   </div>
                 </div>

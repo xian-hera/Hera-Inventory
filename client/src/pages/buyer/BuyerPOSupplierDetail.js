@@ -170,7 +170,7 @@ function BuyerPOSupplierDetail() {
       title={supplier.name}
       backAction={{ onAction: () => navigate('/buyer/po-receiving/suppliers') }}
       secondaryActions={[
-        { content: 'Delete supplier', destructive: true, onAction: handleDelete },
+        { content: 'Delete Supplier', destructive: true, onAction: handleDelete },
         { content: 'Update SKU', onAction: handleUpdateSku, loading: updateStatus?.isRunning, disabled: updateStatus?.isRunning },
       ]}
     >
@@ -232,7 +232,7 @@ function BuyerPOSupplierDetail() {
                 </BlockStack>
 
                 <BlockStack gap="100">
-                  <Text variant="bodySm" tone="subdued">FX rate</Text>
+                  <Text variant="bodySm" tone="subdued">FX Rate</Text>
                   {editingField === 'fxRate' ? (
                     <InlineStack gap="200" blockAlign="center">
                       <div style={{ width: 100 }}>
@@ -250,7 +250,7 @@ function BuyerPOSupplierDetail() {
                 </BlockStack>
 
                 <BlockStack gap="100">
-                  <Text variant="bodySm" tone="subdued">Types carrying</Text>
+                  <Text variant="bodySm" tone="subdued">Types</Text>
                   {editingField === 'types' ? (
                     <InlineStack gap="200" blockAlign="center">
                       <div style={{ minWidth: 220 }}>
@@ -296,27 +296,27 @@ function BuyerPOSupplierDetail() {
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                     <thead>
                       <tr style={{ borderBottom: '2px solid #e1e3e5' }}>
-                        <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Name</th>
-                        <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>code</th>
-                        <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>SKU</th>
                         <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Type</th>
-                        <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Pack size</th>
+                        <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>SKU</th>
+                        <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Name</th>
+                        <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Supplier ID</th>
                         <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>
                           <InfoTooltip text="value in variant metafield custom.supplier_a/b/c_cost">
-                            Supplier cost
+                            Supplier Cost
                           </InfoTooltip>
                         </th>
+                        <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Package Qty</th>
                       </tr>
                     </thead>
                     <tbody>
                       {skus.map(s => (
                         <tr key={s.id} style={{ borderBottom: '1px solid #f1f1f1' }}>
+                          <td style={{ padding: '10px' }}>{s.product_type || '-'}</td>
+                          <td style={{ padding: '10px' }}>{s.sku}</td>
                           <td style={{ padding: '10px' }}>{s.name || '-'}</td>
                           <td style={{ padding: '10px' }}>{s.code}</td>
-                          <td style={{ padding: '10px' }}>{s.sku}</td>
-                          <td style={{ padding: '10px' }}>{s.product_type || '-'}</td>
-                          <td style={{ padding: '10px' }}>{s.pack_size ?? '-'}</td>
                           <td style={{ padding: '10px' }}>{formatCost(s.metafield_cost)}</td>
+                          <td style={{ padding: '10px' }}>{s.pack_size ?? '-'}</td>
                         </tr>
                       ))}
                     </tbody>

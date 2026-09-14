@@ -391,13 +391,13 @@ function BuyerTransferDetail() {
                         <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Name</th>
                         {/* from/to qty now shown in every status (2026-09-10 addendum) — see
                             file-level comment above. */}
-                        <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>{transfer.from_location} qty</th>
-                        <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>{transfer.to_location} qty</th>
+                        <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>{transfer.from_location} Qty</th>
+                        <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>{transfer.to_location} Qty</th>
                         <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>
-                          {isCommitted ? 'Transferred qty' : 'Transfer qty'}
+                          {isCommitted ? 'Transferred Qty' : 'Transfer Qty'}
                         </th>
                         {isCounted && (
-                          <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Received qty</th>
+                          <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Received Qty</th>
                         )}
                       </tr>
                     </thead>

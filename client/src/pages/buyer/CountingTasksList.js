@@ -51,12 +51,12 @@ function getStatusBadge(status) {
   return <Badge tone={toneMap[status] || ''}>{status}</Badge>;
 }
 
-const SORT_CYCLE = [null, 'desc', 'asc'];
-function sortLabel(order) {
-  if (order === 'desc') return 'Sort ↓';
-  if (order === 'asc')  return 'Sort ↑';
-  return 'Sort';
-}
+// Always-on location sort (item 1: the old toggleable Sort button was
+// removed — the list is now unconditionally grouped by location). Order
+// follows LOCATIONS' own M/E/C/O/Q/H group sequence (MTL, EDM, CAL, OTT,
+// QC, HQ prefixes), which is already how that array is laid out above.
+const LOCATION_ORDER = new Map(LOCATIONS.map((loc, i) => [loc, i]));
+const DIVIDER_STYLE = { borderTop: '2px solid #c9cccf', paddingTop: '8px', marginTop: '8px' };
 
 function CountingTasksList() {
   const navigate = useNavigate();
@@ -68,7 +68,6 @@ function CountingTasksList() {
   const [selectedStatuses, setSelectedStatuses]   = useState(['counting','reviewing','committed','auto_committed','draft']);
   const [date, setDate]                           = useState('ALL');
   const [selectedIds, setSelectedIds]             = useState([]);
-  const [sortOrder, setSortOrder]                 = useState(null);
 
   const fetchTasks = useCallback(async () => {
     setLoading(true);
@@ -91,20 +90,16 @@ function CountingTasksList() {
 
   useEffect(() => { fetchTasks(); }, [fetchTasks]);
 
-  const handleSort = () => {
-    setSortOrder(prev => {
-      const idx = SORT_CYCLE.indexOf(prev);
-      return SORT_CYCLE[(idx + 1) % SORT_CYCLE.length];
-    });
-  };
-
+  // Always grouped/sorted by location (M/E/C/O/Q/H group order); a stable
+  // sort keeps each group's original relative order (as returned by the
+  // API) intact.
   const displayedTasks = useMemo(() => {
-    if (!sortOrder) return tasks;
     return [...tasks].sort((a, b) => {
-      const cmp = a.task_no.localeCompare(b.task_no);
-      return sortOrder === 'desc' ? -cmp : cmp;
+      const ai = LOCATION_ORDER.has(a.location) ? LOCATION_ORDER.get(a.location) : LOCATIONS.length;
+      const bi = LOCATION_ORDER.has(b.location) ? LOCATION_ORDER.get(b.location) : LOCATIONS.length;
+      return ai - bi;
     });
-  }, [tasks, sortOrder]);
+  }, [tasks]);
 
   const toggleSelectAll = () => {
     setSelectedIds(selectedIds.length === tasks.length ? [] : tasks.map(t => t.id));
@@ -136,20 +131,25 @@ function CountingTasksList() {
     fetchTasks();
   };
 
-  const rows = displayedTasks.map(task => {
+  const rows = displayedTasks.map((task, idx) => {
     // 显示 task 的 types，多个用 , 分隔，使用缩写
     const typesDisplay = Array.isArray(task.types) && task.types.length > 0
       ? task.types.map(typeDisplay).join(', ')
       : '-';
 
+    // Visual divider: a top border on every cell of the first row of a new
+    // location, so it reads as a horizontal line spanning the whole row.
+    const isNewLocationGroup = idx > 0 && task.location !== displayedTasks[idx - 1].location;
+    const cellStyle = isNewLocationGroup ? DIVIDER_STYLE : undefined;
+
     return [
-      <Checkbox checked={selectedIds.includes(task.id)} onChange={() => toggleSelectOne(task.id)} />,
-      <Button variant="plain" onClick={() => navigate(`/buyer/counting-tasks/${task.id}`)}>{task.task_no}</Button>,
-      <div style={{ whiteSpace: 'normal', wordBreak: 'break-word', maxWidth: '160px' }}>{typesDisplay}</div>,
-      task.location,
-      task.inaccurate_count > 0 ? String(task.inaccurate_count) : '',
-      formatDate(task.created_at),
-      getStatusBadge(task.status),
+      <div style={cellStyle}><Checkbox checked={selectedIds.includes(task.id)} onChange={() => toggleSelectOne(task.id)} /></div>,
+      <div style={cellStyle}><Button variant="plain" onClick={() => navigate(`/buyer/counting-tasks/${task.id}`)}>{task.task_no}</Button></div>,
+      <div style={{ ...cellStyle, whiteSpace: 'normal', wordBreak: 'break-word', maxWidth: '160px' }}>{typesDisplay}</div>,
+      <div style={cellStyle}>{task.location}</div>,
+      <div style={cellStyle}>{task.inaccurate_count > 0 ? String(task.inaccurate_count) : ''}</div>,
+      <div style={cellStyle}>{formatDate(task.created_at)}</div>,
+      <div style={cellStyle}>{getStatusBadge(task.status)}</div>,
     ];
   });
 
@@ -204,22 +204,13 @@ function CountingTasksList() {
 
             <Card>
               <BlockStack gap="300">
-                <InlineStack align="space-between" gap="200">
-                  <Button
-                    onClick={handleSort}
-                    pressed={sortOrder !== null}
-                    tone={sortOrder !== null ? 'success' : undefined}
-                  >
-                    {sortLabel(sortOrder)}
+                <InlineStack align="end" gap="200">
+                  <Button tone="critical" disabled={selectedIds.length === 0} onClick={handleDelete}>
+                    Delete selected
                   </Button>
-                  <InlineStack gap="200">
-                    <Button tone="critical" disabled={selectedIds.length === 0} onClick={handleDelete}>
-                      Delete selected
-                    </Button>
-                    <Button disabled={selectedIds.length === 0} onClick={handleArchive}>
-                      Archive selected
-                    </Button>
-                  </InlineStack>
+                  <Button disabled={selectedIds.length === 0} onClick={handleArchive}>
+                    Archive selected
+                  </Button>
                 </InlineStack>
 
                 <DataTable

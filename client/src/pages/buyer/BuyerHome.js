@@ -67,7 +67,7 @@ function BuyerHome() {
             {/* Stock Losses */}
             <Button size="large" fullWidth onClick={() => navigate('/buyer/stock-losses')}>
               <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                Stock Losses
+                Stock Loss
                 <Badge count={badges.stockLosses} />
               </span>
             </Button>
@@ -87,7 +87,7 @@ function BuyerHome() {
 
             {/* PO Receiving */}
             <Button size="large" fullWidth onClick={() => navigate('/buyer/po-receiving')}>
-              PO Receiving
+              Purchase Orders
             </Button>
 
             {/* Settings */}

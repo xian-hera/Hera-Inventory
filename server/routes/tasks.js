@@ -356,20 +356,21 @@ async function runTaskCommit(id, itemIds) {
       );
       const allGreen = parseInt(inaccurateTotal.rows[0].count) === 0;
 
-      if (allGreen) {
-        const currentNotes = (await pool.query('SELECT notes FROM tasks WHERE id = $1', [id])).rows[0]?.notes || [];
-        const autoNote = { text: 'Automatically committed and archived', created_at: new Date().toISOString() };
-        const updatedNotes = [...currentNotes, autoNote];
-        await pool.query(
-          "UPDATE tasks SET status = 'archived', notes = $1, updated_at = NOW() WHERE id = $2",
-          [JSON.stringify(updatedNotes), id]
-        );
-      } else {
-        await pool.query(
-          "UPDATE tasks SET status = 'committed', updated_at = NOW() WHERE id = $1",
-          [id]
-        );
-      }
+      // Every commit — whether every item came back green (allGreen) or not
+      // — now auto-archives the task; there is no longer a separate manual
+      // archive step. The auto-note text is kept accurate to which case
+      // happened, since a partial (not-all-green) commit is still worth
+      // flagging as such even though both cases now land on 'archived'.
+      const currentNotes = (await pool.query('SELECT notes FROM tasks WHERE id = $1', [id])).rows[0]?.notes || [];
+      const autoNote = {
+        text: allGreen ? 'Automatically committed and archived' : 'Committed and automatically archived',
+        created_at: new Date().toISOString(),
+      };
+      const updatedNotes = [...currentNotes, autoNote];
+      await pool.query(
+        "UPDATE tasks SET status = 'archived', notes = $1, updated_at = NOW() WHERE id = $2",
+        [JSON.stringify(updatedNotes), id]
+      );
     }
   } catch (e) {
     console.error(`runTaskCommit fatal error for task ${id}:`, e.message);

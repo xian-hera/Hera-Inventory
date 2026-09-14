@@ -6,10 +6,32 @@ import { useNavigate } from 'react-router-dom';
 import MultiSelectDropdown from '../../components/MultiSelectDropdown';
 
 const STATUS_PILLS = {
-  pending: { label: 'Commit later', tone: 'attention' },
+  pending: { label: 'Pending', tone: 'attention' },
   sent_to_store: { label: 'Sent to store', tone: 'info' },
   store_counted: { label: 'Store counted', tone: 'success' },
+  committed: { label: 'committed', tone: 'success' },
+  // Every invoice auto-archives on commit (item 9) — the archived pill
+  // renders identically to the committed one.
+  archived: { label: 'committed', tone: 'success' },
 };
+
+// Fixed status filter options (item 10) — no longer derived from whatever
+// statuses happen to be present in the current result set. 'committed' is a
+// permanent legacy synonym for 'archived' (rows written before commits
+// started auto-archiving), so it's folded into the "Archived" filter option
+// rather than getting its own.
+const STATUS_FILTER_OPTIONS = [
+  { value: 'pending', label: 'Pending' },
+  { value: 'sent_to_store', label: 'Sent to store' },
+  { value: 'store_counted', label: 'Store counted' },
+  { value: 'archived', label: 'Archived' },
+];
+const DEFAULT_STATUS_FILTER = ['pending', 'sent_to_store', 'store_counted'];
+
+function normalizedStatus(inv) {
+  const s = inv.status || 'pending';
+  return s === 'committed' ? 'archived' : s;
+}
 
 function BuyerPOCommitLater() {
   const navigate = useNavigate();
@@ -27,7 +49,7 @@ function BuyerPOCommitLater() {
   // empty selection on any of the three means "no filter on that column".
   // The three filters combine with each other, and with the search box,
   // as a plain intersection — every active constraint must match.
-  const [statusFilter, setStatusFilter] = useState([]);
+  const [statusFilter, setStatusFilter] = useState(DEFAULT_STATUS_FILTER);
   const [locationFilter, setLocationFilter] = useState([]);
   const [supplierFilter, setSupplierFilter] = useState([]);
 
@@ -69,10 +91,6 @@ function BuyerPOCommitLater() {
     fetchInvoices('');
   };
 
-  const statusOptions = useMemo(() => {
-    const seen = new Set(invoices.map(inv => inv.status || 'pending'));
-    return [...seen].map(s => ({ value: s, label: (STATUS_PILLS[s] || STATUS_PILLS.pending).label }));
-  }, [invoices]);
   const locationOptions = useMemo(
     () => [...new Set(invoices.map(inv => inv.location).filter(Boolean))].sort(),
     [invoices]
@@ -83,15 +101,29 @@ function BuyerPOCommitLater() {
   );
 
   const filteredInvoices = useMemo(() => invoices.filter(inv => {
-    if (statusFilter.length > 0 && !statusFilter.includes(inv.status || 'pending')) return false;
+    // Status is now a fixed, always-active multi-select (item 10) — unlike
+    // Location/Supplier below, an empty selection here means "show nothing",
+    // not "no filter" (there's no dynamic "ALL" placeholder value for it
+    // any more).
+    if (!statusFilter.includes(normalizedStatus(inv))) return false;
     if (locationFilter.length > 0 && !locationFilter.includes(inv.location)) return false;
     if (supplierFilter.length > 0 && !supplierFilter.includes(inv.supplier_name)) return false;
     return true;
   }), [invoices, statusFilter, locationFilter, supplierFilter]);
 
+  const archivedSelected = statusFilter.includes('archived');
+  const isDefaultStatusFilter = statusFilter.length === DEFAULT_STATUS_FILTER.length
+    && DEFAULT_STATUS_FILTER.every(s => statusFilter.includes(s));
+
   // Committing rows can't be (de)selected — they're already locked into the
-  // commit that's running for them.
-  const selectableInvoices = useMemo(() => filteredInvoices.filter(i => !i.committing), [filteredInvoices]);
+  // commit that's running for them. Committed/archived rows are read-only
+  // history now that this list shows every status (item 6) — nothing left
+  // to commit or bulk-delete on them here (use the row's own Delete action
+  // on the committed-detail page instead).
+  const selectableInvoices = useMemo(
+    () => filteredInvoices.filter(i => !i.committing && i.status !== 'committed' && i.status !== 'archived'),
+    [filteredInvoices]
+  );
 
   const toggleSelectOne = (id) =>
     setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
@@ -150,12 +182,16 @@ function BuyerPOCommitLater() {
     <Checkbox
       checked={selectedIds.includes(inv.id)}
       onChange={() => toggleSelectOne(inv.id)}
-      disabled={inv.committing}
+      disabled={inv.committing || inv.status === 'committed' || inv.status === 'archived'}
     />,
     <BlockStack gap="0">
       <span
         style={{ cursor: 'pointer', textDecoration: 'underline' }}
-        onClick={() => navigate(`/buyer/po-receiving/pending/${inv.id}`)}
+        onClick={() => navigate(
+          (inv.status === 'committed' || inv.status === 'archived')
+            ? `/buyer/po-receiving/committed/${inv.id}`
+            : `/buyer/po-receiving/pending/${inv.id}`
+        )}
       >
         {inv.po_number || inv.invoice_number}
       </span>
@@ -187,12 +223,12 @@ function BuyerPOCommitLater() {
 
   return (
     <Page
-      title="Commit later"
+      title="Purchase Order List"
       backAction={{ onAction: () => navigate('/buyer/po-receiving') }}
       secondaryActions={[
-        { content: 'Delete selected', destructive: true, disabled: selectedIds.length === 0, onAction: handleDelete },
-        { content: 'Commit all', disabled: selectableInvoices.length === 0 || committing, onAction: () => handleCommit(selectableInvoices.map(i => i.id)) },
-        { content: 'Commit selected', disabled: selectedIds.length === 0 || committing, onAction: () => handleCommit(selectedIds) },
+        { content: 'Delete Selected', destructive: true, disabled: selectedIds.length === 0, onAction: handleDelete },
+        { content: 'Commit All', disabled: selectableInvoices.length === 0 || committing, onAction: () => handleCommit(selectableInvoices.map(i => i.id)) },
+        { content: 'Commit Selected', disabled: selectedIds.length === 0 || committing, onAction: () => handleCommit(selectedIds) },
       ]}
     >
       <Layout>
@@ -221,13 +257,18 @@ function BuyerPOCommitLater() {
                 </InlineStack>
 
                 <InlineStack gap="200" wrap>
-                  <MultiSelectDropdown
-                    label="Status"
-                    options={statusOptions}
-                    selected={statusFilter}
-                    onChange={setStatusFilter}
-                    placeholder="ALL"
-                  />
+                  {/* Fixed 4-option status filter (item 10) — widened to 2x
+                      the other filters' width so a full comma-separated
+                      selection (up to all four labels) still fits. */}
+                  <div style={{ minWidth: '280px' }}>
+                    <MultiSelectDropdown
+                      label="Status"
+                      options={STATUS_FILTER_OPTIONS}
+                      selected={statusFilter}
+                      onChange={setStatusFilter}
+                      placeholder="ALL"
+                    />
+                  </div>
                   <MultiSelectDropdown
                     label="Location"
                     options={locationOptions}
@@ -242,14 +283,20 @@ function BuyerPOCommitLater() {
                     onChange={setSupplierFilter}
                     placeholder="ALL"
                   />
-                  {(statusFilter.length > 0 || locationFilter.length > 0 || supplierFilter.length > 0) && (
+                  {(!isDefaultStatusFilter || locationFilter.length > 0 || supplierFilter.length > 0) && (
                     <div style={{ paddingTop: '22px' }}>
-                      <Button size="slim" onClick={() => { setStatusFilter([]); setLocationFilter([]); setSupplierFilter([]); }}>
+                      <Button size="slim" onClick={() => { setStatusFilter(DEFAULT_STATUS_FILTER); setLocationFilter([]); setSupplierFilter([]); }}>
                         Clear filters
                       </Button>
                     </div>
                   )}
                 </InlineStack>
+
+                {archivedSelected && (
+                  <Text tone="critical" variant="bodySm">
+                    Archived invoices are saved for 90 days. Beyond will be deleted.
+                  </Text>
+                )}
 
                 {!loading && (
                   <Text tone="subdued" variant="bodySm">
@@ -264,7 +311,7 @@ function BuyerPOCommitLater() {
                 <InlineStack align="center"><Spinner /></InlineStack>
               ) : filteredInvoices.length === 0 ? (
                 <Text tone="subdued" alignment="center">
-                  {invoices.length > 0 ? 'No invoice matches the current filters.' : (search ? 'No matching invoice found.' : 'No invoices waiting to be committed.')}
+                  {invoices.length > 0 ? 'No invoice matches the current filters.' : (search ? 'No matching invoice found.' : 'No invoices found.')}
                 </Text>
               ) : (
                 <div style={{ overflowX: 'auto' }}>
@@ -278,7 +325,7 @@ function BuyerPOCommitLater() {
                             onChange={toggleSelectAll}
                           />
                         </th>
-                        {['PO number', 'Supplier', 'Location', 'Quantity', 'Subtotal', 'Status'].map((h, i) => (
+                        {['PO Number', 'Supplier', 'Location', 'Quantity', 'Subtotal', 'Status'].map((h, i) => (
                           <th
                             key={i}
                             style={{

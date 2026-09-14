@@ -29,6 +29,13 @@ function typeDisplay(type) {
   return TYPE_LABEL_MAP[type] || type;
 }
 
+// Always-on location sort (item 3: the old toggleable Sort-by-name button
+// was removed — the list is now unconditionally grouped by location).
+// LOCATIONS above is already laid out in M/E/C/O/Q/H group order (MTL, EDM,
+// CAL, OTT, QC prefixes; this list has no HQ entries today).
+const LOCATION_ORDER = new Map(LOCATIONS.map((loc, i) => [loc, i]));
+const DIVIDER_STYLE = { borderTop: '2px solid #c9cccf', paddingTop: '8px', marginTop: '8px' };
+
 function formatDate(dateStr) {
   if (!dateStr) return '';
   const d = new Date(dateStr);
@@ -47,11 +54,8 @@ function ZeroQtyReport() {
   const [selectedStatuses, setSelectedStatuses] = useState(['reviewing', 'committed']);
   const [date, setDate]                         = useState('ALL');
   const [selectedIds, setSelectedIds]           = useState([]);
-  const [sortMode, setSortMode]                 = useState(0);
   // 改动五.3：每行的 adjustment 编辑值，key = report.id
   const [adjustments, setAdjustments]           = useState({});
-
-  const handleSort = () => setSortMode(prev => (prev + 1) % 3);
 
   const fetchReports = useCallback(async () => {
     setLoading(true);
@@ -185,17 +189,15 @@ function ZeroQtyReport() {
     setSelectedIds(selectedIds.length === reports.length ? [] : reports.map(r => r.id));
   };
 
-  const sortedReports = (() => {
-    if (sortMode === 0) return reports;
-    const sorted = [...reports].sort((a, b) =>
-      (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' })
-    );
-    return sortMode === 2 ? sorted.reverse() : sorted;
-  })();
+  // Always grouped/sorted by location (M/E/C/O/Q/H group order); a stable
+  // sort keeps each group's original relative order intact.
+  const sortedReports = [...reports].sort((a, b) => {
+    const ai = LOCATION_ORDER.has(a.location) ? LOCATION_ORDER.get(a.location) : LOCATIONS.length;
+    const bi = LOCATION_ORDER.has(b.location) ? LOCATION_ORDER.get(b.location) : LOCATIONS.length;
+    return ai - bi;
+  });
 
-  const sortLabel = sortMode === 0 ? 'Sort' : sortMode === 1 ? 'Sort A→Z ✓' : 'Sort Z→A ✓';
-
-  const rows = sortedReports.map(report => {
+  const rows = sortedReports.map((report, idx) => {
     // 改动五.1：archived 状态显示 archived
     const statusCell = (() => {
       if (report.status === 'reviewing') return <Badge tone="warning">reviewing</Badge>;
@@ -226,17 +228,22 @@ function ZeroQtyReport() {
       );
     })();
 
+    // Visual divider: a top border on every cell of the first row of a new
+    // location, so it reads as a horizontal line spanning the whole row.
+    const isNewLocationGroup = idx > 0 && report.location !== sortedReports[idx - 1].location;
+    const cellStyle = isNewLocationGroup ? DIVIDER_STYLE : undefined;
+
     return [
-      <Checkbox checked={selectedIds.includes(report.id)} onChange={() => toggleSelectOne(report.id)} />,
+      <div style={cellStyle}><Checkbox checked={selectedIds.includes(report.id)} onChange={() => toggleSelectOne(report.id)} /></div>,
       // 改动一：显示 type 而非 department
-      typeDisplay(report.type) || '-',
-      report.location || '-',
-      formatDate(report.submitted_at),
-      <div style={{ maxWidth: '200px', wordBreak: 'break-word', whiteSpace: 'normal' }}>{report.name || '-'}</div>,
-      report.barcode || '-',
-      report.soh ?? '-',
-      report.poh ?? '-',
-      actionCell,
+      <div style={cellStyle}>{typeDisplay(report.type) || '-'}</div>,
+      <div style={cellStyle}>{report.location || '-'}</div>,
+      <div style={cellStyle}>{formatDate(report.submitted_at)}</div>,
+      <div style={{ ...cellStyle, maxWidth: '200px', wordBreak: 'break-word', whiteSpace: 'normal' }}>{report.name || '-'}</div>,
+      <div style={cellStyle}>{report.barcode || '-'}</div>,
+      <div style={cellStyle}>{report.soh ?? '-'}</div>,
+      <div style={cellStyle}>{report.poh ?? '-'}</div>,
+      <div style={cellStyle}>{actionCell}</div>,
     ];
   });
 
@@ -287,27 +294,13 @@ function ZeroQtyReport() {
 
             <Card>
               <BlockStack gap="300">
-                <InlineStack align="space-between" gap="200">
-                  <button
-                    onClick={handleSort}
-                    style={{
-                      padding: '6px 14px', borderRadius: '20px', border: '1px solid #c9cccf',
-                      background: sortMode !== 0 ? '#1a1a1a' : 'white',
-                      color: sortMode !== 0 ? 'white' : '#202223',
-                      cursor: 'pointer', fontSize: '13px',
-                      fontWeight: sortMode !== 0 ? '600' : '400', whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {sortLabel}
-                  </button>
-                  <InlineStack gap="200">
-                    <Button disabled={selectedIds.length === 0 || committing} onClick={handleCommitSelected} loading={committing}>
-                      Commit selected
-                    </Button>
-                    <Button onClick={handleCommitAll} loading={committing}>Commit all</Button>
-                    <Button tone="critical" disabled={selectedIds.length === 0} onClick={handleDelete}>Delete</Button>
-                    <Button disabled={selectedIds.length === 0} onClick={handleArchive}>Archive</Button>
-                  </InlineStack>
+                <InlineStack align="end" gap="200">
+                  <Button disabled={selectedIds.length === 0 || committing} onClick={handleCommitSelected} loading={committing}>
+                    Commit selected
+                  </Button>
+                  <Button onClick={handleCommitAll} loading={committing}>Commit all</Button>
+                  <Button tone="critical" disabled={selectedIds.length === 0} onClick={handleDelete}>Delete</Button>
+                  <Button disabled={selectedIds.length === 0} onClick={handleArchive}>Archive</Button>
                 </InlineStack>
 
                 {loading ? <Spinner /> : (

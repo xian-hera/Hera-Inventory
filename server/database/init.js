@@ -548,7 +548,7 @@ const initDatabase = async () => {
         adjustment_value    NUMERIC(12,4),
         is_promotional      BOOLEAN NOT NULL DEFAULT FALSE,
         status              TEXT NOT NULL DEFAULT 'pending'
-                             CHECK (status IN ('pending','sent_to_store','store_counted','committed')),
+                             CHECK (status IN ('pending','sent_to_store','store_counted','committed','archived')),
         has_missing_sku     BOOLEAN NOT NULL DEFAULT FALSE,
         has_sku_collision   BOOLEAN NOT NULL DEFAULT FALSE,
         has_missing_cost    BOOLEAN NOT NULL DEFAULT FALSE,
@@ -600,10 +600,16 @@ const initDatabase = async () => {
     // safe to re-run: DROP ... IF EXISTS is a no-op when already dropped by a
     // prior deploy, and ADD only runs after that, so there's never a
     // duplicate-constraint error to poison the transaction.
+    // Migration: 'archived' added — every invoice that finishes committing is
+    // now automatically archived (commitInvoice() writes 'archived' directly
+    // instead of 'committed'). 'committed' is kept in the allowed set as a
+    // permanent legacy synonym for historical rows written before this
+    // change — nothing migrates old rows, the app just treats
+    // status IN ('committed','archived') as "done" everywhere it matters.
     await client.query(`ALTER TABLE po_invoices DROP CONSTRAINT IF EXISTS po_invoices_status_check`).catch(() => {});
     await client.query(`
       ALTER TABLE po_invoices ADD CONSTRAINT po_invoices_status_check
-        CHECK (status IN ('pending','sent_to_store','store_counted','committed'))
+        CHECK (status IN ('pending','sent_to_store','store_counted','committed','archived'))
     `);
     // invoice_date: the date on the supplier's invoice itself (entered by the
     // buyer alongside Supplier/Location), distinct from created_at/committed_at

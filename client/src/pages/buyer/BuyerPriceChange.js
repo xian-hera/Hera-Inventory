@@ -285,7 +285,7 @@ function BuyerPriceChange() {
 
   return (
     <Page
-      title="Price Change Task"
+      title="Price Change"
       backAction={{ onAction: () => navigate('/buyer') }}
     >
       <Layout>
@@ -405,7 +405,7 @@ function BuyerPriceChange() {
                         indeterminate={selectedTaskIds.length > 0 && selectedTaskIds.length < tasks.length}
                         onChange={toggleTaskSelectAll}
                       />,
-                      'Task', 'Items', 'Unfinished stores',
+                      'Task', 'Items', 'Unfinished Locations',
                     ]}
                     rows={taskRows}
                   />

@@ -4,8 +4,12 @@ const crypto = require('crypto');
 const { pool } = require('../database/init');
 const { activeFilter } = require('../shopify');
 
-const HISTORY_LIMIT = 200;
-const RECENT_LIMIT = 20;
+// 90-day retention for archived invoices (item 10) — replaces the old
+// 200-row HISTORY_LIMIT cap that commitInvoice() used to enforce inline.
+// Same lazy-cleanup-on-read pattern as boxPo.js's PAST_RETENTION_DAYS /
+// cleanupExpiredConfirmed(): no cron job, just a DELETE run at the top of
+// the list endpoint that would otherwise show expired archived rows.
+const ARCHIVED_RETENTION_DAYS = 90;
 
 async function shopifyRequest(client, query, variables = null, retries = 3) {
   for (let i = 0; i < retries; i++) {
@@ -197,66 +201,14 @@ async function generatePoNumber(client) {
 }
 
 // ─── Home page / history ─────────────────────────────────────────────────────
-
-// GET /api/po-invoices/recent — last 20 committed, for the PO Receiving home page.
-router.get('/recent', async (req, res) => {
-  try {
-    const result = await pool.query(
-      `SELECT i.id, i.invoice_number, i.po_number, i.committed_at, i.invoice_date, i.is_promotional, i.location, s.name AS supplier_name,
-              COALESCE(SUM(it.quantity * it.effective_cost), 0) AS subtotal_cad
-       FROM po_invoices i
-       JOIN po_suppliers s ON s.id = i.supplier_id
-       LEFT JOIN po_invoice_items it ON it.invoice_id = i.id
-       WHERE i.status = 'committed'
-       GROUP BY i.id, s.name
-       ORDER BY i.committed_at DESC LIMIT $1`,
-      [RECENT_LIMIT]
-    );
-    res.json(result.rows);
-  } catch (e) {
-    console.error('GET /api/po-invoices/recent error:', e);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// GET /api/po-invoices/history — last 200 committed, for the "View all" page.
-// Optional ?q= searches supplier name, receiving location, invoice number,
-// PO number, and any line item's SKU or code (case-insensitive, partial
-// match). The match is resolved in a subquery (by invoice id), same
-// technique as /pending below, so the subtotal SUM still totals ALL of a
-// matched invoice's items, not just the ones that happened to match.
-router.get('/history', async (req, res) => {
-  try {
-    const { q } = req.query;
-    const params = [];
-    let query = `
-      SELECT i.id, i.invoice_number, i.po_number, i.committed_at, i.is_promotional, i.location, s.name AS supplier_name,
-             COALESCE(SUM(it.quantity * it.effective_cost), 0) AS subtotal_cad
-      FROM po_invoices i
-      JOIN po_suppliers s ON s.id = i.supplier_id
-      LEFT JOIN po_invoice_items it ON it.invoice_id = i.id
-      WHERE i.status = 'committed'`;
-    if (q) {
-      params.push(`%${q}%`);
-      query += ` AND i.id IN (
-        SELECT DISTINCT i2.id
-        FROM po_invoices i2
-        JOIN po_suppliers s2 ON s2.id = i2.supplier_id
-        LEFT JOIN po_invoice_items it2 ON it2.invoice_id = i2.id
-        WHERE i2.status = 'committed'
-          AND (s2.name ILIKE $${params.length} OR i2.location ILIKE $${params.length} OR i2.invoice_number ILIKE $${params.length} OR i2.po_number ILIKE $${params.length} OR it2.sku ILIKE $${params.length} OR it2.code ILIKE $${params.length})
-      )`;
-    }
-    query += ` GROUP BY i.id, s.name`;
-    params.push(HISTORY_LIMIT);
-    query += ` ORDER BY i.committed_at DESC LIMIT $${params.length}`;
-    const result = await pool.query(query, params);
-    res.json(result.rows);
-  } catch (e) {
-    console.error('GET /api/po-invoices/history error:', e);
-    res.status(500).json({ error: e.message });
-  }
-});
+//
+// (item 6: the PO Receiving home page's "recent 20 committed invoices" card
+// and the "View all" full-history page are gone — the Commit Later/Purchase
+// Order List page now shows every invoice, including committed/archived
+// ones, so this GET /recent + GET /history pair has no remaining caller and
+// was removed. BuyerPOReceivingHistory.js on the frontend is now an orphaned
+// file — nothing routes to it any more, but it hasn't been deleted from disk
+// here; same for its now-unused App.js route/import, already removed.)
 
 // GET /api/po-invoices/check-number — kept only so any stale cached client
 // build doesn't 404; invoice_number is a free-text reference now (can
@@ -670,23 +622,35 @@ router.post('/pending', async (req, res) => {
 
 // ─── Pending (Commit later) ──────────────────────────────────────────────────
 
-// GET /api/po-invoices/pending — optional ?q= searches supplier name,
-// receiving location, invoice number, PO number, and any line item's SKU or
-// code (case-insensitive, partial match). The search match is resolved in a
-// subquery (by invoice id) rather than filtered directly on the joined
-// po_invoice_items rows, so the quantity/subtotal SUMs below still total ALL
-// of a matched invoice's items, not just the ones that happened to match.
+// Deletes archived invoices whose committed_at is older than the 90-day
+// retention window. Lazy cleanup (no cron job) — run on every read of the
+// list that would show archived rows, same pattern boxPo.js uses for its
+// 90-day confirmed-BOX-PO retention.
+async function cleanupExpiredArchived() {
+  await pool.query(
+    `DELETE FROM po_invoices WHERE status = 'archived' AND committed_at < NOW() - INTERVAL '${ARCHIVED_RETENTION_DAYS} days'`
+  );
+}
+
+// GET /api/po-invoices/pending — despite the name/route, this now backs the
+// whole Purchase Order List page (item 6): every invoice regardless of
+// status, not just the not-yet-committed ones. 'committed' is kept in the
+// status list as a permanent legacy synonym for 'archived' — rows written
+// before commitInvoice() started auto-archiving. Optional ?q= searches
+// supplier name, receiving location, invoice number, PO number, and any line
+// item's SKU or code (case-insensitive, partial match). The search match is
+// resolved in a subquery (by invoice id) rather than filtered directly on
+// the joined po_invoice_items rows, so the quantity/subtotal SUMs below
+// still total ALL of a matched invoice's items, not just the ones that
+// happened to match.
 router.get('/pending', async (req, res) => {
   try {
+    await cleanupExpiredArchived();
     const { q } = req.query;
     const params = [];
-    // Covers every not-yet-committed status — 'pending' (Commit later),
-    // 'sent_to_store' (awaiting the manager's count), and 'store_counted'
-    // (counted, ready for the buyer to commit) — so an invoice never
-    // disappears from the buyer's view once it leaves plain 'pending'.
     let query = `
       SELECT i.id, i.invoice_number, i.po_number, i.location, i.status,
-             i.committing, i.commit_error,
+             i.committing, i.commit_error, i.created_at,
              s.name AS supplier_name, s.currency AS supplier_currency,
              COALESCE(SUM(it.quantity), 0) AS quantity,
              COALESCE(SUM(it.quantity * it.effective_cost), 0) AS subtotal_cad,
@@ -696,7 +660,7 @@ router.get('/pending', async (req, res) => {
       FROM po_invoices i
       JOIN po_suppliers s ON s.id = i.supplier_id
       LEFT JOIN po_invoice_items it ON it.invoice_id = i.id
-      WHERE i.status IN ('pending', 'sent_to_store', 'store_counted')`;
+      WHERE i.status IN ('pending', 'sent_to_store', 'store_counted', 'committed', 'archived')`;
     if (q) {
       params.push(`%${q}%`);
       query += ` AND i.id IN (
@@ -704,11 +668,11 @@ router.get('/pending', async (req, res) => {
         FROM po_invoices i2
         JOIN po_suppliers s2 ON s2.id = i2.supplier_id
         LEFT JOIN po_invoice_items it2 ON it2.invoice_id = i2.id
-        WHERE i2.status IN ('pending', 'sent_to_store', 'store_counted')
+        WHERE i2.status IN ('pending', 'sent_to_store', 'store_counted', 'committed', 'archived')
           AND (s2.name ILIKE $${params.length} OR i2.location ILIKE $${params.length} OR i2.invoice_number ILIKE $${params.length} OR i2.po_number ILIKE $${params.length} OR it2.sku ILIKE $${params.length} OR it2.code ILIKE $${params.length})
       )`;
     }
-    query += ` GROUP BY i.id, i.invoice_number, i.po_number, i.location, i.status, i.committing, i.commit_error, s.name, s.currency ORDER BY i.created_at DESC`;
+    query += ` GROUP BY i.id, i.invoice_number, i.po_number, i.location, i.status, i.committing, i.commit_error, i.created_at, s.name, s.currency ORDER BY i.created_at DESC`;
     const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (e) {
@@ -825,7 +789,7 @@ router.patch('/pending/:id/items/:itemId', async (req, res) => {
 
     const invRes = await pool.query('SELECT status FROM po_invoices WHERE id = $1', [id]);
     if (invRes.rows.length === 0) return res.status(404).json({ error: 'Invoice not found' });
-    if (invRes.rows[0].status === 'committed') return res.status(400).json({ error: 'Invoice already committed' });
+    if (['committed', 'archived'].includes(invRes.rows[0].status)) return res.status(400).json({ error: 'Invoice already committed' });
 
     const sets = [];
     const params = [];
@@ -878,7 +842,7 @@ router.delete('/pending/:id/items', async (req, res) => {
 
     const invRes = await pool.query('SELECT status FROM po_invoices WHERE id = $1', [id]);
     if (invRes.rows.length === 0) return res.status(404).json({ error: 'Invoice not found' });
-    if (invRes.rows[0].status === 'committed') return res.status(400).json({ error: 'Invoice already committed' });
+    if (['committed', 'archived'].includes(invRes.rows[0].status)) return res.status(400).json({ error: 'Invoice already committed' });
 
     await client.query('DELETE FROM po_invoice_items WHERE id = ANY($1) AND invoice_id = $2', [itemIds, id]);
     await recalculateInvoice(client, id);
@@ -917,7 +881,7 @@ router.post('/pending/:id/items', async (req, res) => {
     const invRes = await pool.query('SELECT * FROM po_invoices WHERE id = $1', [id]);
     if (invRes.rows.length === 0) return res.status(404).json({ error: 'Invoice not found' });
     const invoice = invRes.rows[0];
-    if (invoice.status === 'committed') return res.status(400).json({ error: 'Invoice already committed' });
+    if (['committed', 'archived'].includes(invoice.status)) return res.status(400).json({ error: 'Invoice already committed' });
 
     const bySku = await pool.query(
       'SELECT * FROM po_supplier_skus WHERE supplier_id = $1 AND sku = $2 LIMIT 1',
@@ -979,7 +943,7 @@ router.patch('/pending/:id/reference', async (req, res) => {
     const { id } = req.params;
     const { referenceNumber } = req.body;
     const result = await pool.query(
-      `UPDATE po_invoices SET invoice_number = $1, updated_at = NOW() WHERE id = $2 AND status != 'committed' RETURNING *`,
+      `UPDATE po_invoices SET invoice_number = $1, updated_at = NOW() WHERE id = $2 AND status NOT IN ('committed', 'archived') RETURNING *`,
       [referenceNumber ? String(referenceNumber).trim() : null, id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Invoice not found or already committed' });
@@ -1000,7 +964,7 @@ router.post('/pending/:id/notes/buyer', async (req, res) => {
     const cur = await pool.query('SELECT buyer_note, status FROM po_invoices WHERE id = $1', [id]);
     if (cur.rows.length === 0) return res.status(404).json({ error: 'Invoice not found' });
     if (cur.rows[0].buyer_note) return res.status(400).json({ error: 'Note exists already, delete it to create new' });
-    if (['store_counted', 'committed'].includes(cur.rows[0].status)) {
+    if (['store_counted', 'committed', 'archived'].includes(cur.rows[0].status)) {
       return res.status(400).json({ error: 'This invoice can no longer be annotated by the buyer' });
     }
     const result = await pool.query(
@@ -1444,7 +1408,7 @@ async function commitInvoice(invoiceId) {
   const invRes = await pool.query('SELECT * FROM po_invoices WHERE id = $1', [invoiceId]);
   if (invRes.rows.length === 0) throw new Error('Invoice not found');
   const invoice = invRes.rows[0];
-  if (invoice.status === 'committed') return { alreadyCommitted: true };
+  if (invoice.status === 'committed' || invoice.status === 'archived') return { alreadyCommitted: true };
   // Deliberately NOT blocked on 'sent_to_store': the buyer can commit at any
   // time regardless of whether the manager has counted it yet — commitInvoice
   // already falls back to item.quantity when store_count is still null (see
@@ -1564,15 +1528,17 @@ async function commitInvoice(invoiceId) {
     await pool.query(`UPDATE po_invoice_items SET committed = TRUE WHERE id = $1`, [item.id]);
   }
 
-  await pool.query(`UPDATE po_invoices SET status = 'committed', committed_at = NOW() WHERE id = $1`, [invoiceId]);
+  // Every invoice auto-archives on commit now (item 9) — no separate manual
+  // archive step. 'committed' is still written and checked everywhere else
+  // as a permanent legacy synonym for pre-existing rows; going forward this
+  // is the only place that ever sets the status on commit, and it now goes
+  // straight to 'archived'.
+  await pool.query(`UPDATE po_invoices SET status = 'archived', committed_at = NOW() WHERE id = $1`, [invoiceId]);
   await pool.query('UPDATE po_suppliers SET last_committed_at = NOW() WHERE id = $1', [invoice.supplier_id]);
 
-  // Retention: keep only the most recent 200 committed invoices.
-  await pool.query(`
-    DELETE FROM po_invoices WHERE status = 'committed' AND id NOT IN (
-      SELECT id FROM po_invoices WHERE status = 'committed' ORDER BY committed_at DESC LIMIT ${HISTORY_LIMIT}
-    )
-  `);
+  // Retention is now time-based (90 days, item 10) instead of the old
+  // 200-row cap — see cleanupExpiredArchived(), run lazily on every read of
+  // GET /pending instead of inline here.
 
   return { success: true };
 }
@@ -1596,7 +1562,7 @@ async function acquireInvoiceCommitLock(id) {
   if (invRes.rows.length === 0) throw new Error('Invoice not found');
   const invoice = invRes.rows[0];
 
-  if (invoice.status === 'committed') return { alreadyCommitted: true };
+  if (invoice.status === 'committed' || invoice.status === 'archived') return { alreadyCommitted: true };
 
   if (invoice.committing) {
     const startedAt = invoice.commit_started_at ? new Date(invoice.commit_started_at).getTime() : 0;
@@ -1706,7 +1672,7 @@ router.get('/committed/:id', async (req, res) => {
     const { id } = req.params;
     const invRes = await pool.query(
       `SELECT i.*, s.name AS supplier_name, s.currency AS supplier_currency, s.fx_rate
-       FROM po_invoices i JOIN po_suppliers s ON s.id = i.supplier_id WHERE i.id = $1 AND i.status = 'committed'`,
+       FROM po_invoices i JOIN po_suppliers s ON s.id = i.supplier_id WHERE i.id = $1 AND i.status IN ('committed', 'archived')`,
       [id]
     );
     if (invRes.rows.length === 0) return res.status(404).json({ error: 'Invoice not found' });
@@ -1721,7 +1687,7 @@ router.get('/committed/:id', async (req, res) => {
 // DELETE /api/po-invoices/committed/:id — removes the local history record only.
 router.delete('/committed/:id', async (req, res) => {
   try {
-    await pool.query(`DELETE FROM po_invoices WHERE id = $1 AND status = 'committed'`, [req.params.id]);
+    await pool.query(`DELETE FROM po_invoices WHERE id = $1 AND status IN ('committed', 'archived')`, [req.params.id]);
     res.json({ success: true });
   } catch (e) {
     console.error('DELETE /api/po-invoices/committed/:id error:', e);
@@ -1897,10 +1863,13 @@ router.get('/:id/export-pdf', async (req, res) => {
 
 // ─── Committed history detail (settings clear-all) ───────────────────────────
 
-// DELETE /api/po-invoices/committed — clears all committed history (Settings page).
+// DELETE /api/po-invoices/committed — clears all committed/archived history
+// (Settings page). Broadened to include 'archived' since every invoice now
+// auto-archives on commit — without this it would silently stop clearing
+// anything once no more legacy 'committed' rows were left.
 router.delete('/committed', async (req, res) => {
   try {
-    await pool.query(`DELETE FROM po_invoices WHERE status = 'committed'`);
+    await pool.query(`DELETE FROM po_invoices WHERE status IN ('committed', 'archived')`);
     res.json({ success: true });
   } catch (e) {
     console.error('DELETE /api/po-invoices/committed error:', e);

@@ -40,7 +40,7 @@ function BuyerPOSuppliers() {
 
   return (
     <Page
-      title="Supplier management"
+      title="Supplier Management"
       backAction={{ onAction: () => navigate('/buyer/po-receiving') }}
       primaryAction={{ content: 'Add Supplier', onAction: () => navigate('/buyer/po-receiving/suppliers/new') }}
     >
@@ -79,7 +79,7 @@ function BuyerPOSuppliers() {
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                     <thead>
                       <tr style={{ borderBottom: '2px solid #e1e3e5' }}>
-                        {['Supplier', 'Currency', 'FX rate', 'Last invoice'].map((h, i) => (
+                        {['Supplier', 'Currency', 'FX rate', 'Last Invoice'].map((h, i) => (
                           <th key={i} style={{ padding: '8px 10px', textAlign: 'left', fontWeight: '600', color: '#6d7175', whiteSpace: 'nowrap' }}>
                             {h}
                           </th>

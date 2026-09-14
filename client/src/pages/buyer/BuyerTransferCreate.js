@@ -222,7 +222,9 @@ function BuyerTransferCreate() {
     const aSrc = a.source === 'search' ? 1 : 0;
     const bSrc = b.source === 'search' ? 1 : 0;
     if (aSrc !== bSrc) return bSrc - aSrc;
-    return b.order - a.order;
+    // Lowest-priority tiebreaker (item 5): alphabetical by Name, only once
+    // the over-stock and search-added pin-to-top rules above are satisfied.
+    return (a.name || '').localeCompare(b.name || '');
   });
 
   const hasOverStock = items.some(i => Number(i.transferQty) > Number(i.fromQty));
@@ -265,7 +267,7 @@ function BuyerTransferCreate() {
 
   return (
     <Page
-      title="Create transfer"
+      title="Create Transfer"
       backAction={{ onAction: handleDiscard }}
       primaryAction={{ content: 'Discard', destructive: true, onAction: handleDiscard }}
     >
@@ -382,7 +384,7 @@ function BuyerTransferCreate() {
                     </Button>
                   )}
                   {note === null && !noteEditing && (
-                    <Button onClick={openAddNote}>Add note</Button>
+                    <Button onClick={openAddNote}>Add Note</Button>
                   )}
                   <Tooltip content="MUST has header, MUST has 2 columns, SKU and Quantity.">
                     <Button onClick={() => csvInputRef.current.click()} loading={csvLoading}>
