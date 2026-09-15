@@ -99,6 +99,16 @@ async function fetchWigVariant(client, barcode, locationId) {
 // supplier/product carry WIG" gate — every row's barcode is just looked up
 // directly, same as transfers.js's attachWigNumbers(). Batched 50 SKUs per
 // request to stay within Shopify's rate limits, same chunk size used there.
+//
+// One retry per chunk on failure (2026-09-15, after Hera saw a demo show a
+// real Wig number on one page load and "-" on another for the exact same
+// item): this query is identical in shape to transfers.js's already-proven
+// attachWigNumbers(), so a logic bug was unlikely — the more likely
+// explanation is a transient Shopify throttling/network error on that one
+// request, which this function was silently swallowing and treating as "no
+// value" with no way to tell the two apart from the UI. A single retry
+// after a short pause doesn't fix a real, persistent problem, but it does
+// paper over exactly this kind of one-off hiccup instead of guessing.
 async function attachWigNumbers(client, items) {
   const skus = [...new Set(items.map(i => i.barcode).filter(Boolean))];
   if (skus.length === 0) return;
@@ -121,17 +131,22 @@ async function attachWigNumbers(client, items) {
         }
       }
     `;
-    try {
-      const response = await client.request(query, { variables: { filter } });
-      const edges = response.data?.productVariants?.edges || [];
-      edges.forEach(({ node }) => {
-        if (node?.barcode && node?.product?.productType === 'WIG') {
-          wigNumberBySku.set(node.barcode, node.product.wigNumber?.value || '');
-        }
-      });
-    } catch (e) {
-      console.error('wigDemo attachWigNumbers: batched lookup failed:', e.message);
+    let response = null;
+    for (let attempt = 1; attempt <= 2 && !response; attempt++) {
+      try {
+        response = await client.request(query, { variables: { filter } });
+      } catch (e) {
+        console.error(`wigDemo attachWigNumbers: batched lookup failed (attempt ${attempt}):`, e.message);
+        if (attempt === 1) await new Promise(r => setTimeout(r, 400));
+      }
     }
+    if (!response) continue;
+    const edges = response.data?.productVariants?.edges || [];
+    edges.forEach(({ node }) => {
+      if (node?.barcode && node?.product?.productType === 'WIG') {
+        wigNumberBySku.set(node.barcode, node.product.wigNumber?.value || '');
+      }
+    });
   }
   items.forEach(item => {
     item.wig_number = item.barcode && wigNumberBySku.has(item.barcode) ? wigNumberBySku.get(item.barcode) : '';
@@ -214,7 +229,20 @@ router.get('/buyer', async (req, res) => {
     } else {
       result = await pool.query('SELECT * FROM wig_demos ORDER BY location, created_at DESC');
     }
-    res.json(result.rows);
+    const rows = result.rows;
+    // Wig Number column (see attachWigNumbers() above) — Buyer can view
+    // demos across every location at once, so this list can be a lot bigger
+    // than Manager's own-location one; attachWigNumbers already batches 50
+    // SKUs per request so that scales fine. Same partial-degradation
+    // handling as the Manager route: a lookup failure must not block the
+    // list itself from loading.
+    try {
+      const client = await getClient();
+      await attachWigNumbers(client, rows);
+    } catch (e) {
+      console.error('GET /api/wig-demo/buyer: wig number lookup failed:', e.message);
+    }
+    res.json(rows);
   } catch (e) {
     console.error('GET /api/wig-demo/buyer error:', e);
     res.status(500).json({ error: e.message });
@@ -262,10 +290,11 @@ router.get('/', async (req, res) => {
       [location]
     );
     const rows = result.rows;
-    // Wig Number column (Manager list only — see attachWigNumbers() above).
-    // A lookup failure here must not break the list itself; rows just come
-    // back with an empty wig_number, same partial-degradation approach used
-    // for this same lookup elsewhere in the app.
+    // Wig Number column (see attachWigNumbers() above; Buyer's /buyer route
+    // above does the same, added 2026-09-15). A lookup failure here must not
+    // break the list itself; rows just come back with an empty wig_number,
+    // same partial-degradation approach used for this same lookup elsewhere
+    // in the app.
     try {
       const client = await getClient();
       await attachWigNumbers(client, rows);

@@ -87,7 +87,7 @@ function AddDemoModal({ data, loading, submitting, error, onClose, onSubmit }) {
                 <Text variant="headingMd" fontWeight="bold">{data.name}</Text>
                 <Text variant="bodyMd" tone="subdued">{data.barcode}</Text>
                 <Text variant="bodyMd" tone="subdued">{data.variantName}</Text>
-                <Text variant="bodyMd" tone="subdued">Wig number: {data.wigNumber || '-'}</Text>
+                <Text variant="bodyMd" tone="subdued">{data.wigNumber || '-'}</Text>
               </BlockStack>
             </InlineStack>
 
@@ -347,7 +347,14 @@ function ManagerWigDemo() {
                 <InlineStack align="space-between" blockAlign="center" wrap gap="200">
                   <Text variant="bodySm" tone="subdued">Scan barcode to add a new demo or search</Text>
                   <InlineStack gap="100" blockAlign="center">
-                    <div style={{ minWidth: '180px' }}>
+                    {/* Polaris TextField has no font-size variant of its own
+                        (it always renders at Polaris's standard input size),
+                        so matching it to the small bodySm text used elsewhere
+                        on this page needs a scoped CSS override on the
+                        underlying <input> — no existing convention for this
+                        in the codebase to reuse, this is the first one. */}
+                    <div className="wig-demo-search-field" style={{ minWidth: '180px' }}>
+                      <style>{`.wig-demo-search-field input { font-size: 12px; }`}</style>
                       <TextField
                         label="" labelHidden
                         placeholder="SKU / name"
@@ -441,16 +448,16 @@ function ManagerWigDemo() {
                           onChange={() => toggleSelectOne(item.id)}
                         />
                         <div>
-                          <div style={{ fontSize: '13px', wordBreak: 'break-word' }}>{item.barcode}</div>
-                          <div style={{ fontSize: '14px', fontWeight: '500', wordBreak: 'break-word', marginTop: '2px' }}>
+                          <div style={{ fontSize: '12px', wordBreak: 'break-word' }}>{item.barcode}</div>
+                          <div style={{ fontSize: '12px', fontWeight: '500', wordBreak: 'break-word', marginTop: '2px' }}>
                             {item.name || '-'}
                           </div>
-                          <div style={{ fontSize: '13px', color: '#6d7175', marginTop: '2px' }}>
+                          <div style={{ fontSize: '12px', color: '#6d7175', marginTop: '2px' }}>
                             {item.variant_name || '-'}
                           </div>
                         </div>
-                        <div style={{ fontSize: '13px' }}>{formatDemoDate(item.created_at)}</div>
-                        <div style={{ fontSize: '13px', wordBreak: 'break-word' }}>{item.wig_number || '-'}</div>
+                        <div style={{ fontSize: '12px' }}>{formatDemoDate(item.created_at)}</div>
+                        <div style={{ fontSize: '12px', wordBreak: 'break-word' }}>{item.wig_number || '-'}</div>
                       </div>
                     ))}
                   </div>

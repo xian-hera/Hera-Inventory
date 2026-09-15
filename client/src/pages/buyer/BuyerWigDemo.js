@@ -262,28 +262,34 @@ function BuyerWigDemo() {
                   <Card key={loc}>
                     <BlockStack gap="300">
                       <Text variant="headingSm" fontWeight="bold">{loc}</Text>
+                      {/* Column order per Hera (2026-09-15): SKU, Name, Color,
+                          Wig number, Demo date — Wig number (custom.wig_number
+                          product metafield, see attachWigNumbers() in
+                          wigDemo.js) sits between Color and Demo date. */}
                       <div style={{
-                        display: 'grid', gridTemplateColumns: '32px 100px 1fr 110px 70px',
+                        display: 'grid', gridTemplateColumns: '32px 100px 1fr 90px 70px 90px',
                         gap: '8px', padding: '8px 0', borderBottom: '2px solid #e1e3e5',
                         fontSize: '12px', fontWeight: '600', color: '#6d7175',
                       }}>
                         <Checkbox checked={allSelected} indeterminate={someSelected && !allSelected} onChange={toggleAllInCard} />
                         <span>SKU</span>
                         <span>Name</span>
-                        <span>Demo date</span>
                         <span>Color</span>
+                        <span>Wig number</span>
+                        <span>Demo date</span>
                       </div>
                       {rows.map(item => (
                         <div key={item.id} style={{
-                          display: 'grid', gridTemplateColumns: '32px 100px 1fr 110px 70px',
+                          display: 'grid', gridTemplateColumns: '32px 100px 1fr 90px 70px 90px',
                           gap: '8px', padding: '10px 0', borderBottom: '1px solid #f1f1f1',
                           alignItems: 'center',
                         }}>
                           <Checkbox checked={selectedIds.includes(item.id)} onChange={() => toggleSelectOne(item.id)} />
                           <div style={{ fontSize: '13px', wordBreak: 'break-word' }}>{item.barcode}</div>
                           <div style={{ fontSize: '14px', fontWeight: '500', wordBreak: 'break-word' }}>{item.name || '-'}</div>
-                          <div style={{ fontSize: '13px' }}>{formatDemoDate(item.created_at)}</div>
                           <div style={{ fontSize: '13px' }}>{item.variant_name || '-'}</div>
+                          <div style={{ fontSize: '13px', wordBreak: 'break-word' }}>{item.wig_number || '-'}</div>
+                          <div style={{ fontSize: '13px' }}>{formatDemoDate(item.created_at)}</div>
                         </div>
                       ))}
                     </BlockStack>
