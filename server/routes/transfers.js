@@ -567,16 +567,17 @@ router.get('/history', async (req, res) => {
 // frontend uses this to power the Ongoing list's "Show archived" toggle,
 // reading auto_committed off each row to badge the ones that skipped Buyer
 // review entirely.
+// 2026-09-16: "Show archived" toggle removed (Buyer replaced it with a
+// front-end Status/From/To filter set) — this route no longer filters by
+// status at all, it just returns every transfer and lets
+// BuyerTransferOngoing.js decide what to display.
 router.get('/ongoing', async (req, res) => {
   try {
-    const includeArchived = req.query.includeArchived === 'true';
     const result = await pool.query(
       `SELECT id, transfer_no, shopify_transfer_id, shopify_transfer_name, shopify_transfer_url,
               from_location, to_location, status, created_at, on_hold, auto_committed
        FROM transfers
-       WHERE ($1 = TRUE OR status != 'archived') AND status != 'committed'
-       ORDER BY created_at DESC`,
-      [includeArchived]
+       ORDER BY created_at DESC`
     );
     res.json(result.rows);
   } catch (e) {

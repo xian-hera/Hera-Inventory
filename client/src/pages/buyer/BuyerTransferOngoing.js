@@ -1,22 +1,78 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Page, Layout, Card, Button, BlockStack, InlineStack, Text, Spinner, Banner, Checkbox
+  Page, Layout, Card, Button, BlockStack, InlineStack, Text, Spinner, Banner, Popover, Checkbox
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
-import { StatusBadge, HoldBadge, AutoCommittedBadge } from '../shared/transferStatus';
+import { STATUS_LABELS, StatusBadge, HoldBadge, AutoCommittedBadge } from '../shared/transferStatus';
 
-// Buyer's Ongoing Transfer list — every non-committed transfer (all 7
-// statuses except committed, which lives in the Recent/History views
-// instead). Delete selected removes whole transfers (Loading/Pending only,
+// Buyer's Ongoing Transfer list — every transfer, all statuses (this page
+// used to exclude 'committed'/'archived' server-side; as of 2026-09-16 the
+// server just returns everything and this page's own Status/From/To filters
+// decide what's visible — see the "2026-09-16 UI 改动" note below).
+// Delete selected removes whole transfers (Loading/Pending only,
 // server-enforced); Commit selected runs the Commit logic per selected
 // Counted transfer. Spec doc section 3/4.
 //
-// 改动三 (2026-09-15): "Archived" is now a real status — a fully-counted,
+// 改动三 (2026-09-15): "Archived" is a real status — a fully-counted,
 // no-qty-issue transfer is auto-committed AND immediately archived, so it
-// never rests at a visible "committed" state. This list defaults to hiding
-// archived transfers (includeArchived=false server-side); the "Show
-// archived" checkbox flips that on, and only then do auto-committed rows
-// show their badge (per spec: badge only visible when this filter is on).
+// never rests at a visible "committed" state.
+//
+// 2026-09-16 UI 改动 (见 claude/TRANSFER_FEATURE_SPEC.md 第 13 节):
+// - Removed the old "Show archived" checkbox (and the server-side
+//   includeArchived param it drove) in favor of three proper filters below.
+// - Delete Selected / Commit Selected moved to the top-right, same row as
+//   the filters, right-aligned; labels are now Title Case.
+// - Status/From/To filters are pure front-end — this page fetches every
+//   transfer once and filters the in-memory list; nothing is sent to the
+//   server for this. Status filter options are the 8 statuses a transfer
+//   can currently be created/advanced into (deliberately NOT including the
+//   legacy 'committed' value some pre-2026-09-15 rows may still carry — a
+//   row stuck at that old status is invisible on this page now, by Hera's
+//   explicit choice). From/To options come from the full Shopify location
+//   list (/api/shopify/locations, same endpoint Create Transfer uses), not
+//   just locations seen in the current transfer list.
+const STATUS_FILTER_VALUES = [
+  'loading', 'pending', 'good_to_go', 'in_transit', 'receiving', 'counted', 'not_counted', 'archived',
+];
+const DEFAULT_STATUS_SELECTION = STATUS_FILTER_VALUES.filter(s => s !== 'archived');
+
+function toggleInList(list, value) {
+  return list.includes(value) ? list.filter(v => v !== value) : [...list, value];
+}
+
+// Shared Popover+Checkbox-list multi-select — used for all three filters.
+// `selected: null` means "not yet initialized" (still waiting on data the
+// options themselves depend on, e.g. locations) and is treated as "show
+// everything" by the caller's filter predicate, not as "nothing selected".
+function MultiSelectFilter({ label, options, selected, onChange }) {
+  const [open, setOpen] = useState(false);
+  const current = selected || [];
+  return (
+    <Popover
+      active={open}
+      onClose={() => setOpen(false)}
+      activator={
+        <Button onClick={() => setOpen(v => !v)} disclosure={open ? 'up' : 'down'}>
+          {label}
+        </Button>
+      }
+    >
+      <Popover.Section>
+        <BlockStack gap="150">
+          {options.map(opt => (
+            <Checkbox
+              key={opt.value}
+              label={opt.label}
+              checked={current.includes(opt.value)}
+              onChange={() => onChange(toggleInList(current, opt.value))}
+            />
+          ))}
+        </BlockStack>
+      </Popover.Section>
+    </Popover>
+  );
+}
+
 function BuyerTransferOngoing() {
   const navigate = useNavigate();
   const [transfers, setTransfers] = useState([]);
@@ -25,13 +81,17 @@ function BuyerTransferOngoing() {
   const [selectedIds, setSelectedIds] = useState([]);
   const [deleting, setDeleting] = useState(false);
   const [committing, setCommitting] = useState(false);
-  const [showArchived, setShowArchived] = useState(false);
 
-  const fetchOngoing = useCallback(async (includeArchived) => {
+  const [selectedStatuses, setSelectedStatuses] = useState(DEFAULT_STATUS_SELECTION);
+  const [locationNames, setLocationNames] = useState([]);
+  const [selectedFrom, setSelectedFrom] = useState(null); // null until locations load, see MultiSelectFilter
+  const [selectedTo, setSelectedTo] = useState(null);
+
+  const fetchOngoing = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch(`/api/transfers/ongoing${includeArchived ? '?includeArchived=true' : ''}`);
+      const res = await fetch('/api/transfers/ongoing');
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       setTransfers(Array.isArray(data) ? data : []);
@@ -42,13 +102,37 @@ function BuyerTransferOngoing() {
     }
   }, []);
 
-  useEffect(() => { fetchOngoing(showArchived); }, [fetchOngoing, showArchived]);
+  useEffect(() => { fetchOngoing(); }, [fetchOngoing]);
+
+  // From/To filter options — full Shopify location list, not just whatever
+  // shows up in the current transfers. Defaults to "everything checked".
+  useEffect(() => {
+    fetch('/api/shopify/locations')
+      .then(res => res.json())
+      .then(data => {
+        const names = (Array.isArray(data) ? data : []).map(l => l.name).filter(Boolean);
+        setLocationNames(names);
+        setSelectedFrom(names);
+        setSelectedTo(names);
+      })
+      .catch(() => {
+        setLocationNames([]);
+        setSelectedFrom([]);
+        setSelectedTo([]);
+      });
+  }, []);
+
+  const visibleTransfers = transfers.filter(tr => (
+    selectedStatuses.includes(tr.status)
+    && (selectedFrom === null || selectedFrom.includes(tr.from_location))
+    && (selectedTo === null || selectedTo.includes(tr.to_location))
+  ));
 
   const toggleSelect = (id) => {
     setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   };
   const toggleSelectAll = () => {
-    setSelectedIds(selectedIds.length === transfers.length ? [] : transfers.map(t => t.id));
+    setSelectedIds(selectedIds.length === visibleTransfers.length ? [] : visibleTransfers.map(t => t.id));
   };
 
   const handleDeleteSelected = async () => {
@@ -65,7 +149,7 @@ function BuyerTransferOngoing() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       setSelectedIds([]);
-      await fetchOngoing(showArchived);
+      await fetchOngoing();
     } catch (e) {
       setError(e.message);
     } finally {
@@ -87,13 +171,16 @@ function BuyerTransferOngoing() {
       const failed = (data.results || []).filter(r => !r.success);
       if (failed.length > 0) setError(`${failed.length} transfer(s) failed to commit: ${failed.map(f => f.error).join('; ')}`);
       setSelectedIds([]);
-      await fetchOngoing(showArchived);
+      await fetchOngoing();
     } catch (e) {
       setError(e.message);
     } finally {
       setCommitting(false);
     }
   };
+
+  const statusOptions = STATUS_FILTER_VALUES.map(v => ({ value: v, label: STATUS_LABELS[v] || v }));
+  const locationOptions = locationNames.map(n => ({ value: n, label: n }));
 
   return (
     <Page title="Ongoing Transfer" backAction={{ onAction: () => navigate('/buyer/transfer') }}>
@@ -102,34 +189,51 @@ function BuyerTransferOngoing() {
           <BlockStack gap="400">
             {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
 
-            <InlineStack gap="200" wrap>
-              <Button
-                tone="critical"
-                disabled={selectedIds.length === 0}
-                loading={deleting}
-                onClick={handleDeleteSelected}
-              >
-                Delete selected ({selectedIds.length})
-              </Button>
-              <Button
-                variant="primary"
-                disabled={selectedIds.length === 0}
-                loading={committing}
-                onClick={handleCommitSelected}
-              >
-                Commit selected
-              </Button>
-              <Checkbox
-                label="Show archived"
-                checked={showArchived}
-                onChange={setShowArchived}
-              />
+            <InlineStack align="space-between" blockAlign="center" wrap>
+              <InlineStack gap="200" wrap>
+                <MultiSelectFilter
+                  label="Status"
+                  options={statusOptions}
+                  selected={selectedStatuses}
+                  onChange={setSelectedStatuses}
+                />
+                <MultiSelectFilter
+                  label="From"
+                  options={locationOptions}
+                  selected={selectedFrom}
+                  onChange={setSelectedFrom}
+                />
+                <MultiSelectFilter
+                  label="To"
+                  options={locationOptions}
+                  selected={selectedTo}
+                  onChange={setSelectedTo}
+                />
+              </InlineStack>
+              <InlineStack gap="200" wrap>
+                <Button
+                  tone="critical"
+                  disabled={selectedIds.length === 0}
+                  loading={deleting}
+                  onClick={handleDeleteSelected}
+                >
+                  Delete Selected ({selectedIds.length})
+                </Button>
+                <Button
+                  variant="primary"
+                  disabled={selectedIds.length === 0}
+                  loading={committing}
+                  onClick={handleCommitSelected}
+                >
+                  Commit Selected
+                </Button>
+              </InlineStack>
             </InlineStack>
 
             <Card>
               {loading ? (
                 <InlineStack align="center"><Spinner /></InlineStack>
-              ) : transfers.length === 0 ? (
+              ) : visibleTransfers.length === 0 ? (
                 <Text tone="subdued">No ongoing transfers.</Text>
               ) : (
                 <div style={{ overflowX: 'auto' }}>
@@ -139,7 +243,7 @@ function BuyerTransferOngoing() {
                         <th style={{ padding: '8px 10px', width: '32px' }}>
                           <input
                             type="checkbox"
-                            checked={transfers.length > 0 && selectedIds.length === transfers.length}
+                            checked={visibleTransfers.length > 0 && selectedIds.length === visibleTransfers.length}
                             onChange={toggleSelectAll}
                           />
                         </th>
@@ -150,7 +254,7 @@ function BuyerTransferOngoing() {
                       </tr>
                     </thead>
                     <tbody>
-                      {transfers.map(tr => (
+                      {visibleTransfers.map(tr => (
                         <tr key={tr.id} style={{ borderBottom: '1px solid #f1f1f1' }}>
                           <td style={{ padding: '8px 10px' }}>
                             <input
@@ -171,7 +275,7 @@ function BuyerTransferOngoing() {
                             <InlineStack gap="150" blockAlign="center">
                               <StatusBadge status={tr.status} />
                               {tr.on_hold && <HoldBadge />}
-                              {showArchived && tr.auto_committed && <AutoCommittedBadge />}
+                              {tr.auto_committed && <AutoCommittedBadge />}
                             </InlineStack>
                           </td>
                         </tr>

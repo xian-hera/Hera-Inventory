@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Page, Layout, Card, BlockStack, InlineStack,
-  Text, Checkbox, Banner, Spinner, TextField
+  Text, Checkbox, Banner, Spinner, TextField, Button
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 
@@ -333,19 +333,14 @@ function ManagerWigDemo() {
               <BlockStack gap="300">
                 <InlineStack align="space-between" blockAlign="center" wrap gap="200">
                   <Text variant="headingSm">Current demos</Text>
-                  <button
-                    disabled={selectedIds.length === 0 || cancelling}
+                  <Button
+                    tone="critical"
+                    disabled={selectedIds.length === 0}
+                    loading={cancelling}
                     onClick={handleCancelDemo}
-                    style={{
-                      padding: '8px 16px', borderRadius: '20px', border: 'none',
-                      background: selectedIds.length === 0 || cancelling ? '#f6f6f7' : '#d72c0d',
-                      color: selectedIds.length === 0 || cancelling ? '#8c9196' : 'white',
-                      cursor: selectedIds.length === 0 || cancelling ? 'not-allowed' : 'pointer',
-                      fontSize: '13px', fontWeight: '700', whiteSpace: 'nowrap',
-                    }}
                   >
-                    {cancelling ? 'Cancelling…' : 'Cancel DEMO'}
-                  </button>
+                    Cancel DEMO
+                  </Button>
                 </InlineStack>
 
                 <InlineStack align="space-between" blockAlign="center" wrap gap="200">
@@ -361,17 +356,7 @@ function ManagerWigDemo() {
                         autoComplete="off"
                       />
                     </div>
-                    <button
-                      onClick={runSearch}
-                      disabled={searchLoading}
-                      style={{
-                        width: '36px', height: '36px', borderRadius: '8px',
-                        border: '1px solid #c9cccf', background: 'white',
-                        cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      }}
-                    >
-                      {searchLoading ? <Spinner size="small" /> : '🔍'}
-                    </button>
+                    <Button onClick={runSearch} loading={searchLoading}>Search</Button>
                   </InlineStack>
                 </InlineStack>
 
@@ -422,8 +407,14 @@ function ManagerWigDemo() {
                   <Text tone="subdued" alignment="center">No demos yet. Scan a barcode or search to add one.</Text>
                 ) : (
                   <div>
+                    {/* Manager is mostly used on mobile — SKU/Name/Color are
+                        stacked into one merged column (same pattern as
+                        ManagerStockLosses.js) instead of separate fixed-width
+                        columns, which was cramping "Name" down to almost
+                        nothing on a phone screen and wrapping it one letter
+                        per line. Demo date keeps its own column. */}
                     <div style={{
-                      display: 'grid', gridTemplateColumns: '32px 100px 1fr 90px 60px',
+                      display: 'grid', gridTemplateColumns: '32px 1fr 90px',
                       gap: '8px', padding: '8px 0', borderBottom: '1px solid #e1e3e5',
                       fontSize: '12px', fontWeight: '600', color: '#6d7175',
                     }}>
@@ -432,25 +423,29 @@ function ManagerWigDemo() {
                         indeterminate={selectedIds.length > 0 && selectedIds.length < items.length}
                         onChange={toggleSelectAll}
                       />
-                      <span>SKU</span>
-                      <span>Name</span>
+                      <span>SKU / Name / Color</span>
                       <span>Demo date</span>
-                      <span>Color</span>
                     </div>
                     {items.map(item => (
                       <div key={item.id} style={{
-                        display: 'grid', gridTemplateColumns: '32px 100px 1fr 90px 60px',
+                        display: 'grid', gridTemplateColumns: '32px 1fr 90px',
                         gap: '8px', padding: '10px 0', borderBottom: '1px solid #f1f1f1',
-                        alignItems: 'center',
+                        alignItems: 'start',
                       }}>
                         <Checkbox
                           checked={selectedIds.includes(item.id)}
                           onChange={() => toggleSelectOne(item.id)}
                         />
-                        <div style={{ fontSize: '13px', wordBreak: 'break-word' }}>{item.barcode}</div>
-                        <div style={{ fontSize: '14px', fontWeight: '500', wordBreak: 'break-word' }}>{item.name || '-'}</div>
+                        <div>
+                          <div style={{ fontSize: '13px', wordBreak: 'break-word' }}>{item.barcode}</div>
+                          <div style={{ fontSize: '14px', fontWeight: '500', wordBreak: 'break-word', marginTop: '2px' }}>
+                            {item.name || '-'}
+                          </div>
+                          <div style={{ fontSize: '13px', color: '#6d7175', marginTop: '2px' }}>
+                            {item.variant_name || '-'}
+                          </div>
+                        </div>
                         <div style={{ fontSize: '13px' }}>{formatDemoDate(item.created_at)}</div>
-                        <div style={{ fontSize: '13px' }}>{item.variant_name || '-'}</div>
                       </div>
                     ))}
                   </div>

@@ -568,19 +568,20 @@ function BuyerTransferDetail() {
             {transfer.auto_committed && <AutoCommittedBadge />}
             {/* 改动七: the id/name next to the status pill is now a plain
                 jump-out icon button, not clickable text — the page title
-                itself is the Shopify transfer id/name now. */}
+                itself is the Shopify transfer id/name now.
+                2026-09-16: was a hand-styled circular <a> — the icon sat
+                off-center inside the circle and read as a UI glitch.
+                Swapped for a plain Polaris Button (its normal
+                rounded-rectangle shape) instead of custom CSS. */}
             {transfer.shopify_transfer_url && (
-              <a
-                href={transfer.shopify_transfer_url} target="_blank" rel="noopener noreferrer"
-                title="Open in Shopify"
-                style={{
-                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                  width: '26px', height: '26px', borderRadius: '999px',
-                  border: '1px solid #c9cccf', color: '#202223', textDecoration: 'none', fontSize: '13px',
-                }}
+              <Button
+                size="micro"
+                url={transfer.shopify_transfer_url}
+                external
+                accessibilityLabel="Open in Shopify"
               >
                 ↗
-              </a>
+              </Button>
             )}
           </InlineStack>
         }
