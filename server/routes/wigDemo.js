@@ -53,6 +53,7 @@ async function fetchWigVariant(client, barcode, locationId) {
               featuredMedia {
                 preview { image { url } }
               }
+              wigNumber: metafield(namespace: "custom", key: "wig_number") { value }
             }
           }
         }
@@ -77,12 +78,64 @@ async function fetchWigVariant(client, barcode, locationId) {
     barcode: variant.barcode || variant.sku,
     name: variant.metafield?.value || variant.product.title,
     variantName: variant.title,
+    wigNumber: variant.product.wigNumber?.value || '',
     image: variant.product.featuredMedia?.preview?.image?.url || null,
     productId: variant.product.id,
     variantId: variant.id,
     inventoryItemId: variant.inventoryItem.id,
     availableQty,
   };
+}
+
+// Wig Number: the same product-level custom.wig_number metafield already
+// used elsewhere in this codebase (see attachWigNumbers() in transfers.js
+// and attachPoWigNumbers() in poInvoices.js) — a manufacturer-assigned
+// number Hera tracks per WIG product, read live from Shopify and never
+// persisted (same "never store, always re-read" convention as custom.name
+// display names throughout the app; see claude/DEMO_WIG_FEATURE_SPEC.md).
+// Every row passed in here is already known to be a WIG (only WIG products
+// can ever become a wig_demos row, enforced by fetchWigVariant above at
+// creation time), so unlike attachPoWigNumbers() there's no "does this
+// supplier/product carry WIG" gate — every row's barcode is just looked up
+// directly, same as transfers.js's attachWigNumbers(). Batched 50 SKUs per
+// request to stay within Shopify's rate limits, same chunk size used there.
+async function attachWigNumbers(client, items) {
+  const skus = [...new Set(items.map(i => i.barcode).filter(Boolean))];
+  if (skus.length === 0) return;
+  const { activeFilter } = require('../shopify');
+  const wigNumberBySku = new Map();
+  const CHUNK_SIZE = 50;
+  for (let i = 0; i < skus.length; i += CHUNK_SIZE) {
+    const chunk = skus.slice(i, i + CHUNK_SIZE);
+    const filter = activeFilter(chunk.map(s => `barcode:${s}`).join(' OR '));
+    const query = `
+      query wigNumbers($filter: String!) {
+        productVariants(first: ${chunk.length}, query: $filter) {
+          edges { node {
+            barcode
+            product {
+              productType
+              wigNumber: metafield(namespace: "custom", key: "wig_number") { value }
+            }
+          } }
+        }
+      }
+    `;
+    try {
+      const response = await client.request(query, { variables: { filter } });
+      const edges = response.data?.productVariants?.edges || [];
+      edges.forEach(({ node }) => {
+        if (node?.barcode && node?.product?.productType === 'WIG') {
+          wigNumberBySku.set(node.barcode, node.product.wigNumber?.value || '');
+        }
+      });
+    } catch (e) {
+      console.error('wigDemo attachWigNumbers: batched lookup failed:', e.message);
+    }
+  }
+  items.forEach(item => {
+    item.wig_number = item.barcode && wigNumberBySku.has(item.barcode) ? wigNumberBySku.get(item.barcode) : '';
+  });
 }
 
 // Moves exactly 1 unit between two named quantity states for one inventory
@@ -208,7 +261,18 @@ router.get('/', async (req, res) => {
       'SELECT * FROM wig_demos WHERE location = $1 ORDER BY created_at DESC',
       [location]
     );
-    res.json(result.rows);
+    const rows = result.rows;
+    // Wig Number column (Manager list only — see attachWigNumbers() above).
+    // A lookup failure here must not break the list itself; rows just come
+    // back with an empty wig_number, same partial-degradation approach used
+    // for this same lookup elsewhere in the app.
+    try {
+      const client = await getClient();
+      await attachWigNumbers(client, rows);
+    } catch (e) {
+      console.error('GET /api/wig-demo: wig number lookup failed:', e.message);
+    }
+    res.json(rows);
   } catch (e) {
     console.error('GET /api/wig-demo error:', e);
     res.status(500).json({ error: e.message });

@@ -87,6 +87,7 @@ function AddDemoModal({ data, loading, submitting, error, onClose, onSubmit }) {
                 <Text variant="headingMd" fontWeight="bold">{data.name}</Text>
                 <Text variant="bodyMd" tone="subdued">{data.barcode}</Text>
                 <Text variant="bodyMd" tone="subdued">{data.variantName}</Text>
+                <Text variant="bodyMd" tone="subdued">Wig number: {data.wigNumber || '-'}</Text>
               </BlockStack>
             </InlineStack>
 
@@ -412,9 +413,11 @@ function ManagerWigDemo() {
                         ManagerStockLosses.js) instead of separate fixed-width
                         columns, which was cramping "Name" down to almost
                         nothing on a phone screen and wrapping it one letter
-                        per line. Demo date keeps its own column. */}
+                        per line. Demo date and Wig number (custom.wig_number
+                        metafield, see attachWigNumbers() in wigDemo.js) each
+                        keep their own narrow column at the right. */}
                     <div style={{
-                      display: 'grid', gridTemplateColumns: '32px 1fr 90px',
+                      display: 'grid', gridTemplateColumns: '32px 1fr 90px 70px',
                       gap: '8px', padding: '8px 0', borderBottom: '1px solid #e1e3e5',
                       fontSize: '12px', fontWeight: '600', color: '#6d7175',
                     }}>
@@ -425,10 +428,11 @@ function ManagerWigDemo() {
                       />
                       <span>SKU / Name / Color</span>
                       <span>Demo date</span>
+                      <span>Wig number</span>
                     </div>
                     {items.map(item => (
                       <div key={item.id} style={{
-                        display: 'grid', gridTemplateColumns: '32px 1fr 90px',
+                        display: 'grid', gridTemplateColumns: '32px 1fr 90px 70px',
                         gap: '8px', padding: '10px 0', borderBottom: '1px solid #f1f1f1',
                         alignItems: 'start',
                       }}>
@@ -446,6 +450,7 @@ function ManagerWigDemo() {
                           </div>
                         </div>
                         <div style={{ fontSize: '13px' }}>{formatDemoDate(item.created_at)}</div>
+                        <div style={{ fontSize: '13px', wordBreak: 'break-word' }}>{item.wig_number || '-'}</div>
                       </div>
                     ))}
                   </div>
