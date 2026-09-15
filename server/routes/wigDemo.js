@@ -94,6 +94,18 @@ async function fetchWigVariant(client, barcode, locationId) {
 // convention as stockLosses.js's inventoryAdjustQuantities calls elsewhere
 // in this codebase, since we don't have a fresh per-state quantity in hand
 // at call time. @idempotent is required as of Shopify API 2026-04.
+//
+// Two *different* URI fields are involved here, confirmed against
+// shopify.dev (2026-09-15, after a live "A ledger document URI is required
+// except when adjusting available" error surfaced this): `referenceDocumentUri`
+// is a top-level, freeform audit field on the whole input; `ledgerDocumentUri`
+// is a separate field that must be set on whichever terminal (from/to) has a
+// `name` other than "available" — required on that terminal, not allowed to
+// be omitted, and NOT satisfied by the top-level referenceDocumentUri alone.
+// Since this app's moves are always available<->reserved, exactly one of
+// from/to is ever the non-"available" side; we reuse the same URI value for
+// both fields since they're independent but nothing here calls for them to
+// differ.
 async function moveInventory(client, { inventoryItemId, locationId, fromName, toName, reason, referenceDocumentUri }) {
   const mutation = `
     mutation moveQty($input: InventoryMoveQuantitiesInput!, $idempotencyKey: String!) {
@@ -111,8 +123,14 @@ async function moveInventory(client, { inventoryItemId, locationId, fromName, to
         changes: [{
           quantity: 1,
           inventoryItemId,
-          from: { locationId, name: fromName, changeFromQuantity: null },
-          to: { locationId, name: toName, changeFromQuantity: null },
+          from: {
+            locationId, name: fromName, changeFromQuantity: null,
+            ...(fromName !== 'available' ? { ledgerDocumentUri: referenceDocumentUri } : {}),
+          },
+          to: {
+            locationId, name: toName, changeFromQuantity: null,
+            ...(toName !== 'available' ? { ledgerDocumentUri: referenceDocumentUri } : {}),
+          },
         }],
       },
       idempotencyKey: crypto.randomUUID(),
