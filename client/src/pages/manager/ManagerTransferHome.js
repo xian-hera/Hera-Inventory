@@ -3,7 +3,7 @@ import {
   Page, Layout, Card, BlockStack, InlineStack, Text, Spinner, Banner
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
-import { StatusBadge } from '../shared/transferStatus';
+import { StatusBadge, HoldBadge } from '../shared/transferStatus';
 
 function formatDate(dateStr) {
   if (!dateStr) return '';
@@ -93,10 +93,13 @@ function ManagerTransferHome() {
     >
       <InlineStack align="space-between" blockAlign="center" wrap>
         <InlineStack gap="300" blockAlign="center" wrap>
-          <Text fontWeight="semibold">{tr.transfer_no}</Text>
+          <Text fontWeight="semibold">{tr.shopify_transfer_name || tr.transfer_no}</Text>
           <Text tone="subdued" variant="bodySm">{tr.from_location} to {tr.to_location}</Text>
         </InlineStack>
-        <StatusBadge status={tr.status} />
+        <InlineStack gap="150" blockAlign="center">
+          <StatusBadge status={tr.status} />
+          {tr.on_hold && <HoldBadge />}
+        </InlineStack>
       </InlineStack>
     </div>
   );

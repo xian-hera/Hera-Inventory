@@ -127,8 +127,12 @@ function ManagerHome() {
               </span>
             </Button>
 
+            <Button size="large" fullWidth onClick={() => handleNavigate('/manager/wig-demo')}>
+              Demo Wig
+            </Button>
+
             <Button size="large" fullWidth onClick={() => handleNavigate('/manager/stock-losses')}>
-              Stock Losses
+              Stock Loss
             </Button>
 
             <Button size="large" fullWidth onClick={() => handleNavigate('/manager/restock-plan')}>

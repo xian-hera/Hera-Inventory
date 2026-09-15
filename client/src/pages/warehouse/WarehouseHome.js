@@ -3,7 +3,7 @@ import {
   Page, Layout, Card, Button, BlockStack, InlineStack, Text, Spinner, Banner
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
-import { StatusBadge, warehouseStatusLabel } from '../shared/transferStatus';
+import { StatusBadge, warehouseStatusLabel, HoldBadge } from '../shared/transferStatus';
 import { StatusBadge as BoxPoStatusBadge } from '../shared/boxPoStatus';
 
 // Warehouse Home — a new "BOX PO" section at the very top (see
@@ -21,6 +21,8 @@ function WarehouseHome() {
   const navigate = useNavigate();
   const [hq, setHq] = useState([]);
   const [pickupFromStore, setPickupFromStore] = useState([]);
+  const [receivingToHq, setReceivingToHq] = useState([]);
+  const [receivingLoading, setReceivingLoading] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [selectedIds, setSelectedIds] = useState([]);
@@ -54,6 +56,18 @@ function WarehouseHome() {
   }, []);
 
   useEffect(() => { fetchHome(); }, [fetchHome]);
+
+  // 改动二第1点 (2026-09-15): "Receiving to HQ" — In transit/Receiving
+  // transfers whose to_location is HQ. Warehouse acts as the receiving/
+  // counting role here (see WarehouseTransferReceivingDetail.js).
+  useEffect(() => {
+    setReceivingLoading(true);
+    fetch('/api/transfers/warehouse/receiving-to-hq')
+      .then(r => r.json())
+      .then(data => setReceivingToHq(Array.isArray(data) ? data : []))
+      .catch(() => setReceivingToHq([]))
+      .finally(() => setReceivingLoading(false));
+  }, []);
 
   const goodToGoIds = hq.filter(tr => tr.status === 'good_to_go').map(tr => tr.id);
   const allGoodToGoSelected = goodToGoIds.length > 0 && goodToGoIds.every(id => selectedIds.includes(id));
@@ -209,11 +223,54 @@ function WarehouseHome() {
                                   style={{ padding: '10px', cursor: 'pointer', textDecoration: 'underline' }}
                                   onClick={() => navigate(`/warehouse/transfer/${tr.id}`)}
                                 >
-                                  {tr.transfer_no}
+                                  {tr.shopify_transfer_name || tr.transfer_no}
                                 </td>
                                 <td style={{ padding: '10px' }}>{tr.from_location}</td>
                                 <td style={{ padding: '10px' }}>{tr.to_location}</td>
-                                <td style={{ padding: '10px' }}><StatusBadge status={tr.status} /></td>
+                                <td style={{ padding: '10px' }}>
+                                  <InlineStack gap="100"><StatusBadge status={tr.status} />{tr.on_hold && <HoldBadge />}</InlineStack>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </BlockStack>
+                </Card>
+
+                <Card>
+                  <BlockStack gap="300">
+                    <Text variant="headingSm">Receiving to HQ</Text>
+                    {receivingLoading ? (
+                      <InlineStack align="center"><Spinner size="small" /></InlineStack>
+                    ) : receivingToHq.length === 0 ? (
+                      <Text tone="subdued">No transfers right now.</Text>
+                    ) : (
+                      <div style={{ overflowX: 'auto' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                          <thead>
+                            <tr style={{ borderBottom: '2px solid #e1e3e5' }}>
+                              <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Transfer</th>
+                              <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>From</th>
+                              <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>To</th>
+                              <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Status</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {receivingToHq.map(tr => (
+                              <tr key={tr.id} style={{ borderBottom: '1px solid #f1f1f1' }}>
+                                <td
+                                  style={{ padding: '10px', cursor: 'pointer', textDecoration: 'underline' }}
+                                  onClick={() => navigate(`/warehouse/transfer/receiving/${tr.id}`)}
+                                >
+                                  {tr.shopify_transfer_name || tr.transfer_no}
+                                </td>
+                                <td style={{ padding: '10px' }}>{tr.from_location}</td>
+                                <td style={{ padding: '10px' }}>{tr.to_location}</td>
+                                <td style={{ padding: '10px' }}>
+                                  <InlineStack gap="100"><StatusBadge status={tr.status} />{tr.on_hold && <HoldBadge />}</InlineStack>
+                                </td>
                               </tr>
                             ))}
                           </tbody>
@@ -242,7 +299,7 @@ function WarehouseHome() {
                           <tbody>
                             {pickupFromStore.map(tr => (
                               <tr key={tr.id} style={{ borderBottom: '1px solid #f1f1f1' }}>
-                                <td style={{ padding: '10px' }}>{tr.transfer_no}</td>
+                                <td style={{ padding: '10px' }}>{tr.shopify_transfer_name || tr.transfer_no}</td>
                                 <td style={{ padding: '10px' }}>{tr.from_location}</td>
                                 <td style={{ padding: '10px' }}>{tr.to_location}</td>
                                 <td style={{ padding: '10px' }}>

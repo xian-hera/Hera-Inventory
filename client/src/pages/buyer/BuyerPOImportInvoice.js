@@ -86,6 +86,19 @@ function normalizeDateInput(val) {
   return v;
 }
 
+// Filename for Export PDF downloads (item 4): {PO number}_{supplier}_
+// {receiving location}_{date}.pdf — supplier's spaces become "-", and date
+// is the buyer's manually-entered Invoice Date (already normalized to
+// YYYY-MM-DD by normalizeDateInput above) reformatted to yymmdd, yy being
+// the last 2 digits of the year.
+function buildExportFilename(poNumberPart, supplierName, locationVal, dateStr) {
+  const supplierPart = (supplierName || '').trim().replace(/\s+/g, '-');
+  let datePart = '';
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr || '');
+  if (m) datePart = `${m[1].slice(2)}${m[2]}${m[3]}`;
+  return `${poNumberPart || 'invoice'}_${supplierPart}_${locationVal || ''}_${datePart}.pdf`;
+}
+
 function BuyerPOImportInvoice() {
   const navigate = useNavigate();
   const { invoiceId: invoiceIdParam } = useParams();
@@ -936,7 +949,7 @@ function BuyerPOImportInvoice() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${poNumber || invoiceNumber || 'invoice'}-export.pdf`;
+      a.download = buildExportFilename(poNumber || invoiceNumber, supplier?.name, location, invoiceDate);
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -1165,7 +1178,7 @@ function BuyerPOImportInvoice() {
 
                     <div style={{ minWidth: 180 }}>
                       <TextField
-                        label="Reference Name"
+                        label="Invoice Number"
                         placeholder="optional"
                         value={invoiceNumber}
                         onChange={handleReferenceChange}
@@ -1223,7 +1236,7 @@ function BuyerPOImportInvoice() {
                 <Text tone="subdued">Receiving Location: {location}</Text>
                 <div style={{ width: 180 }}>
                   <TextField
-                    label="Reference Name"
+                    label="Invoice Number"
                     placeholder="optional"
                     value={invoiceNumber}
                     onChange={handleReferenceChange}
@@ -1484,16 +1497,19 @@ function BuyerPOImportInvoice() {
                               <input type="checkbox" checked={items.length > 0 && selectedIds.size === items.length} onChange={toggleSelectAll} />
                             </th>
                           )}
-                          {['SKU', 'code', 'name', 'quantity'].map(h => (
+                          {/* Column order: Name before Product ID (wording pass — labels
+                              capitalized, "code" renamed to "Product ID", "quantity" to
+                              "Qty", and Name/Product ID swapped per Hera's request). */}
+                          {['SKU', 'Name', 'Product ID', 'Qty'].map(h => (
                             <th key={h} style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>{h}</th>
                           ))}
-                          <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Invoice cost</th>
+                          <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Invoice Cost</th>
                           <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>
                             <InfoTooltip text={isUsdSupplier ? EFFECTIVE_COST_TOOLTIP_USD : EFFECTIVE_COST_TOOLTIP_CAD}>
-                              effective cost
+                              Effective Cost
                             </InfoTooltip>
                           </th>
-                          <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Supplier cost</th>
+                          <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Supplier Cost</th>
                           {showStoreCountColumn && (
                             <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Store count</th>
                           )}
@@ -1539,8 +1555,10 @@ function BuyerPOImportInvoice() {
                                   </InlineStack>
                                 ) : it.sku}
                               </td>
-                              <td style={{ padding: '10px' }}>{it.code}</td>
+                              {/* Name rendered before Product ID (it.code) to match the
+                                  swapped header order above. */}
                               <td style={{ padding: '10px' }}>{it.name}</td>
+                              <td style={{ padding: '10px' }}>{it.code}</td>
                               <td style={{ padding: '10px' }}>
                                 {isEditingQty ? (
                                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', whiteSpace: 'nowrap' }}>

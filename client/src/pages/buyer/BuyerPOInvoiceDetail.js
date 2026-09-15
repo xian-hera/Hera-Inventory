@@ -8,6 +8,18 @@ import InfoTooltip from '../../components/InfoTooltip';
 const EFFECTIVE_COST_TOOLTIP_USD = `effective cost = invoice cost + adjustment + unit discount + converted to CAD`;
 const EFFECTIVE_COST_TOOLTIP_CAD = `effective cost = invoice cost + adjustment + unit discount`;
 
+// Filename for Export PDF downloads (item 4): {PO number}_{supplier}_
+// {receiving location}_{date}.pdf — supplier's spaces become "-", and date
+// is the buyer's manually-entered Invoice Date (stored as YYYY-MM-DD)
+// reformatted to yymmdd, yy being the last 2 digits of the year.
+function buildExportFilename(poNumberPart, supplierName, locationVal, dateStr) {
+  const supplierPart = (supplierName || '').trim().replace(/\s+/g, '-');
+  let datePart = '';
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateStr || '').slice(0, 10));
+  if (m) datePart = `${m[1].slice(2)}${m[2]}${m[3]}`;
+  return `${poNumberPart || 'invoice'}_${supplierPart}_${locationVal || ''}_${datePart}.pdf`;
+}
+
 function BuyerPOInvoiceDetail() {
   const navigate = useNavigate();
   const { invoiceId } = useParams();
@@ -66,7 +78,12 @@ function BuyerPOInvoiceDetail() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${(invoice && (invoice.po_number || invoice.invoice_number)) || 'invoice'}-export.pdf`;
+      a.download = buildExportFilename(
+        invoice && (invoice.po_number || invoice.invoice_number),
+        invoice && invoice.supplier_name,
+        invoice && invoice.location,
+        invoice && invoice.invoice_date
+      );
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -158,8 +175,8 @@ function BuyerPOInvoiceDetail() {
           <BlockStack gap="300">
             {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
 
-            {invoice.po_number && invoice.invoice_number && (
-              <Text tone="subdued" variant="bodySm">Ref: {invoice.invoice_number}</Text>
+            {invoice.invoice_number && (
+              <Text tone="subdued" variant="bodySm">Invoice Number: {invoice.invoice_number}</Text>
             )}
 
             <InlineStack gap="500" wrap>
@@ -190,17 +207,20 @@ function BuyerPOInvoiceDetail() {
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                     <thead>
                       <tr style={{ borderBottom: '2px solid #e1e3e5' }}>
-                        {['SKU', 'code', 'name', 'Qty'].map(h => (
+                        {/* Column order: Name before Product ID (wording pass — labels
+                            capitalized, "code" renamed to "Product ID", and Name/Product
+                            ID swapped, matching the pending-invoice page). */}
+                        {['SKU', 'Name', 'Product ID', 'Qty'].map(h => (
                           <th key={h} style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>{h}</th>
                         ))}
                         <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Committed qty</th>
-                        <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Invoice cost</th>
+                        <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Invoice Cost</th>
                         <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>
                           <InfoTooltip text={isUsdSupplier ? EFFECTIVE_COST_TOOLTIP_USD : EFFECTIVE_COST_TOOLTIP_CAD}>
-                            effective cost
+                            Effective Cost
                           </InfoTooltip>
                         </th>
-                        <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Supplier cost</th>
+                        <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Supplier Cost</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -220,8 +240,8 @@ function BuyerPOInvoiceDetail() {
                         return (
                           <tr key={it.id} style={{ borderBottom: '1px solid #f1f1f1', background: rowBackground }}>
                             <td style={{ padding: '10px' }}>{it.sku}</td>
-                            <td style={{ padding: '10px' }}>{it.code}</td>
                             <td style={{ padding: '10px' }}>{it.name}</td>
+                            <td style={{ padding: '10px' }}>{it.code}</td>
                             <td style={{ padding: '10px' }}>{it.quantity}</td>
                             <td style={{
                               padding: '10px',

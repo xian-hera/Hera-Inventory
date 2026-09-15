@@ -1051,6 +1051,46 @@ router.post('/pending/:id/send-to-store', async (req, res) => {
   }
 });
 
+// POST /api/po-invoices/pending/send-to-store-many — body: { ids: [...] }
+// Bulk version of the single-invoice route above, backing the Purchase
+// Order List page's "Send Selected to Store" button. Unlike commit-many,
+// this is a simple, fast status flip with no Shopify calls, so it runs
+// synchronously (no background job / polling needed) — same 'pending' →
+// 'sent_to_store' transition applied to every id, reporting back any that
+// weren't eligible (already sent, already counted, committed/archived, or
+// not found).
+router.post('/pending/send-to-store-many', async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!ids || ids.length === 0) return res.status(400).json({ error: 'No ids provided' });
+
+    const updated = [];
+    const rejected = [];
+    for (const id of ids) {
+      try {
+        const result = await pool.query(
+          `UPDATE po_invoices SET status = 'sent_to_store', sent_to_store_at = NOW(), updated_at = NOW()
+           WHERE id = $1 AND status = 'pending' RETURNING id`,
+          [id]
+        );
+        if (result.rows.length > 0) {
+          updated.push(id);
+        } else {
+          const numRes = await pool.query('SELECT invoice_number FROM po_invoices WHERE id = $1', [id]);
+          rejected.push({ id, invoiceNumber: numRes.rows[0]?.invoice_number || id, reason: 'not in a state that can be sent to store' });
+        }
+      } catch (e) {
+        rejected.push({ id, invoiceNumber: id, reason: e.message });
+      }
+    }
+
+    res.json({ updated, rejected });
+  } catch (e) {
+    console.error('POST /api/po-invoices/pending/send-to-store-many error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ─── Manager: PO Receiving (counting) ───────────────────────────────────────
 
 // Same batched Wig Number lookup as GET /manager/receiving/:id below (kept
@@ -1776,7 +1816,23 @@ router.get('/:id/export-pdf', async (req, res) => {
     }
 
     const PDFDocument = require('pdfkit');
-    const filename = `${invoice.po_number || invoice.invoice_number || 'invoice'}-export.pdf`;
+
+    // Filename (item 4): {PO number}_{supplier}_{receiving location}_{date}.pdf
+    // — supplier's spaces become "-", date is the buyer's manually-entered
+    // Invoice Date reformatted to yymmdd (yy = last 2 digits of the year).
+    // Uses UTC getters since invoice_date is a DATE column (parsed as
+    // UTC-midnight) — local getters could roll the day back a day depending
+    // on the server's timezone.
+    const supplierForFile = (invoice.supplier_name || '').trim().replace(/\s+/g, '-');
+    let dateForFile = '';
+    if (invoice.invoice_date) {
+      const d = new Date(invoice.invoice_date);
+      const yy = String(d.getUTCFullYear()).slice(-2);
+      const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+      const dd = String(d.getUTCDate()).padStart(2, '0');
+      dateForFile = `${yy}${mm}${dd}`;
+    }
+    const filename = `${invoice.po_number || invoice.invoice_number || 'invoice'}_${supplierForFile}_${invoice.location || ''}_${dateForFile}.pdf`;
     res.set('Content-Type', 'application/pdf');
     res.set('Content-Disposition', `attachment; filename="${filename}"`);
 
@@ -1786,8 +1842,20 @@ router.get('/:id/export-pdf', async (req, res) => {
     // Title carries the supplier name too — a manager looking at a printed
     // page needs to know at a glance which supplier this invoice is from.
     doc.fontSize(16).text(`${invoice.po_number || invoice.invoice_number || 'Invoice'}  ${invoice.supplier_name || ''}`, { continued: false });
-    if (invoice.po_number && invoice.invoice_number) {
-      doc.fontSize(9).fillColor('#6d7175').text(`Ref: ${invoice.invoice_number}`);
+    // Small info line under the title (item 3): Receiving location, Invoice
+    // Number, and Invoice Date, separated by " - ". Only the parts that are
+    // actually present are shown. This subsumes the old plain "Ref: X" line
+    // — Invoice Number is now included here instead, so it isn't repeated.
+    const infoParts = [];
+    if (invoice.location) infoParts.push(invoice.location);
+    if (invoice.invoice_number) infoParts.push(invoice.invoice_number);
+    if (invoice.invoice_date) {
+      const d = new Date(invoice.invoice_date);
+      const iso = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+      infoParts.push(iso);
+    }
+    if (infoParts.length > 0) {
+      doc.fontSize(9).fillColor('#6d7175').text(infoParts.join(' - '));
     }
     doc.moveDown(0.5);
 

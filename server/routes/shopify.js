@@ -387,28 +387,39 @@ router.post('/sync-locations', async (req, res) => {
 // Supports pagination: ?q=...&offset=0  returns { total, results[] }
 router.get('/search', async (req, res) => {
   try {
-    const { q, offset } = req.query;
+    const { q, offset, types } = req.query;
     if (!q || q.trim().length < 2) return res.json({ total: 0, results: [] });
 
     const raw = q.trim();
     const { pool } = require('../database/init');
     const PAGE_SIZE = 50;
     const skip = parseInt(offset) || 0;
+    // Optional product-type filter, comma-separated (e.g. Wig Demo's search
+    // box passes types=WIG so it only ever offers WIG variants). Additive —
+    // every existing caller that omits `types` keeps its current behavior.
+    const typeList = types ? types.split(',').map(t => t.trim()).filter(Boolean) : [];
 
     // ── Rule 1: pure digits → SKU contains match ─────────────────────────────
     if (/^\d+$/.test(raw)) {
+      const skuParams = [`%${raw}%`];
+      let skuWhere = `sku LIKE $1`;
+      if (typeList.length > 0) {
+        skuParams.push(typeList);
+        skuWhere += ` AND product_type = ANY($${skuParams.length})`;
+      }
+
       const countRes = await pool.query(
-        `SELECT COUNT(*) FROM variant_search_index WHERE sku LIKE $1`,
-        [`%${raw}%`]
+        `SELECT COUNT(*) FROM variant_search_index WHERE ${skuWhere}`,
+        skuParams
       );
       const total = parseInt(countRes.rows[0].count);
 
       const rows = await pool.query(
         `SELECT * FROM variant_search_index
-         WHERE sku LIKE $1
+         WHERE ${skuWhere}
          ORDER BY sku
-         LIMIT $2 OFFSET $3`,
-        [`%${raw}%`, PAGE_SIZE, skip]
+         LIMIT $${skuParams.length + 1} OFFSET $${skuParams.length + 2}`,
+        [...skuParams, PAGE_SIZE, skip]
       );
 
       return res.json({
@@ -435,7 +446,11 @@ router.get('/search', async (req, res) => {
     const nameConditions  = words.map((_, i) => `custom_name  ILIKE $${i + 1}`).join(' AND ');
     const params = words.map(w => `%${w}%`);
 
-    const whereClause = `(${titleConditions}) OR (${nameConditions})`;
+    let whereClause = `(${titleConditions}) OR (${nameConditions})`;
+    if (typeList.length > 0) {
+      params.push(typeList);
+      whereClause = `(${whereClause}) AND product_type = ANY($${params.length})`;
+    }
 
     const countRes = await pool.query(
       `SELECT COUNT(*) FROM variant_search_index WHERE ${whereClause}`,

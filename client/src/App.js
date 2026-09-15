@@ -12,6 +12,7 @@ import PreviewTask from './pages/buyer/PreviewTask';
 import TaskDetail from './pages/buyer/TaskDetail';
 import ZeroQtyReport from './pages/buyer/ZeroQtyReport';
 import BuyerStockLosses from './pages/buyer/BuyerStockLosses';
+import BuyerWigDemo from './pages/buyer/BuyerWigDemo';
 import BuyerStockLossesSettings from './pages/buyer/BuyerStockLossesSettings';
 import ManagerRestockPlan from './pages/manager/ManagerRestockPlan';
 import BuyerLabelTemplates from './pages/buyer/BuyerLabelTemplates';
@@ -22,6 +23,7 @@ import ManagerCountingTasksList from './pages/manager/ManagerCountingTasksList';
 import ManagerTaskDetail from './pages/manager/ManagerTaskDetail';
 import ManagerZeroQtyReport from './pages/manager/ManagerZeroQtyReport';
 import ManagerStockLosses from './pages/manager/ManagerStockLosses';
+import ManagerWigDemo from './pages/manager/ManagerWigDemo';
 import ManagerLabelPrintTasks from './pages/manager/ManagerLabelPrintTasks';
 import ManagerLabelPrintTaskDetail from './pages/manager/ManagerLabelPrintTaskDetail';
 import BuyerPriceChange from './pages/buyer/BuyerPriceChange';
@@ -61,6 +63,7 @@ import BuyerBoxPOPast from './pages/buyer/BuyerBoxPOPast';
 import BuyerBoxPODetail from './pages/buyer/BuyerBoxPODetail';
 import WarehouseHome from './pages/warehouse/WarehouseHome';
 import WarehouseTransferDetail from './pages/warehouse/WarehouseTransferDetail';
+import WarehouseTransferReceivingDetail from './pages/warehouse/WarehouseTransferReceivingDetail';
 import WarehouseBoxPODetail from './pages/warehouse/WarehouseBoxPODetail';
 import ManagerTransferHome from './pages/manager/ManagerTransferHome';
 import ManagerTransferSendingDetail from './pages/manager/ManagerTransferSendingDetail';
@@ -86,6 +89,7 @@ function App() {
           <Route path="/buyer/counting-tasks/:taskId" element={<TaskDetail />} />
           <Route path="/buyer/zero-qty-report" element={<ZeroQtyReport />} />
           <Route path="/buyer/stock-losses" element={<BuyerStockLosses />} />
+          <Route path="/buyer/wig-demo" element={<BuyerWigDemo />} />
           <Route path="/buyer/stock-losses-settings" element={<BuyerStockLossesSettings />} />
           <Route path="/buyer/label-templates" element={<BuyerLabelTemplates />} />
           <Route path="/buyer/label-templates/:id" element={<BuyerLabelEditor />} />
@@ -117,6 +121,9 @@ function App() {
 
           {/* Warehouse */}
           <Route path="/warehouse" element={<WarehouseHome />} />
+          {/* Receiving to HQ (改动二) — fixed "receiving" segment registered
+              before the :transferId route so it can't be shadowed. */}
+          <Route path="/warehouse/transfer/receiving/:transferId" element={<WarehouseTransferReceivingDetail />} />
           <Route path="/warehouse/transfer/:transferId" element={<WarehouseTransferDetail />} />
           <Route path="/warehouse/box-po/:id" element={<WarehouseBoxPODetail />} />
 
@@ -134,6 +141,7 @@ function App() {
           <Route path="/manager/counting-tasks/history/:historyId" element={<ManagerTaskHistoryDetail />} />
           <Route path="/manager/zero-qty-report" element={<ManagerZeroQtyReport />} />
           <Route path="/manager/stock-losses" element={<ManagerStockLosses />} />
+          <Route path="/manager/wig-demo" element={<ManagerWigDemo />} />
           <Route path="/manager/restock-plan" element={<ManagerRestockPlan />} />
           <Route path="/manager/label-print" element={<ManagerLabelPrintTasks />} />
           <Route path="/manager/label-print/:taskId" element={<ManagerLabelPrintTaskDetail />} />

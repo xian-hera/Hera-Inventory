@@ -230,6 +230,67 @@ async function mapShipmentLineItems(shipment, items) {
   }
 }
 
+// ── 2026-09-15 七项改动的共享 helper（见 spec doc 第 11 节）───────────────────
+
+// Line items still on the transfer for Shopify-facing purposes — a Buyer
+// Edit (see /:id/edit below) soft-deletes a removed line item (edit_state =
+// 'removed', kept in the DB purely for the cross-role strikethrough display)
+// instead of hard-deleting it immediately, so every place that builds a
+// Shopify mutation payload from `items` must first filter these out.
+function activeItems(items) {
+  return items.filter(i => i.edit_state !== 'removed');
+}
+
+// Optimistic-concurrency check for change 1's "This transfer has been
+// updated by someone else" modal. Every status-changing endpoint that a
+// detail page's main button can call accepts an optional expectedUpdatedAt
+// (ISO string of the transfers.updated_at the page loaded). If the caller
+// passes it and it no longer matches, the click is stale — someone else
+// moved this transfer forward first — so we refuse instead of silently
+// operating on a transfer the caller's screen doesn't actually reflect
+// anymore. Not passing expectedUpdatedAt at all skips the check (used by
+// bulk/batch callers like commit-selected/dispatch-selected, which don't
+// hold a single per-transfer snapshot).
+async function checkNotStale(id, expectedUpdatedAt) {
+  if (!expectedUpdatedAt) return;
+  const { rows } = await pool.query('SELECT updated_at FROM transfers WHERE id = $1', [id]);
+  if (!rows[0]) {
+    const err = new Error('Transfer not found');
+    err.statusCode = 404;
+    throw err;
+  }
+  const current = new Date(rows[0].updated_at).getTime();
+  const expected = new Date(expectedUpdatedAt).getTime();
+  if (Number.isFinite(current) && Number.isFinite(expected) && current !== expected) {
+    const err = new Error('This transfer has been updated by someone else');
+    err.statusCode = 409;
+    throw err;
+  }
+}
+
+// Hold (spec doc section 改动六): while on_hold, EVERY role — including Buyer
+// themselves — is blocked from any action that changes this transfer's
+// status. Buyer must Release before advancing it further, same as everyone
+// else ("当 Buyer hold 一个 transfer 之后，buyer 自己也需要先 release，才能推进其状态").
+// The `asBuyer` param callers still pass is kept only so Hold/Release
+// themselves (and Edit — see /:id/edit) can identify the caller for other
+// purposes; it is NOT a bypass here.
+async function assertNotHeld(id, _asBuyer) {
+  const { rows } = await pool.query('SELECT on_hold FROM transfers WHERE id = $1', [id]);
+  if (rows[0]?.on_hold) {
+    const err = new Error('Buyer put this transfer on hold');
+    err.statusCode = 423;
+    throw err;
+  }
+}
+
+// Shared catch-block responder — checkNotStale/assertNotHeld throw with a
+// statusCode (409/423/404); anything else is a real server error (500).
+function sendErr(res, e, logPrefix) {
+  console.error(`${logPrefix} error:`, e.message);
+  res.status(e.statusCode || 500).json({ error: e.message });
+}
+
 // Note visibility (spec doc section 0): Buyer's note is visible to everyone;
 // a Warehouse or Manager note is visible only to its author role + Buyer.
 function applyNoteVisibility(transfer, role) {
@@ -448,13 +509,18 @@ router.post('/', async (req, res) => {
 
 // ─── Buyer: Transfer home / history ─────────────────────────────────────────
 
+// 2026-09-15: nothing rests at status='committed' anymore — commitOne() now
+// moves straight to 'archived' (spec doc 改动三). /recent and /history read
+// archived rows instead; 'committed' is kept in the CHECK constraint only for
+// backward compatibility with old rows/callers, not as a state anything new
+// writes.
 router.get('/recent', async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT id, transfer_no, shopify_transfer_id, shopify_transfer_name, shopify_transfer_url,
-              from_location, to_location, committed_at
+              from_location, to_location, committed_at, auto_committed
        FROM transfers
-       WHERE status = 'committed'
+       WHERE status = 'archived'
        ORDER BY committed_at DESC
        LIMIT $1`,
       [RECENT_LIMIT]
@@ -472,16 +538,16 @@ router.get('/history', async (req, res) => {
     const params = [];
     let query = `
       SELECT id, transfer_no, shopify_transfer_id, shopify_transfer_name, shopify_transfer_url,
-             from_location, to_location, committed_at
+             from_location, to_location, committed_at, auto_committed
       FROM transfers
-      WHERE status = 'committed'`;
+      WHERE status = 'archived'`;
     if (q) {
       params.push(`%${q}%`);
       query += ` AND id IN (
         SELECT DISTINCT t2.id
         FROM transfers t2
         LEFT JOIN transfer_items it2 ON it2.transfer_id = t2.id
-        WHERE t2.status = 'committed'
+        WHERE t2.status = 'archived'
           AND (it2.sku ILIKE $${params.length} OR it2.name ILIKE $${params.length})
       )`;
     }
@@ -495,16 +561,22 @@ router.get('/history', async (req, res) => {
   }
 });
 
-// GET /api/transfers/ongoing — Buyer sees all 7 statuses except committed
-// (committed lives in /recent + /history instead — see spec doc section 3).
+// GET /api/transfers/ongoing?includeArchived=true — Buyer sees every status
+// except archived by default (spec doc 改动三: Archived is a filter, off by
+// default). Passing includeArchived=true shows archived rows too — the
+// frontend uses this to power the Ongoing list's "Show archived" toggle,
+// reading auto_committed off each row to badge the ones that skipped Buyer
+// review entirely.
 router.get('/ongoing', async (req, res) => {
   try {
+    const includeArchived = req.query.includeArchived === 'true';
     const result = await pool.query(
       `SELECT id, transfer_no, shopify_transfer_id, shopify_transfer_name, shopify_transfer_url,
-              from_location, to_location, status, created_at
+              from_location, to_location, status, created_at, on_hold, auto_committed
        FROM transfers
-       WHERE status != 'committed'
-       ORDER BY created_at DESC`
+       WHERE ($1 = TRUE OR status != 'archived') AND status != 'committed'
+       ORDER BY created_at DESC`,
+      [includeArchived]
     );
     res.json(result.rows);
   } catch (e) {
@@ -523,7 +595,7 @@ router.get('/warehouse/home', async (req, res) => {
   try {
     const statuses = ['loading', 'pending', 'good_to_go', 'in_transit'];
     const result = await pool.query(
-      `SELECT id, transfer_no, from_location, to_location, status
+      `SELECT id, transfer_no, shopify_transfer_name, from_location, to_location, status, on_hold
        FROM transfers
        WHERE status = ANY($1)
        ORDER BY created_at ASC`,
@@ -534,6 +606,28 @@ router.get('/warehouse/home', async (req, res) => {
     res.json({ hq, pickupFromStore });
   } catch (e) {
     console.error('GET /api/transfers/warehouse/home error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/transfers/warehouse/receiving-to-hq — 改动二第 1/2 点: a third
+// Warehouse home card, "Receiving to HQ" — every transfer whose to_location
+// is HQ, In transit or Receiving. Unlike the from-HQ card above, this one is
+// keyed off to_location, not from_location — Warehouse acts as the
+// to-location's receiving/counting role here, mirroring what Manager does
+// for a store (see WarehouseTransferReceivingDetail.js).
+router.get('/warehouse/receiving-to-hq', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, transfer_no, shopify_transfer_name, from_location, to_location, status, on_hold
+       FROM transfers
+       WHERE to_location = $1 AND status IN ('in_transit', 'receiving')
+       ORDER BY created_at ASC`,
+      [HQ_LOCATION_NAME]
+    );
+    res.json(result.rows);
+  } catch (e) {
+    console.error('GET /api/transfers/warehouse/receiving-to-hq error:', e);
     res.status(500).json({ error: e.message });
   }
 });
@@ -552,14 +646,14 @@ router.get('/manager/home', async (req, res) => {
     if (!location) return res.status(400).json({ error: 'Missing location' });
 
     const receiving = await pool.query(
-      `SELECT id, transfer_no, from_location, to_location, status
+      `SELECT id, transfer_no, shopify_transfer_name, from_location, to_location, status, on_hold
        FROM transfers
        WHERE to_location = $1 AND status IN ('in_transit','receiving')
        ORDER BY created_at ASC`,
       [location]
     );
     const sending = await pool.query(
-      `SELECT id, transfer_no, from_location, to_location, status
+      `SELECT id, transfer_no, shopify_transfer_name, from_location, to_location, status, on_hold
        FROM transfers
        WHERE from_location = $1 AND status IN ('loading','good_to_go','pending')
        ORDER BY created_at ASC`,
@@ -626,7 +720,13 @@ router.get('/:id', async (req, res) => {
     const found = await fetchTransferWithItems(req.params.id);
     if (!found) return res.status(404).json({ error: 'Transfer not found' });
 
-    if (role === 'manager') {
+    // Wig Number: Manager pages always show it; Warehouse only in the new
+    // Receiving to HQ flow (改动二第 2 点 — same list structure as Manager's
+    // Receiving side, Wig Number included), never in Warehouse's original
+    // Loading/Dispatch pages. wigContext=receiving-hq is what
+    // WarehouseTransferReceivingDetail.js passes.
+    const needsWigNumbers = role === 'manager' || (role === 'warehouse' && req.query.wigContext === 'receiving-hq');
+    if (needsWigNumbers) {
       const session = await getSession();
       if (session) {
         try {
@@ -704,21 +804,282 @@ router.post('/:id/refresh-qty', async (req, res) => {
   }
 });
 
+// ─── Hold / Release (Buyer, 改动六) ──────────────────────────────────────────
+// Only meaningful on Loading/Pending/Good to go — the frontend only shows the
+// button there — but not enforced here: Buyer can also release a transfer
+// they advanced past Good to go themselves while held (see the Release
+// button-visibility note in spec doc section 11 改动六).
+
+router.post('/:id/hold', async (req, res) => {
+  try {
+    await pool.query('UPDATE transfers SET on_hold = TRUE, updated_at = NOW() WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (e) {
+    sendErr(res, e, 'POST /api/transfers/:id/hold');
+  }
+});
+
+router.post('/:id/release', async (req, res) => {
+  try {
+    await pool.query('UPDATE transfers SET on_hold = FALSE, updated_at = NOW() WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (e) {
+    sendErr(res, e, 'POST /api/transfers/:id/release');
+  }
+});
+
+// ─── Buyer Edit (改动四) ──────────────────────────────────────────────────────
+
+// POST /api/transfers/:id/edit — only valid while status is Loading/Pending/
+// Good to go. Body: {
+//   expectedUpdatedAt,
+//   added: [{ sku, name, inventoryItemId, quantity }],
+//   removedItemIds: [itemId, ...],
+//   quantityChanges: [{ itemId, quantity }],
+// }
+//
+// Pushes the edit to Shopify at the Transfer layer (inventoryTransferSetItems
+// handles both "add a new line item" and "change an existing one's quantity"
+// in one mutation per shopify.dev; inventoryTransferRemoveItems handles
+// deletions) and — only when this transfer already has a shipment (i.e. it
+// was Good to go before this edit) — ALSO at the Shipment layer, because
+// Dispatch/Commit read from the Shipment, not the Transfer, from that point
+// on (see the spec doc discussion this resolved). ⚠️ inventoryTransferRemove
+// Items / inventoryShipmentAddItems / inventoryShipmentRemoveItems have never
+// been called anywhere in this codebase before this — their input shapes
+// below are our best-guess construction from shopify.dev's mutation
+// reference (mirroring inventoryTransferSetItems'/inventoryShipmentUpdate
+// ItemQuantities' already-confirmed shapes), NOT yet exercised against a
+// real transfer. If Save errors out with a GraphQL schema complaint (e.g.
+// "not a defined input type" or an unknown field), send me the exact error —
+// same pattern as the inventoryTransferMarkAsReadyToShip bug this session
+// already found and fixed once.
+//
+// Always ends with status = 'loading', regardless of what status this
+// transfer was in before the edit — even Good to go, per Hera's decision:
+// Shopify has no mutation to un-mark a transfer as ready-to-ship, so its
+// side stays Ready-to-ship/committed the whole time; only our own status
+// label and the actual line items move.
+router.post('/:id/edit', async (req, res) => {
+  try {
+    const { expectedUpdatedAt, added, removedItemIds, quantityChanges } = req.body || {};
+    await checkNotStale(req.params.id, expectedUpdatedAt);
+
+    const found = await fetchTransferWithItems(req.params.id);
+    if (!found) return res.status(404).json({ error: 'Transfer not found' });
+    const { transfer } = found;
+    if (!['loading', 'pending', 'good_to_go'].includes(transfer.status)) {
+      return res.status(400).json({ error: 'This transfer can no longer be edited' });
+    }
+    const itemsById = new Map(found.items.map(i => [i.id, i]));
+
+    const addedList = added || [];
+    const removedIds = removedItemIds || [];
+    const qtyChanges = (quantityChanges || []).filter(c => !removedIds.includes(c.itemId));
+
+    const session = await getSession();
+    if (!session) return res.status(401).json({ error: 'No session' });
+    const shopify = getShopify();
+    const client = new shopify.clients.Graphql({ session });
+
+    // A. Transfer layer — add + quantity-change in one inventoryTransferSetItems
+    // call (it adds a line item that isn't on the transfer yet, or updates
+    // the quantity of one that already is).
+    const setLineItems = [
+      ...addedList.map(a => ({ inventoryItemId: a.inventoryItemId, quantity: Number(a.quantity) })),
+      ...qtyChanges.map(c => ({ inventoryItemId: itemsById.get(c.itemId)?.inventory_item_id, quantity: Number(c.quantity) })).filter(li => li.inventoryItemId),
+    ];
+    if (setLineItems.length > 0) {
+      const setItemsMutation = `
+        mutation inventoryTransferSetItems($input: InventoryTransferSetItemsInput!, $idempotencyKey: String!) {
+          inventoryTransferSetItems(input: $input) @idempotent(key: $idempotencyKey) {
+            inventoryTransfer { id }
+            userErrors { field message }
+          }
+        }
+      `;
+      const setData = await graphql(client, setItemsMutation, {
+        input: { id: transfer.shopify_transfer_id, lineItems: setLineItems },
+        idempotencyKey: crypto.randomUUID(),
+      });
+      const setErrors = setData?.inventoryTransferSetItems?.userErrors || [];
+      if (setErrors.length > 0) return res.status(400).json({ error: setErrors.map(e => e.message).join('; ') });
+    }
+
+    // B. Transfer layer — removals.
+    if (removedIds.length > 0) {
+      const removeLineItems = removedIds
+        .map(id => itemsById.get(id))
+        .filter(Boolean)
+        .map(i => ({ inventoryItemId: i.inventory_item_id, quantity: i.quantity }));
+      if (removeLineItems.length > 0) {
+        const removeMutation = `
+          mutation inventoryTransferRemoveItems($input: InventoryTransferRemoveItemsInput!, $idempotencyKey: String!) {
+            inventoryTransferRemoveItems(input: $input) @idempotent(key: $idempotencyKey) {
+              inventoryTransfer { id }
+              userErrors { field message }
+            }
+          }
+        `;
+        const removeData = await graphql(client, removeMutation, {
+          input: { id: transfer.shopify_transfer_id, lineItems: removeLineItems },
+          idempotencyKey: crypto.randomUUID(),
+        });
+        const removeErrors = removeData?.inventoryTransferRemoveItems?.userErrors || [];
+        if (removeErrors.length > 0) return res.status(400).json({ error: removeErrors.map(e => e.message).join('; ') });
+      }
+    }
+
+    // C. Shipment layer — only if this transfer already has a shipment (was
+    // Good to go before this edit). Dispatch/Commit read the Shipment, not
+    // the Transfer, so it has to be kept in sync too.
+    if (transfer.shopify_shipment_id) {
+      const shipmentId = transfer.shopify_shipment_id;
+
+      if (qtyChanges.length > 0) {
+        const shipmentQtyItems = qtyChanges
+          .map(c => ({ shipmentLineItemId: itemsById.get(c.itemId)?.shipment_line_item_id, quantity: Number(c.quantity) }))
+          .filter(li => li.shipmentLineItemId);
+        if (shipmentQtyItems.length > 0) {
+          const updateMutation = `
+            mutation inventoryShipmentUpdateItemQuantities($input: InventoryShipmentUpdateItemQuantitiesInput!, $idempotencyKey: String!) {
+              inventoryShipmentUpdateItemQuantities(input: $input) @idempotent(key: $idempotencyKey) {
+                inventoryShipment { id }
+                userErrors { field message }
+              }
+            }
+          `;
+          const data = await graphql(client, updateMutation, {
+            input: { id: shipmentId, items: shipmentQtyItems },
+            idempotencyKey: crypto.randomUUID(),
+          });
+          const errors = data?.inventoryShipmentUpdateItemQuantities?.userErrors || [];
+          if (errors.length > 0) return res.status(400).json({ error: errors.map(e => e.message).join('; ') });
+        }
+      }
+
+      if (removedIds.length > 0) {
+        const shipmentLineItemIdsToRemove = removedIds
+          .map(id => itemsById.get(id)?.shipment_line_item_id)
+          .filter(Boolean);
+        if (shipmentLineItemIdsToRemove.length > 0) {
+          const removeShipmentMutation = `
+            mutation inventoryShipmentRemoveItems($input: InventoryShipmentRemoveItemsInput!, $idempotencyKey: String!) {
+              inventoryShipmentRemoveItems(input: $input) @idempotent(key: $idempotencyKey) {
+                inventoryShipment { id }
+                userErrors { field message }
+              }
+            }
+          `;
+          const data = await graphql(client, removeShipmentMutation, {
+            input: { id: shipmentId, lineItems: shipmentLineItemIdsToRemove.map(id => ({ id })) },
+            idempotencyKey: crypto.randomUUID(),
+          });
+          const errors = data?.inventoryShipmentRemoveItems?.userErrors || [];
+          if (errors.length > 0) console.error('inventoryShipmentRemoveItems userErrors (edit still applied at Transfer layer):', errors.map(e => e.message).join('; '));
+        }
+      }
+
+      if (addedList.length > 0) {
+        const addShipmentMutation = `
+          mutation inventoryShipmentAddItems($input: InventoryShipmentAddItemsInput!, $idempotencyKey: String!) {
+            inventoryShipmentAddItems(input: $input) @idempotent(key: $idempotencyKey) {
+              inventoryShipment { id lineItems(first: 250) { edges { node { id inventoryItem { id } } } } }
+              userErrors { field message }
+            }
+          }
+        `;
+        const data = await graphql(client, addShipmentMutation, {
+          input: {
+            id: shipmentId,
+            lineItems: addedList.map(a => ({ inventoryItemId: a.inventoryItemId, quantity: Number(a.quantity) })),
+          },
+          idempotencyKey: crypto.randomUUID(),
+        });
+        const errors = data?.inventoryShipmentAddItems?.userErrors || [];
+        if (errors.length > 0) console.error('inventoryShipmentAddItems userErrors (edit still applied at Transfer layer):', errors.map(e => e.message).join('; '));
+        else if (data?.inventoryShipmentAddItems?.inventoryShipment) {
+          // Re-map so the newly-added rows (inserted below) can pick up their
+          // shipment_line_item_id in the same request cycle next time this
+          // transfer is read — done after the INSERTs below instead, see D.
+        }
+      }
+    }
+
+    // D. Our own DB.
+    for (const a of addedList) {
+      await pool.query(
+        `INSERT INTO transfer_items (transfer_id, sku, name, quantity, inventory_item_id, edit_state)
+         VALUES ($1, $2, $3, $4, $5, 'added')`,
+        [transfer.id, a.sku || null, a.name || null, Number(a.quantity), a.inventoryItemId]
+      );
+    }
+    if (removedIds.length > 0) {
+      await pool.query(
+        `UPDATE transfer_items SET edit_state = 'removed' WHERE id = ANY($1)`,
+        [removedIds]
+      );
+    }
+    for (const c of qtyChanges) {
+      await pool.query(
+        `UPDATE transfer_items
+         SET quantity = $1,
+             edit_state = CASE WHEN edit_state = 'added' THEN 'added' ELSE 'qty_changed' END,
+             loaded_confirmed = FALSE, qty_loaded = NULL,
+             counted_confirmed = FALSE, received_quantity = NULL
+         WHERE id = $2`,
+        [Number(c.quantity), c.itemId]
+      );
+    }
+
+    // If a shipment exists, re-map shipment_line_item_id for every active
+    // item (covers the newly-added rows just inserted above, and keeps
+    // everything else's mapping fresh too).
+    if (transfer.shopify_shipment_id) {
+      try {
+        const lookup = `
+          query shipmentLineItems($id: ID!) {
+            inventoryShipment(id: $id) {
+              id
+              lineItems(first: 250) { edges { node { id inventoryItem { id } } } }
+            }
+          }
+        `;
+        const lookupData = await graphql(client, lookup, { id: transfer.shopify_shipment_id });
+        const shipment = lookupData?.inventoryShipment;
+        if (shipment) {
+          const refreshedItems = await fetchTransferWithItems(transfer.id);
+          await mapShipmentLineItems(shipment, activeItems(refreshedItems.items));
+        }
+      } catch (e) {
+        console.error(`POST /api/transfers/:id/edit: shipment line item re-map failed for transfer ${transfer.id}:`, e.message);
+      }
+    }
+
+    await pool.query("UPDATE transfers SET status = 'loading', updated_at = NOW() WHERE id = $1", [transfer.id]);
+
+    const refreshed = await fetchTransferWithItems(transfer.id);
+    res.json({ success: true, transfer: refreshed.transfer, items: refreshed.items });
+  } catch (e) {
+    sendErr(res, e, 'POST /api/transfers/:id/edit');
+  }
+});
+
 // ─── Loading (Warehouse, or Manager as from-location) ───────────────────────
 
 // POST /api/transfers/:id/qty-loaded — one line item's stepper+check
 // confirmation. Body: { itemId, qty }.
 router.post('/:id/qty-loaded', async (req, res) => {
   try {
-    const { itemId, qty } = req.body;
+    const { itemId, qty, asBuyer } = req.body;
+    await assertNotHeld(req.params.id, asBuyer);
     await pool.query(
       'UPDATE transfer_items SET qty_loaded = $1, loaded_confirmed = TRUE WHERE id = $2 AND transfer_id = $3',
       [Number(qty), itemId, req.params.id]
     );
     res.json({ success: true });
   } catch (e) {
-    console.error('POST /api/transfers/:id/qty-loaded error:', e);
-    res.status(500).json({ error: e.message });
+    sendErr(res, e, 'POST /api/transfers/:id/qty-loaded');
   }
 });
 
@@ -728,16 +1089,39 @@ router.post('/:id/qty-loaded', async (req, res) => {
 // quantity: advance to Pending. Otherwise: mark Good to go directly —
 // inventoryTransferMarkAsReadyToShip, then create the shipment from the
 // confirmed qty_loaded values.
+// Body (all optional): { force, asBuyer, expectedUpdatedAt }. force (改动一
+// 第 1 点, Buyer only): Buyer's main button on a Loading transfer can jump
+// straight to Good to go even if line items are still unconfirmed — every
+// unconfirmed active item is treated as "loaded exactly as transferred"
+// (qty_loaded = quantity) and the Pending-on-mismatch branch is skipped
+// entirely, matching "main button 默认为 Good to Go" from the spec.
 router.post('/:id/submit-loading', async (req, res) => {
   try {
+    const { force, asBuyer, expectedUpdatedAt } = req.body || {};
+    await checkNotStale(req.params.id, expectedUpdatedAt);
+    await assertNotHeld(req.params.id, asBuyer);
+
     const found = await fetchTransferWithItems(req.params.id);
     if (!found) return res.status(404).json({ error: 'Transfer not found' });
-    const { transfer, items } = found;
+    const { transfer } = found;
+    const items = activeItems(found.items);
 
-    if (items.some(i => !i.loaded_confirmed)) {
+    if (!force && items.some(i => !i.loaded_confirmed)) {
       return res.status(400).json({ error: 'All line items must be confirmed before submitting' });
     }
-    const hasMismatch = items.some(i => i.qty_loaded !== i.quantity);
+    if (force) {
+      for (const i of items) {
+        if (!i.loaded_confirmed) {
+          await pool.query(
+            'UPDATE transfer_items SET qty_loaded = quantity, loaded_confirmed = TRUE WHERE id = $1',
+            [i.id]
+          );
+          i.qty_loaded = i.quantity;
+          i.loaded_confirmed = true;
+        }
+      }
+    }
+    const hasMismatch = !force && items.some(i => i.qty_loaded !== i.quantity);
 
     if (hasMismatch) {
       await pool.query("UPDATE transfers SET status = 'pending', updated_at = NOW() WHERE id = $1", [transfer.id]);
@@ -749,21 +1133,38 @@ router.post('/:id/submit-loading', async (req, res) => {
     const shopify = getShopify();
     const client = new shopify.clients.Graphql({ session });
 
-    const markReadyMutation = `
-      mutation inventoryTransferMarkAsReadyToShip($input: InventoryTransferMarkAsReadyToShipInput!, $idempotencyKey: String!) {
-        inventoryTransferMarkAsReadyToShip(input: $input) @idempotent(key: $idempotencyKey) {
-          inventoryTransfer { id }
-          userErrors { field message }
+    // 2026-09-15: if a shipment already exists, this transfer was previously
+    // advanced to Good to go and later reverted to Loading by a Buyer Edit
+    // (改动四) — Shopify's side never actually left Ready-to-ship, only the
+    // line items changed, so calling mark-as-ready-to-ship again would be
+    // redundant (and may error). Skip straight to re-confirming the
+    // shipment/status below.
+    if (!transfer.shopify_shipment_id) {
+      // 2026-09-15 fix: this mutation takes a plain `id: ID!` argument, NOT a
+      // wrapped `input` object — confirmed against shopify.dev's mutation
+      // reference (the only argument is `id`; there is no
+      // InventoryTransferMarkAsReadyToShipInput type). The old
+      // `input: InventoryTransferMarkAsReadyToShipInput!` shape below was
+      // wrong from when this route was first written and only surfaced as a
+      // real error once a Buyer actually hit a code path that called it —
+      // same bug existed in the two other copies of this mutation in this
+      // file (POST /:id/confirm and commitOne()), fixed there too.
+      const markReadyMutation = `
+        mutation inventoryTransferMarkAsReadyToShip($id: ID!, $idempotencyKey: String!) {
+          inventoryTransferMarkAsReadyToShip(id: $id) @idempotent(key: $idempotencyKey) {
+            inventoryTransfer { id }
+            userErrors { field message }
+          }
         }
+      `;
+      const markData = await graphql(client, markReadyMutation, {
+        id: transfer.shopify_transfer_id,
+        idempotencyKey: crypto.randomUUID(),
+      });
+      const markErrors = markData?.inventoryTransferMarkAsReadyToShip?.userErrors || [];
+      if (markErrors.length > 0) {
+        return res.status(400).json({ error: markErrors.map(e => e.message).join('; ') });
       }
-    `;
-    const markData = await graphql(client, markReadyMutation, {
-      input: { id: transfer.shopify_transfer_id },
-      idempotencyKey: crypto.randomUUID(),
-    });
-    const markErrors = markData?.inventoryTransferMarkAsReadyToShip?.userErrors || [];
-    if (markErrors.length > 0) {
-      return res.status(400).json({ error: markErrors.map(e => e.message).join('; ') });
     }
 
     const shipmentId = await ensureShipment(client, transfer, items);
@@ -773,8 +1174,7 @@ router.post('/:id/submit-loading', async (req, res) => {
     );
     res.json({ success: true, status: 'good_to_go' });
   } catch (e) {
-    console.error('POST /api/transfers/:id/submit-loading error:', e);
-    res.status(500).json({ error: e.message });
+    sendErr(res, e, 'POST /api/transfers/:id/submit-loading');
   }
 });
 
@@ -791,10 +1191,13 @@ router.post('/:id/submit-loading', async (req, res) => {
 //      same as the no-mismatch path in submit-loading)
 router.post('/:id/confirm', async (req, res) => {
   try {
-    const { items: confirmedItems } = req.body;
+    const { items: confirmedItems, expectedUpdatedAt } = req.body;
+    await checkNotStale(req.params.id, expectedUpdatedAt);
+
     const found = await fetchTransferWithItems(req.params.id);
     if (!found) return res.status(404).json({ error: 'Transfer not found' });
-    const { transfer, items } = found;
+    const { transfer } = found;
+    const items = activeItems(found.items);
 
     const session = await getSession();
     if (!session) return res.status(401).json({ error: 'No session' });
@@ -876,34 +1279,40 @@ router.post('/:id/confirm', async (req, res) => {
       }
     }
 
-    // C. Advance to Good to go.
-    const markReadyMutation = `
-      mutation inventoryTransferMarkAsReadyToShip($input: InventoryTransferMarkAsReadyToShipInput!, $idempotencyKey: String!) {
-        inventoryTransferMarkAsReadyToShip(input: $input) @idempotent(key: $idempotencyKey) {
-          inventoryTransfer { id }
-          userErrors { field message }
+    // C. Advance to Good to go. 2026-09-15: skip mark-as-ready-to-ship if a
+    // shipment already exists (this transfer was previously Good to go and
+    // reverted to Loading/Pending by a Buyer Edit — see the same guard in
+    // POST /:id/submit-loading above).
+    if (!transfer.shopify_shipment_id) {
+      // 2026-09-15 fix: plain `id: ID!` argument, not a wrapped input object —
+      // see the comment on this same mutation in POST /:id/submit-loading above.
+      const markReadyMutation = `
+        mutation inventoryTransferMarkAsReadyToShip($id: ID!, $idempotencyKey: String!) {
+          inventoryTransferMarkAsReadyToShip(id: $id) @idempotent(key: $idempotencyKey) {
+            inventoryTransfer { id }
+            userErrors { field message }
+          }
         }
+      `;
+      const markData = await graphql(client, markReadyMutation, {
+        id: transfer.shopify_transfer_id,
+        idempotencyKey: crypto.randomUUID(),
+      });
+      const markErrors = markData?.inventoryTransferMarkAsReadyToShip?.userErrors || [];
+      if (markErrors.length > 0) {
+        return res.status(400).json({ error: markErrors.map(e => e.message).join('; ') });
       }
-    `;
-    const markData = await graphql(client, markReadyMutation, {
-      input: { id: transfer.shopify_transfer_id },
-      idempotencyKey: crypto.randomUUID(),
-    });
-    const markErrors = markData?.inventoryTransferMarkAsReadyToShip?.userErrors || [];
-    if (markErrors.length > 0) {
-      return res.status(400).json({ error: markErrors.map(e => e.message).join('; ') });
     }
 
     const refreshed = await fetchTransferWithItems(transfer.id);
-    const shipmentId = await ensureShipment(client, transfer, refreshed.items);
+    const shipmentId = await ensureShipment(client, transfer, activeItems(refreshed.items));
     await pool.query(
       "UPDATE transfers SET status = 'good_to_go', shopify_shipment_id = $1, updated_at = NOW() WHERE id = $2",
       [shipmentId, transfer.id]
     );
     res.json({ success: true, status: 'good_to_go' });
   } catch (e) {
-    console.error('POST /api/transfers/:id/confirm error:', e);
-    res.status(500).json({ error: e.message });
+    sendErr(res, e, 'POST /api/transfers/:id/confirm');
   }
 });
 
@@ -911,6 +1320,10 @@ router.post('/:id/confirm', async (req, res) => {
 
 router.post('/:id/cancel', async (req, res) => {
   try {
+    await checkNotStale(req.params.id, (req.body || {}).expectedUpdatedAt);
+    // 2026-09-15 改动六收尾修复: Cancel 会直接删掉这个 transfer，和其他状态
+    // 推进类操作一样应该被 Hold 挡住，之前遗漏了这条。
+    await assertNotHeld(req.params.id, (req.body || {}).asBuyer);
     const found = await fetchTransferWithItems(req.params.id);
     if (!found) return res.status(404).json({ error: 'Transfer not found' });
     const { transfer } = found;
@@ -936,8 +1349,7 @@ router.post('/:id/cancel', async (req, res) => {
     await pool.query('DELETE FROM transfers WHERE id = $1', [transfer.id]);
     res.json({ success: true });
   } catch (e) {
-    console.error('POST /api/transfers/:id/cancel error:', e);
-    res.status(500).json({ error: e.message });
+    sendErr(res, e, 'POST /api/transfers/:id/cancel');
   }
 });
 
@@ -947,11 +1359,12 @@ router.post('/:id/cancel', async (req, res) => {
 // up" button (spec doc: same effect, different label per role/page).
 router.post('/:id/dispatch', async (req, res) => {
   try {
-    await dispatchOne(req.params.id);
+    const { asBuyer, expectedUpdatedAt } = req.body || {};
+    await checkNotStale(req.params.id, expectedUpdatedAt);
+    await dispatchOne(req.params.id, asBuyer);
     res.json({ success: true });
   } catch (e) {
-    console.error('POST /api/transfers/:id/dispatch error:', e);
-    res.status(500).json({ error: e.message });
+    sendErr(res, e, 'POST /api/transfers/:id/dispatch');
   }
 });
 
@@ -993,7 +1406,8 @@ router.post('/warehouse/dispatch-all-good-to-go', async (req, res) => {
 // Shared by the two batch endpoints above and, indirectly, the single
 // /:id/dispatch route's logic (kept as a small helper rather than an HTTP
 // self-call).
-async function dispatchOne(id) {
+async function dispatchOne(id, asBuyer) {
+  await assertNotHeld(id, asBuyer);
   const found = await fetchTransferWithItems(id);
   if (!found) throw new Error('Transfer not found');
   const { transfer } = found;
@@ -1054,11 +1468,13 @@ async function dispatchOne(id) {
 // call (spec doc section 6: this is purely our own status advance).
 router.post('/:id/delivered', async (req, res) => {
   try {
+    const { asBuyer, expectedUpdatedAt } = req.body || {};
+    await checkNotStale(req.params.id, expectedUpdatedAt);
+    await assertNotHeld(req.params.id, asBuyer);
     await pool.query("UPDATE transfers SET status = 'receiving', delivered_at = NOW(), updated_at = NOW() WHERE id = $1", [req.params.id]);
     res.json({ success: true });
   } catch (e) {
-    console.error('POST /api/transfers/:id/delivered error:', e);
-    res.status(500).json({ error: e.message });
+    sendErr(res, e, 'POST /api/transfers/:id/delivered');
   }
 });
 
@@ -1066,27 +1482,47 @@ router.post('/:id/delivered', async (req, res) => {
 // Body: { itemId, count }.
 router.post('/:id/count', async (req, res) => {
   try {
-    const { itemId, count } = req.body;
+    const { itemId, count, asBuyer } = req.body;
+    await assertNotHeld(req.params.id, asBuyer);
     await pool.query(
       'UPDATE transfer_items SET received_quantity = $1, counted_confirmed = TRUE WHERE id = $2 AND transfer_id = $3',
       [Number(count), itemId, req.params.id]
     );
     res.json({ success: true });
   } catch (e) {
-    console.error('POST /api/transfers/:id/count error:', e);
-    res.status(500).json({ error: e.message });
+    sendErr(res, e, 'POST /api/transfers/:id/count');
   }
 });
 
-// POST /api/transfers/:id/submit-count — Receiving → Counted. Blocked if any
-// line item hasn't been counted yet.
+// POST /api/transfers/:id/submit-count — Receiving → Counted, blocked if any
+// line item hasn't been counted yet — UNLESS force is set (改动二: Warehouse's
+// "Submit Without Counting" button on a Receiving to HQ transfer, shown only
+// when at least one item is still unprocessed). With force and at least one
+// unprocessed item, the transfer goes to 'not_counted' instead of 'counted'
+// (never auto-commits — Buyer always has to review/finish it). Without force
+// — or with force passed but every item actually already processed, which
+// the frontend shouldn't do but this guards against anyway — normal 'counted'
+// path runs, and then (改动三) auto-commits + archives immediately if every
+// item's received_quantity matches its transfer quantity exactly.
 router.post('/:id/submit-count', async (req, res) => {
   try {
+    const { force, asBuyer, expectedUpdatedAt } = req.body || {};
+    await checkNotStale(req.params.id, expectedUpdatedAt);
+    await assertNotHeld(req.params.id, asBuyer);
+
     const found = await fetchTransferWithItems(req.params.id);
     if (!found) return res.status(404).json({ error: 'Transfer not found' });
-    if (found.items.some(i => !i.counted_confirmed)) {
+    const items = activeItems(found.items);
+    const incomplete = items.some(i => !i.counted_confirmed);
+    if (incomplete && !force) {
       return res.status(400).json({ error: 'All line items must be counted before submitting' });
     }
+    if (incomplete && force) {
+      await pool.query("UPDATE transfers SET status = 'not_counted', counted_at = NOW(), updated_at = NOW() WHERE id = $1", [req.params.id]);
+      return res.json({ success: true, status: 'not_counted' });
+    }
+
+    const noQtyIssue = items.every(i => i.received_quantity === i.quantity);
     await pool.query("UPDATE transfers SET status = 'counted', counted_at = NOW(), updated_at = NOW() WHERE id = $1", [req.params.id]);
 
     // Freeze a snapshot of this transfer's counts for the manager's own
@@ -1120,10 +1556,23 @@ router.post('/:id/submit-count', async (req, res) => {
       console.error(`Failed to record manager history for transfer ${req.params.id} submit-count:`, histErr.message);
     }
 
-    res.json({ success: true });
+    // 改动三: no qty issue on a normally-completed count → auto commit +
+    // archive right away, no Buyer review needed. A commit failure here
+    // leaves the transfer sitting at 'counted' (already committed to the DB
+    // above) for Buyer to commit manually instead — it must never turn this
+    // Submit click itself into an error for Warehouse/Manager.
+    if (noQtyIssue) {
+      try {
+        await commitOne(req.params.id, true);
+        return res.json({ success: true, status: 'archived', autoCommitted: true });
+      } catch (commitErr) {
+        console.error(`Auto-commit failed for transfer ${req.params.id} after submit-count:`, commitErr.message);
+      }
+    }
+
+    res.json({ success: true, status: 'counted' });
   } catch (e) {
-    console.error('POST /api/transfers/:id/submit-count error:', e);
-    res.status(500).json({ error: e.message });
+    sendErr(res, e, 'POST /api/transfers/:id/submit-count');
   }
 });
 
@@ -1145,10 +1594,11 @@ router.post('/:id/submit-count', async (req, res) => {
 //     never dispatched — mark it in transit.
 //   - has a shipment, status is In transit/Receiving/Counted -> already
 //     in transit on Shopify's side, nothing to do here.
-async function commitOne(id) {
+async function commitOne(id, autoCommitted) {
   const found = await fetchTransferWithItems(id);
   if (!found) throw new Error('Transfer not found');
-  const { transfer, items } = found;
+  const { transfer } = found;
+  const items = activeItems(found.items);
 
   const session = await getSession();
   if (!session) throw new Error('No session');
@@ -1159,16 +1609,18 @@ async function commitOne(id) {
 
   if (!shipmentId) {
     if (transfer.status === 'loading' || transfer.status === 'pending') {
+      // 2026-09-15 fix: plain `id: ID!` argument, not a wrapped input object —
+      // see the comment on this same mutation in POST /:id/submit-loading above.
       const markReadyMutation = `
-        mutation inventoryTransferMarkAsReadyToShip($input: InventoryTransferMarkAsReadyToShipInput!, $idempotencyKey: String!) {
-          inventoryTransferMarkAsReadyToShip(input: $input) @idempotent(key: $idempotencyKey) {
+        mutation inventoryTransferMarkAsReadyToShip($id: ID!, $idempotencyKey: String!) {
+          inventoryTransferMarkAsReadyToShip(id: $id) @idempotent(key: $idempotencyKey) {
             inventoryTransfer { id }
             userErrors { field message }
           }
         }
       `;
       const markData = await graphql(client, markReadyMutation, {
-        input: { id: transfer.shopify_transfer_id },
+        id: transfer.shopify_transfer_id,
         idempotencyKey: crypto.randomUUID(),
       });
       const markErrors = markData?.inventoryTransferMarkAsReadyToShip?.userErrors || [];
@@ -1231,19 +1683,33 @@ async function commitOne(id) {
   for (const item of mismatched) {
     await pool.query('UPDATE transfer_items SET quantity = $1 WHERE id = $2', [item.received_quantity, item.id]);
   }
+  // 2026-09-15 (改动三): commit's terminal status is 'archived' now, not
+  // 'committed' — nothing rests at 'committed' anymore, whether this was a
+  // manual Buyer commit or an automatic one out of submit-count.
+  // auto_committed only gets set true on the automatic path (default false,
+  // per init.js) so Buyer can tell the two apart in the Ongoing list's
+  // Archived filter.
   await pool.query(
-    "UPDATE transfers SET status = 'committed', committed_at = NOW(), shopify_shipment_id = $1, updated_at = NOW() WHERE id = $2",
-    [shipmentId, id]
+    `UPDATE transfers SET status = 'archived', committed_at = NOW(), shopify_shipment_id = $1,
+            auto_committed = $2, updated_at = NOW() WHERE id = $3`,
+    [shipmentId, !!autoCommitted, id]
   );
+  // 改动五: cross-role edit diff highlighting only holds until commit — once
+  // archived, a 'removed' line item has no more reason to exist (it was
+  // never really part of what got shipped/received) and every remaining
+  // item's edit_state goes back to NULL.
+  await pool.query("DELETE FROM transfer_items WHERE transfer_id = $1 AND edit_state = 'removed'", [id]);
+  await pool.query("UPDATE transfer_items SET edit_state = NULL WHERE transfer_id = $1", [id]);
 }
 
 router.post('/:id/commit', async (req, res) => {
   try {
-    await commitOne(req.params.id);
+    const { expectedUpdatedAt } = req.body || {};
+    await checkNotStale(req.params.id, expectedUpdatedAt);
+    await commitOne(req.params.id, false);
     res.json({ success: true });
   } catch (e) {
-    console.error('POST /api/transfers/:id/commit error:', e);
-    res.status(500).json({ error: e.message });
+    sendErr(res, e, 'POST /api/transfers/:id/commit');
   }
 });
 
@@ -1255,7 +1721,7 @@ router.post('/commit-selected', async (req, res) => {
   const results = [];
   for (const id of ids || []) {
     try {
-      await commitOne(id);
+      await commitOne(id, false);
       results.push({ id, success: true });
     } catch (e) {
       results.push({ id, success: false, error: e.message });
@@ -1379,11 +1845,13 @@ router.get('/:id/export-pdf', async (req, res) => {
 router.delete('/:id/items', async (req, res) => {
   try {
     const { itemIds } = req.body;
+    // 2026-09-15 改动六收尾修复: 这是 Pending 页"Delete selected line items"
+    // 用的路由，会实际改变这个 transfer 的内容，之前的 Hold 检查遗漏了它。
+    await assertNotHeld(req.params.id, (req.body || {}).asBuyer);
     await pool.query('DELETE FROM transfer_items WHERE transfer_id = $1 AND id = ANY($2)', [req.params.id, itemIds || []]);
     res.json({ success: true });
   } catch (e) {
-    console.error('DELETE /api/transfers/:id/items error:', e);
-    res.status(500).json({ error: e.message });
+    sendErr(res, e, 'DELETE /api/transfers/:id/items');
   }
 });
 
@@ -1392,7 +1860,10 @@ router.delete('/:id/items', async (req, res) => {
 router.post('/delete-selected', async (req, res) => {
   try {
     const { ids } = req.body;
-    await pool.query("DELETE FROM transfers WHERE id = ANY($1) AND status != 'committed'", [ids || []]);
+    // 2026-09-15 改动三修复: 'committed' 不再是任何 transfer 会停留的可见状态——
+    // Commit 之后立即变成 'archived'，所以这里的保护条件必须跟着改成排除
+    // 'archived'，否则一个已经 Commit/归档的 transfer 仍然会被这条路由整条删掉。
+    await pool.query("DELETE FROM transfers WHERE id = ANY($1) AND status != 'archived'", [ids || []]);
     res.json({ success: true });
   } catch (e) {
     console.error('POST /api/transfers/delete-selected error:', e);

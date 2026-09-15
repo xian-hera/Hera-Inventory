@@ -888,6 +888,49 @@ const initDatabase = async () => {
       CREATE UNIQUE INDEX IF NOT EXISTS idx_transfer_tag_pool_lower ON transfer_tag_pool (LOWER(tag))
     `);
 
+    // ── Migration: 2026-09-15 七项改动（见 claude/TRANSFER_FEATURE_SPEC.md 第 11 节）
+
+    // 5a. 状态机新增 'not_counted'（Warehouse 在 Receiving to HQ 场景里点
+    // Submit Without Counting 时产生）和 'archived'（Commit 成功后的终态——
+    // 一旦 commit 就立即 archived，不再有会停留展示的 'committed' 状态；
+    // 'committed' 仍留在允许值里只是为了兼容，不会再被写入）。
+    await client.query(`ALTER TABLE transfers DROP CONSTRAINT IF EXISTS transfers_status_check`).catch(() => {});
+    await client.query(`
+      ALTER TABLE transfers ADD CONSTRAINT transfers_status_check
+        CHECK (status IN ('loading','pending','good_to_go','in_transit','receiving','counted','not_counted','committed','archived'))
+    `).catch(() => {});
+
+    // 5b. auto_committed：没有 qty issue 而被自动 commit+archive 时打上，
+    // Buyer 在 Ongoing Transfer 页面勾选"显示 Archived"筛选后据此在列表上
+    // 标出哪些是系统自动完成的，需要额外核验。
+    await client.query(`ALTER TABLE transfers ADD COLUMN IF NOT EXISTS auto_committed BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
+
+    // 5c. on_hold：Buyer 端 Hold/Release。持有期间其余角色（Warehouse/
+    // Manager）所有会改变这个 transfer 状态的按钮一律禁用并提示。
+    await client.query(`ALTER TABLE transfers ADD COLUMN IF NOT EXISTS on_hold BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
+
+    // 5d. transfer_items.edit_state：Buyer 通过 Edit 模式改过 line item 之后，
+    // 标记这一行是 'added' / 'removed' / 'qty_changed'，供所有角色的详情页
+    // 做差异高亮。'removed' 的行仍保留在数据库里（只是不可交互、划线展示），
+    // 直到这个 transfer 被 archived 时才真正硬删除；到那时其余行的
+    // edit_state 也一并清空为 NULL（差异高亮只保持到 commit 为止）。
+    await client.query(`ALTER TABLE transfer_items ADD COLUMN IF NOT EXISTS edit_state TEXT`).catch(() => {});
+    await client.query(`ALTER TABLE transfer_items DROP CONSTRAINT IF EXISTS transfer_items_edit_state_check`).catch(() => {});
+    await client.query(`
+      ALTER TABLE transfer_items ADD CONSTRAINT transfer_items_edit_state_check
+        CHECK (edit_state IS NULL OR edit_state IN ('added','removed','qty_changed'))
+    `).catch(() => {});
+
+    // 5e. 〔顺带修复一个既存 bug，不是这七项改动的一部分〕2026-09-10 的
+    // "Refresh qty 改成创建时查一次+点击才再查"那次改动（spec doc 第 9.1
+    // 节）引入了 from_qty_snapshot/to_qty_snapshot 两列，server/routes/
+    // transfers.js 里已经在读写它们了，但当时漏加进了这个 init.js 文件——
+    // 也就是说这两列在实际数据库里从来没有被创建过，Create Transfer 提交
+    // 或者点击 Refresh qty 只要真正跑到这两列就会直接报
+    // "column does not exist" 的 SQL 错误。这里补上。
+    await client.query(`ALTER TABLE transfer_items ADD COLUMN IF NOT EXISTS from_qty_snapshot INTEGER`).catch(() => {});
+    await client.query(`ALTER TABLE transfer_items ADD COLUMN IF NOT EXISTS to_qty_snapshot INTEGER`).catch(() => {});
+
     // ────────────────────────────────────────────────────────────────────────────
 
     // BOX PO feature (Buyer creates, Warehouse counts/submits, Buyer confirms —
@@ -985,6 +1028,41 @@ const initDatabase = async () => {
     `);
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_box_po_items_box_po_id ON box_po_items (box_po_id)
+    `);
+
+    // ─── Wig Demo ────────────────────────────────────────────────────────────────
+    // One row per SKU currently set up as an in-store demo for a WIG product at a
+    // location. Manager adds a row (POST /api/wig-demo) by scanning/searching a
+    // WIG variant — the server moves 1 unit Available -> Unavailable in Shopify
+    // (inventoryMoveQuantities, reason "promotion", on_hand untouched) and, if
+    // another row already exists for the same shopify_product_id at the same
+    // location, releases that old row's 1 unit back to Available (reason
+    // "restock") and deletes it — a product has at most one demo per location at
+    // any time. Buyer (and, as of this session, Manager too) can select rows and
+    // "Cancel DEMO" (DELETE /api/wig-demo), which releases the unit back to
+    // Available and removes the row, with no same-product check (manual override).
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS wig_demos (
+        id                  SERIAL PRIMARY KEY,
+        location            TEXT NOT NULL,
+        shopify_location_id TEXT NOT NULL,
+        shopify_product_id  TEXT NOT NULL,
+        shopify_variant_id  TEXT NOT NULL,
+        inventory_item_id   TEXT NOT NULL,
+        barcode             TEXT NOT NULL,
+        name                TEXT,
+        variant_name        TEXT,
+        created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_wig_demos_location ON wig_demos (location)
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_wig_demos_location_product
+      ON wig_demos (location, shopify_product_id)
     `);
 
     await client.query('COMMIT');

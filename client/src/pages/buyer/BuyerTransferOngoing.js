@@ -1,15 +1,22 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Page, Layout, Card, Button, BlockStack, InlineStack, Text, Spinner, Banner
+  Page, Layout, Card, Button, BlockStack, InlineStack, Text, Spinner, Banner, Checkbox
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
-import { StatusBadge } from '../shared/transferStatus';
+import { StatusBadge, HoldBadge, AutoCommittedBadge } from '../shared/transferStatus';
 
 // Buyer's Ongoing Transfer list — every non-committed transfer (all 7
 // statuses except committed, which lives in the Recent/History views
 // instead). Delete selected removes whole transfers (Loading/Pending only,
 // server-enforced); Commit selected runs the Commit logic per selected
 // Counted transfer. Spec doc section 3/4.
+//
+// 改动三 (2026-09-15): "Archived" is now a real status — a fully-counted,
+// no-qty-issue transfer is auto-committed AND immediately archived, so it
+// never rests at a visible "committed" state. This list defaults to hiding
+// archived transfers (includeArchived=false server-side); the "Show
+// archived" checkbox flips that on, and only then do auto-committed rows
+// show their badge (per spec: badge only visible when this filter is on).
 function BuyerTransferOngoing() {
   const navigate = useNavigate();
   const [transfers, setTransfers] = useState([]);
@@ -18,12 +25,13 @@ function BuyerTransferOngoing() {
   const [selectedIds, setSelectedIds] = useState([]);
   const [deleting, setDeleting] = useState(false);
   const [committing, setCommitting] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
 
-  const fetchOngoing = useCallback(async () => {
+  const fetchOngoing = useCallback(async (includeArchived) => {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch('/api/transfers/ongoing');
+      const res = await fetch(`/api/transfers/ongoing${includeArchived ? '?includeArchived=true' : ''}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       setTransfers(Array.isArray(data) ? data : []);
@@ -34,7 +42,7 @@ function BuyerTransferOngoing() {
     }
   }, []);
 
-  useEffect(() => { fetchOngoing(); }, [fetchOngoing]);
+  useEffect(() => { fetchOngoing(showArchived); }, [fetchOngoing, showArchived]);
 
   const toggleSelect = (id) => {
     setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
@@ -57,7 +65,7 @@ function BuyerTransferOngoing() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       setSelectedIds([]);
-      await fetchOngoing();
+      await fetchOngoing(showArchived);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -79,7 +87,7 @@ function BuyerTransferOngoing() {
       const failed = (data.results || []).filter(r => !r.success);
       if (failed.length > 0) setError(`${failed.length} transfer(s) failed to commit: ${failed.map(f => f.error).join('; ')}`);
       setSelectedIds([]);
-      await fetchOngoing();
+      await fetchOngoing(showArchived);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -111,6 +119,11 @@ function BuyerTransferOngoing() {
               >
                 Commit selected
               </Button>
+              <Checkbox
+                label="Show archived"
+                checked={showArchived}
+                onChange={setShowArchived}
+              />
             </InlineStack>
 
             <Card>
@@ -150,11 +163,17 @@ function BuyerTransferOngoing() {
                             style={{ padding: '10px', cursor: 'pointer', textDecoration: 'underline' }}
                             onClick={() => navigate(`/buyer/transfer/${tr.id}`)}
                           >
-                            {tr.transfer_no}
+                            {tr.shopify_transfer_name || tr.transfer_no}
                           </td>
                           <td style={{ padding: '10px' }}>{tr.from_location}</td>
                           <td style={{ padding: '10px' }}>{tr.to_location}</td>
-                          <td style={{ padding: '10px' }}><StatusBadge status={tr.status} /></td>
+                          <td style={{ padding: '10px' }}>
+                            <InlineStack gap="150" blockAlign="center">
+                              <StatusBadge status={tr.status} />
+                              {tr.on_hold && <HoldBadge />}
+                              {showArchived && tr.auto_committed && <AutoCommittedBadge />}
+                            </InlineStack>
+                          </td>
                         </tr>
                       ))}
                     </tbody>

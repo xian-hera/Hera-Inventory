@@ -732,7 +732,7 @@ function ManagerStockLosses() {
 
   return (
     <Page
-      title="Stock Losses"
+      title="Stock Loss"
       backAction={{ onAction: () => navigate('/manager') }}
     >
       <Layout>

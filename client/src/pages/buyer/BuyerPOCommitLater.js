@@ -40,6 +40,7 @@ function BuyerPOCommitLater() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [committing, setCommitting] = useState(false);
+  const [sendingToStore, setSendingToStore] = useState(false);
   const [selectedIds, setSelectedIds] = useState([]);
   const [search, setSearch] = useState('');
 
@@ -161,6 +162,37 @@ function BuyerPOCommitLater() {
     }
   };
 
+  // Bulk "Send Selected to Store" — mirrors handleCommit's shape (fetch,
+  // report any rejected ids, clear selection, refetch), but hits the
+  // synchronous send-to-store-many endpoint rather than the background
+  // commit-many job, since flipping status here needs no Shopify calls.
+  const handleSendToStore = async (ids) => {
+    if (ids.length === 0) return;
+    setSendingToStore(true);
+    setError('');
+    try {
+      const res = await fetch('/api/po-invoices/pending/send-to-store-many', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      if (data.rejected?.length > 0) {
+        setError(
+          `${data.rejected.length} invoice(s) could not be sent to store: ` +
+          data.rejected.map(r => `${r.invoiceNumber} (${r.reason})`).join(', ')
+        );
+      }
+      setSelectedIds([]);
+      fetchInvoices(search);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSendingToStore(false);
+    }
+  };
+
   const handleDelete = async () => {
     if (selectedIds.length === 0) return;
     if (!window.confirm(`Delete ${selectedIds.length} invoice(s)? This cannot be undone.`)) return;
@@ -227,7 +259,7 @@ function BuyerPOCommitLater() {
       backAction={{ onAction: () => navigate('/buyer/po-receiving') }}
       secondaryActions={[
         { content: 'Delete Selected', destructive: true, disabled: selectedIds.length === 0, onAction: handleDelete },
-        { content: 'Commit All', disabled: selectableInvoices.length === 0 || committing, onAction: () => handleCommit(selectableInvoices.map(i => i.id)) },
+        { content: 'Send Selected to Store', disabled: selectedIds.length === 0 || sendingToStore, onAction: () => handleSendToStore(selectedIds) },
         { content: 'Commit Selected', disabled: selectedIds.length === 0 || committing, onAction: () => handleCommit(selectedIds) },
       ]}
     >

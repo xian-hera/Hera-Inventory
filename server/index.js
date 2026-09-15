@@ -55,6 +55,7 @@ app.use('/api/po-settings', require('./routes/poSettings'));
 app.use('/api/transfers', require('./routes/transfers'));
 app.use('/api/box-po', require('./routes/boxPo'));
 app.use('/api/manager-history', require('./routes/managerHistory').router);
+app.use('/api/wig-demo', require('./routes/wigDemo'));
 
 // Serve static files in production
 if (process.env.NODE_ENV === 'production') {

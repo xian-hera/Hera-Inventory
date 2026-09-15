@@ -64,6 +64,11 @@ function BuyerHome() {
               </span>
             </Button>
 
+            {/* Wig DEMO */}
+            <Button size="large" fullWidth onClick={() => navigate('/buyer/wig-demo')}>
+              Wig DEMO
+            </Button>
+
             {/* Stock Losses */}
             <Button size="large" fullWidth onClick={() => navigate('/buyer/stock-losses')}>
               <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
