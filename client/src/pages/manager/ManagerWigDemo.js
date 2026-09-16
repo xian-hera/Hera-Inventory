@@ -172,7 +172,7 @@ function HowToUseOverlay({ onClose }) {
     <div
       onClick={onClose}
       style={{
-        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 1100,
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.94)', zIndex: 1100,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         padding: '32px 24px', cursor: 'pointer',
       }}
@@ -264,7 +264,38 @@ function ManagerWigDemo() {
     try {
       const res = await fetch(`/api/wig-demo?location=${encodeURIComponent(location)}`);
       const data = await res.json();
-      setItems(Array.isArray(data) ? data : []);
+      const list = Array.isArray(data) ? data : [];
+      setItems(list);
+
+      // Wig Number auto-heal (2026-09-16): wig_number comes from a live,
+      // batched Shopify lookup (attachWigNumbers() in wigDemo.js) that already
+      // retries once server-side, but Hera still saw a row load with "-" and
+      // then show the real number after a manual page refresh — a transient
+      // Shopify/network hiccup on that one batched request, not a genuinely
+      // empty metafield. Rather than asking her to refresh (the Add Demo
+      // modal's own single-item lookup doesn't have this problem, so the list
+      // shouldn't need to either), silently re-fetch once in the background
+      // and patch in wig_number for any row that's still missing it. Matched
+      // by id so this only fills gaps — it never overwrites or reorders what's
+      // already on screen. Best-effort: if this second fetch also comes back
+      // empty for a row, it's left showing "-" rather than retried forever.
+      if (list.some(i => !i.wig_number)) {
+        setTimeout(async () => {
+          try {
+            const res2 = await fetch(`/api/wig-demo?location=${encodeURIComponent(location)}`);
+            const data2 = await res2.json();
+            const list2 = Array.isArray(data2) ? data2 : [];
+            const wigNumberById = new Map(list2.map(i => [i.id, i.wig_number]));
+            setItems(prev => prev.map(i => (
+              !i.wig_number && wigNumberById.get(i.id)
+                ? { ...i, wig_number: wigNumberById.get(i.id) }
+                : i
+            )));
+          } catch (e) {
+            // best-effort only — leave "-" showing if this also fails
+          }
+        }, 1500);
+      }
     } catch (e) {
       setError('Failed to load');
     } finally {
@@ -364,7 +395,14 @@ function ManagerWigDemo() {
       if (!res.ok) throw new Error(data.error || 'Failed to make demo');
       setItems(prev => {
         const withoutReplaced = data.replaced ? prev.filter(i => i.id !== data.replaced.id) : prev;
-        return [data.row, ...withoutReplaced];
+        // wig_number isn't a column on wig_demos (see spec §5 — it's always read
+        // live from Shopify, never persisted), so the freshly-inserted row the
+        // POST just returned has no wig_number field at all. The Add Demo modal
+        // already fetched it a moment ago via GET /lookup (it's what's on screen
+        // in the modal right now as modalData.wigNumber) — reuse that instead of
+        // leaving this row blank until the next full list reload fills it in.
+        const newRow = { ...data.row, wig_number: modalData.wigNumber || '' };
+        return [newRow, ...withoutReplaced];
       });
       if (data.replaceWarning) setError(data.replaceWarning);
       closeModal();
