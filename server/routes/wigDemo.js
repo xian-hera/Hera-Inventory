@@ -153,6 +153,62 @@ async function attachWigNumbers(client, items) {
   });
 }
 
+// Natural-sort compare for two wig numbers (2026-09-16, Hera follow-up: the
+// first cut of this used a plain alphabetical string compare per her first
+// wording ("字母顺序"), which put "W10" before "W9" — wrong, since Hera's
+// actual wig numbers are letters-then-digits (e.g. "W9", "W10") and she wants
+// same-letter groups ordered by the numeric part, not lexicographically).
+// This splits each string into alternating runs of digits and non-digits
+// (e.g. "W10" -> ["W", "10"]) and compares run-by-run: digit runs numerically,
+// everything else case-insensitively as text. That correctly handles the
+// documented "letters + number" format (same-letter rows fall back to
+// comparing their digit run as a number) and degrades gracefully for any
+// value that doesn't fit that shape instead of assuming it always will.
+function naturalCompare(a, b) {
+  const tokenize = (s) => s.match(/(\d+)|(\D+)/g) || [];
+  const ta = tokenize(a);
+  const tb = tokenize(b);
+  const len = Math.max(ta.length, tb.length);
+  for (let i = 0; i < len; i++) {
+    const pa = ta[i];
+    const pb = tb[i];
+    if (pa === undefined) return -1; // a ran out of tokens first -> a is a "prefix" of b, sorts first
+    if (pb === undefined) return 1;
+    const isNumA = /^\d+$/.test(pa);
+    const isNumB = /^\d+$/.test(pb);
+    if (isNumA && isNumB) {
+      const diff = parseInt(pa, 10) - parseInt(pb, 10);
+      if (diff !== 0) return diff;
+    } else {
+      const cmp = pa.localeCompare(pb, undefined, { sensitivity: 'base' });
+      if (cmp !== 0) return cmp;
+    }
+  }
+  return 0;
+}
+
+// Sort order for every wig-demo list view (2026-09-16, Hera: "让列表里的所有
+// 条目总是按照 wig number 来排列...用自然排序，我们的 wig number 会是字母加
+// 数字的格式，字母相同的条目，要按照数字大小排列") — call this after
+// attachWigNumbers() has populated wig_number on every row (it reads
+// item.wig_number, so it's a no-op / falls back to the existing order if the
+// lookup above failed). A row with no wig_number (lookup failed, or
+// genuinely never set) sorts to the very end rather than first, since an
+// empty string would otherwise be treated as alphabetically smallest and
+// bury every real value under a block of blanks. Sort is stable, so rows
+// that tie (equal wig_number, or several blanks) keep whatever order the SQL
+// query above already put them in.
+function sortByWigNumber(rows) {
+  rows.sort((a, b) => {
+    const wa = (a.wig_number || '').toString().trim();
+    const wb = (b.wig_number || '').toString().trim();
+    if (!wa && !wb) return 0;
+    if (!wa) return 1;
+    if (!wb) return -1;
+    return naturalCompare(wa, wb);
+  });
+}
+
 // Moves exactly 1 unit between two named quantity states for one inventory
 // item at one location, without touching on_hand — this is deliberately
 // inventoryMoveQuantities, not inventoryAdjustQuantities (the latter is a
@@ -242,6 +298,12 @@ router.get('/buyer', async (req, res) => {
     } catch (e) {
       console.error('GET /api/wig-demo/buyer: wig number lookup failed:', e.message);
     }
+    // Sorted globally by wig_number (see sortByWigNumber() above) rather than
+    // per-location — the frontend buckets this flat list into one card per
+    // location afterwards (BuyerWigDemo.js's byLocation grouping), and since
+    // Array#sort is stable, each location's bucket ends up in wig_number
+    // order too once it's filtered out of this single sorted array.
+    sortByWigNumber(rows);
     res.json(rows);
   } catch (e) {
     console.error('GET /api/wig-demo/buyer error:', e);
@@ -300,6 +362,7 @@ router.get('/', async (req, res) => {
     } catch (e) {
       console.error('GET /api/wig-demo: wig number lookup failed:', e.message);
     }
+    sortByWigNumber(rows);
     res.json(rows);
   } catch (e) {
     console.error('GET /api/wig-demo error:', e);
@@ -336,6 +399,10 @@ router.get('/export-pdf', async (req, res) => {
     } catch (e) {
       console.error('GET /api/wig-demo/export-pdf: wig number lookup failed:', e.message);
     }
+    // Same wig_number ordering as the on-screen Manager list (GET / above) —
+    // so a Manager printing this to physically check the floor sees the same
+    // row order on paper as they do on screen.
+    sortByWigNumber(rows);
 
     const PDFDocument = require('pdfkit');
 
