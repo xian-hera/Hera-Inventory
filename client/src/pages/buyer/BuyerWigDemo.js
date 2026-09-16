@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Papa from 'papaparse';
 import {
   Page, Layout, Card, BlockStack, InlineStack,
-  Text, Checkbox, Banner, Spinner, Button, Modal
+  Text, Checkbox, Banner, Spinner, Button, Modal, Tooltip
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import MultiSelectDropdown from '../../components/MultiSelectDropdown';
@@ -216,7 +216,7 @@ function BuyerWigDemo() {
           <BlockStack gap="400">
             {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
 
-            <InlineStack align="space-between" blockAlign="end" wrap gap="300">
+            <BlockStack gap="300">
               <MultiSelectDropdown
                 label="Locations"
                 options={LOCATIONS}
@@ -224,30 +224,36 @@ function BuyerWigDemo() {
                 onChange={setSelectedLocations}
                 showSelectAll
               />
-              <InlineStack gap="200" blockAlign="end">
-                <input
-                  type="file"
-                  accept=".csv"
-                  ref={importInputRef}
-                  style={{ display: 'none' }}
-                  onChange={handleImportFileSelected}
-                />
-                <Button onClick={() => importInputRef.current?.click()}>Import</Button>
-                <button
+              {/* Import (left) and Cancel DEMO (right) — Hera, 2026-09-16:
+                  Cancel DEMO should be the same Polaris Button style as
+                  Import, just a different (critical/red) tone, and pushed to
+                  the far right rather than sitting next to Import. This is
+                  its own InlineStack (not nested inside the Locations row)
+                  specifically so align="space-between" has exactly these two
+                  items to split across the full row width. */}
+              <InlineStack align="space-between" blockAlign="center" wrap gap="200">
+                <InlineStack gap="200" blockAlign="center">
+                  <input
+                    type="file"
+                    accept=".csv"
+                    ref={importInputRef}
+                    style={{ display: 'none' }}
+                    onChange={handleImportFileSelected}
+                  />
+                  <Tooltip content="CSV MUST have header SKU and Location.">
+                    <Button onClick={() => importInputRef.current?.click()}>Import</Button>
+                  </Tooltip>
+                </InlineStack>
+                <Button
+                  tone="critical"
                   disabled={selectedIds.length === 0 || cancelling}
+                  loading={cancelling}
                   onClick={handleCancelDemo}
-                  style={{
-                    padding: '9px 18px', borderRadius: '20px', border: 'none',
-                    background: selectedIds.length === 0 || cancelling ? '#f6f6f7' : '#d72c0d',
-                    color: selectedIds.length === 0 || cancelling ? '#8c9196' : 'white',
-                    cursor: selectedIds.length === 0 || cancelling ? 'not-allowed' : 'pointer',
-                    fontSize: '13px', fontWeight: '700', whiteSpace: 'nowrap',
-                  }}
                 >
-                  {cancelling ? 'Cancelling…' : 'Cancel DEMO'}
-                </button>
+                  Cancel DEMO
+                </Button>
               </InlineStack>
-            </InlineStack>
+            </BlockStack>
 
             {loading ? (
               <InlineStack align="center"><Spinner /></InlineStack>

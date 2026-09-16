@@ -942,16 +942,22 @@ router.post('/:id/edit', async (req, res) => {
           .map(c => ({ shipmentLineItemId: itemsById.get(c.itemId)?.shipment_line_item_id, quantity: Number(c.quantity) }))
           .filter(li => li.shipmentLineItemId);
         if (shipmentQtyItems.length > 0) {
+          // ⚠️ 2026-09-16 修正：这条 mutation 的参数是扁平的 id/items，不是包一层
+          // 的 input 对象——之前一直以为是 wrapped input（还被记成"已确认可用"），
+          // 直到这次临时工具真的跑到这条分支才被 Shopify 报错
+          // "missing required arguments: id" 揭穿。已通过官方 mutation 参考页
+          // 核实正确形状。见 claude/TRANSFER_FEATURE_SPEC.md 第 14 节。
           const updateMutation = `
-            mutation inventoryShipmentUpdateItemQuantities($input: InventoryShipmentUpdateItemQuantitiesInput!, $idempotencyKey: String!) {
-              inventoryShipmentUpdateItemQuantities(input: $input) @idempotent(key: $idempotencyKey) {
+            mutation inventoryShipmentUpdateItemQuantities($id: ID!, $items: [InventoryShipmentUpdateItemQuantitiesInput!], $idempotencyKey: String!) {
+              inventoryShipmentUpdateItemQuantities(id: $id, items: $items) @idempotent(key: $idempotencyKey) {
                 inventoryShipment { id }
                 userErrors { field message }
               }
             }
           `;
           const data = await graphql(client, updateMutation, {
-            input: { id: shipmentId, items: shipmentQtyItems },
+            id: shipmentId,
+            items: shipmentQtyItems,
             idempotencyKey: crypto.randomUUID(),
           });
           const errors = data?.inventoryShipmentUpdateItemQuantities?.userErrors || [];
@@ -1646,19 +1652,19 @@ async function commitOne(id, autoCommitted) {
 
   const mismatched = items.filter(i => i.received_quantity != null && i.received_quantity !== i.quantity);
   if (mismatched.length > 0) {
+    // ⚠️ 2026-09-16 修正：同上——扁平 id/items 参数，不是 wrapped input。
+    // 见 claude/TRANSFER_FEATURE_SPEC.md 第 14 节。
     const updateMutation = `
-      mutation inventoryShipmentUpdateItemQuantities($input: InventoryShipmentUpdateItemQuantitiesInput!, $idempotencyKey: String!) {
-        inventoryShipmentUpdateItemQuantities(input: $input) @idempotent(key: $idempotencyKey) {
+      mutation inventoryShipmentUpdateItemQuantities($id: ID!, $items: [InventoryShipmentUpdateItemQuantitiesInput!], $idempotencyKey: String!) {
+        inventoryShipmentUpdateItemQuantities(id: $id, items: $items) @idempotent(key: $idempotencyKey) {
           inventoryShipment { id }
           userErrors { field message }
         }
       }
     `;
     const data = await graphql(client, updateMutation, {
-      input: {
-        id: shipmentId,
-        items: mismatched.map(i => ({ shipmentLineItemId: i.shipment_line_item_id, quantity: i.received_quantity })),
-      },
+      id: shipmentId,
+      items: mismatched.map(i => ({ shipmentLineItemId: i.shipment_line_item_id, quantity: i.received_quantity })),
       idempotencyKey: crypto.randomUUID(),
     });
     const errors = data?.inventoryShipmentUpdateItemQuantities?.userErrors || [];
@@ -1906,24 +1912,35 @@ router.post('/delete-selected', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 // Best-effort zero-out of one shipment's still-unreceived line items —
-// tries inventoryShipmentUpdateItemQuantities (confirmed shape, already
-// used elsewhere in this file) first; if Shopify rejects that (e.g. an
-// INVALID_QUANTITY-style error), falls back to inventoryShipmentRemoveItems
-// (flat id/lineItems args per the shopify.dev mutation reference — NOT the
-// same shape as the other, unverified inventoryShipmentRemoveItems call in
-// the /:id/edit route above; this one was checked against the docs
-// directly for this tool).
+// tries inventoryShipmentUpdateItemQuantities first; if Shopify rejects
+// that (e.g. an INVALID_QUANTITY-style error), falls back to
+// inventoryShipmentRemoveItems (flat id/lineItems args per the shopify.dev
+// mutation reference — NOT the same shape as the other, unverified
+// inventoryShipmentRemoveItems call in the /:id/edit route above; this one
+// was checked against the docs directly for this tool).
+//
+// ⚠️ 2026-09-16: inventoryShipmentUpdateItemQuantities's args were
+// originally (wrongly) assumed to be a single wrapped `input` object — this
+// is what this temp tool's first real test run against Shopify caught
+// ("Field 'inventoryShipmentUpdateItemQuantities' is missing required
+// arguments: id"). Confirmed via the official mutation reference page that
+// it actually takes flat `id`/`items` args, same pattern as the earlier
+// inventoryTransferMarkAsReadyToShip bug (see section 10). Fixed here AND
+// in the two other call sites that had the same wrong shape (the /:id/edit
+// route and commitOne's mismatched-quantity branch) — see
+// claude/TRANSFER_FEATURE_SPEC.md 第 14 节.
 async function zeroShipmentLineItems(client, shipmentId, lineItems) {
   const updateMutation = `
-    mutation inventoryShipmentUpdateItemQuantities($input: InventoryShipmentUpdateItemQuantitiesInput!, $idempotencyKey: String!) {
-      inventoryShipmentUpdateItemQuantities(input: $input) @idempotent(key: $idempotencyKey) {
+    mutation inventoryShipmentUpdateItemQuantities($id: ID!, $items: [InventoryShipmentUpdateItemQuantitiesInput!], $idempotencyKey: String!) {
+      inventoryShipmentUpdateItemQuantities(id: $id, items: $items) @idempotent(key: $idempotencyKey) {
         inventoryShipment { id }
         userErrors { field message }
       }
     }
   `;
   const updateData = await graphql(client, updateMutation, {
-    input: { id: shipmentId, items: lineItems.map(li => ({ shipmentLineItemId: li.id, quantity: 0 })) },
+    id: shipmentId,
+    items: lineItems.map(li => ({ shipmentLineItemId: li.id, quantity: 0 })),
     idempotencyKey: crypto.randomUUID(),
   });
   const updateErrors = updateData?.inventoryShipmentUpdateItemQuantities?.userErrors || [];
