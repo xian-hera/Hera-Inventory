@@ -14,24 +14,6 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Fixes a page-wide left-right "shake" on any page whose content height
-   changes after load (2026-09-16, Hera: reported on Buyer's Wig DEMO page,
-   which goes from a short loading-spinner state to a much taller list of
-   location cards once data arrives). By default the browser's vertical
-   scrollbar only reserves horizontal space once content actually overflows
-   the viewport, so going from "short" to "tall" makes the scrollbar appear
-   mid-render and instantly narrows the content area by its width — every
-   right-aligned or centered element visibly jumps left at that moment. This
-   reserves that space up front so it never has to jump. `scrollbar-gutter`
-   is the modern, non-visual way to do this (Chrome/Edge 94+, Firefox 97+ —
-   comfortably covers this app's users); `overflow-y: scroll` is kept as a
-   fallback for anything older, at the cost of always showing the scrollbar
-   track even on short pages. */
-html {
-  overflow-y: scroll;
-  scrollbar-gutter: stable;
-}
-
 code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
     monospace;

@@ -20,6 +20,33 @@
         max-width: 100vw;
         overflow-x: hidden;
       }
+      /* Fixes a page-wide left-right "shake" on any page whose content
+         height changes after load (2026-09-16, Hera: reported on Buyer's
+         Wig DEMO page, which goes from a short loading-spinner state to a
+         much taller list of location cards once data arrives). By default
+         the browser's vertical scrollbar only reserves horizontal space
+         once content actually overflows the viewport, so going from
+         "short" to "tall" makes the scrollbar appear mid-render and
+         instantly narrows the content area by its width — every
+         right-aligned or centered element visibly jumps left at that
+         moment. This reserves that space up front so it never has to jump.
+         `scrollbar-gutter` is the modern, non-visual way to do this
+         (Chrome/Edge 94+, Firefox 97+); `overflow-y: scroll` is a fallback
+         for anything older, at the cost of always showing the scrollbar
+         track even on short pages.
+         2026-09-16 correction: this was first written into
+         client/src/index.css, which turned out not to be imported by the
+         app anywhere (index.js only imports Polaris's own stylesheet, and
+         nothing in the client references index.css at all) — so that
+         change had zero effect no matter how many times it was deployed.
+         This inline block in public/index.html is the actual global
+         stylesheet the app loads (baked directly into the HTML shell), so
+         this is where the real fix has to live. The dead rule in
+         index.css has been removed. */
+      html {
+        overflow-y: scroll;
+        scrollbar-gutter: stable;
+      }
     </style>
   </head>
   <body>

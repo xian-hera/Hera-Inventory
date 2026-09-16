@@ -1938,6 +1938,39 @@ router.post('/delete-selected', async (req, res) => {
 
 const wigCancelJobs = { step1: null, step2: null };
 
+// A batch of a few hundred transfers, each needing 2-3 sequential GraphQL
+// calls, can realistically trip Shopify's query-cost rate limit even with
+// the 400ms per-transfer pause below — this wraps the shared graphql()
+// helper (unchanged, still used as-is by every production route in this
+// file) with a THROTTLED-aware retry, used only by this temp tool's batch
+// loops. Shopify's cost-based throttling comes back as an HTTP 200 with a
+// GraphQL-level error whose `extensions.code` is `"THROTTLED"` — checked
+// defensively against a couple of shapes since the exact place @shopify/
+// shopify-api v9 surfaces it on the thrown error hasn't been confirmed
+// against a real throttled response, plus a message-text fallback.
+function isThrottledError(e) {
+  const errorLists = [e?.response?.errors, e?.body?.errors, e?.errors].filter(Array.isArray);
+  for (const list of errorLists) {
+    if (list.some(err => err?.extensions?.code === 'THROTTLED')) return true;
+  }
+  return /throttl/i.test(e?.message || '');
+}
+
+async function graphqlWithRetry(client, query, variables, attempt = 1) {
+  const MAX_ATTEMPTS = 5;
+  try {
+    return await graphql(client, query, variables);
+  } catch (e) {
+    if (isThrottledError(e) && attempt < MAX_ATTEMPTS) {
+      const waitMs = 2000 * attempt; // 2s, 4s, 6s, 8s backoff
+      console.warn(`wig-cancel: throttled by Shopify, retrying in ${waitMs}ms (attempt ${attempt}/${MAX_ATTEMPTS})`);
+      await new Promise(resolve => setTimeout(resolve, waitMs));
+      return graphqlWithRetry(client, query, variables, attempt + 1);
+    }
+    throw e;
+  }
+}
+
 function newWigJob(tag) {
   return {
     tag,
@@ -1972,7 +2005,7 @@ async function findTransfersByTag(client, tag, wantedStatus) {
   `;
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    const data = await graphql(client, searchQuery, { q: `tag:"${tag}"`, after });
+    const data = await graphqlWithRetry(client, searchQuery, { q: `tag:"${tag}"`, after });
     const conn = data?.inventoryTransfers;
     const edges = conn?.edges || [];
     for (const { node } of edges) {
@@ -2018,7 +2051,7 @@ async function removeShipmentItemsForTransfer(client, transfer) {
         }
       }
     `;
-    const detailData = await graphql(client, detailQuery, { id: transfer.id });
+    const detailData = await graphqlWithRetry(client, detailQuery, { id: transfer.id });
     const shipmentEdges = detailData?.inventoryTransfer?.shipments?.edges || [];
 
     let removedAny = false;
@@ -2039,7 +2072,7 @@ async function removeShipmentItemsForTransfer(client, transfer) {
           }
         }
       `;
-      const removeData = await graphql(client, removeMutation, {
+      const removeData = await graphqlWithRetry(client, removeMutation, {
         id: shipment.id,
         lineItems: pendingIds,
         idempotencyKey: crypto.randomUUID(),
@@ -2054,7 +2087,7 @@ async function removeShipmentItemsForTransfer(client, transfer) {
     else result.removeStep = 'ok';
 
     const statusQuery = `query CheckStatus($id: ID!) { inventoryTransfer(id: $id) { status } }`;
-    const statusData = await graphql(client, statusQuery, { id: transfer.id });
+    const statusData = await graphqlWithRetry(client, statusQuery, { id: transfer.id });
     result.statusAfter = statusData?.inventoryTransfer?.status;
   } catch (e) {
     result.error = e.message;
@@ -2077,7 +2110,7 @@ async function cancelTransfer(client, transfer) {
         }
       }
     `;
-    const cancelData = await graphql(client, cancelMutation, { id: transfer.id, idempotencyKey: crypto.randomUUID() });
+    const cancelData = await graphqlWithRetry(client, cancelMutation, { id: transfer.id, idempotencyKey: crypto.randomUUID() });
     const cancelErrors = cancelData?.inventoryTransferCancel?.userErrors || [];
     if (cancelErrors.length > 0) {
       result.cancelStep = `failed — ${cancelErrors.map(e => e.message).join('; ')}`;
