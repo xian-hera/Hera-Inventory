@@ -240,6 +240,7 @@ function ManagerWigDemo() {
   const [modalError, setModalError]         = useState('');
 
   const [showHelp, setShowHelp] = useState(false);
+  const [exportingPdf, setExportingPdf] = useState(false);
 
   const popupOpen = modalOpen || modalLoading;
 
@@ -415,11 +416,44 @@ function ManagerWigDemo() {
     }
   };
 
+  // Export to PDF (2026-09-16, Hera): "会将当前列表输出为 PDF 文档，方便 manager
+  // 进行打印并实物检查" — lets Manager print the current-demos list and walk
+  // the floor checking it against what's physically on display. Same pdfkit
+  // approach as PO Receiving's already-proven Export PDF (see
+  // server/routes/wigDemo.js's new GET /export-pdf route, modeled on
+  // poInvoices.js's GET /:id/export-pdf), and the same fetch-blob-download
+  // pattern already used on ManagerPOReceivingDetail.js's Export PDF button —
+  // reused rather than building a new download mechanism from scratch.
+  const handleExportPdf = async () => {
+    setExportingPdf(true);
+    setError('');
+    try {
+      const res = await fetch(`/api/wig-demo/export-pdf?location=${encodeURIComponent(location)}`);
+      if (!res.ok) throw new Error('Export failed');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `wig-demo-${location}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setExportingPdf(false);
+    }
+  };
+
   return (
     <Page
       title="Wig DEMO"
       backAction={{ onAction: () => navigate('/manager') }}
-      secondaryActions={[{ content: 'How to Use', onAction: () => setShowHelp(true) }]}
+      secondaryActions={[
+        { content: 'Export PDF', onAction: handleExportPdf, loading: exportingPdf, disabled: exportingPdf },
+        { content: 'How to Use', onAction: () => setShowHelp(true) },
+      ]}
     >
       <Layout>
         <Layout.Section>

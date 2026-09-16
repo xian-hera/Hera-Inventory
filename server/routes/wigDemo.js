@@ -307,6 +307,126 @@ router.get('/', async (req, res) => {
   }
 });
 
+// GET /api/wig-demo/export-pdf?location=MTL01 — same list as GET / above
+// (Manager's own-location current demos), rendered as a printable PDF table
+// so Manager can print it and walk the floor doing a physical check against
+// what the app currently thinks is on demo (Hera, 2026-09-16: "方便 manager
+// 进行打印并实物检查", "格式上，就是列表内容就好" — just the list content, no
+// extra formatting). Reuses the same pdfkit table-drawing approach already
+// proven in poInvoices.js's GET /:id/export-pdf rather than inventing a new
+// PDF layout from scratch. Columns match what the Manager list actually
+// shows (SKU, Name, Color, Wig number, Demo date) rather than the mobile
+// screen's merged single-column layout (§16) — that merge only exists to
+// cope with narrow phone width, a printed LETTER page has plenty of room for
+// separate columns.
+router.get('/export-pdf', async (req, res) => {
+  try {
+    const { location } = req.query;
+    if (!location) return res.status(400).json({ error: 'location required' });
+    const result = await pool.query(
+      'SELECT * FROM wig_demos WHERE location = $1 ORDER BY created_at DESC',
+      [location]
+    );
+    const rows = result.rows;
+    // Same partial-degradation handling as GET / above — a wig number lookup
+    // failure must not block the export itself, rows just print blank.
+    try {
+      const client = await getClient();
+      await attachWigNumbers(client, rows);
+    } catch (e) {
+      console.error('GET /api/wig-demo/export-pdf: wig number lookup failed:', e.message);
+    }
+
+    const PDFDocument = require('pdfkit');
+
+    const dateForFile = new Date().toISOString().slice(0, 10);
+    const filename = `wig-demo_${location}_${dateForFile}.pdf`;
+    res.set('Content-Type', 'application/pdf');
+    res.set('Content-Disposition', `attachment; filename="${filename}"`);
+
+    const doc = new PDFDocument({ size: 'LETTER', margin: 40 });
+    doc.pipe(res);
+
+    doc.fontSize(16).text(`Wig DEMO — ${location}`, { continued: false });
+    doc.fontSize(9).fillColor('#6d7175').text(new Date().toLocaleDateString('en-US'));
+    doc.moveDown(0.5);
+
+    // Check column (2026-09-16, Hera: "可以加一个空白 column 在最右侧") — a blank
+    // hand-fill column so Manager can tick/note each row while physically
+    // walking the floor comparing it against this printed list, same idea as
+    // the blank "Count" column on PO Receiving's export-pdf (poInvoices.js).
+    // key: null means cellValue() below always renders it empty.
+    const cols = [
+      { label: 'SKU', width: 80, key: 'barcode' },
+      { label: 'Name', width: 125, key: 'name' },
+      { label: 'Color', width: 75, key: 'variant_name' },
+      { label: 'Wig number', width: 60, key: 'wig_number' },
+      { label: 'Demo date', width: 60, key: '__date' },
+      { label: 'Check', width: 130, key: null },
+    ];
+    const startX = doc.page.margins.left;
+    const tableWidth = cols.reduce((s, c) => s + c.width, 0);
+    const rowVPad = 8; // top+bottom padding inside each row, on top of the wrapped text height
+    const headerHeight = 20;
+
+    const drawHeader = (y) => {
+      let x = startX;
+      doc.fontSize(9).fillColor('#6d7175');
+      cols.forEach(c => { doc.text(c.label, x, y, { width: c.width }); x += c.width; });
+      doc.moveTo(startX, y + headerHeight - 6).lineTo(startX + tableWidth, y + headerHeight - 6)
+        .strokeColor('#c9cccf').lineWidth(1).stroke();
+    };
+
+    const cellValue = (row, col) => {
+      if (col.key === '__date') {
+        return row.created_at ? new Date(row.created_at).toLocaleDateString('en-US') : '';
+      }
+      return row[col.key] || '';
+    };
+
+    let y = doc.y;
+    drawHeader(y);
+    y += headerHeight;
+    doc.fillColor('#000');
+
+    rows.forEach((row) => {
+      // Row height adapts to however tall the tallest wrapped cell is (Name
+      // is the one most likely to wrap), same approach as poInvoices.js's
+      // export-pdf, so wrapped text never crowds into the next row.
+      doc.fontSize(9);
+      // Check column has no content (key: null) so it's excluded here, same
+      // as poInvoices.js's blank Count column — it never drives row height.
+      const cellHeights = cols.map(c => (c.key === null ? 0 : doc.heightOfString(cellValue(row, c), { width: c.width })));
+      const contentHeight = Math.max(...cellHeights, 10);
+      const rowHeight = contentHeight + rowVPad;
+
+      if (y + rowHeight > doc.page.height - doc.page.margins.bottom) {
+        doc.addPage();
+        y = doc.page.margins.top;
+        drawHeader(y);
+        y += headerHeight;
+        doc.fillColor('#000');
+      }
+
+      let x = startX;
+      cols.forEach(c => {
+        if (c.key !== null) doc.text(cellValue(row, c), x, y, { width: c.width });
+        x += c.width;
+      });
+      y += rowHeight;
+
+      doc.moveTo(startX, y - 4).lineTo(startX + tableWidth, y - 4)
+        .strokeColor('#f1f1f1').lineWidth(0.5).stroke();
+      doc.fillColor('#000');
+    });
+
+    doc.end();
+  } catch (e) {
+    console.error('GET /api/wig-demo/export-pdf error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // POST /api/wig-demo — "Make DEMO". If this location already has a demo for
 // the same product, that old demo is replaced (a product has at most one
 // demo per location at any time): released back to Available and removed,
