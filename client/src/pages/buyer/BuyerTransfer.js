@@ -40,6 +40,16 @@ function BuyerTransfer() {
               Ongoing Transfer
             </Button>
 
+            {/* ═══ TEMP TOOL — CSV Cancel Test (see claude/TRANSFER_FEATURE_SPEC.md
+                第 14 节). Delete this whole block, plus CsvCancelTestTool.js,
+                the /buyer/transfer/csv-cancel-test route in App.js, and the
+                matching TEMP TOOL block in server/routes/transfers.js, to
+                remove this feature entirely. ═══ */}
+            <Button size="large" fullWidth tone="critical" onClick={() => navigate('/buyer/transfer/csv-cancel-test')}>
+              CSV Cancel Test (Temp Tool)
+            </Button>
+            {/* ═══ TEMP TOOL END ═══ */}
+
             <Card>
               <BlockStack gap="300">
                 {loading ? (

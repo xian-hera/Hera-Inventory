@@ -525,6 +525,138 @@ router.post('/', async (req, res) => {
   }
 });
 
+// POST /api/wig-demo/import — one-time bulk migration tool (Hera,
+// 2026-09-15): bring in the wig demo list Hera was tracking elsewhere.
+// Removed 2026-09-16 once that migration was done, then restored the same
+// day per Hera's request ("一切照原样"). At restore time this route's
+// removal (and everything committed after it — §19.2, §22, §23 in
+// claude/DEMO_WIG_FEATURE_SPEC.md) had never been committed, so pulling the
+// exact original bytes from git would have meant reverting all of that too;
+// Hera opted instead to have this rebuilt from the spec's §13 design notes.
+// Behavior should match what was there before — exact comment wording may
+// not.
+//
+// Body: { rows: [{ sku, location }, ...] } — CSV already parsed client-side
+// (see BuyerWigDemo.js's handleImportFileSelected). Each (location, sku)
+// pair is an independent new demo — unlike Make DEMO (POST / above), this
+// does NOT check for/replace an existing demo of the same *product*; a row
+// is only skipped if that exact SKU is already this location's current
+// demo.
+//
+// Business rules (Hera, 2026-09-15):
+//  - A (location, SKU) pair that appears more than once in the same request
+//    is skipped entirely — every occurrence of it, not just the extras.
+//  - A SKU already the current demo at its location: skipped.
+//  - SKU not found / not Active / not a WIG product / 0 available stock at
+//    that location: skipped (reusing fetchWigVariant, same WIG+Active gate
+//    as everywhere else in this file).
+// Rows are processed serially (not Promise.all), with a 350ms politeness
+// delay between each one's Shopify calls — same convention as
+// server/jobs/syncVariantIndex.js — since a real import batch can be large
+// enough to risk Shopify rate limiting if fired all at once.
+router.post('/import', async (req, res) => {
+  try {
+    const { rows } = req.body;
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return res.status(400).json({ error: 'rows required' });
+    }
+
+    // Count (location, sku) occurrences up front so every row sharing a
+    // duplicated pair can be skipped, not just the ones after the first.
+    const pairCounts = new Map();
+    rows.forEach(r => {
+      const key = `${r.location}::${r.sku}`;
+      pairCounts.set(key, (pairCounts.get(key) || 0) + 1);
+    });
+
+    // Resolve every distinct location code to its Shopify location GID up
+    // front in one query — same location_map table used elsewhere in this
+    // codebase (poInvoices.js, transfers.js).
+    const distinctLocations = [...new Set(rows.map(r => r.location).filter(Boolean))];
+    const locMapRes = distinctLocations.length > 0
+      ? await pool.query('SELECT location_name, shopify_location_id FROM location_map WHERE location_name = ANY($1)', [distinctLocations])
+      : { rows: [] };
+    const shopifyLocationIdByName = new Map(locMapRes.rows.map(r => [r.location_name, r.shopify_location_id]));
+
+    const client = await getClient();
+    const imported = [];
+    const skipped = [];
+
+    for (const r of rows) {
+      const sku = (r.sku || '').toString().trim();
+      const location = (r.location || '').toString().trim();
+      if (!sku || !location) {
+        skipped.push({ sku, location, reason: 'missing SKU or location' });
+        continue;
+      }
+
+      const key = `${location}::${sku}`;
+      if (pairCounts.get(key) > 1) {
+        skipped.push({ sku, location, reason: 'duplicate (location, SKU) in this import' });
+        continue;
+      }
+
+      const shopifyLocationId = shopifyLocationIdByName.get(location);
+      if (!shopifyLocationId) {
+        skipped.push({ sku, location, reason: 'unknown location' });
+        continue;
+      }
+
+      try {
+        const existing = await pool.query(
+          'SELECT id FROM wig_demos WHERE location = $1 AND barcode = $2',
+          [location, sku]
+        );
+        if (existing.rows.length > 0) {
+          skipped.push({ sku, location, reason: 'already the current demo at this location' });
+          continue;
+        }
+
+        const info = await fetchWigVariant(client, sku, shopifyLocationId);
+        if (!info) {
+          skipped.push({ sku, location, reason: 'not found, not Active, or not a WIG product' });
+          continue;
+        }
+        if (info.availableQty < 1) {
+          skipped.push({ sku, location, reason: `no available stock (${info.availableQty})` });
+          continue;
+        }
+
+        await moveInventory(client, {
+          inventoryItemId: info.inventoryItemId,
+          locationId: shopifyLocationId,
+          fromName: 'available',
+          toName: DEMO_UNAVAILABLE_STATE,
+          reason: 'promotion',
+          referenceDocumentUri: `wig-demo-import://${encodeURIComponent(location)}/${encodeURIComponent(sku)}/${Date.now()}`,
+        });
+
+        const inserted = await pool.query(
+          `INSERT INTO wig_demos
+            (location, shopify_location_id, shopify_product_id, shopify_variant_id,
+             inventory_item_id, barcode, name, variant_name)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+           RETURNING *`,
+          [location, shopifyLocationId, info.productId, info.variantId, info.inventoryItemId, sku, info.name || null, info.variantName || null]
+        );
+        imported.push(inserted.rows[0]);
+      } catch (e) {
+        // Partial-failure handling, same approach as everywhere else in this
+        // file: one row's Shopify error doesn't stop the rest of the batch.
+        console.error(`POST /api/wig-demo/import: row failed (${location}/${sku}):`, e.message);
+        skipped.push({ sku, location, reason: e.message });
+      }
+
+      await new Promise(r => setTimeout(r, 350));
+    }
+
+    res.json({ success: true, imported, skipped });
+  } catch (e) {
+    console.error('POST /api/wig-demo/import error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // DELETE /api/wig-demo — "Cancel DEMO", Buyer-only (Manager had this too for
 // a while, but Hera had it removed 2026-09-16 — Manager can no longer cancel
 // a demo on their own; see claude/DEMO_WIG_FEATURE_SPEC.md §18). The route

@@ -1872,5 +1872,222 @@ router.post('/delete-selected', async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// TEMP TOOL — 2026-09-16 CSV bulk-cancel test (delete this whole block,
+// down to the matching "TEMP TOOL END" marker, plus the "CSV cancel test"
+// button in client/src/pages/buyer/BuyerTransfer.js and the file
+// client/src/pages/buyer/CsvCancelTestTool.js, once this investigation is
+// done — nothing else in the app depends on any of this).
+//
+// Context: Hera has ~100+ Shopify inventory transfers stuck IN_PROGRESS
+// that need to be canceled with their committed inventory restored to the
+// origin location. `inventoryTransferCancel` only works on DRAFT/
+// READY_TO_SHIP transfers (per Shopify's merchant docs), but the Admin UI
+// lets you get an IN_PROGRESS transfer back to READY_TO_SHIP by editing its
+// shipment and zeroing out every line item's quantity first. This route
+// reproduces that same sequence through the public GraphQL Admin API, one
+// transfer number at a time, and reports exactly what happened at each
+// step — it does NOT touch our own `transfers` DB table at all, since these
+// are Shopify-only transfers Hera is investigating outside the Hub's own
+// feature set (see claude/TRANSFER_FEATURE_SPEC.md 第 14 节 for the research
+// that led here).
+//
+// Safety gates baked into testCancelOne():
+//   - Only an EXACT match on Shopify's own transfer `name` field is used —
+//     never a fuzzy/first-result match — so a loosely-matching search
+//     result can never get processed under the wrong transfer's identity.
+//   - A transfer whose current status isn't IN_PROGRESS is skipped
+//     untouched (no zero, no cancel) — this tool never touches a Draft,
+//     Ready to ship, already-Canceled, or already-Transferred transfer.
+//   - The zero-out step only proceeds to Cancel if a re-fetch confirms the
+//     status actually flipped to READY_TO_SHIP — if it didn't, the tool
+//     stops there and reports it, rather than guessing and calling Cancel
+//     anyway.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Best-effort zero-out of one shipment's still-unreceived line items —
+// tries inventoryShipmentUpdateItemQuantities (confirmed shape, already
+// used elsewhere in this file) first; if Shopify rejects that (e.g. an
+// INVALID_QUANTITY-style error), falls back to inventoryShipmentRemoveItems
+// (flat id/lineItems args per the shopify.dev mutation reference — NOT the
+// same shape as the other, unverified inventoryShipmentRemoveItems call in
+// the /:id/edit route above; this one was checked against the docs
+// directly for this tool).
+async function zeroShipmentLineItems(client, shipmentId, lineItems) {
+  const updateMutation = `
+    mutation inventoryShipmentUpdateItemQuantities($input: InventoryShipmentUpdateItemQuantitiesInput!, $idempotencyKey: String!) {
+      inventoryShipmentUpdateItemQuantities(input: $input) @idempotent(key: $idempotencyKey) {
+        inventoryShipment { id }
+        userErrors { field message }
+      }
+    }
+  `;
+  const updateData = await graphql(client, updateMutation, {
+    input: { id: shipmentId, items: lineItems.map(li => ({ shipmentLineItemId: li.id, quantity: 0 })) },
+    idempotencyKey: crypto.randomUUID(),
+  });
+  const updateErrors = updateData?.inventoryShipmentUpdateItemQuantities?.userErrors || [];
+  if (updateErrors.length === 0) return { ok: true };
+
+  const removeMutation = `
+    mutation inventoryShipmentRemoveItems($id: ID!, $lineItems: [ID!]!, $idempotencyKey: String!) {
+      inventoryShipmentRemoveItems(id: $id, lineItems: $lineItems) @idempotent(key: $idempotencyKey) {
+        inventoryShipment { id }
+        userErrors { field message }
+      }
+    }
+  `;
+  const removeData = await graphql(client, removeMutation, {
+    id: shipmentId,
+    lineItems: lineItems.map(li => li.id),
+    idempotencyKey: crypto.randomUUID(),
+  });
+  const removeErrors = removeData?.inventoryShipmentRemoveItems?.userErrors || [];
+  if (removeErrors.length === 0) return { ok: true };
+
+  return {
+    ok: false,
+    error: `update failed (${updateErrors.map(e => e.message).join('; ')}); remove also failed (${removeErrors.map(e => e.message).join('; ')})`,
+  };
+}
+
+// Runs the full test sequence for one Shopify transfer name (e.g. "T4955")
+// and returns a plain result object describing exactly what happened at
+// each step, never throwing — every failure mode is reported in the
+// returned object so the caller can render one row per input name.
+async function testCancelOne(client, name) {
+  const result = {
+    name, found: false, originalStatus: null,
+    zeroStep: null, statusAfterZero: null, cancelStep: null, finalStatus: null, error: null,
+  };
+  try {
+    const searchQuery = `
+      query FindTransferByName($q: String!) {
+        inventoryTransfers(first: 10, query: $q) {
+          edges { node { id name status } }
+        }
+      }
+    `;
+    const searchData = await graphql(client, searchQuery, { q: name });
+    const edges = searchData?.inventoryTransfers?.edges || [];
+    // Exact match only — see safety-gate comment on the block above.
+    const match = edges.find(e => e.node.name === name);
+    if (!match) {
+      result.error = 'Not found in Shopify (no exact name match)';
+      return result;
+    }
+    result.found = true;
+    const transferId = match.node.id;
+    result.originalStatus = match.node.status;
+    result.finalStatus = match.node.status;
+
+    if (match.node.status !== 'IN_PROGRESS') {
+      result.zeroStep = 'skipped — not IN_PROGRESS, left untouched';
+      return result;
+    }
+
+    const detailQuery = `
+      query TransferShipments($id: ID!) {
+        inventoryTransfer(id: $id) {
+          shipments(first: 20) {
+            edges {
+              node {
+                id
+                status
+                lineItems(first: 100) {
+                  edges { node { id unreceivedQuantity } }
+                }
+              }
+            }
+          }
+        }
+      }
+    `;
+    const detailData = await graphql(client, detailQuery, { id: transferId });
+    const shipmentEdges = detailData?.inventoryTransfer?.shipments?.edges || [];
+
+    let zeroedAny = false;
+    const zeroErrors = [];
+    for (const { node: shipment } of shipmentEdges) {
+      if (shipment.status === 'RECEIVED') continue;
+      const pending = (shipment.lineItems?.edges || [])
+        .map(e => e.node)
+        .filter(li => li.unreceivedQuantity > 0);
+      if (pending.length === 0) continue;
+      const zeroResult = await zeroShipmentLineItems(client, shipment.id, pending);
+      if (zeroResult.ok) zeroedAny = true;
+      else zeroErrors.push(`shipment ${shipment.id}: ${zeroResult.error}`);
+    }
+
+    if (zeroErrors.length > 0) result.zeroStep = `failed — ${zeroErrors.join(' | ')}`;
+    else if (!zeroedAny) result.zeroStep = 'no unreceived shipment line items found (nothing to zero)';
+    else result.zeroStep = 'ok';
+
+    const statusQuery = `query CheckStatus($id: ID!) { inventoryTransfer(id: $id) { status } }`;
+    const statusData = await graphql(client, statusQuery, { id: transferId });
+    const statusAfterZero = statusData?.inventoryTransfer?.status;
+    result.statusAfterZero = statusAfterZero;
+    result.finalStatus = statusAfterZero;
+
+    if (statusAfterZero !== 'READY_TO_SHIP') {
+      result.cancelStep = 'skipped — status did not revert to READY_TO_SHIP';
+      return result;
+    }
+
+    const cancelMutation = `
+      mutation inventoryTransferCancel($id: ID!, $idempotencyKey: String!) {
+        inventoryTransferCancel(id: $id) @idempotent(key: $idempotencyKey) {
+          inventoryTransfer { id status }
+          userErrors { field message }
+        }
+      }
+    `;
+    const cancelData = await graphql(client, cancelMutation, { id: transferId, idempotencyKey: crypto.randomUUID() });
+    const cancelErrors = cancelData?.inventoryTransferCancel?.userErrors || [];
+    if (cancelErrors.length > 0) {
+      result.cancelStep = `failed — ${cancelErrors.map(e => e.message).join('; ')}`;
+      return result;
+    }
+    result.cancelStep = 'ok';
+    result.finalStatus = cancelData?.inventoryTransferCancel?.inventoryTransfer?.status || 'CANCELED';
+    return result;
+  } catch (e) {
+    result.error = e.message;
+    return result;
+  }
+}
+
+// POST /api/transfers/csv-cancel-test — body: { transferNumbers: string[] }.
+// Processes sequentially with a short pause between each transfer (gentle
+// on Shopify's rate limits across what could be hundreds of rows) and
+// returns one result object per input name, in input order.
+router.post('/csv-cancel-test', async (req, res) => {
+  try {
+    const raw = (req.body || {}).transferNumbers;
+    const names = Array.isArray(raw)
+      ? [...new Set(raw.map(n => String(n || '').trim()).filter(Boolean))]
+      : [];
+    if (names.length === 0) return res.status(400).json({ error: 'No transfer numbers provided' });
+
+    const session = await getSession();
+    if (!session) return res.status(401).json({ error: 'No session' });
+    const shopify = getShopify();
+    const client = new shopify.clients.Graphql({ session });
+
+    const results = [];
+    for (const name of names) {
+      results.push(await testCancelOne(client, name));
+      await new Promise(resolve => setTimeout(resolve, 400));
+    }
+    res.json({ results });
+  } catch (e) {
+    console.error('POST /api/transfers/csv-cancel-test error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+// ═══════════════════════════════════════════════════════════════════════════
+// TEMP TOOL END
+// ═══════════════════════════════════════════════════════════════════════════
+
 
 module.exports = router;
