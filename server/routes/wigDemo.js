@@ -251,8 +251,12 @@ router.get('/buyer', async (req, res) => {
 
 // GET /api/wig-demo/lookup?barcode=&locationId=&location= — resolves a
 // barcode (from search-result "Add" or a raw scan) to the info the Add Demo
-// modal needs. Also flags alreadyDemo so the frontend can block re-adding
-// the exact same SKU that's already this location's current demo.
+// modal needs. Used to also flag alreadyDemo so the frontend could block
+// re-adding a SKU that's already this location's current demo — that block
+// is gone (Hera, 2026-09-16): the demo that just sold and the new demo
+// being made can legitimately be the exact same variant, so making a new
+// demo for an already-demoed SKU is now just a normal replace. See the
+// same-SKU shortcut in the POST handler below.
 router.get('/lookup', async (req, res) => {
   try {
     const { barcode, locationId, location } = req.query;
@@ -268,12 +272,7 @@ router.get('/lookup', async (req, res) => {
       return res.status(400).json({ error: `No available stock (${info.availableQty}) at this location to make into a demo.` });
     }
 
-    const existing = await pool.query(
-      'SELECT id FROM wig_demos WHERE location = $1 AND barcode = $2',
-      [location, info.barcode]
-    );
-
-    res.json({ ...info, alreadyDemo: existing.rows.length > 0 });
+    res.json(info);
   } catch (e) {
     console.error('GET /api/wig-demo/lookup error:', e);
     res.status(500).json({ error: e.message });
@@ -308,10 +307,24 @@ router.get('/', async (req, res) => {
   }
 });
 
-// POST /api/wig-demo — "Make DEMO". Moves 1 Available -> Unavailable for the
-// new SKU, and — if this location already has a demo for the same product —
-// releases that old demo's 1 unit back to Available and removes it first,
-// since a product has at most one demo per location at any time.
+// POST /api/wig-demo — "Make DEMO". If this location already has a demo for
+// the same product, that old demo is replaced (a product has at most one
+// demo per location at any time): released back to Available and removed,
+// then the new one is added. Two cases:
+//   - Different variant of the same product: 2 inventoryMoveQuantities
+//     calls — release the old one (reserved -> available), then move the
+//     new one (available -> reserved).
+//   - The *exact same SKU* as the demo being replaced (Hera, 2026-09-16 —
+//     this used to be blocked outright with a 400 "This SKU is already the
+//     current demo" error, but that was wrong: the demo that just sold and
+//     the new demo being made can legitimately be the identical variant,
+//     e.g. restocked and re-demoed in the same color). In that case no
+//     Shopify call is made at all — releasing the unit and immediately
+//     re-occupying the same state on the same inventory item nets to
+//     exactly zero, so this just swaps the DB row (delete old, insert new)
+//     so the demo's created_at still reflects that a new demo was made.
+// If there's no existing demo for this product yet, it's just a normal
+// Available -> Unavailable move for the new SKU.
 router.post('/', async (req, res) => {
   try {
     const {
@@ -322,53 +335,57 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    const existingSame = await pool.query(
-      'SELECT id FROM wig_demos WHERE location = $1 AND barcode = $2',
-      [location, barcode]
-    );
-    if (existingSame.rows.length > 0) {
-      return res.status(400).json({ error: 'This SKU is already the current demo.' });
-    }
-
     const client = await getClient();
 
-    await moveInventory(client, {
-      inventoryItemId,
-      locationId: shopifyLocationId,
-      fromName: 'available',
-      toName: DEMO_UNAVAILABLE_STATE,
-      reason: 'promotion',
-      referenceDocumentUri: `wig-demo://${encodeURIComponent(location)}/${encodeURIComponent(barcode)}/${Date.now()}`,
-    });
-
-    // Same product already has a demo at this location — it's being
-    // replaced: release its 1 unit back to Available and drop it from the
-    // list. If the release call itself fails, don't block the new demo from
-    // being recorded — surface it as a warning instead, so the manager can
-    // deal with the stuck old row (e.g. via Cancel DEMO) rather than losing
-    // the new demo they just made.
-    let replaced = null;
-    let replaceWarning = null;
     const existingProduct = await pool.query(
       'SELECT * FROM wig_demos WHERE location = $1 AND shopify_product_id = $2',
       [location, productId]
     );
-    if (existingProduct.rows.length > 0) {
-      const oldRow = existingProduct.rows[0];
-      try {
-        await moveInventory(client, {
-          inventoryItemId: oldRow.inventory_item_id,
-          locationId: oldRow.shopify_location_id,
-          fromName: DEMO_UNAVAILABLE_STATE,
-          toName: 'available',
-          reason: 'restock',
-          referenceDocumentUri: `wig-demo-release://${encodeURIComponent(oldRow.location)}/${encodeURIComponent(oldRow.barcode)}/${Date.now()}`,
-        });
-        await pool.query('DELETE FROM wig_demos WHERE id = $1', [oldRow.id]);
-        replaced = oldRow;
-      } catch (e) {
-        console.error('Wig Demo: failed to release replaced demo', oldRow.id, e.message);
-        replaceWarning = `Could not release the previous demo (${oldRow.barcode}) back to Available: ${e.message}. Please Cancel DEMO on it manually.`;
+    const oldRow = existingProduct.rows[0] || null;
+    const sameSkuReplace = !!(oldRow && oldRow.barcode === barcode);
+
+    let replaced = null;
+    let replaceWarning = null;
+
+    if (sameSkuReplace) {
+      // Same variant already occupying the 1 unit — no Shopify call needed,
+      // see the route comment above. A DB failure here (rare) just falls
+      // through to the outer catch and a 500, same as any other query in
+      // this handler.
+      await pool.query('DELETE FROM wig_demos WHERE id = $1', [oldRow.id]);
+      replaced = oldRow;
+    } else {
+      await moveInventory(client, {
+        inventoryItemId,
+        locationId: shopifyLocationId,
+        fromName: 'available',
+        toName: DEMO_UNAVAILABLE_STATE,
+        reason: 'promotion',
+        referenceDocumentUri: `wig-demo://${encodeURIComponent(location)}/${encodeURIComponent(barcode)}/${Date.now()}`,
+      });
+
+      if (oldRow) {
+        // Different variant of the same product — it's being replaced:
+        // release its 1 unit back to Available and drop it from the list.
+        // If the release call itself fails, don't block the new demo from
+        // being recorded — surface it as a warning instead, so the manager
+        // can deal with the stuck old row (e.g. via Cancel DEMO) rather
+        // than losing the new demo they just made.
+        try {
+          await moveInventory(client, {
+            inventoryItemId: oldRow.inventory_item_id,
+            locationId: oldRow.shopify_location_id,
+            fromName: DEMO_UNAVAILABLE_STATE,
+            toName: 'available',
+            reason: 'restock',
+            referenceDocumentUri: `wig-demo-release://${encodeURIComponent(oldRow.location)}/${encodeURIComponent(oldRow.barcode)}/${Date.now()}`,
+          });
+          await pool.query('DELETE FROM wig_demos WHERE id = $1', [oldRow.id]);
+          replaced = oldRow;
+        } catch (e) {
+          console.error('Wig Demo: failed to release replaced demo', oldRow.id, e.message);
+          replaceWarning = `Could not release the previous demo (${oldRow.barcode}) back to Available: ${e.message}. Please Cancel DEMO on it manually.`;
+        }
       }
     }
 
@@ -388,10 +405,14 @@ router.post('/', async (req, res) => {
   }
 });
 
-// DELETE /api/wig-demo — "Cancel DEMO" (Buyer, and Manager as of this
-// session). Releases each selected row's 1 unit back to Available and
-// removes the row. No same-product check here — this is a manual override,
-// not a replacement, so it just processes exactly what was selected.
+// DELETE /api/wig-demo — "Cancel DEMO", Buyer-only (Manager had this too for
+// a while, but Hera had it removed 2026-09-16 — Manager can no longer cancel
+// a demo on their own; see claude/DEMO_WIG_FEATURE_SPEC.md §18). The route
+// itself is untouched, since Buyer still needs it — only ManagerWigDemo.js's
+// UI access to it was removed. Releases each selected row's 1 unit back to
+// Available and removes the row. No same-product check here — this is a
+// manual override, not a replacement, so it just processes exactly what was
+// selected.
 router.delete('/', async (req, res) => {
   try {
     const { ids } = req.body;
@@ -426,135 +447,6 @@ router.delete('/', async (req, res) => {
     res.json({ success: true, deletedIds, errors });
   } catch (e) {
     console.error('DELETE /api/wig-demo error:', e);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// POST /api/wig-demo/import — bulk-import existing demos that are currently
-// tracked on another platform, via CSV (client parses the file into
-// {sku, location} rows; see IMPORT_CSV_HEADER_ALIASES in BuyerWigDemo.js for
-// the accepted headers). Confirmed with Hera (2026-09-15): Shopify's
-// Available count for these SKUs is still the full, un-adjusted number, so
-// each row goes through the exact same lookup + inventoryMoveQuantities call
-// as the normal "Make DEMO" flow (POST /) — it's not a DB-only insert, it
-// actually moves 1 unit Available -> Unavailable to match reality. Also per
-// Hera: unlike POST /, this deliberately skips the same-product "replace the
-// old demo" logic — an import row isn't replacing anything, every row is
-// just its own new demo. Runs serially with a small delay between rows to
-// stay polite to Shopify's rate limits (same convention as
-// server/jobs/syncVariantIndex.js), not a Promise.all batch.
-router.post('/import', async (req, res) => {
-  try {
-    const { rows } = req.body;
-    if (!Array.isArray(rows) || rows.length === 0) {
-      return res.status(400).json({ error: 'No rows provided' });
-    }
-
-    const normalized = rows
-      .map(r => ({
-        sku: (r.sku || '').toString().trim(),
-        location: (r.location || '').toString().trim().toUpperCase(),
-      }))
-      .filter(r => r.sku && r.location);
-
-    // Duplicate (location, SKU) pairs within this one file: per Hera,
-    // neither side gets imported, both are reported as errors — a duplicate
-    // almost certainly means the same physical demo was listed twice, and
-    // importing it twice would incorrectly move 2 units instead of 1.
-    const keyCounts = {};
-    normalized.forEach(r => {
-      const key = `${r.location}|${r.sku}`;
-      keyCounts[key] = (keyCounts[key] || 0) + 1;
-    });
-
-    const toProcess = [];
-    const skipped = [];
-    normalized.forEach(r => {
-      const key = `${r.location}|${r.sku}`;
-      if (keyCounts[key] > 1) {
-        skipped.push({
-          sku: r.sku,
-          location: r.location,
-          reason: `Duplicate: SKU ${r.sku} appears ${keyCounts[key]} times for location ${r.location} in this file — neither was imported.`,
-        });
-      } else {
-        toProcess.push(r);
-      }
-    });
-
-    // Resolve location codes -> Shopify location GIDs up front (one query),
-    // same table/columns used elsewhere in server/routes/shopify.js.
-    const distinctLocations = [...new Set(toProcess.map(r => r.location))];
-    const locMap = distinctLocations.length > 0
-      ? await pool.query(
-          'SELECT location_name, shopify_location_id FROM location_map WHERE location_name = ANY($1)',
-          [distinctLocations]
-        )
-      : { rows: [] };
-    const locationIdByCode = {};
-    locMap.rows.forEach(r => { locationIdByCode[r.location_name] = r.shopify_location_id; });
-
-    const client = await getClient();
-    const imported = [];
-
-    for (const row of toProcess) {
-      const { sku, location } = row;
-      try {
-        const shopifyLocationId = locationIdByCode[location];
-        if (!shopifyLocationId) {
-          skipped.push({ sku, location, reason: `Unknown location "${location}".` });
-          continue;
-        }
-
-        const existing = await pool.query(
-          'SELECT id FROM wig_demos WHERE location = $1 AND barcode = $2',
-          [location, sku]
-        );
-        if (existing.rows.length > 0) {
-          skipped.push({ sku, location, reason: 'Already the current demo for this location — skipped.' });
-          continue;
-        }
-
-        const info = await fetchWigVariant(client, sku, shopifyLocationId);
-        if (!info) {
-          skipped.push({ sku, location, reason: 'Not found, not an Active product, or not a WIG.' });
-          continue;
-        }
-        if (info.availableQty < 1) {
-          skipped.push({ sku, location, reason: `No available stock (${info.availableQty}) at this location.` });
-          continue;
-        }
-
-        await moveInventory(client, {
-          inventoryItemId: info.inventoryItemId,
-          locationId: shopifyLocationId,
-          fromName: 'available',
-          toName: DEMO_UNAVAILABLE_STATE,
-          reason: 'promotion',
-          referenceDocumentUri: `wig-demo-import://${encodeURIComponent(location)}/${encodeURIComponent(sku)}/${Date.now()}`,
-        });
-
-        const inserted = await pool.query(
-          `INSERT INTO wig_demos
-            (location, shopify_location_id, shopify_product_id, shopify_variant_id,
-             inventory_item_id, barcode, name, variant_name)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-           RETURNING *`,
-          [location, shopifyLocationId, info.productId, info.variantId, info.inventoryItemId, sku, info.name || null, info.variantName || null]
-        );
-        imported.push(inserted.rows[0]);
-      } catch (e) {
-        console.error('Wig Demo import row failed:', sku, location, e.message);
-        skipped.push({ sku, location, reason: e.message });
-      }
-
-      // Polite delay between rows — same convention as syncVariantIndex.js.
-      await new Promise(r => setTimeout(r, 350));
-    }
-
-    res.json({ success: true, imported, skipped });
-  } catch (e) {
-    console.error('POST /api/wig-demo/import error:', e);
     res.status(500).json({ error: e.message });
   }
 });

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Page, Layout, Card, BlockStack, InlineStack,
-  Text, Checkbox, Banner, Spinner, TextField, Button
+  Text, Banner, Spinner, TextField, Button
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 
@@ -44,15 +44,28 @@ function AddDemoModal({ data, loading, submitting, error, onClose, onSubmit }) {
   const [zoomOpen, setZoomOpen] = useState(false);
 
   return (
-    <div style={{
-      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000,
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-    }}>
-      <div style={{
-        background: 'white', borderRadius: '16px', padding: '24px',
-        width: 'calc(100% - 32px)', maxWidth: '460px',
-        maxHeight: '90vh', overflowY: 'auto', position: 'relative',
-      }}>
+    // Click anywhere on the dark backdrop closes the modal (Hera, 2026-09-16
+    // — the alreadyDemo warning banner used to partially cover the ✕ button,
+    // making it fiddly to hit; clicking outside the modal is now the primary
+    // way to close it). The ✕ button is kept as a secondary, more discoverable
+    // close affordance — it still works the same as before.
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        cursor: 'pointer',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: 'white', borderRadius: '16px', padding: '24px',
+          width: 'calc(100% - 32px)', maxWidth: '460px',
+          maxHeight: '90vh', overflowY: 'auto', position: 'relative',
+          cursor: 'default',
+        }}
+      >
         <button onClick={onClose} style={{
           position: 'absolute', top: '12px', right: '12px',
           background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer',
@@ -63,9 +76,6 @@ function AddDemoModal({ data, loading, submitting, error, onClose, onSubmit }) {
         ) : (
           <BlockStack gap="300">
             {error && <Banner tone="critical">{error}</Banner>}
-            {data.alreadyDemo && (
-              <Banner tone="warning">This SKU is already the current demo for this location.</Banner>
-            )}
 
             <InlineStack gap="300" blockAlign="start" wrap={false}>
               <div
@@ -91,14 +101,23 @@ function AddDemoModal({ data, loading, submitting, error, onClose, onSubmit }) {
               </BlockStack>
             </InlineStack>
 
+            {/* Making a demo for a SKU that's already this location's
+                current demo used to be blocked here (disabled button +
+                warning banner above). Hera, 2026-09-16: that's wrong — the
+                demo that just sold and the new demo being made can
+                legitimately be the exact same variant, and the correct
+                behavior is a normal replace (old released, new added), same
+                as swapping to a different variant of the same product. See
+                the POST /api/wig-demo handler in wigDemo.js for the
+                same-SKU shortcut this enables server-side. */}
             <button
-              disabled={submitting || data.alreadyDemo}
+              disabled={submitting}
               onClick={onSubmit}
               style={{
                 width: '100%', padding: '16px', borderRadius: '10px', border: 'none',
-                background: submitting || data.alreadyDemo ? '#f0f0f0' : '#005bd3',
-                color: submitting || data.alreadyDemo ? '#8c9196' : 'white',
-                cursor: submitting || data.alreadyDemo ? 'not-allowed' : 'pointer',
+                background: submitting ? '#f0f0f0' : '#005bd3',
+                color: submitting ? '#8c9196' : 'white',
+                cursor: submitting ? 'not-allowed' : 'pointer',
                 fontSize: '20px', fontWeight: '700',
               }}
             >
@@ -114,7 +133,7 @@ function AddDemoModal({ data, loading, submitting, error, onClose, onSubmit }) {
             position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', zIndex: 1002,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}
-          onClick={() => setZoomOpen(false)}
+          onClick={(e) => { e.stopPropagation(); setZoomOpen(false); }}
         >
           <button onClick={() => setZoomOpen(false)} style={{
             position: 'fixed', top: '16px', right: '16px', zIndex: 1003,
@@ -134,6 +153,68 @@ function AddDemoModal({ data, loading, submitting, error, onClose, onSubmit }) {
   );
 }
 
+// ─── How to Use overlay ─────────────────────────────────────────────────────
+// Full-screen dark scrim with plain-language usage instructions. Click
+// anywhere (including on the text) closes it — Hera's explicit spec, so
+// unlike AddDemoModal's image zoom (which stops propagation on the image so
+// only the backdrop closes it) this overlay has no inner stopPropagation.
+// Copy and layout are Hera's own final version (2026-09-16, replacing the
+// earlier 5-point placeholder draft): a 2-step numbered "how to make a
+// demo" list, two explainer paragraphs, a worked example set off in a
+// pill-shaped callout, and a closing note on cancelling. The example pill
+// deliberately uses a *subtle* translucent-white fill rather than a
+// saturated color (a first pass used a pale yellow, which read as an
+// emphasis/warning callout — Hera wanted differentiation, not emphasis, so
+// it's just barely lighter than the surrounding text, confirmed against an
+// HTML preview before this was coded up).
+function HowToUseOverlay({ onClose }) {
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 1100,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: '32px 24px', cursor: 'pointer',
+      }}
+    >
+      <div style={{ maxWidth: '440px', color: 'white', textAlign: 'left' }}>
+        <div style={{ fontSize: '15px', fontWeight: '700', marginBottom: '20px' }}>
+          Use this page to MAKE demo only.
+        </div>
+
+        <ol style={{ margin: '0 0 20px', paddingLeft: '22px' }}>
+          <li style={{ fontSize: '15px', lineHeight: 1.6, marginBottom: '14px' }}>
+            Scan a WIG barcode with the scanner, or use the search box, to find the wig you want to demo.
+          </li>
+          <li style={{ fontSize: '15px', lineHeight: 1.6 }}>
+            Check the details in the popup, you can also tap the thumbnail to enlarge the photo, for verification. Then tap "Make DEMO".
+          </li>
+        </ol>
+
+        <div style={{ fontSize: '15px', lineHeight: 1.6, marginBottom: '16px' }}>
+          The list shows every current demo at your location: SKU / Name / Color, the date it became a demo, and its Wig number.
+        </div>
+
+        <div style={{ fontSize: '15px', lineHeight: 1.6, marginBottom: '16px' }}>
+          A wig can only have 1 demo at any time, so when you add a new demo, the existing demo of the same wig will be replaced.
+        </div>
+
+        <div style={{
+          background: 'rgba(255,255,255,0.10)', border: '1px solid rgba(255,255,255,0.14)',
+          color: 'rgba(255,255,255,0.85)', borderRadius: '16px', padding: '14px 18px',
+          fontSize: '14px', lineHeight: 1.6, marginBottom: '16px',
+        }}>
+          For example, you have added color #1 of the wig Ryella as demo in Hub, when that demo is sold, you want to add color #2 as new demo, when you do, color #1 in the list will be replaced.
+        </div>
+
+        <div style={{ fontSize: '15px', lineHeight: 1.6 }}>
+          To cancel a demo if you made a mistake, contact the buyer.
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 function ManagerWigDemo() {
   const navigate = useNavigate();
@@ -141,10 +222,8 @@ function ManagerWigDemo() {
 
   const [shopifyLocationId, setShopifyLocationId] = useState('');
   const [items, setItems]             = useState([]);
-  const [selectedIds, setSelectedIds] = useState([]);
   const [loading, setLoading]         = useState(true);
   const [error, setError]             = useState('');
-  const [cancelling, setCancelling]   = useState(false);
 
   const barcodeBuffer = useRef('');
   const barcodeTimer  = useRef(null);
@@ -160,12 +239,14 @@ function ManagerWigDemo() {
   const [modalSubmitting, setModalSubmitting] = useState(false);
   const [modalError, setModalError]         = useState('');
 
+  const [showHelp, setShowHelp] = useState(false);
+
   const popupOpen = modalOpen || modalLoading;
 
   useEffect(() => {
-    document.body.style.overflow = popupOpen ? 'hidden' : '';
+    document.body.style.overflow = (popupOpen || showHelp) ? 'hidden' : '';
     return () => { document.body.style.overflow = ''; };
-  }, [popupOpen]);
+  }, [popupOpen, showHelp]);
 
   useEffect(() => {
     if (!location) return;
@@ -196,7 +277,7 @@ function ManagerWigDemo() {
   // ── Barcode scanner listener — same pattern as ManagerStockLosses.js ──────
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (popupOpen) return;
+      if (popupOpen || showHelp) return;
       const activeTag = document.activeElement?.tagName;
       if (['INPUT', 'TEXTAREA'].includes(activeTag)) return;
       if (e.key === 'Enter') {
@@ -219,7 +300,7 @@ function ManagerWigDemo() {
       clearTimeout(barcodeTimer.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [popupOpen, shopifyLocationId, location]);
+  }, [popupOpen, showHelp, shopifyLocationId, location]);
 
   const openAddDemoModal = async (barcode) => {
     if (!shopifyLocationId) { setError('Location not ready yet — please try again in a moment.'); return; }
@@ -296,35 +377,12 @@ function ManagerWigDemo() {
     }
   };
 
-  const handleCancelDemo = async () => {
-    if (selectedIds.length === 0) return;
-    setCancelling(true);
-    setError('');
-    try {
-      const res = await fetch('/api/wig-demo', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids: selectedIds }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to cancel');
-      setItems(prev => prev.filter(i => !(data.deletedIds || []).includes(i.id)));
-      setSelectedIds([]);
-      if (data.errors?.length > 0) setError(data.errors.join('\n'));
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setCancelling(false);
-    }
-  };
-
-  const toggleSelectOne = (id) => setSelectedIds(prev =>
-    prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
-  const toggleSelectAll = () =>
-    setSelectedIds(selectedIds.length === items.length ? [] : items.map(i => i.id));
-
   return (
-    <Page title="Wig DEMO" backAction={{ onAction: () => navigate('/manager') }}>
+    <Page
+      title="Wig DEMO"
+      backAction={{ onAction: () => navigate('/manager') }}
+      secondaryActions={[{ content: 'How to Use', onAction: () => setShowHelp(true) }]}
+    >
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">
@@ -332,17 +390,7 @@ function ManagerWigDemo() {
 
             <Card>
               <BlockStack gap="300">
-                <InlineStack align="space-between" blockAlign="center" wrap gap="200">
-                  <Text variant="headingSm">Current demos</Text>
-                  <Button
-                    tone="critical"
-                    disabled={selectedIds.length === 0}
-                    loading={cancelling}
-                    onClick={handleCancelDemo}
-                  >
-                    Cancel DEMO
-                  </Button>
-                </InlineStack>
+                <Text variant="headingSm">Current demos</Text>
 
                 <InlineStack align="space-between" blockAlign="center" wrap gap="200">
                   <Text variant="bodySm" tone="subdued">Scan barcode to add a new demo or search</Text>
@@ -381,30 +429,32 @@ function ManagerWigDemo() {
                         <Text tone="subdued" variant="bodySm">No WIG matches.</Text>
                       </div>
                     ) : (
-                      searchResults.map(r => {
-                        const already = items.some(i => i.barcode === r.barcode);
-                        return (
-                          <div key={r.variantId} style={{
-                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                            padding: '10px 12px', borderTop: '1px solid #f1f1f1',
-                          }}>
-                            <Text variant="bodySm">{r.barcode} — {r.name}</Text>
-                            {already ? (
-                              <Text variant="bodySm" tone="success">✓ Already a demo</Text>
-                            ) : (
-                              <button
-                                onClick={() => openAddDemoModal(r.barcode)}
-                                style={{
-                                  padding: '6px 14px', borderRadius: '8px', border: '1px solid #c9cccf',
-                                  background: 'white', cursor: 'pointer', fontSize: '13px', fontWeight: '500',
-                                }}
-                              >
-                                Add
-                              </button>
-                            )}
-                          </div>
-                        );
-                      })
+                      // Used to show "✓ Already a demo" instead of an Add
+                      // button for a SKU that's already this location's
+                      // current demo, blocking re-adding it from search
+                      // results. Hera, 2026-09-16: that block is gone — see
+                      // the Make DEMO button in AddDemoModal above — so this
+                      // always shows Add now, same as any other search
+                      // result. No special-casing needed here any more: a
+                      // click still opens the normal Add Demo modal, and the
+                      // backend handles the "same SKU" replace on its own.
+                      searchResults.map(r => (
+                        <div key={r.variantId} style={{
+                          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                          padding: '10px 12px', borderTop: '1px solid #f1f1f1',
+                        }}>
+                          <Text variant="bodySm">{r.barcode} — {r.name}</Text>
+                          <button
+                            onClick={() => openAddDemoModal(r.barcode)}
+                            style={{
+                              padding: '6px 14px', borderRadius: '8px', border: '1px solid #c9cccf',
+                              background: 'white', cursor: 'pointer', fontSize: '13px', fontWeight: '500',
+                            }}
+                          >
+                            Add
+                          </button>
+                        </div>
+                      ))
                     )}
                   </div>
                 )}
@@ -422,31 +472,27 @@ function ManagerWigDemo() {
                         nothing on a phone screen and wrapping it one letter
                         per line. Demo date and Wig number (custom.wig_number
                         metafield, see attachWigNumbers() in wigDemo.js) each
-                        keep their own narrow column at the right. */}
+                        keep their own narrow column at the right. No
+                        checkbox column any more — it only ever existed to
+                        select rows for Cancel DEMO, which Hera had removed
+                        from this page 2026-09-16 (Manager can no longer
+                        cancel a demo themselves; see
+                        claude/DEMO_WIG_FEATURE_SPEC.md §18). */}
                     <div style={{
-                      display: 'grid', gridTemplateColumns: '32px 1fr 90px 70px',
+                      display: 'grid', gridTemplateColumns: '1fr 90px 70px',
                       gap: '8px', padding: '8px 0', borderBottom: '1px solid #e1e3e5',
                       fontSize: '12px', fontWeight: '600', color: '#6d7175',
                     }}>
-                      <Checkbox
-                        checked={selectedIds.length === items.length && items.length > 0}
-                        indeterminate={selectedIds.length > 0 && selectedIds.length < items.length}
-                        onChange={toggleSelectAll}
-                      />
                       <span>SKU / Name / Color</span>
                       <span>Demo date</span>
                       <span>Wig number</span>
                     </div>
                     {items.map(item => (
                       <div key={item.id} style={{
-                        display: 'grid', gridTemplateColumns: '32px 1fr 90px 70px',
+                        display: 'grid', gridTemplateColumns: '1fr 90px 70px',
                         gap: '8px', padding: '10px 0', borderBottom: '1px solid #f1f1f1',
                         alignItems: 'start',
                       }}>
-                        <Checkbox
-                          checked={selectedIds.includes(item.id)}
-                          onChange={() => toggleSelectOne(item.id)}
-                        />
                         <div>
                           <div style={{ fontSize: '12px', wordBreak: 'break-word' }}>{item.barcode}</div>
                           <div style={{ fontSize: '12px', fontWeight: '500', wordBreak: 'break-word', marginTop: '2px' }}>
@@ -478,6 +524,8 @@ function ManagerWigDemo() {
           onSubmit={handleMakeDemo}
         />
       )}
+
+      {showHelp && <HowToUseOverlay onClose={() => setShowHelp(false)} />}
     </Page>
   );
 }
