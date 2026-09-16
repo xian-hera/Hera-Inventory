@@ -5,7 +5,6 @@ import {
   Text, Checkbox, Banner, Spinner, Button, Modal, Tooltip
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
-import MultiSelectDropdown from '../../components/MultiSelectDropdown';
 
 const LOCATIONS = [
   'MTL01','MTL02','MTL03','MTL04','MTL05','MTL06',
@@ -42,12 +41,27 @@ function formatDemoDate(dateStr) {
 function BuyerWigDemo() {
   const navigate = useNavigate();
 
-  const [selectedLocations, setSelectedLocations] = useState([...LOCATIONS]);
   const [items, setItems]         = useState([]);
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState('');
   const [cancelling, setCancelling] = useState(false);
   const [selectedIds, setSelectedIds] = useState([]);
+
+  // Which location cards are expanded (2026-09-16, Hera: every location with
+  // at least 1 demo now always gets a card — the top Locations filter that
+  // used to narrow this down is gone — but each card starts collapsed to a
+  // one-line "location + demo count" header, since with every location
+  // showing there could be a lot of cards on screen at once). Set of
+  // location codes; a location's full list only renders while its code is
+  // in this set.
+  const [expandedLocations, setExpandedLocations] = useState(new Set());
+  const toggleLocationExpanded = (loc) => {
+    setExpandedLocations(prev => {
+      const next = new Set(prev);
+      if (next.has(loc)) next.delete(loc); else next.add(loc);
+      return next;
+    });
+  };
 
   // Import (restored 2026-09-16, see the module-level comment above).
   const importInputRef = useRef(null);
@@ -58,19 +72,15 @@ function BuyerWigDemo() {
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState(null); // { imported, skipped } from the server, once run
 
+  // No locations filter anymore (2026-09-16, Hera: with every location that
+  // has a demo now showing as its own collapsible card, the top filter isn't
+  // needed) — always fetch every location's demos (GET /api/wig-demo/buyer
+  // with no `locations` param means "all", per that route's own contract).
   const fetchItems = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const params = new URLSearchParams();
-      if (selectedLocations.length > 0 && selectedLocations.length < LOCATIONS.length) {
-        params.append('locations', selectedLocations.join(','));
-      } else if (selectedLocations.length === 0) {
-        setItems([]);
-        setLoading(false);
-        return;
-      }
-      const res = await fetch(`/api/wig-demo/buyer?${params.toString()}`);
+      const res = await fetch('/api/wig-demo/buyer');
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to load');
       setItems(Array.isArray(data) ? data : []);
@@ -79,7 +89,7 @@ function BuyerWigDemo() {
     } finally {
       setLoading(false);
     }
-  }, [selectedLocations]);
+  }, []);
 
   useEffect(() => { fetchItems(); }, [fetchItems]);
 
@@ -216,54 +226,46 @@ function BuyerWigDemo() {
           <BlockStack gap="400">
             {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
 
-            <BlockStack gap="300">
-              <MultiSelectDropdown
-                label="Locations"
-                options={LOCATIONS}
-                selected={selectedLocations}
-                onChange={setSelectedLocations}
-                showSelectAll
-              />
-              {/* Import (left) and Cancel DEMO (right) — Hera, 2026-09-16:
-                  Cancel DEMO should be the same Polaris Button style as
-                  Import, just a different (critical/red) tone, and pushed to
-                  the far right rather than sitting next to Import. This is
-                  its own InlineStack (not nested inside the Locations row)
-                  specifically so align="space-between" has exactly these two
-                  items to split across the full row width. */}
-              <InlineStack align="space-between" blockAlign="center" wrap gap="200">
-                <InlineStack gap="200" blockAlign="center">
-                  <input
-                    type="file"
-                    accept=".csv"
-                    ref={importInputRef}
-                    style={{ display: 'none' }}
-                    onChange={handleImportFileSelected}
-                  />
-                  <Tooltip content="CSV MUST have header SKU and Location.">
-                    <Button onClick={() => importInputRef.current?.click()}>Import</Button>
-                  </Tooltip>
-                </InlineStack>
-                <Button
-                  tone="critical"
-                  disabled={selectedIds.length === 0 || cancelling}
-                  loading={cancelling}
-                  onClick={handleCancelDemo}
-                >
-                  Cancel DEMO
-                </Button>
+            {/* Import (left) and Cancel DEMO (right) — Hera, 2026-09-16:
+                Cancel DEMO should be the same Polaris Button style as
+                Import, just a different (critical/red) tone, and pushed to
+                the far right rather than sitting next to Import. (The
+                Locations filter that used to sit above this row is gone —
+                see the "no locations filter" comment on fetchItems above —
+                so this is now the top row of the page.) */}
+            <InlineStack align="space-between" blockAlign="center" wrap gap="200">
+              <InlineStack gap="200" blockAlign="center">
+                <input
+                  type="file"
+                  accept=".csv"
+                  ref={importInputRef}
+                  style={{ display: 'none' }}
+                  onChange={handleImportFileSelected}
+                />
+                <Tooltip content="CSV MUST have header SKU and Location.">
+                  <Button onClick={() => importInputRef.current?.click()}>Import</Button>
+                </Tooltip>
               </InlineStack>
-            </BlockStack>
+              <Button
+                tone="critical"
+                disabled={selectedIds.length === 0 || cancelling}
+                loading={cancelling}
+                onClick={handleCancelDemo}
+              >
+                Cancel DEMO
+              </Button>
+            </InlineStack>
 
             {loading ? (
               <InlineStack align="center"><Spinner /></InlineStack>
             ) : locationsWithDemos.length === 0 ? (
               <Card>
-                <Text tone="subdued" alignment="center">No current demos for the selected location(s).</Text>
+                <Text tone="subdued" alignment="center">No current demos.</Text>
               </Card>
             ) : (
               locationsWithDemos.map(loc => {
                 const rows = byLocation[loc];
+                const isExpanded = expandedLocations.has(loc);
                 const allSelected = rows.every(r => selectedIds.includes(r.id));
                 const someSelected = rows.some(r => selectedIds.includes(r.id));
                 const toggleAllInCard = () => {
@@ -275,37 +277,60 @@ function BuyerWigDemo() {
                 return (
                   <Card key={loc}>
                     <BlockStack gap="300">
-                      <Text variant="headingSm" fontWeight="bold">{loc}</Text>
-                      {/* Column order per Hera (2026-09-15): SKU, Name, Color,
-                          Wig number, Demo date — Wig number (custom.wig_number
-                          product metafield, see attachWigNumbers() in
-                          wigDemo.js) sits between Color and Demo date. */}
-                      <div style={{
-                        display: 'grid', gridTemplateColumns: '32px 100px 1fr 90px 70px 90px',
-                        gap: '8px', padding: '8px 0', borderBottom: '2px solid #e1e3e5',
-                        fontSize: '12px', fontWeight: '600', color: '#6d7175',
-                      }}>
-                        <Checkbox checked={allSelected} indeterminate={someSelected && !allSelected} onChange={toggleAllInCard} />
-                        <span>SKU</span>
-                        <span>Name</span>
-                        <span>Color</span>
-                        <span>Wig number</span>
-                        <span>Demo date</span>
+                      {/* Card header — always visible, click anywhere on it to
+                          expand/collapse (Hera, 2026-09-16). Keeps showing the
+                          demo count (rows.length, i.e. how many line items are
+                          in the list below) after the location name whether
+                          collapsed or expanded, per Hera's spec, so this text
+                          isn't inside the `isExpanded &&` block below. The "▸"/
+                          "▾" is a plain character rather than a Polaris icon —
+                          this codebase has never pulled in @shopify/polaris-
+                          icons (see claude/DEMO_WIG_FEATURE_SPEC.md §15.2), so
+                          a text glyph avoids adding that dependency for one
+                          small affordance. */}
+                      <div
+                        onClick={() => toggleLocationExpanded(loc)}
+                        style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
+                      >
+                        <Text tone="subdued">{isExpanded ? '▾' : '▸'}</Text>
+                        <Text variant="headingSm" fontWeight="bold">{loc}</Text>
+                        <Text tone="subdued">{rows.length} demo{rows.length === 1 ? '' : 's'}</Text>
                       </div>
-                      {rows.map(item => (
-                        <div key={item.id} style={{
-                          display: 'grid', gridTemplateColumns: '32px 100px 1fr 90px 70px 90px',
-                          gap: '8px', padding: '10px 0', borderBottom: '1px solid #f1f1f1',
-                          alignItems: 'center',
-                        }}>
-                          <Checkbox checked={selectedIds.includes(item.id)} onChange={() => toggleSelectOne(item.id)} />
-                          <div style={{ fontSize: '13px', wordBreak: 'break-word' }}>{item.barcode}</div>
-                          <div style={{ fontSize: '14px', fontWeight: '500', wordBreak: 'break-word' }}>{item.name || '-'}</div>
-                          <div style={{ fontSize: '13px' }}>{item.variant_name || '-'}</div>
-                          <div style={{ fontSize: '13px', wordBreak: 'break-word' }}>{item.wig_number || '-'}</div>
-                          <div style={{ fontSize: '13px' }}>{formatDemoDate(item.created_at)}</div>
-                        </div>
-                      ))}
+                      {isExpanded && (
+                        <>
+                          {/* Column order per Hera (2026-09-15): SKU, Name,
+                              Color, Wig number, Demo date — Wig number
+                              (custom.wig_number product metafield, see
+                              attachWigNumbers() in wigDemo.js) sits between
+                              Color and Demo date. */}
+                          <div style={{
+                            display: 'grid', gridTemplateColumns: '32px 100px 1fr 90px 70px 90px',
+                            gap: '8px', padding: '8px 0', borderBottom: '2px solid #e1e3e5',
+                            fontSize: '12px', fontWeight: '600', color: '#6d7175',
+                          }}>
+                            <Checkbox checked={allSelected} indeterminate={someSelected && !allSelected} onChange={toggleAllInCard} />
+                            <span>SKU</span>
+                            <span>Name</span>
+                            <span>Color</span>
+                            <span>Wig number</span>
+                            <span>Demo date</span>
+                          </div>
+                          {rows.map(item => (
+                            <div key={item.id} style={{
+                              display: 'grid', gridTemplateColumns: '32px 100px 1fr 90px 70px 90px',
+                              gap: '8px', padding: '10px 0', borderBottom: '1px solid #f1f1f1',
+                              alignItems: 'center',
+                            }}>
+                              <Checkbox checked={selectedIds.includes(item.id)} onChange={() => toggleSelectOne(item.id)} />
+                              <div style={{ fontSize: '13px', wordBreak: 'break-word' }}>{item.barcode}</div>
+                              <div style={{ fontSize: '14px', fontWeight: '500', wordBreak: 'break-word' }}>{item.name || '-'}</div>
+                              <div style={{ fontSize: '13px' }}>{item.variant_name || '-'}</div>
+                              <div style={{ fontSize: '13px', wordBreak: 'break-word' }}>{item.wig_number || '-'}</div>
+                              <div style={{ fontSize: '13px' }}>{formatDemoDate(item.created_at)}</div>
+                            </div>
+                          ))}
+                        </>
+                      )}
                     </BlockStack>
                   </Card>
                 );

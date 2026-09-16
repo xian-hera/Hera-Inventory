@@ -950,7 +950,7 @@ router.post('/:id/edit', async (req, res) => {
           const updateMutation = `
             mutation inventoryShipmentUpdateItemQuantities($id: ID!, $items: [InventoryShipmentUpdateItemQuantitiesInput!], $idempotencyKey: String!) {
               inventoryShipmentUpdateItemQuantities(id: $id, items: $items) @idempotent(key: $idempotencyKey) {
-                inventoryShipment { id }
+                shipment { id }
                 userErrors { field message }
               }
             }
@@ -1657,7 +1657,7 @@ async function commitOne(id, autoCommitted) {
     const updateMutation = `
       mutation inventoryShipmentUpdateItemQuantities($id: ID!, $items: [InventoryShipmentUpdateItemQuantitiesInput!], $idempotencyKey: String!) {
         inventoryShipmentUpdateItemQuantities(id: $id, items: $items) @idempotent(key: $idempotencyKey) {
-          inventoryShipment { id }
+          shipment { id }
           userErrors { field message }
         }
       }
@@ -1933,7 +1933,7 @@ async function zeroShipmentLineItems(client, shipmentId, lineItems) {
   const updateMutation = `
     mutation inventoryShipmentUpdateItemQuantities($id: ID!, $items: [InventoryShipmentUpdateItemQuantitiesInput!], $idempotencyKey: String!) {
       inventoryShipmentUpdateItemQuantities(id: $id, items: $items) @idempotent(key: $idempotencyKey) {
-        inventoryShipment { id }
+        shipment { id }
         userErrors { field message }
       }
     }
