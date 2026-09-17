@@ -86,22 +86,6 @@ async function fetchWigVariant(client, barcode, locationId) {
   const variant = match.node;
   if ((variant.product.productType || '').toUpperCase() !== 'WIG') return null;
 
-  // Temporary diagnostic (2026-09-17, Hera: "Sub type not found" now firing
-  // on every wig at Make DEMO — code review of this query and the sub_type
-  // alias turned up nothing structurally wrong, so logging the raw metafield
-  // values Shopify actually hands back here, to get hard evidence from the
-  // next repro's Render logs instead of another guess. Safe to delete once
-  // this is resolved.).
-  console.log('[wigDemo] fetchWigVariant debug:', {
-    requestedBarcode: barcode,
-    matchedBarcode: variant.barcode,
-    sku: variant.sku,
-    productId: variant.product.id,
-    productType: variant.product.productType,
-    wigNumberRaw: variant.product.wigNumber,
-    subTypeRaw: variant.product.subType,
-  });
-
   const decodedLocationId = decodeURIComponent(locationId);
   const levels = variant.inventoryItem.inventoryLevels.edges;
   const level = levels.find(e => e.node.location.id === decodedLocationId);

@@ -614,6 +614,17 @@ function ManagerWigDemo() {
           // along here too now (previously not sent at all — see the
           // wig_number note in setItems() below for what that used to mean).
           wigNumber: modalData.wigNumber || '',
+          // subType (2026-09-17, Hera): fix for a bug found this same day —
+          // GET /lookup already resolves and returns subType (it's what
+          // modalData.subType holds right now), but this POST body never
+          // forwarded it, so the server's own defensive re-check at POST /
+          // (`if (!subType) ...`, added as a belt-and-suspenders guard since
+          // /lookup already blocks a missing sub_type before this modal can
+          // even open) always saw undefined and rejected every single Make
+          // DEMO submission with "Sub type not found" — regardless of what
+          // Shopify actually had. Sending it through now, same as wigNumber
+          // above.
+          subType: modalData.subType || '',
         }),
       });
       const data = await res.json();
