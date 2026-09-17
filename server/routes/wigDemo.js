@@ -68,11 +68,39 @@ async function fetchWigVariant(client, barcode, locationId) {
   const response = await client.request(query, {
     variables: { q: activeFilter(`barcode:${barcode}`) },
   });
-  const variants = response.data?.productVariants?.edges || [];
-  if (variants.length === 0) return null;
+  const edges = response.data?.productVariants?.edges || [];
+  if (edges.length === 0) return null;
 
-  const variant = variants[0].node;
+  // Exact-match the barcode (2026-09-17, Hera): a barcode search can return
+  // up to 5 candidates, and this used to just take edges[0] regardless of
+  // whether its own barcode field actually equaled the one being looked up.
+  // claude/OLD_SKU_INCIDENT_FIX.md documents a confirmed real incident of a
+  // duplicate-barcode mismatch picking the wrong product this same way (that
+  // specific case — an Archived duplicate — is already excluded by the
+  // activeFilter() call above, but two both-Active products/variants sharing
+  // a barcode would not be). Only a candidate whose own barcode field is
+  // byte-for-byte equal to the requested one is ever used now; if none
+  // match, this is treated the same as "not found" below.
+  const match = edges.find(e => e.node.barcode === barcode);
+  if (!match) return null;
+  const variant = match.node;
   if ((variant.product.productType || '').toUpperCase() !== 'WIG') return null;
+
+  // Temporary diagnostic (2026-09-17, Hera: "Sub type not found" now firing
+  // on every wig at Make DEMO — code review of this query and the sub_type
+  // alias turned up nothing structurally wrong, so logging the raw metafield
+  // values Shopify actually hands back here, to get hard evidence from the
+  // next repro's Render logs instead of another guess. Safe to delete once
+  // this is resolved.).
+  console.log('[wigDemo] fetchWigVariant debug:', {
+    requestedBarcode: barcode,
+    matchedBarcode: variant.barcode,
+    sku: variant.sku,
+    productId: variant.product.id,
+    productType: variant.product.productType,
+    wigNumberRaw: variant.product.wigNumber,
+    subTypeRaw: variant.product.subType,
+  });
 
   const decodedLocationId = decodeURIComponent(locationId);
   const levels = variant.inventoryItem.inventoryLevels.edges;
