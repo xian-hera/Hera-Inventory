@@ -25,6 +25,10 @@ async function getClient() {
 // Returns null if not found, not a WIG, or not Active.
 async function fetchWigVariant(client, barcode, locationId) {
   const { activeFilter } = require('../shopify');
+  // subType below (2026-09-17, Hera: Manager's Wig DEMO page groups demos
+  // into cards by this metafield — see categorizeRow() below). Fetched in
+  // the same request as wig_number rather than a second round-trip, same
+  // reasoning as everywhere else metafields are batched onto this query.
   const query = `
     query getWigVariant($q: String!) {
       productVariants(first: 5, query: $q) {
@@ -54,11 +58,6 @@ async function fetchWigVariant(client, barcode, locationId) {
                 preview { image { url } }
               }
               wigNumber: metafield(namespace: "custom", key: "wig_number") { value }
-              // sub_type (2026-09-17, Hera: Manager's Wig DEMO page groups
-              // demos into cards by this metafield — see categorizeRow()
-              // below). Fetched in the same request as wig_number rather
-              // than a second round-trip, same reasoning as everywhere else
-              // metafields are batched onto this query.
               subType: metafield(namespace: "custom", key: "sub_type") { value }
             }
           }

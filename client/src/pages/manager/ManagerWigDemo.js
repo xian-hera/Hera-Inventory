@@ -53,21 +53,83 @@ function formatDemoDate(dateStr) {
 const CARD_ORDER = ['FULL', 'HALF', 'LACE', 'HUMAN HAIR', 'TOPPERS', 'SOLDE'];
 const SOLDE_SECTION_ORDER = ['FULL', 'HALF', 'LACE', 'HUMAN HAIR', 'TOPPERS'];
 
+// Name/Color de-duplication (2026-09-17, Hera): every wig's Name already
+// ends with its own Color (e.g. Name "BFF TP MIRELLA #BURGUNDY ANGEL",
+// Color "#BURGUNDY ANGEL"), and Color is also shown as its own line right
+// below Name — so the color text was effectively printed twice, which was
+// also most of what made Name so wide it squeezed Demo date/Wig number.
+// Hera's rule: "在 Name 的末尾找到和 Color 一致的部分（包括 #），然后不在列表
+// 里显示这个部分" — an exact suffix match (Color, including its leading
+// "#"), matched against Name's raw text as-is (not case-folded — Hera said
+// the two are already "完全一致" in the data, so this doesn't try to guess
+// around a mismatch). Only ever changes what's *rendered*; item.name itself
+// is untouched. Falls back to the full Name whenever there's no exact
+// match, so a row that doesn't follow this convention (or predates it)
+// never gets silently mangled.
+//
+// "@" instead of "#" (2026-09-17 follow-up, Hera): some wigs spell their
+// trailing color in Name with "@" where Color itself still starts with "#"
+// (e.g. Name "WIG@ LACE ARLENA @613", Color "#613"). Hera: "仅针对末尾的 @"
+// — only the trailing occurrence is treated as equivalent to "#", because a
+// Name like that one also has an *earlier* "@" (right after "WIG") that
+// must NOT be touched. This never scans the string for "@" — it only ever
+// checks whether Name's exact tail matches Color as given, or matches Color
+// with its leading "#" swapped for "@", so an unrelated "@" earlier in the
+// string can never accidentally match.
+//
+// Leading "WIG" (2026-09-17 follow-up, Hera): a second, independent rule —
+// "只要 Name 是以 WIG 开头，就隐藏掉这三个字母，以及其后的一个空格" — applied
+// regardless of whether the color-suffix rule above matched anything.
+// Consumes at most one following space, only if one is actually there right
+// after "WIG": "WIG FW DASHLY..." -> "FW DASHLY..." (space consumed), but
+// "WIG@ LACE ARLENA" -> "@ LACE ARLENA" (next character is "@", not a
+// space, so nothing extra is consumed and the "@" stays) — matching Hera's
+// own worked example end to end: Name "WIG@ LACE ARLENA @613" + Color
+// "#613" -> strip the "@613" suffix -> "WIG@ LACE ARLENA" -> strip leading
+// "WIG" -> "@ LACE ARLENA".
+//
+// Performance: still just string prefix/suffix checks and slices on two
+// strings already sitting in the row object in memory — no extra fetch or
+// database work, no scanning/regex over the whole string. Even a card with
+// a few hundred rows costs a fraction of a millisecond total for this, well
+// under anything a person could notice next to the React rendering work
+// already happening for every row regardless.
+function displayName(name, color) {
+  const n = (name || '').toString();
+  const c = (color || '').toString();
+  let result = n;
+
+  if (n && c) {
+    const candidates = c.startsWith('#') ? [c, '@' + c.slice(1)] : [c];
+    const matched = candidates.find(cand => n.endsWith(cand));
+    if (matched) {
+      result = n.slice(0, n.length - matched.length).trimEnd();
+    }
+  }
+
+  if (result.startsWith('WIG')) {
+    result = result.slice(3);
+    if (result.startsWith(' ')) result = result.slice(1);
+  }
+
+  return result;
+}
+
 // A single demo row — same column layout as the old flat list, reused for
 // every card/section's list below.
 function DemoRow({ item }) {
   return (
     <div style={{
-      display: 'grid', gridTemplateColumns: '1fr 90px 70px',
-      gap: '8px', padding: '10px 0', borderBottom: '1px solid #f1f1f1',
+      display: 'grid', gridTemplateColumns: '1fr 90px 80px',
+      gap: '10px', padding: '10px 0', borderBottom: '1px solid #f1f1f1',
       alignItems: 'start',
     }}>
       <div>
         <div style={{ fontSize: '12px', wordBreak: 'break-word' }}>{item.barcode}</div>
         <div style={{ fontSize: '12px', fontWeight: '500', wordBreak: 'break-word', marginTop: '2px' }}>
-          {item.name || '-'}
+          {displayName(item.name, item.variant_name) || '-'}
         </div>
-        <div style={{ fontSize: '12px', color: '#6d7175', marginTop: '2px' }}>
+        <div style={{ fontSize: '12px', color: '#6d7175', marginTop: '2px', wordBreak: 'break-word' }}>
           {item.variant_name || '-'}
         </div>
       </div>
@@ -77,10 +139,17 @@ function DemoRow({ item }) {
   );
 }
 
+// Column widths (2026-09-17, Hera: "保证每个 column 的安全宽度，留取一点点
+// padding") — Wig number 70→80px and the gap between columns widened
+// 8→10px. Color itself isn't a separate grid column here (it's stacked
+// under Name inside the first, flexible column, unlike Buyer's layout which
+// has Color as its own narrow column), so it was never at risk of the exact
+// overlap Hera saw on Buyer's page — this still adds the same wordBreak
+// safety to it above, plus the wider Wig number column here for consistency.
 const DEMO_ROW_HEADER = (
   <div style={{
-    display: 'grid', gridTemplateColumns: '1fr 90px 70px',
-    gap: '8px', padding: '8px 0', borderBottom: '1px solid #e1e3e5',
+    display: 'grid', gridTemplateColumns: '1fr 90px 80px',
+    gap: '10px', padding: '8px 0', borderBottom: '1px solid #e1e3e5',
     fontSize: '12px', fontWeight: '600', color: '#6d7175',
   }}>
     <span>SKU / Name / Color</span>

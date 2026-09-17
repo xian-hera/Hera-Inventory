@@ -341,9 +341,22 @@ function BuyerWigDemo() {
                               (custom.wig_number product metafield, see
                               attachWigNumbers() in wigDemo.js) sits between
                               Color and Demo date. */}
+                          {/* Column widths (2026-09-17, Hera: Color and Wig
+                              number were getting squeezed enough that long
+                              values could visually overlap) — Color 90→108px
+                              and Wig number 70→84px, plus the gap between
+                              columns widened 8→10px for a bit more breathing
+                              room on every column. The actual overlap bug was
+                              the Color cell missing `wordBreak: 'break-word'`
+                              below (every other cell already had it) — a
+                              long, space-less color value had nowhere to
+                              wrap and just overflowed past its column into
+                              Wig number's. Wider columns alone wouldn't have
+                              fixed that; both together is the "safe width"
+                              Hera asked for. */}
                           <div style={{
-                            display: 'grid', gridTemplateColumns: '32px 100px 1fr 90px 70px 90px',
-                            gap: '8px', padding: '8px 0', borderBottom: '2px solid #e1e3e5',
+                            display: 'grid', gridTemplateColumns: '32px 100px 1fr 108px 84px 90px',
+                            gap: '10px', padding: '8px 0', borderBottom: '2px solid #e1e3e5',
                             fontSize: '12px', fontWeight: '600', color: '#6d7175',
                           }}>
                             <Checkbox checked={allSelected} indeterminate={someSelected && !allSelected} onChange={toggleAllInCard} />
@@ -355,14 +368,14 @@ function BuyerWigDemo() {
                           </div>
                           {rows.map(item => (
                             <div key={item.id} style={{
-                              display: 'grid', gridTemplateColumns: '32px 100px 1fr 90px 70px 90px',
-                              gap: '8px', padding: '10px 0', borderBottom: '1px solid #f1f1f1',
+                              display: 'grid', gridTemplateColumns: '32px 100px 1fr 108px 84px 90px',
+                              gap: '10px', padding: '10px 0', borderBottom: '1px solid #f1f1f1',
                               alignItems: 'center',
                             }}>
                               <Checkbox checked={selectedIds.includes(item.id)} onChange={() => toggleSelectOne(item.id)} />
                               <div style={{ fontSize: '13px', wordBreak: 'break-word' }}>{item.barcode}</div>
                               <div style={{ fontSize: '14px', fontWeight: '500', wordBreak: 'break-word' }}>{item.name || '-'}</div>
-                              <div style={{ fontSize: '13px' }}>{item.variant_name || '-'}</div>
+                              <div style={{ fontSize: '13px', wordBreak: 'break-word' }}>{item.variant_name || '-'}</div>
                               <div style={{ fontSize: '13px', wordBreak: 'break-word' }}>{item.wig_number || '-'}</div>
                               <div style={{ fontSize: '13px' }}>{formatDemoDate(item.created_at)}</div>
                             </div>
