@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Papa from 'papaparse';
 import {
   Page, Layout, Card, BlockStack, InlineStack,
-  Text, Checkbox, Banner, Spinner, Button, Modal, Tooltip
+  Text, Checkbox, Banner, Button, Modal, Tooltip
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 
@@ -46,6 +46,7 @@ function BuyerWigDemo() {
   const [error, setError]         = useState('');
   const [cancelling, setCancelling] = useState(false);
   const [selectedIds, setSelectedIds] = useState([]);
+  const [refreshingWigNumbers, setRefreshingWigNumbers] = useState(false);
 
   // Which location cards are expanded (2026-09-16, Hera: every location with
   // at least 1 demo now always gets a card — the top Locations filter that
@@ -95,6 +96,32 @@ function BuyerWigDemo() {
 
   const toggleSelectOne = (id) =>
     setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+
+  // Refresh Wig Number (Hera, 2026-09-17): re-queries Shopify live for every
+  // demo's wig_number and updates the DB (see POST /refresh-wig-numbers in
+  // server/routes/wigDemo.js), across ALL locations — Buyer's own scope is
+  // "every location" per Hera (this also doubles as the one-time backfill
+  // for the rows that predate the wig_number column being persisted at all).
+  // The endpoint returns the refreshed list in the same shape as GET /buyer,
+  // so this just replaces items with the response directly.
+  const handleRefreshWigNumbers = async () => {
+    setRefreshingWigNumbers(true);
+    setError('');
+    try {
+      const res = await fetch('/api/wig-demo/refresh-wig-numbers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to refresh wig numbers');
+      setItems(Array.isArray(data) ? data : []);
+    } catch (e) {
+      setError(e.message || 'Failed to refresh wig numbers');
+    } finally {
+      setRefreshingWigNumbers(false);
+    }
+  };
 
   const handleCancelDemo = async () => {
     if (selectedIds.length === 0) return;
@@ -246,18 +273,29 @@ function BuyerWigDemo() {
                   <Button onClick={() => importInputRef.current?.click()}>Import</Button>
                 </Tooltip>
               </InlineStack>
-              <Button
-                tone="critical"
-                disabled={selectedIds.length === 0 || cancelling}
-                loading={cancelling}
-                onClick={handleCancelDemo}
-              >
-                Cancel DEMO
-              </Button>
+              {/* Refresh Wig Number (Hera, 2026-09-17): immediately left of
+                  Cancel DEMO. */}
+              <InlineStack gap="200" blockAlign="center">
+                <Button
+                  disabled={refreshingWigNumbers}
+                  loading={refreshingWigNumbers}
+                  onClick={handleRefreshWigNumbers}
+                >
+                  Refresh Wig Number
+                </Button>
+                <Button
+                  tone="critical"
+                  disabled={selectedIds.length === 0 || cancelling}
+                  loading={cancelling}
+                  onClick={handleCancelDemo}
+                >
+                  Cancel DEMO
+                </Button>
+              </InlineStack>
             </InlineStack>
 
             {loading ? (
-              <InlineStack align="center"><Spinner /></InlineStack>
+              <Text alignment="center" tone="subdued">Loading...</Text>
             ) : locationsWithDemos.length === 0 ? (
               <Card>
                 <Text tone="subdued" alignment="center">No current demos.</Text>

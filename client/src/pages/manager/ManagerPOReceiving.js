@@ -90,21 +90,37 @@ function ManagerPOReceiving() {
                         borderTop: idx > 0 ? '1px solid #f1f1f1' : undefined,
                       }}
                     >
-                      <InlineStack align="space-between" blockAlign="center" wrap>
-                        <BlockStack gap="0">
-                          <Text fontWeight="semibold">{inv.po_number || inv.invoice_number}</Text>
-                          <Text variant="bodySm" tone="subdued">{inv.supplier_name}</Text>
-                        </BlockStack>
-                        <Text variant="bodySm" tone="subdued">{formatDate(inv.sent_to_store_at)}</Text>
-                        <Text variant="bodySm" tone="subdued">Qty: {inv.total_quantity}</Text>
-                        <Text
-                          variant="bodySm"
-                          fontWeight="medium"
-                          tone={Number(inv.counted_lineitems) >= Number(inv.total_lineitems) ? 'success' : 'subdued'}
-                        >
-                          {inv.counted_lineitems}/{inv.total_lineitems}
-                        </Text>
-                      </InlineStack>
+                      {/* A fixed flex-basis on every column except the first
+                          (PO number/supplier, which varies a lot in length)
+                          keeps Date/Qty/counted lined up vertically between
+                          rows — the previous `align="space-between"` instead
+                          distributed space based on each row's own content
+                          width, so a shorter PO/supplier block on one row
+                          shifted every column after it left, row by row. */}
+                      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+                        <div style={{ flex: '1 1 160px', minWidth: 0 }}>
+                          <BlockStack gap="0">
+                            <Text fontWeight="semibold" truncate>{inv.po_number || inv.invoice_number}</Text>
+                            <Text variant="bodySm" tone="subdued" truncate>{inv.supplier_name}</Text>
+                          </BlockStack>
+                        </div>
+                        <div style={{ flex: '0 0 150px', textAlign: 'center' }}>
+                          <Text variant="bodySm" tone="subdued" alignment="center">{formatDate(inv.sent_to_store_at)}</Text>
+                        </div>
+                        <div style={{ flex: '0 0 100px', textAlign: 'center' }}>
+                          <Text variant="bodySm" tone="subdued" alignment="center">Qty: {inv.total_quantity}</Text>
+                        </div>
+                        <div style={{ flex: '0 0 70px', textAlign: 'right' }}>
+                          <Text
+                            variant="bodySm"
+                            fontWeight="medium"
+                            alignment="end"
+                            tone={Number(inv.counted_lineitems) >= Number(inv.total_lineitems) ? 'success' : 'subdued'}
+                          >
+                            {inv.counted_lineitems}/{inv.total_lineitems}
+                          </Text>
+                        </div>
+                      </div>
                     </div>
                   ))}
                 </BlockStack>
@@ -132,19 +148,29 @@ function ManagerPOReceiving() {
                           borderTop: idx > 0 ? '1px solid #f1f1f1' : undefined,
                         }}
                       >
-                        <InlineStack align="space-between" blockAlign="center" wrap>
-                          <BlockStack gap="0">
-                            <span style={{ fontWeight: 600, textDecoration: 'underline' }}>{h.ref_no}</span>
-                            <Text variant="bodySm" tone="subdued">{h.summary?.supplier_name}</Text>
-                          </BlockStack>
-                          <Text variant="bodySm" tone="subdued">{formatDate(h.created_at)}</Text>
-                          <span style={{
-                            display: 'inline-block', padding: '4px 12px', borderRadius: '999px',
-                            background: '#E1E3E5', color: '#3F4448', fontSize: '13px', fontWeight: 600, whiteSpace: 'nowrap',
-                          }}>
-                            {h.label}
-                          </span>
-                        </InlineStack>
+                        {/* Same fixed-column fix as the pending list above —
+                            Date/status need their own fixed width so they
+                            stay lined up regardless of how long ref_no/
+                            supplier_name happen to be on a given row. */}
+                        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+                          <div style={{ flex: '1 1 160px', minWidth: 0 }}>
+                            <BlockStack gap="0">
+                              <span style={{ fontWeight: 600, textDecoration: 'underline' }}>{h.ref_no}</span>
+                              <Text variant="bodySm" tone="subdued" truncate>{h.summary?.supplier_name}</Text>
+                            </BlockStack>
+                          </div>
+                          <div style={{ flex: '0 0 150px', textAlign: 'center' }}>
+                            <Text variant="bodySm" tone="subdued" alignment="center">{formatDate(h.created_at)}</Text>
+                          </div>
+                          <div style={{ flex: '0 0 110px', textAlign: 'right' }}>
+                            <span style={{
+                              display: 'inline-block', padding: '4px 12px', borderRadius: '999px',
+                              background: '#E1E3E5', color: '#3F4448', fontSize: '13px', fontWeight: 600, whiteSpace: 'nowrap',
+                            }}>
+                              {h.label}
+                            </span>
+                          </div>
+                        </div>
                       </div>
                     ))}
                   </BlockStack>

@@ -1065,6 +1065,36 @@ const initDatabase = async () => {
       ON wig_demos (location, shopify_product_id)
     `);
 
+    // Migration: persist wig_number on the row itself (2026-09-17, Hera —
+    // Buyer/Manager list loads were taking 7-11s because every GET queried
+    // Shopify live for every SKU's custom.wig_number metafield). Written at
+    // creation time (POST / and POST /import) and refreshed live from
+    // Shopify by the "Refresh Wig Number" button and by GET /export-pdf
+    // (which still queries Shopify + updates this column before rendering,
+    // since Hera wants the printed PDF to reflect the current value) — see
+    // server/routes/wigDemo.js. GET /buyer and GET / now read this column
+    // straight from the DB instead of calling attachWigNumbers(). Existing
+    // rows predating this column start out with wig_number NULL/empty until
+    // Refresh Wig Number is run once (Hera's chosen backfill approach).
+    await client.query(`ALTER TABLE wig_demos ADD COLUMN IF NOT EXISTS wig_number TEXT`).catch(() => {});
+
+    // Migration: sub_type on the row itself (2026-09-17, Hera — Manager's Wig
+    // DEMO page groups demos into cards by product custom.sub_type, split
+    // further by whether wig_number is "SOLDE"; see server/routes/wigDemo.js
+    // for the full categorization rule and claude/DEMO_WIG_FEATURE_SPEC.md §32
+    // for the design discussion). NULL means "never checked against Shopify
+    // yet" (the state every pre-existing row starts in); '' (empty string)
+    // means "checked, and Shopify's custom.sub_type was genuinely blank for
+    // this product" — these are kept distinct on purpose, same convention as
+    // wig_number's resolved/unresolved distinction, so a row Shopify has
+    // already confirmed has no value isn't re-queried forever on every future
+    // page load. Unlike wig_number, there's no separate manual backfill step
+    // for this column: GET /api/wig-demo (Manager's own list) checks for any
+    // NULL sub_type row on every load and resolves it right there before
+    // responding (self-healing, one-time slow-down per location on first
+    // load after this deploys, per Hera's explicit choice — see the spec).
+    await client.query(`ALTER TABLE wig_demos ADD COLUMN IF NOT EXISTS sub_type TEXT`).catch(() => {});
+
     await client.query('COMMIT');
     console.log('✓ Database initialized successfully');
   } catch (e) {

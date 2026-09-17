@@ -56,9 +56,6 @@ import BuyerTransferCreate from './pages/buyer/BuyerTransferCreate';
 import BuyerTransferOngoing from './pages/buyer/BuyerTransferOngoing';
 import BuyerTransferSettings from './pages/buyer/BuyerTransferSettings';
 import BuyerTransferDetail from './pages/buyer/BuyerTransferDetail';
-// TEMP TOOL — see claude/TRANSFER_FEATURE_SPEC.md 第 14 节. Remove this
-// import + the route below to delete the CSV Cancel Test feature.
-import CsvCancelTestTool from './pages/buyer/CsvCancelTestTool';
 import BuyerBoxPO from './pages/buyer/BuyerBoxPO';
 import BuyerBoxPOCreate from './pages/buyer/BuyerBoxPOCreate';
 import BuyerBoxPOOngoing from './pages/buyer/BuyerBoxPOOngoing';
@@ -112,8 +109,6 @@ function App() {
           <Route path="/buyer/transfer/create" element={<BuyerTransferCreate />} />
           <Route path="/buyer/transfer/ongoing" element={<BuyerTransferOngoing />} />
           <Route path="/buyer/transfer/settings" element={<BuyerTransferSettings />} />
-          {/* TEMP TOOL — CSV Cancel Test, see claude/TRANSFER_FEATURE_SPEC.md 第 14 节 */}
-          <Route path="/buyer/transfer/csv-cancel-test" element={<CsvCancelTestTool />} />
           <Route path="/buyer/transfer/:transferId" element={<BuyerTransferDetail />} />
           {/* BOX PO — fixed-path routes registered before the :id route so
               react-router's ordering can't shadow "create"/"ongoing"/"past"

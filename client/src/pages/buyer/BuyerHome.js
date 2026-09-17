@@ -64,17 +64,22 @@ function BuyerHome() {
               </span>
             </Button>
 
-            {/* Wig DEMO */}
-            <Button size="large" fullWidth onClick={() => navigate('/buyer/wig-demo')}>
-              Wig DEMO
-            </Button>
-
             {/* Stock Losses */}
             <Button size="large" fullWidth onClick={() => navigate('/buyer/stock-losses')}>
               <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 Stock Loss
                 <Badge count={badges.stockLosses} />
               </span>
+            </Button>
+
+            {/* PO Receiving */}
+            <Button size="large" fullWidth onClick={() => navigate('/buyer/po-receiving')}>
+              Purchase Orders
+            </Button>
+
+            {/* Transfer */}
+            <Button size="large" fullWidth onClick={() => navigate('/buyer/transfer')}>
+              Transfer
             </Button>
 
             {/* Price Change */}
@@ -85,14 +90,10 @@ function BuyerHome() {
               </span>
             </Button>
 
-            {/* Transfer */}
-            <Button size="large" fullWidth onClick={() => navigate('/buyer/transfer')}>
-              Transfer
-            </Button>
-
-            {/* PO Receiving */}
-            <Button size="large" fullWidth onClick={() => navigate('/buyer/po-receiving')}>
-              Purchase Orders
+            {/* Wig - Demo (2026-09-17, Hera: rename "Wig DEMO" to "Wig - Demo"
+                and move it to just before Settings) */}
+            <Button size="large" fullWidth onClick={() => navigate('/buyer/wig-demo')}>
+              Wig - Demo
             </Button>
 
             {/* Settings */}

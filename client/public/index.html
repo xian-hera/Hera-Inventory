@@ -20,30 +20,17 @@
         max-width: 100vw;
         overflow-x: hidden;
       }
-      /* Fixes a page-wide left-right "shake" on any page whose content
-         height changes after load (2026-09-16, Hera: reported on Buyer's
-         Wig DEMO page, which goes from a short loading-spinner state to a
-         much taller list of location cards once data arrives). By default
-         the browser's vertical scrollbar only reserves horizontal space
-         once content actually overflows the viewport, so going from
-         "short" to "tall" makes the scrollbar appear mid-render and
-         instantly narrows the content area by its width — every
-         right-aligned or centered element visibly jumps left at that
-         moment. This reserves that space up front so it never has to jump.
-         `scrollbar-gutter` is the modern, non-visual way to do this
-         (Chrome/Edge 94+, Firefox 97+); `overflow-y: scroll` is a fallback
-         for anything older, at the cost of always showing the scrollbar
-         track even on short pages.
-         2026-09-16 correction: this was first written into
-         client/src/index.css, which turned out not to be imported by the
-         app anywhere (index.js only imports Polaris's own stylesheet, and
-         nothing in the client references index.css at all) — so that
-         change had zero effect no matter how many times it was deployed.
-         This inline block in public/index.html is the actual global
-         stylesheet the app loads (baked directly into the HTML shell), so
-         this is where the real fix has to live. The dead rule in
-         index.css has been removed. */
-      html {
+      /* 2026-09-17, Hera: Buyer Wig Demo 页面展开/折叠 location 卡片时，页面内容会左右
+         偏移几像素。用内置浏览器实测确认：上面这条 overflow-x: hidden 规则按 CSS 规范会让
+         body 的 overflow-y 隐式变成 auto（浏览器在一个方向设了非 visible、另一个方向没设时
+         的标准行为），而 body 本身又被 Polaris 的基础样式设成 height: 100%/min-height: 100%
+         （视口高度）——这就让 body 变成了一个独立于 <html> 之外、自己会出现/消失竖向滚动条的
+         嵌套滚动容器：卡片展开、内容超过视口高度时，body 自己的滚动条出现，瞬间吃掉约 15px
+         宽度，页面整体左移；折叠回去滚动条消失，又弹回右边。<html> 本身另有一条固定显示的
+         滚动条（宽度不随内容变化，不是这次问题的原因）。下面这条规则让 body 的这条滚动条也始终
+         占住位置，不再随内容高度增减而出现/消失，从而消除这个偏移。已经在浏览器里注入这条规则
+         实测过展开/折叠多次，确认偏移完全消失后才写回代码。 */
+      body {
         overflow-y: scroll;
         scrollbar-gutter: stable;
       }

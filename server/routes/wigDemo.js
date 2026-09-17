@@ -54,6 +54,12 @@ async function fetchWigVariant(client, barcode, locationId) {
                 preview { image { url } }
               }
               wigNumber: metafield(namespace: "custom", key: "wig_number") { value }
+              // sub_type (2026-09-17, Hera: Manager's Wig DEMO page groups
+              // demos into cards by this metafield — see categorizeRow()
+              // below). Fetched in the same request as wig_number rather
+              // than a second round-trip, same reasoning as everywhere else
+              // metafields are batched onto this query.
+              subType: metafield(namespace: "custom", key: "sub_type") { value }
             }
           }
         }
@@ -79,6 +85,7 @@ async function fetchWigVariant(client, barcode, locationId) {
     name: variant.metafield?.value || variant.product.title,
     variantName: variant.title,
     wigNumber: variant.product.wigNumber?.value || '',
+    subType: variant.product.subType?.value || '',
     image: variant.product.featuredMedia?.preview?.image?.url || null,
     productId: variant.product.id,
     variantId: variant.id,
@@ -109,11 +116,41 @@ async function fetchWigVariant(client, barcode, locationId) {
 // value" with no way to tell the two apart from the UI. A single retry
 // after a short pause doesn't fix a real, persistent problem, but it does
 // paper over exactly this kind of one-off hiccup instead of guessing.
+// 2026-09-17 update (Hera: wig_number is now persisted on the row itself —
+// see the wig_demos.wig_number migration in server/database/init.js — so
+// this function is no longer called by every list-view page load, only by
+// GET /export-pdf and POST /refresh-wig-numbers below, both of which are
+// about to UPDATE the DB with whatever this resolves). That changes what
+// "couldn't resolve a SKU" should mean: the old behavior set item.wig_number
+// to '' whenever a SKU wasn't found in wigNumberBySku, which conflated two
+// very different cases — "Shopify answered and genuinely has no value for
+// this SKU" vs "the whole batched request for this SKU's chunk failed
+// (network hiccup) and we simply never asked". Blanking a value on the
+// latter was harmless when the result was just redisplayed and dropped, but
+// would be a real data loss for a caller about to UPDATE it into the
+// database — an already-known-good wig_number must not be overwritten with
+// '' just because one Shopify request hiccupped. So this now only touches
+// item.wig_number for SKUs whose chunk actually got a response (added to
+// `resolved`, returned to the caller); every other item is left completely
+// untouched, keeping whatever wig_number it already had (e.g. from the
+// wig_demos.wig_number column the caller's SELECT * already read).
+//
+// 2026-09-17 update (Hera: Manager's Wig DEMO page now groups demos into
+// cards by product custom.sub_type): this function now resolves sub_type in
+// the exact same batched request as wig_number, rather than adding a second
+// round of Shopify calls — every caller of this function already wants both
+// fields refreshed together (see GET /, GET /export-pdf and
+// POST /refresh-wig-numbers below). item.sub_type follows the identical
+// resolved/unresolved rule as item.wig_number: only touched for SKUs whose
+// chunk got a real response, left untouched otherwise, so a transient
+// network failure never overwrites an already-known-good sub_type with ''.
 async function attachWigNumbers(client, items) {
   const skus = [...new Set(items.map(i => i.barcode).filter(Boolean))];
-  if (skus.length === 0) return;
+  const resolved = new Set();
+  if (skus.length === 0) return resolved;
   const { activeFilter } = require('../shopify');
   const wigNumberBySku = new Map();
+  const subTypeBySku = new Map();
   const CHUNK_SIZE = 50;
   for (let i = 0; i < skus.length; i += CHUNK_SIZE) {
     const chunk = skus.slice(i, i + CHUNK_SIZE);
@@ -126,6 +163,7 @@ async function attachWigNumbers(client, items) {
             product {
               productType
               wigNumber: metafield(namespace: "custom", key: "wig_number") { value }
+              subType: metafield(namespace: "custom", key: "sub_type") { value }
             }
           } }
         }
@@ -140,17 +178,23 @@ async function attachWigNumbers(client, items) {
         if (attempt === 1) await new Promise(r => setTimeout(r, 400));
       }
     }
-    if (!response) continue;
+    if (!response) continue; // whole chunk failed both attempts — its SKUs stay unresolved
+    chunk.forEach(sku => resolved.add(sku));
     const edges = response.data?.productVariants?.edges || [];
     edges.forEach(({ node }) => {
       if (node?.barcode && node?.product?.productType === 'WIG') {
         wigNumberBySku.set(node.barcode, node.product.wigNumber?.value || '');
+        subTypeBySku.set(node.barcode, node.product.subType?.value || '');
       }
     });
   }
   items.forEach(item => {
-    item.wig_number = item.barcode && wigNumberBySku.has(item.barcode) ? wigNumberBySku.get(item.barcode) : '';
+    if (item.barcode && resolved.has(item.barcode)) {
+      item.wig_number = wigNumberBySku.has(item.barcode) ? wigNumberBySku.get(item.barcode) : '';
+      item.sub_type = subTypeBySku.has(item.barcode) ? subTypeBySku.get(item.barcode) : '';
+    }
   });
+  return resolved;
 }
 
 // Natural-sort compare for two wig numbers (2026-09-16, Hera follow-up: the
@@ -207,6 +251,61 @@ function sortByWigNumber(rows) {
     if (!wb) return -1;
     return naturalCompare(wa, wb);
   });
+}
+
+// ─── Manager Wig DEMO card grouping (2026-09-17, Hera) ─────────────────────
+// Manager's page groups demos into cards by product custom.sub_type, split
+// further by whether wig_number marks the demo as cleared-out stock
+// ("SOLDE"). See claude/DEMO_WIG_FEATURE_SPEC.md §32 for the full design
+// discussion this implements. Kept here (not just client-side) so GET /,
+// GET /export-pdf and the frontend all agree on exactly the same rule — the
+// JSON response from GET / carries the computed `category`/`section` back to
+// the client (see categorizeRow below) instead of the client re-deriving it,
+// so there's only one place this mapping can ever drift.
+
+// Hera's word-for-word sub_type -> card name mapping. Matched case-
+// insensitively (Hera: Shopify always stores these upper-case, but match
+// loosely anyway rather than assume that never changes). Returns null for
+// blank or unrecognized values — callers treat that the same as "sub type
+// not found", since both mean this row can't be placed in one of the 6
+// known cards.
+const SUB_TYPE_TO_CARD = {
+  'FULL WIGS': 'FULL',
+  'HALF WIGS': 'HALF',
+  'LACE WIGS': 'LACE',
+  'HUMAN HAIR WIGS': 'HUMAN HAIR',
+  'HUMAN MIX WIGS': 'HUMAN HAIR', // union with HUMAN HAIR WIGS, per Hera
+  'TOPPERS': 'TOPPERS',
+};
+function subTypeToCard(subType) {
+  const key = (subType || '').toString().trim().toUpperCase();
+  return SUB_TYPE_TO_CARD[key] || null;
+}
+
+// Card display order (Hera's explicit order) and, within the SOLDE card, the
+// section order for its 5 divided sub-lists (same 5 names, SOLDE excluded
+// since it isn't a sub_type — it's the purchase-status card itself).
+const CARD_ORDER = ['FULL', 'HALF', 'LACE', 'HUMAN HAIR', 'TOPPERS', 'SOLDE'];
+const SOLDE_SECTION_ORDER = ['FULL', 'HALF', 'LACE', 'HUMAN HAIR', 'TOPPERS'];
+
+// wig_number === "SOLDE" (exact match, case-insensitive per Hera) marks a
+// demo as cleared-out stock — checked before sub_type in the placement rule,
+// per Hera's §32 spec: "首先看这个 wig 的 wig number 是否为 SOLDE".
+function isSoldeWigNumber(wigNumber) {
+  return (wigNumber || '').toString().trim().toUpperCase() === 'SOLDE';
+}
+
+// Returns { card, section } for one wig_demos row — `card` is one of
+// CARD_ORDER or 'UNKNOWN' ("Sub type not found" — Hera, 2026-09-17: a demo
+// whose sub_type Shopify itself has no value for; see the sub_type migration
+// note in server/database/init.js for the NULL-vs-'' distinction this reads).
+// `section` is only meaningful when card === 'SOLDE' (one of
+// SOLDE_SECTION_ORDER); null otherwise.
+function categorizeRow(row) {
+  const baseCard = subTypeToCard(row.sub_type);
+  if (!baseCard) return { card: 'UNKNOWN', section: null };
+  if (isSoldeWigNumber(row.wig_number)) return { card: 'SOLDE', section: baseCard };
+  return { card: baseCard, section: null };
 }
 
 // Moves exactly 1 unit between two named quantity states for one inventory
@@ -286,18 +385,15 @@ router.get('/buyer', async (req, res) => {
       result = await pool.query('SELECT * FROM wig_demos ORDER BY location, created_at DESC');
     }
     const rows = result.rows;
-    // Wig Number column (see attachWigNumbers() above) — Buyer can view
-    // demos across every location at once, so this list can be a lot bigger
-    // than Manager's own-location one; attachWigNumbers already batches 50
-    // SKUs per request so that scales fine. Same partial-degradation
-    // handling as the Manager route: a lookup failure must not block the
-    // list itself from loading.
-    try {
-      const client = await getClient();
-      await attachWigNumbers(client, rows);
-    } catch (e) {
-      console.error('GET /api/wig-demo/buyer: wig number lookup failed:', e.message);
-    }
+    // wig_number now comes straight off the wig_demos.wig_number column
+    // (2026-09-17, Hera — this route used to call attachWigNumbers() here on
+    // every single load, which is what made Buyer's page take 7-11s to open:
+    // ~20 sequential Shopify round-trips for the ~955 distinct SKUs across
+    // every location. wig_number is persisted at creation time (POST / and
+    // POST /import below) and kept fresh via the "Refresh Wig Number" button
+    // (POST /refresh-wig-numbers below) and GET /export-pdf, so this route no
+    // longer needs to talk to Shopify at all — see
+    // claude/DEMO_WIG_FEATURE_SPEC.md for the full before/after.
     // Sorted globally by wig_number (see sortByWigNumber() above) rather than
     // per-location — the frontend buckets this flat list into one card per
     // location afterwards (BuyerWigDemo.js's byLocation grouping), and since
@@ -334,6 +430,17 @@ router.get('/lookup', async (req, res) => {
       return res.status(400).json({ error: `No available stock (${info.availableQty}) at this location to make into a demo.` });
     }
 
+    // Sub type gate (Hera, 2026-09-17): Manager's page groups demos into
+    // cards by custom.sub_type, and per Hera every WIG product should always
+    // have this metafield set — a blank value here means it was never filled
+    // in on the Shopify side. Rather than letting a demo get created that
+    // then can't be placed in any of the 6 cards, this is blocked at the
+    // same lookup step "No available stock" already blocks at, before the
+    // Add Demo modal even opens.
+    if (!info.subType) {
+      return res.status(400).json({ error: 'Sub type not found, please contact Buyer' });
+    }
+
     res.json(info);
   } catch (e) {
     console.error('GET /api/wig-demo/lookup error:', e);
@@ -351,18 +458,57 @@ router.get('/', async (req, res) => {
       [location]
     );
     const rows = result.rows;
-    // Wig Number column (see attachWigNumbers() above; Buyer's /buyer route
-    // above does the same, added 2026-09-15). A lookup failure here must not
-    // break the list itself; rows just come back with an empty wig_number,
-    // same partial-degradation approach used for this same lookup elsewhere
-    // in the app.
-    try {
-      const client = await getClient();
-      await attachWigNumbers(client, rows);
-    } catch (e) {
-      console.error('GET /api/wig-demo: wig number lookup failed:', e.message);
+    // wig_number now comes straight off the wig_demos.wig_number column,
+    // same as GET /buyer above (2026-09-17, Hera — no more per-load Shopify
+    // call here either).
+
+    // sub_type self-heal (2026-09-17, Hera): this page now groups demos into
+    // cards by sub_type, so unlike wig_number (a purely decorative field that
+    // can sit blank until someone clicks Refresh) a row with no sub_type
+    // can't be placed in any card at all. Hera's explicit choice here (over
+    // the lighter background-patch approach used for wig_number's own
+    // straggler auto-heal in ManagerWigDemo.js): resolve it right now, before
+    // responding, so the page always renders fully categorized. NULL means
+    // "never checked" (every pre-existing row, until this runs once for it);
+    // '' means "checked, Shopify confirmed no value" and is deliberately NOT
+    // re-checked here every load (see the sub_type migration note in
+    // server/database/init.js) — those go to the "Sub type not found" card
+    // instead. Scoped to just this location's own never-checked rows, so
+    // each location only ever pays this cost once (the first load after this
+    // deploys, or after a genuinely new row that failed this lookup earlier),
+    // not on every page open.
+    const uncheckedSubType = rows.filter(r => r.sub_type === null);
+    if (uncheckedSubType.length > 0) {
+      try {
+        const client = await getClient();
+        const resolved = await attachWigNumbers(client, uncheckedSubType);
+        const toUpdate = uncheckedSubType.filter(r => r.barcode && resolved.has(r.barcode));
+        if (toUpdate.length > 0) {
+          await Promise.all(toUpdate.map(r =>
+            pool.query(
+              'UPDATE wig_demos SET wig_number = $1, sub_type = $2 WHERE id = $3',
+              [r.wig_number || null, r.sub_type != null ? r.sub_type : null, r.id]
+            )
+          ));
+        }
+      } catch (e) {
+        // Best-effort — a Shopify hiccup here just leaves these rows with
+        // sub_type still NULL (they'll fall into "Sub type not found" for
+        // this load and be retried on the next one, same as any other
+        // unresolved-chunk case in attachWigNumbers).
+        console.error('GET /api/wig-demo: sub_type self-heal failed:', e.message);
+      }
     }
+
     sortByWigNumber(rows);
+    // Category/section is computed here (not on the client) so GET /,
+    // GET /export-pdf and the frontend can never disagree about which card a
+    // row belongs in — see categorizeRow() above.
+    rows.forEach(r => {
+      const { card, section } = categorizeRow(r);
+      r.category = card;
+      r.section = section;
+    });
     res.json(rows);
   } catch (e) {
     console.error('GET /api/wig-demo error:', e);
@@ -391,18 +537,51 @@ router.get('/export-pdf', async (req, res) => {
       [location]
     );
     const rows = result.rows;
-    // Same partial-degradation handling as GET / above — a wig number lookup
-    // failure must not block the export itself, rows just print blank.
+    // Unlike the on-screen list views (GET /buyer, GET / above), which now
+    // read wig_number straight from the DB for speed, this export still
+    // queries Shopify live and updates the DB before rendering (Hera,
+    // 2026-09-17: "导出 PDF 这一步，可以查 shopify，更新一下 wig number，而不是
+    // 读库") — a Manager printing this to physically check the floor wants
+    // the current value, not whatever was last persisted. A row whose lookup
+    // fails (see attachWigNumbers()'s `resolved` tracking above) just keeps
+    // printing whatever wig_number is already in the DB rather than blocking
+    // the export or blanking it.
     try {
       const client = await getClient();
-      await attachWigNumbers(client, rows);
+      const resolved = await attachWigNumbers(client, rows);
+      const toUpdate = rows.filter(r => r.barcode && resolved.has(r.barcode));
+      if (toUpdate.length > 0) {
+        // sub_type refreshed together with wig_number here too (2026-09-17,
+        // Hera — same reasoning as POST /refresh-wig-numbers below: one
+        // Shopify call updates both, and this route already queries Shopify
+        // live on every export anyway). r.sub_type is a resolved string ('
+        // included) for every row in toUpdate, written as-is rather than
+        // `|| null` — see the sub_type migration note in
+        // server/database/init.js for why '' is a meaningful state here, not
+        // something to collapse away.
+        await Promise.all(toUpdate.map(r =>
+          pool.query(
+            'UPDATE wig_demos SET wig_number = $1, sub_type = $2 WHERE id = $3',
+            [r.wig_number || null, r.sub_type, r.id]
+          )
+        ));
+      }
     } catch (e) {
-      console.error('GET /api/wig-demo/export-pdf: wig number lookup failed:', e.message);
+      console.error('GET /api/wig-demo/export-pdf: wig number refresh failed:', e.message);
     }
     // Same wig_number ordering as the on-screen Manager list (GET / above) —
     // so a Manager printing this to physically check the floor sees the same
     // row order on paper as they do on screen.
     sortByWigNumber(rows);
+    // Category/section (2026-09-17, Hera: "PDF 也分组打印...每个 type 有标题...
+    // SOLDE 区的 type 也有小标题...标题后面跟上数目" — grouped the same way as
+    // the on-screen Manager cards; see categorizeRow() above and the grouped
+    // rendering below).
+    rows.forEach(r => {
+      const { card, section } = categorizeRow(r);
+      r.category = card;
+      r.section = section;
+    });
 
     const PDFDocument = require('pdfkit');
 
@@ -456,10 +635,10 @@ router.get('/export-pdf', async (req, res) => {
     y += headerHeight;
     doc.fillColor('#000');
 
-    rows.forEach((row) => {
-      // Row height adapts to however tall the tallest wrapped cell is (Name
-      // is the one most likely to wrap), same approach as poInvoices.js's
-      // export-pdf, so wrapped text never crowds into the next row.
+    // Row height adapts to however tall the tallest wrapped cell is (Name is
+    // the one most likely to wrap), same approach as poInvoices.js's
+    // export-pdf, so wrapped text never crowds into the next row.
+    const drawRow = (row) => {
       doc.fontSize(9);
       // Check column has no content (key: null) so it's excluded here, same
       // as poInvoices.js's blank Count column — it never drives row height.
@@ -485,7 +664,63 @@ router.get('/export-pdf', async (req, res) => {
       doc.moveTo(startX, y - 4).lineTo(startX + tableWidth, y - 4)
         .strokeColor('#f1f1f1').lineWidth(0.5).stroke();
       doc.fillColor('#000');
+    };
+
+    // Group title line (2026-09-17, Hera: "PDF 也分组打印...每个 type 有标题...
+    // 不用像 card 那么华丽,只要区分开...标题后面跟上数目"). Plain bold-ish text,
+    // no border/box like the on-screen cards. `indent`/smaller `fontSize` is
+    // used for SOLDE's 5 inner sub-type sections so they read as nested
+    // under the SOLDE heading rather than as their own top-level cards.
+    const drawGroupTitle = (text, { indent = 0, fontSize = 11, color = '#202223' } = {}) => {
+      const titleHeight = fontSize + 10;
+      if (y + titleHeight > doc.page.height - doc.page.margins.bottom) {
+        doc.addPage();
+        y = doc.page.margins.top;
+        drawHeader(y);
+        y += headerHeight;
+      }
+      doc.fontSize(fontSize).fillColor(color).text(text, startX + indent, y + 4, { width: tableWidth - indent });
+      y += titleHeight;
+      doc.fillColor('#000');
+    };
+
+    const byCard = {};
+    rows.forEach(r => {
+      if (!byCard[r.category]) byCard[r.category] = [];
+      byCard[r.category].push(r);
     });
+
+    // Same 6-card order as the on-screen Manager cards (CARD_ORDER above),
+    // and — per Hera — every card gets a title line even with 0 demos in it,
+    // same as the screen.
+    CARD_ORDER.forEach(card => {
+      if (card !== 'SOLDE') {
+        const items = byCard[card] || [];
+        drawGroupTitle(`${card} (${items.length})`, { fontSize: 12 });
+        items.forEach(drawRow);
+        return;
+      }
+      // SOLDE — split into the same 5 sub-type sections as the on-screen
+      // SOLDE card, each with its own small title + count, 0-count sections
+      // included.
+      const soldeItems = byCard.SOLDE || [];
+      drawGroupTitle(`SOLDE (${soldeItems.length})`, { fontSize: 12 });
+      SOLDE_SECTION_ORDER.forEach(section => {
+        const sectionItems = soldeItems.filter(r => r.section === section);
+        drawGroupTitle(`${section} (${sectionItems.length})`, { indent: 14, fontSize: 10, color: '#6d7175' });
+        sectionItems.forEach(drawRow);
+      });
+    });
+
+    // "Sub type not found" (Hera, 2026-09-17): demos whose product has no
+    // custom.sub_type value in Shopify at all. Not one of Hera's 6 official
+    // cards, so — unlike those 6 — this is only printed when non-empty
+    // rather than always showing a permanent "(0)" line.
+    const unknownItems = byCard.UNKNOWN || [];
+    if (unknownItems.length > 0) {
+      drawGroupTitle(`Sub type not found — contact Buyer (${unknownItems.length})`, { fontSize: 12, color: '#d82c0d' });
+      unknownItems.forEach(drawRow);
+    }
 
     doc.end();
   } catch (e) {
@@ -516,10 +751,17 @@ router.post('/', async (req, res) => {
   try {
     const {
       location, shopifyLocationId, barcode, name, variantName,
-      productId, variantId, inventoryItemId,
+      productId, variantId, inventoryItemId, wigNumber, subType,
     } = req.body;
     if (!location || !shopifyLocationId || !barcode || !productId || !variantId || !inventoryItemId) {
       return res.status(400).json({ error: 'Missing required fields' });
+    }
+    // Defensive re-check (2026-09-17, Hera): GET /lookup already blocks the
+    // Add Demo modal from ever opening for a product with no sub_type, so
+    // this should never actually trigger — kept anyway so this route can't
+    // insert an uncategorizable row even if something upstream changes.
+    if (!subType) {
+      return res.status(400).json({ error: 'Sub type not found, please contact Buyer' });
     }
 
     const client = await getClient();
@@ -579,10 +821,10 @@ router.post('/', async (req, res) => {
     const inserted = await pool.query(
       `INSERT INTO wig_demos
         (location, shopify_location_id, shopify_product_id, shopify_variant_id,
-         inventory_item_id, barcode, name, variant_name)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+         inventory_item_id, barcode, name, variant_name, wig_number, sub_type)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
        RETURNING *`,
-      [location, shopifyLocationId, productId, variantId, inventoryItemId, barcode, name || null, variantName || null]
+      [location, shopifyLocationId, productId, variantId, inventoryItemId, barcode, name || null, variantName || null, wigNumber || null, subType]
     );
 
     res.json({ success: true, row: inserted.rows[0], replaced, replaceWarning });
@@ -688,6 +930,14 @@ router.post('/import', async (req, res) => {
           skipped.push({ sku, location, reason: `no available stock (${info.availableQty})` });
           continue;
         }
+        // Sub type gate (Hera, 2026-09-17) — same rule as the single-item
+        // GET /lookup above, but skipping this one row rather than rejecting
+        // the whole import batch, same as every other per-row skip reason in
+        // this loop.
+        if (!info.subType) {
+          skipped.push({ sku, location, reason: 'sub type not found, contact buyer' });
+          continue;
+        }
 
         await moveInventory(client, {
           inventoryItemId: info.inventoryItemId,
@@ -701,10 +951,10 @@ router.post('/import', async (req, res) => {
         const inserted = await pool.query(
           `INSERT INTO wig_demos
             (location, shopify_location_id, shopify_product_id, shopify_variant_id,
-             inventory_item_id, barcode, name, variant_name)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+             inventory_item_id, barcode, name, variant_name, wig_number, sub_type)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
            RETURNING *`,
-          [location, shopifyLocationId, info.productId, info.variantId, info.inventoryItemId, sku, info.name || null, info.variantName || null]
+          [location, shopifyLocationId, info.productId, info.variantId, info.inventoryItemId, sku, info.name || null, info.variantName || null, info.wigNumber || null, info.subType]
         );
         imported.push(inserted.rows[0]);
       } catch (e) {
@@ -720,6 +970,65 @@ router.post('/import', async (req, res) => {
     res.json({ success: true, imported, skipped });
   } catch (e) {
     console.error('POST /api/wig-demo/import error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/wig-demo/refresh-wig-numbers — "Refresh Wig Number" button (Hera,
+// 2026-09-17): re-queries Shopify live for wig_number and updates the DB for
+// the demos in scope, then returns the refreshed list in the same shape as
+// GET /buyer / GET / above, so the caller can just replace its on-screen
+// list with the response.
+// Body: { location } — omitted/blank means every location (Buyer's button;
+// per Hera this also doubles as the one-time backfill for the rows that
+// predate the wig_number column — she runs it once after this deploys).
+// Provided means only that one location (Manager's button, scoped the same
+// way as the rest of Manager's own page — per Hera's answer, it does NOT
+// cover every location).
+// Unlike GET /buyer, GET / and GET /export-pdf, a Shopify failure here is
+// NOT swallowed — surfaced as a 500 instead, since the whole point of
+// clicking this button is to refresh, so silently doing nothing would be
+// misleading.
+router.post('/refresh-wig-numbers', async (req, res) => {
+  try {
+    const { location } = req.body || {};
+    const result = location
+      ? await pool.query('SELECT * FROM wig_demos WHERE location = $1 ORDER BY created_at DESC', [location])
+      : await pool.query('SELECT * FROM wig_demos ORDER BY location, created_at DESC');
+    const rows = result.rows;
+
+    const client = await getClient();
+    const resolved = await attachWigNumbers(client, rows);
+    const toUpdate = rows.filter(r => r.barcode && resolved.has(r.barcode));
+    if (toUpdate.length > 0) {
+      // sub_type is refreshed together with wig_number now (2026-09-17, Hera
+      // — this button doubles as the sub_type refresh too, one Shopify call
+      // covers both). r.sub_type is a resolved string ('' included) for
+      // every row in toUpdate since attachWigNumbers() just set it above, so
+      // this is written as-is (not `|| null`) — unlike wig_number, '' here is
+      // a meaningful, intentionally-persisted "Shopify confirmed no value"
+      // state, not "blank because we skip it" (see the sub_type migration
+      // note in server/database/init.js).
+      await Promise.all(toUpdate.map(r =>
+        pool.query(
+          'UPDATE wig_demos SET wig_number = $1, sub_type = $2 WHERE id = $3',
+          [r.wig_number || null, r.sub_type, r.id]
+        )
+      ));
+    }
+
+    sortByWigNumber(rows);
+    // Same category/section annotation as GET / above, so Manager's
+    // "Refresh Wig Number" button can re-render its cards straight from this
+    // response without re-deriving the mapping itself.
+    rows.forEach(r => {
+      const { card, section } = categorizeRow(r);
+      r.category = card;
+      r.section = section;
+    });
+    res.json(rows);
+  } catch (e) {
+    console.error('POST /api/wig-demo/refresh-wig-numbers error:', e);
     res.status(500).json({ error: e.message });
   }
 });

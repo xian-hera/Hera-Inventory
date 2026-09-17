@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Page, Layout, Card, BlockStack, InlineStack,
-  Text, Banner, Spinner, TextField, Button
+  Text, Banner, TextField, Button
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 
@@ -39,6 +39,107 @@ function formatDemoDate(dateStr) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+// ─── Card grouping (2026-09-17, Hera) ───────────────────────────────────────
+// Manager's list is now split into one card per product custom.sub_type,
+// plus a SOLDE card for cleared-out stock (split further into the same 5
+// sub-type sections, divided by a labeled rule). The actual sub_type ->
+// card mapping and the wig_number === "SOLDE" check both happen server-side
+// (see categorizeRow() in server/routes/wigDemo.js) — every item GET / (and
+// POST /refresh-wig-numbers) returns already carries `category` (one of
+// CARD_ORDER below, or 'UNKNOWN' for "sub type not found") and `section`
+// (only set when category === 'SOLDE', one of SOLDE_SECTION_ORDER). Kept
+// server-side rather than duplicated here so there's only one place this
+// mapping can ever drift — see claude/DEMO_WIG_FEATURE_SPEC.md §32.
+const CARD_ORDER = ['FULL', 'HALF', 'LACE', 'HUMAN HAIR', 'TOPPERS', 'SOLDE'];
+const SOLDE_SECTION_ORDER = ['FULL', 'HALF', 'LACE', 'HUMAN HAIR', 'TOPPERS'];
+
+// A single demo row — same column layout as the old flat list, reused for
+// every card/section's list below.
+function DemoRow({ item }) {
+  return (
+    <div style={{
+      display: 'grid', gridTemplateColumns: '1fr 90px 70px',
+      gap: '8px', padding: '10px 0', borderBottom: '1px solid #f1f1f1',
+      alignItems: 'start',
+    }}>
+      <div>
+        <div style={{ fontSize: '12px', wordBreak: 'break-word' }}>{item.barcode}</div>
+        <div style={{ fontSize: '12px', fontWeight: '500', wordBreak: 'break-word', marginTop: '2px' }}>
+          {item.name || '-'}
+        </div>
+        <div style={{ fontSize: '12px', color: '#6d7175', marginTop: '2px' }}>
+          {item.variant_name || '-'}
+        </div>
+      </div>
+      <div style={{ fontSize: '12px' }}>{formatDemoDate(item.created_at)}</div>
+      <div style={{ fontSize: '12px', wordBreak: 'break-word' }}>{item.wig_number || '-'}</div>
+    </div>
+  );
+}
+
+const DEMO_ROW_HEADER = (
+  <div style={{
+    display: 'grid', gridTemplateColumns: '1fr 90px 70px',
+    gap: '8px', padding: '8px 0', borderBottom: '1px solid #e1e3e5',
+    fontSize: '12px', fontWeight: '600', color: '#6d7175',
+  }}>
+    <span>SKU / Name / Color</span>
+    <span>Demo date</span>
+    <span>Wig number</span>
+  </div>
+);
+
+// A list of demos under one card/section — shows the "No demos" subdued line
+// instead of an empty column header when there aren't any (Hera: a card or
+// section with 0 demos still shows, just with nothing under it).
+function DemoList({ items }) {
+  if (items.length === 0) {
+    return <Text tone="subdued" variant="bodySm">No demos.</Text>;
+  }
+  return (
+    <div>
+      {DEMO_ROW_HEADER}
+      {items.map(item => <DemoRow key={item.id} item={item} />)}
+    </div>
+  );
+}
+
+// Divider + centered title used to separate the 5 sub-type sections inside
+// the SOLDE card (Hera: "用分割线来水平分隔多个列表，分割线居中写 title，title
+// 后面跟着 demo 的数量").
+function SectionDivider({ title, count }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', margin: '4px 0' }}>
+      <div style={{ flex: 1, height: '1px', background: '#e1e3e5' }} />
+      <Text variant="bodySm" fontWeight="semibold" tone="subdued">{title} ({count})</Text>
+      <div style={{ flex: 1, height: '1px', background: '#e1e3e5' }} />
+    </div>
+  );
+}
+
+// One card per category — same "click header to expand/collapse, default
+// collapsed, count in the header" shape as Buyer's per-location cards (see
+// BuyerWigDemo.js). `critical` styles the header red — used for the "Sub
+// type not found" card, since that one is flagging a data problem rather
+// than a normal category.
+function CategoryCard({ title, count, expanded, onToggle, critical, children }) {
+  return (
+    <Card>
+      <BlockStack gap="300">
+        <div
+          onClick={onToggle}
+          style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
+        >
+          <Text tone={critical ? 'critical' : 'subdued'}>{expanded ? '▾' : '▸'}</Text>
+          <Text variant="headingSm" fontWeight="bold" tone={critical ? 'critical' : undefined}>{title}</Text>
+          <Text tone={critical ? 'critical' : 'subdued'}>{count} demo{count === 1 ? '' : 's'}</Text>
+        </div>
+        {expanded && children}
+      </BlockStack>
+    </Card>
+  );
+}
+
 // ─── Add Demo modal ─────────────────────────────────────────────────────────
 function AddDemoModal({ data, loading, submitting, error, onClose, onSubmit }) {
   const [zoomOpen, setZoomOpen] = useState(false);
@@ -72,7 +173,7 @@ function AddDemoModal({ data, loading, submitting, error, onClose, onSubmit }) {
         }}>✕</button>
 
         {loading || !data ? (
-          <InlineStack align="center"><Spinner /></InlineStack>
+          <Text alignment="center" tone="subdued">Loading...</Text>
         ) : (
           <BlockStack gap="300">
             {error && <Banner tone="critical">{error}</Banner>}
@@ -241,6 +342,22 @@ function ManagerWigDemo() {
 
   const [showHelp, setShowHelp] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
+  const [refreshingWigNumbers, setRefreshingWigNumbers] = useState(false);
+
+  // Which cards are expanded (2026-09-17, Hera: cards default collapsed to a
+  // one-line "name + demo count" header, same as Buyer's per-location cards
+  // — see BuyerWigDemo.js's expandedLocations). Only resets on page re-entry
+  // (the initial empty Set below) or after clicking Refresh Wig Number
+  // (Hera: "展开状态只会在重新进入页面，或者按下了 refresh 之后刷新") — a normal
+  // list update (e.g. making a new demo) leaves whatever's expanded alone.
+  const [expandedCards, setExpandedCards] = useState(new Set());
+  const toggleCardExpanded = (card) => {
+    setExpandedCards(prev => {
+      const next = new Set(prev);
+      if (next.has(card)) next.delete(card); else next.add(card);
+      return next;
+    });
+  };
 
   const popupOpen = modalOpen || modalLoading;
 
@@ -377,6 +494,38 @@ function ManagerWigDemo() {
     }
   }, [searchQuery]);
 
+  // Refresh Wig Number (Hera, 2026-09-17): re-queries Shopify live for
+  // wig_number and updates the DB (see POST /refresh-wig-numbers in
+  // server/routes/wigDemo.js), scoped to just this manager's own location —
+  // same scope as the rest of this page (Hera's answer: NOT every location,
+  // that's Buyer's button). The endpoint returns the refreshed list in the
+  // same shape as GET /, so this just replaces items with the response.
+  const handleRefreshWigNumbers = async () => {
+    if (!location) return;
+    setRefreshingWigNumbers(true);
+    setError('');
+    try {
+      const res = await fetch('/api/wig-demo/refresh-wig-numbers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ location }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to refresh wig numbers');
+      setItems(Array.isArray(data) ? data : []);
+      // Collapse every card back down (Hera, 2026-09-17: expanded state
+      // should reset after Refresh, same as re-entering the page) — a demo
+      // can move cards entirely when its wig_number becomes/stops being
+      // "SOLDE", so keeping old cards expanded after this could leave a now-
+      // empty card open and a newly-populated one collapsed.
+      setExpandedCards(new Set());
+    } catch (e) {
+      setError(e.message || 'Failed to refresh wig numbers');
+    } finally {
+      setRefreshingWigNumbers(false);
+    }
+  };
+
   const handleMakeDemo = async () => {
     if (!modalData) return;
     setModalSubmitting(true);
@@ -390,6 +539,12 @@ function ManagerWigDemo() {
           barcode: modalData.barcode, name: modalData.name, variantName: modalData.variantName,
           productId: modalData.productId, variantId: modalData.variantId,
           inventoryItemId: modalData.inventoryItemId,
+          // wig_number is now a persisted column (2026-09-17, Hera — see the
+          // wig_demos.wig_number migration in server/database/init.js) and
+          // the backend's INSERT wants it at creation time, so it's sent
+          // along here too now (previously not sent at all — see the
+          // wig_number note in setItems() below for what that used to mean).
+          wigNumber: modalData.wigNumber || '',
         }),
       });
       const data = await res.json();
@@ -402,6 +557,15 @@ function ManagerWigDemo() {
         // already fetched it a moment ago via GET /lookup (it's what's on screen
         // in the modal right now as modalData.wigNumber) — reuse that instead of
         // leaving this row blank until the next full list reload fills it in.
+        //
+        // 2026-09-17 update: wig_number IS now a persisted column (see the
+        // migration in server/database/init.js), and modalData.wigNumber is
+        // now sent up in the POST body above, so data.row already comes back
+        // with the correct wig_number via the INSERT's RETURNING *. The
+        // override below is redundant now (both sides hold the same value)
+        // but left in place rather than removed, since it's harmless and
+        // still a reasonable belt-and-suspenders fallback if that ever
+        // changes.
         const newRow = { ...data.row, wig_number: modalData.wigNumber || '' };
         return [newRow, ...withoutReplaced];
       });
@@ -446,6 +610,27 @@ function ManagerWigDemo() {
     }
   };
 
+  // Group into cards (2026-09-17, Hera) — `category`/`section` are computed
+  // server-side (see categorizeRow() in server/routes/wigDemo.js) and come
+  // back on every item from GET / and POST /refresh-wig-numbers, so this is
+  // just a straight bucket-by-field pass, same shape as BuyerWigDemo.js's
+  // byLocation grouping. `items` is already sorted by wig_number server-side
+  // (sortByWigNumber()), and since these are plain filters/forEach passes
+  // (not re-sorts), every bucket below keeps that same order.
+  const byCategory = {};
+  items.forEach(item => {
+    const cat = item.category || 'UNKNOWN';
+    if (!byCategory[cat]) byCategory[cat] = [];
+    byCategory[cat].push(item);
+  });
+  const soldeBySection = {};
+  (byCategory.SOLDE || []).forEach(item => {
+    const sec = item.section || 'UNKNOWN';
+    if (!soldeBySection[sec]) soldeBySection[sec] = [];
+    soldeBySection[sec].push(item);
+  });
+  const unknownItems = byCategory.UNKNOWN || [];
+
   return (
     <Page
       title="Wig DEMO"
@@ -462,7 +647,17 @@ function ManagerWigDemo() {
 
             <Card>
               <BlockStack gap="300">
-                <Text variant="headingSm">Current demos</Text>
+                {/* Demo count in the heading (2026-09-17, Hera: "在 Current
+                    demos 后面，加一个括号，然后显示当前 demo 的数量") — reads
+                    straight off `items.length`, the same array the list
+                    below renders from, so it's always in sync with what's
+                    actually showing (no separate count to keep updated by
+                    hand). Stays accurate through the loading state too:
+                    while `loading` is true `items` is still whatever it was
+                    from the last successful load (`[]` on first mount), so
+                    the count doesn't show a stale non-zero number if it's
+                    somehow read before the first fetch resolves. */}
+                <Text variant="headingSm">Current demos ({items.length})</Text>
 
                 <InlineStack align="space-between" blockAlign="center" wrap gap="200">
                   <Text variant="bodySm" tone="subdued">Scan barcode to add a new demo or search</Text>
@@ -485,6 +680,16 @@ function ManagerWigDemo() {
                       />
                     </div>
                     <Button onClick={runSearch} loading={searchLoading}>Search</Button>
+                    {/* Refresh Wig Number (Hera, 2026-09-17): right of
+                        Search, becoming the rightmost button in this row —
+                        Search shifts left within this same group. */}
+                    <Button
+                      onClick={handleRefreshWigNumbers}
+                      loading={refreshingWigNumbers}
+                      disabled={refreshingWigNumbers}
+                    >
+                      Refresh Wig Number
+                    </Button>
                   </InlineStack>
                 </InlineStack>
 
@@ -531,57 +736,82 @@ function ManagerWigDemo() {
                   </div>
                 )}
 
-                {loading ? (
-                  <InlineStack align="center"><Spinner /></InlineStack>
-                ) : items.length === 0 ? (
-                  <Text tone="subdued" alignment="center">No demos yet. Scan a barcode or search to add one.</Text>
-                ) : (
-                  <div>
-                    {/* Manager is mostly used on mobile — SKU/Name/Color are
-                        stacked into one merged column (same pattern as
-                        ManagerStockLosses.js) instead of separate fixed-width
-                        columns, which was cramping "Name" down to almost
-                        nothing on a phone screen and wrapping it one letter
-                        per line. Demo date and Wig number (custom.wig_number
-                        metafield, see attachWigNumbers() in wigDemo.js) each
-                        keep their own narrow column at the right. No
-                        checkbox column any more — it only ever existed to
-                        select rows for Cancel DEMO, which Hera had removed
-                        from this page 2026-09-16 (Manager can no longer
-                        cancel a demo themselves; see
-                        claude/DEMO_WIG_FEATURE_SPEC.md §18). */}
-                    <div style={{
-                      display: 'grid', gridTemplateColumns: '1fr 90px 70px',
-                      gap: '8px', padding: '8px 0', borderBottom: '1px solid #e1e3e5',
-                      fontSize: '12px', fontWeight: '600', color: '#6d7175',
-                    }}>
-                      <span>SKU / Name / Color</span>
-                      <span>Demo date</span>
-                      <span>Wig number</span>
-                    </div>
-                    {items.map(item => (
-                      <div key={item.id} style={{
-                        display: 'grid', gridTemplateColumns: '1fr 90px 70px',
-                        gap: '8px', padding: '10px 0', borderBottom: '1px solid #f1f1f1',
-                        alignItems: 'start',
-                      }}>
-                        <div>
-                          <div style={{ fontSize: '12px', wordBreak: 'break-word' }}>{item.barcode}</div>
-                          <div style={{ fontSize: '12px', fontWeight: '500', wordBreak: 'break-word', marginTop: '2px' }}>
-                            {item.name || '-'}
-                          </div>
-                          <div style={{ fontSize: '12px', color: '#6d7175', marginTop: '2px' }}>
-                            {item.variant_name || '-'}
-                          </div>
-                        </div>
-                        <div style={{ fontSize: '12px' }}>{formatDemoDate(item.created_at)}</div>
-                        <div style={{ fontSize: '12px', wordBreak: 'break-word' }}>{item.wig_number || '-'}</div>
-                      </div>
-                    ))}
-                  </div>
-                )}
               </BlockStack>
             </Card>
+
+            {/* Cards (2026-09-17, Hera): one per product custom.sub_type,
+                plus SOLDE for cleared-out stock — replaces the old flat list
+                above. Same collapsed-by-default, click-to-expand shape as
+                Buyer's per-location cards (BuyerWigDemo.js), rendered as
+                siblings of the toolbar Card above rather than nested inside
+                it, same as Buyer's layout. category/section come straight
+                off each item from the server (see the byCategory/
+                soldeBySection grouping above) — every card and SOLDE section
+                is always shown, even with 0 demos in it, per Hera's spec. */}
+            {loading ? (
+              <Text alignment="center" tone="subdued">Loading...</Text>
+            ) : items.length === 0 ? (
+              <Card>
+                <Text tone="subdued" alignment="center">No demos yet. Scan a barcode or search to add one.</Text>
+              </Card>
+            ) : (
+              <>
+                {CARD_ORDER.map(cat => {
+                  if (cat !== 'SOLDE') {
+                    const catItems = byCategory[cat] || [];
+                    return (
+                      <CategoryCard
+                        key={cat}
+                        title={cat}
+                        count={catItems.length}
+                        expanded={expandedCards.has(cat)}
+                        onToggle={() => toggleCardExpanded(cat)}
+                      >
+                        <DemoList items={catItems} />
+                      </CategoryCard>
+                    );
+                  }
+                  // SOLDE — further divided into the same 5 sub-type
+                  // sections, separated by a labeled divider (Hera: "分割线
+                  // 居中写 title，title 后面跟着 demo 的数量"), each section
+                  // shown even with 0 demos.
+                  const soldeItems = byCategory.SOLDE || [];
+                  return (
+                    <CategoryCard
+                      key="SOLDE"
+                      title="SOLDE"
+                      count={soldeItems.length}
+                      expanded={expandedCards.has('SOLDE')}
+                      onToggle={() => toggleCardExpanded('SOLDE')}
+                    >
+                      <BlockStack gap="200">
+                        {SOLDE_SECTION_ORDER.map(section => (
+                          <div key={section}>
+                            <SectionDivider title={section} count={(soldeBySection[section] || []).length} />
+                            <DemoList items={soldeBySection[section] || []} />
+                          </div>
+                        ))}
+                      </BlockStack>
+                    </CategoryCard>
+                  );
+                })}
+                {/* "Sub type not found" (Hera, 2026-09-17): demos whose
+                    product has no custom.sub_type value in Shopify at all —
+                    not one of the 6 official cards above, so unlike those,
+                    this only shows up when there's actually something in it. */}
+                {unknownItems.length > 0 && (
+                  <CategoryCard
+                    title="Sub type not found — contact Buyer"
+                    count={unknownItems.length}
+                    expanded={expandedCards.has('UNKNOWN')}
+                    onToggle={() => toggleCardExpanded('UNKNOWN')}
+                    critical
+                  >
+                    <DemoList items={unknownItems} />
+                  </CategoryCard>
+                )}
+              </>
+            )}
           </BlockStack>
         </Layout.Section>
       </Layout>
