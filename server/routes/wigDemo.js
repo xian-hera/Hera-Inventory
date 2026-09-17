@@ -838,7 +838,21 @@ router.post('/', async (req, res) => {
       [location, shopifyLocationId, productId, variantId, inventoryItemId, barcode, name || null, variantName || null, wigNumber || null, subType]
     );
 
-    res.json({ success: true, row: inserted.rows[0], replaced, replaceWarning });
+    // category/section (2026-09-17, Hera: a demo made just now landed in the
+    // "Sub type not found" card instead of its real one, only fixing itself
+    // after a Refresh) — GET / attaches these to every row via
+    // categorizeRow() before responding (see above), but this route was
+    // sending the freshly-INSERTed row straight back without ever doing the
+    // same, so the frontend's byCategory grouping (which reads item.category)
+    // always saw it as undefined and bucketed it under 'UNKNOWN' until the
+    // next full GET / reload recomputed it. Doing it here too so a brand new
+    // demo lands in its correct card immediately, same as every other row.
+    const newRow = inserted.rows[0];
+    const { card: newCard, section: newSection } = categorizeRow(newRow);
+    newRow.category = newCard;
+    newRow.section = newSection;
+
+    res.json({ success: true, row: newRow, replaced, replaceWarning });
   } catch (e) {
     console.error('POST /api/wig-demo error:', e);
     res.status(500).json({ error: e.message });
