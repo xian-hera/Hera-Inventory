@@ -336,45 +336,55 @@ function BuyerWigDemo() {
                       </div>
                       {isExpanded && (
                         <>
-                          {/* Column order per Hera (2026-09-15): SKU, Name,
-                              Color, Wig number, Demo date — Wig number
-                              (custom.wig_number product metafield, see
-                              attachWigNumbers() in wigDemo.js) sits between
-                              Color and Demo date. */}
+                          {/* Column structure (2026-09-18, Hera — replaces the
+                              2026-09-15 order): SKU, Name, Brand, Color, Wig
+                              No., Demo date. Two changes from before: (1) SKU
+                              and Name are merged into one stacked cell (SKU
+                              on top, Name below) instead of two separate grid
+                              columns — same stacking style Manager's list
+                              already used; (2) a new Brand column (Shopify's
+                              product vendor) sits right after that stacked
+                              cell. Name itself is no longer raw custom.name —
+                              it's the server-computed display_name
+                              ("{sub_type 缩写} {custom.wig_name}", see
+                              buildDisplayName() in server/routes/wigDemo.js)
+                              — so the old Name-shortening logic this page
+                              never actually had (that was Manager-only) still
+                              isn't needed here either. "Wig number" header
+                              relabeled "Wig No." */}
                           {/* Column widths (2026-09-17, Hera: Color and Wig
                               number were getting squeezed enough that long
-                              values could visually overlap) — Color 90→108px
-                              and Wig number 70→84px, plus the gap between
-                              columns widened 8→10px for a bit more breathing
-                              room on every column. The actual overlap bug was
-                              the Color cell missing `wordBreak: 'break-word'`
-                              below (every other cell already had it) — a
-                              long, space-less color value had nowhere to
-                              wrap and just overflowed past its column into
-                              Wig number's. Wider columns alone wouldn't have
-                              fixed that; both together is the "safe width"
-                              Hera asked for. */}
+                              values could visually overlap) — Color and Wig
+                              No. keep their wordBreak safety net below, plus
+                              the 10px gap between columns from that same
+                              round. Widths rebalanced 2026-09-18 to fit the
+                              new Brand column into the same overall row. */}
                           <div style={{
-                            display: 'grid', gridTemplateColumns: '32px 100px 1fr 108px 84px 90px',
+                            display: 'grid', gridTemplateColumns: '32px 1fr 90px 105px 75px 90px',
                             gap: '10px', padding: '8px 0', borderBottom: '2px solid #e1e3e5',
                             fontSize: '12px', fontWeight: '600', color: '#6d7175',
                           }}>
                             <Checkbox checked={allSelected} indeterminate={someSelected && !allSelected} onChange={toggleAllInCard} />
-                            <span>SKU</span>
-                            <span>Name</span>
+                            <span>SKU / Name</span>
+                            <span>Brand</span>
                             <span>Color</span>
-                            <span>Wig number</span>
+                            <span>Wig No.</span>
                             <span>Demo date</span>
                           </div>
                           {rows.map(item => (
                             <div key={item.id} style={{
-                              display: 'grid', gridTemplateColumns: '32px 100px 1fr 108px 84px 90px',
+                              display: 'grid', gridTemplateColumns: '32px 1fr 90px 105px 75px 90px',
                               gap: '10px', padding: '10px 0', borderBottom: '1px solid #f1f1f1',
-                              alignItems: 'center',
+                              alignItems: 'start',
                             }}>
                               <Checkbox checked={selectedIds.includes(item.id)} onChange={() => toggleSelectOne(item.id)} />
-                              <div style={{ fontSize: '13px', wordBreak: 'break-word' }}>{item.barcode}</div>
-                              <div style={{ fontSize: '14px', fontWeight: '500', wordBreak: 'break-word' }}>{item.name || '-'}</div>
+                              <div>
+                                <div style={{ fontSize: '13px', wordBreak: 'break-word' }}>{item.barcode}</div>
+                                <div style={{ fontSize: '14px', fontWeight: '500', wordBreak: 'break-word', marginTop: '2px' }}>
+                                  {item.display_name || '-'}
+                                </div>
+                              </div>
+                              <div style={{ fontSize: '13px', wordBreak: 'break-word' }}>{item.vendor || '-'}</div>
                               <div style={{ fontSize: '13px', wordBreak: 'break-word' }}>{item.variant_name || '-'}</div>
                               <div style={{ fontSize: '13px', wordBreak: 'break-word' }}>{item.wig_number || '-'}</div>
                               <div style={{ fontSize: '13px' }}>{formatDemoDate(item.created_at)}</div>

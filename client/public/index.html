@@ -34,6 +34,18 @@
         overflow-y: scroll;
         scrollbar-gutter: stable;
       }
+      /* 2026-09-18, Hera: Manager 端 Wig DEMO 页面在 Android 上用 Shopify 自带的 app
+         打开时，页面最下面一张卡片会被 Shopify 原生的底部按钮/导航条挡住、点不到。这条
+         底部按钮是 Shopify app 自己画在页面上面的原生 UI，不是这个网页的一部分，我们这边
+         没办法去改它的大小或者位置，只能反过来在网页内容的最底部留出一段固定空间，把最后
+         一张卡片"顶"上去，让它不会被挡住。只在手机宽度的屏幕上生效（768px 是 Polaris 自己
+         用的手机/桌面断点，跟其它地方保持一致），桌面浏览器打开不受影响。用到这个类的地方
+         见 ManagerWigDemo.js 页面最下面的 spacer。 */
+      @media (max-width: 767px) {
+        .wig-demo-mobile-bottom-safe-area {
+          height: 96px;
+        }
+      }
     </style>
   </head>
   <body>

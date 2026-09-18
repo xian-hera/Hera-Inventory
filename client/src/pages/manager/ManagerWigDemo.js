@@ -896,6 +896,18 @@ function ManagerWigDemo() {
         </Layout.Section>
       </Layout>
 
+      {/* Bottom safe-area spacer (2026-09-18, Hera): on Android, opening this
+          page inside Shopify's own app leaves the page's last card sitting
+          right under Shopify's native bottom button/nav bar, unreachable to
+          tap. That bottom bar is drawn by the Shopify app itself, on top of
+          this page — nothing here can resize or move it — so this just
+          reserves a fixed block of empty space at the very end of the page
+          content instead, pushing the last card up above it. The
+          .wig-demo-mobile-bottom-safe-area class (client/public/index.html)
+          only gives this height on phone-width screens; on desktop it's 0
+          height and invisible, same as not being there at all. */}
+      <div className="wig-demo-mobile-bottom-safe-area" aria-hidden="true" />
+
       {popupOpen && (
         <AddDemoModal
           data={modalData}

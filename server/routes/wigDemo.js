@@ -54,11 +54,13 @@ async function fetchWigVariant(client, barcode, locationId) {
               id
               title
               productType
+              vendor
               featuredMedia {
                 preview { image { url } }
               }
               wigNumber: metafield(namespace: "custom", key: "wig_number") { value }
               subType: metafield(namespace: "custom", key: "sub_type") { value }
+              wigName: metafield(namespace: "custom", key: "wig_name") { value }
             }
           }
         }
@@ -71,19 +73,36 @@ async function fetchWigVariant(client, barcode, locationId) {
   const edges = response.data?.productVariants?.edges || [];
   if (edges.length === 0) return null;
 
-  // Exact-match the barcode (2026-09-17, Hera): a barcode search can return
-  // up to 5 candidates, and this used to just take edges[0] regardless of
-  // whether its own barcode field actually equaled the one being looked up.
-  // claude/OLD_SKU_INCIDENT_FIX.md documents a confirmed real incident of a
-  // duplicate-barcode mismatch picking the wrong product this same way (that
-  // specific case — an Archived duplicate — is already excluded by the
-  // activeFilter() call above, but two both-Active products/variants sharing
-  // a barcode would not be). Only a candidate whose own barcode field is
-  // byte-for-byte equal to the requested one is ever used now; if none
-  // match, this is treated the same as "not found" below.
-  const match = edges.find(e => e.node.barcode === barcode);
-  if (!match) return null;
-  const variant = match.node;
+  // NOT exact-matched against the barcode field (2026-09-18, Hera —
+  // reverting the 2026-09-17 "exact match" change after it blocked a real
+  // scan). That change required edges[i].node.barcode === the barcode being
+  // looked up, meant to guard against claude/OLD_SKU_INCIDENT_FIX.md's
+  // duplicate-barcode-picks-wrong-product scenario. But Hera Beauté attaches
+  // more than one barcode to a single variant via Shopify's own multi-
+  // barcode feature (Admin UI "Barcodes" list, e.g. SKU 803868506963 with
+  // barcodes 803868506963 and 803868513381) — confirmed live via GraphiQL:
+  // searching `barcode:803868513381` finds that same variant, but its
+  // `barcode` field still comes back as "803868506963" (the primary one).
+  // An introspection query confirmed ProductVariant has no field that lists
+  // every barcode a variant carries — only the single `barcode: String` —
+  // so there is no way through this API to verify "does this variant really
+  // own the barcode I searched for" once more than one is attached. Exact-
+  // matching therefore rejected every legitimate scan of a non-primary
+  // barcode, which is a normal, regularly-used pattern here, not an edge
+  // case. Back to trusting Shopify's own barcode: search result instead.
+  // The historical Active/Archived duplicate is still excluded by
+  // activeFilter() above; a genuine same-barcode collision between two
+  // Active variants (an actual data problem, unlike Hera's multi-barcode
+  // usage) would show up as more than one edge here — logged below so it's
+  // visible, but still not blocked, since nothing in this response can say
+  // which of several candidates is the "correct" one.
+  if (edges.length > 1) {
+    console.warn('[wigDemo] fetchWigVariant: barcode search returned more than one Active WIG variant — using the first; check for a genuine duplicate barcode.', {
+      requestedBarcode: barcode,
+      candidates: edges.map(e => ({ sku: e.node.sku, barcode: e.node.barcode, productId: e.node.product?.id })),
+    });
+  }
+  const variant = edges[0].node;
   if ((variant.product.productType || '').toUpperCase() !== 'WIG') return null;
 
   const decodedLocationId = decodeURIComponent(locationId);
@@ -92,17 +111,89 @@ async function fetchWigVariant(client, barcode, locationId) {
   const availableQty = level?.node.quantities.find(q => q.name === 'available')?.quantity ?? 0;
 
   return {
-    barcode: variant.barcode || variant.sku,
+    // SKU, not Shopify's "primary" barcode field (2026-09-18, Hera): the
+    // value the app calls "barcode" everywhere downstream (modal, search
+    // results, the demo list, wig_demos.barcode) is meant to be this variant's
+    // canonical SKU, not whichever barcode happened to be scanned/typed to
+    // find it. The scanned/typed digits above are only ever used as the
+    // Shopify barcode: search key — once the variant is resolved, its own
+    // `sku` field is what gets carried forward from here on. This also fixes
+    // the "same SKU replace" check in POST / below (oldRow.barcode ===
+    // barcode), which used to compare whichever barcode was scanned each
+    // time rather than the actual SKU, so re-scanning the *other* barcode of
+    // a multi-barcode variant could wrongly look like a different product.
+    barcode: variant.sku || variant.barcode,
     name: variant.metafield?.value || variant.product.title,
     variantName: variant.title,
     wigNumber: variant.product.wigNumber?.value || '',
     subType: variant.product.subType?.value || '',
+    // wigName/vendor (2026-09-18, Hera): feed buildDisplayName() below for
+    // the Name column, and the new Brand column, respectively. Same "fetch
+    // it in the same request as everything else metafield-shaped" reasoning
+    // as wig_number/sub_type above — vendor isn't a metafield at all, just
+    // Shopify's own Product.vendor field, so it's free to include here.
+    wigName: variant.product.wigName?.value || '',
+    vendor: variant.product.vendor || '',
     image: variant.product.featuredMedia?.preview?.image?.url || null,
     productId: variant.product.id,
     variantId: variant.id,
     inventoryItemId: variant.inventoryItem.id,
     availableQty,
   };
+}
+
+// Sub-type abbreviation used inside the Name column (2026-09-18, Hera's
+// word-for-word mapping). Anything not in this table (including the "Sub
+// type not found" / UNKNOWN case) just contributes no abbreviation at all —
+// per Hera: "对 sub-type 部分留空" — rather than some placeholder text, since
+// a missing sub_type doesn't mean wig_name itself is bad data.
+const SUB_TYPE_ABBR = {
+  'FULL WIGS': 'FW',
+  'HALF WIGS': 'HW',
+  'LACE WIGS': 'LW',
+  'HUMAN HAIR WIGS': 'HH',
+  'HUMAN MIX WIGS': 'HH',
+  'TOPPERS': 'TP',
+};
+function subTypeAbbr(subType) {
+  const key = (subType || '').toString().trim().toUpperCase();
+  return SUB_TYPE_ABBR[key] || '';
+}
+
+// Combined Name column value (2026-09-18, Hera): replaces the old raw
+// custom.name display (and the WIG/Color-hiding logic ManagerWigDemo.js used
+// to apply to it, which is no longer needed at all now that Name is built
+// from wig_name instead of custom.name). Computed once here — not on the
+// client, not per-page — so Buyer's list, Manager's list, Manager's Add Demo
+// modal and the exported PDF can never disagree, same reasoning as
+// categorizeRow() below for category/section.
+//
+// Rule, per Hera: "{sub_type 缩写} {custom.wig_name}", with a leading "@ "
+// added when the *original* custom.name contains an "@" anywhere in it
+// (that's the only thing custom.name is still used for — its own text is
+// never shown anymore). Hera's two explicit edge-case answers:
+//   - wig_name missing (NULL = never checked by Buyer's Refresh yet, or ''
+//     = checked and Shopify genuinely has none) -> show "-" outright, full
+//     stop, regardless of anything else. There's nothing meaningful to
+//     combine without it.
+//   - sub_type missing/unrecognized (the "Sub type not found" card) -> just
+//     leave the abbreviation out (subTypeAbbr() already returns '' for
+//     this), not a "-" — wig_name can still be perfectly good on its own.
+// `row` here is intentionally a plain {subType, wigName, rawName} shape
+// (camelCase) rather than a raw DB row, so this same function works both for
+// a persisted wig_demos row (GET /, GET /buyer, GET /export-pdf,
+// POST /refresh-wig-numbers — snake_case DB columns mapped in by the caller)
+// and for a live Shopify lookup that hasn't been saved yet (GET /lookup,
+// used by the modal before Make DEMO is even clicked).
+function buildDisplayName({ subType, wigName, rawName }) {
+  if (!wigName) return '-';
+  const abbr = subTypeAbbr(subType);
+  const hasAt = (rawName || '').includes('@');
+  const parts = [];
+  if (hasAt) parts.push('@');
+  if (abbr) parts.push(abbr);
+  parts.push(wigName);
+  return parts.join(' ');
 }
 
 // Wig Number: the same product-level custom.wig_number metafield already
@@ -155,6 +246,22 @@ async function fetchWigVariant(client, barcode, locationId) {
 // resolved/unresolved rule as item.wig_number: only touched for SKUs whose
 // chunk got a real response, left untouched otherwise, so a transient
 // network failure never overwrites an already-known-good sub_type with ''.
+//
+// 2026-09-18 update (Hera): searches by sku: now, not barcode:. item.barcode
+// is the value this whole file stores/displays as "the SKU" (see the
+// fetchWigVariant() return above) — as of today that's genuinely each
+// variant's own `sku` field, not whichever barcode was scanned to find it.
+// Searching sku: here matches that directly instead of relying on a SKU
+// also happening to be registered as a barcode, which was only ever true by
+// convention, not guaranteed.
+//
+// 2026-09-18 update (Hera: new wig_name/vendor columns feed the Name/Brand
+// columns everywhere — see buildDisplayName() above): resolved in this same
+// batched request too, same resolved/unresolved rule as wig_number/sub_type
+// (only touched for SKUs whose chunk got a real response). This is also the
+// ONLY backfill path for these two on pre-existing rows, per Hera's explicit
+// choice — unlike sub_type, GET / (Manager's own list) does NOT self-heal
+// these; a row just shows "-" in the Name column until Buyer runs Refresh.
 async function attachWigNumbers(client, items) {
   const skus = [...new Set(items.map(i => i.barcode).filter(Boolean))];
   const resolved = new Set();
@@ -162,19 +269,23 @@ async function attachWigNumbers(client, items) {
   const { activeFilter } = require('../shopify');
   const wigNumberBySku = new Map();
   const subTypeBySku = new Map();
+  const wigNameBySku = new Map();
+  const vendorBySku = new Map();
   const CHUNK_SIZE = 50;
   for (let i = 0; i < skus.length; i += CHUNK_SIZE) {
     const chunk = skus.slice(i, i + CHUNK_SIZE);
-    const filter = activeFilter(chunk.map(s => `barcode:${s}`).join(' OR '));
+    const filter = activeFilter(chunk.map(s => `sku:${s}`).join(' OR '));
     const query = `
       query wigNumbers($filter: String!) {
         productVariants(first: ${chunk.length}, query: $filter) {
           edges { node {
-            barcode
+            sku
             product {
               productType
+              vendor
               wigNumber: metafield(namespace: "custom", key: "wig_number") { value }
               subType: metafield(namespace: "custom", key: "sub_type") { value }
+              wigName: metafield(namespace: "custom", key: "wig_name") { value }
             }
           } }
         }
@@ -193,9 +304,11 @@ async function attachWigNumbers(client, items) {
     chunk.forEach(sku => resolved.add(sku));
     const edges = response.data?.productVariants?.edges || [];
     edges.forEach(({ node }) => {
-      if (node?.barcode && node?.product?.productType === 'WIG') {
-        wigNumberBySku.set(node.barcode, node.product.wigNumber?.value || '');
-        subTypeBySku.set(node.barcode, node.product.subType?.value || '');
+      if (node?.sku && node?.product?.productType === 'WIG') {
+        wigNumberBySku.set(node.sku, node.product.wigNumber?.value || '');
+        subTypeBySku.set(node.sku, node.product.subType?.value || '');
+        wigNameBySku.set(node.sku, node.product.wigName?.value || '');
+        vendorBySku.set(node.sku, node.product.vendor || '');
       }
     });
   }
@@ -203,6 +316,8 @@ async function attachWigNumbers(client, items) {
     if (item.barcode && resolved.has(item.barcode)) {
       item.wig_number = wigNumberBySku.has(item.barcode) ? wigNumberBySku.get(item.barcode) : '';
       item.sub_type = subTypeBySku.has(item.barcode) ? subTypeBySku.get(item.barcode) : '';
+      item.wig_name = wigNameBySku.has(item.barcode) ? wigNameBySku.get(item.barcode) : '';
+      item.vendor = vendorBySku.has(item.barcode) ? vendorBySku.get(item.barcode) : '';
     }
   });
   return resolved;
@@ -411,6 +526,11 @@ router.get('/buyer', async (req, res) => {
     // Array#sort is stable, each location's bucket ends up in wig_number
     // order too once it's filtered out of this single sorted array.
     sortByWigNumber(rows);
+    // display_name (2026-09-18, Hera): computed here, not on the client, same
+    // reasoning as category/section for Manager below — see buildDisplayName().
+    rows.forEach(r => {
+      r.display_name = buildDisplayName({ subType: r.sub_type, wigName: r.wig_name, rawName: r.name });
+    });
     res.json(rows);
   } catch (e) {
     console.error('GET /api/wig-demo/buyer error:', e);
@@ -452,6 +572,13 @@ router.get('/lookup', async (req, res) => {
       return res.status(400).json({ error: 'Sub type not found, please contact Buyer' });
     }
 
+    // displayName (2026-09-18, Hera): the Add Demo modal shows this instead
+    // of the raw custom.name now — see buildDisplayName() above. Live wig_name
+    // straight from Shopify here (this hasn't been saved to a row yet), so
+    // unlike a persisted row this can only be "-" if Shopify itself has no
+    // custom.wig_name value for this product yet.
+    info.displayName = buildDisplayName({ subType: info.subType, wigName: info.wigName, rawName: info.name });
+
     res.json(info);
   } catch (e) {
     console.error('GET /api/wig-demo/lookup error:', e);
@@ -492,7 +619,23 @@ router.get('/', async (req, res) => {
     if (uncheckedSubType.length > 0) {
       try {
         const client = await getClient();
+        // wig_name/vendor snapshot (2026-09-18, Hera: Manager's page must NOT
+        // self-heal these two — only Buyer's "Refresh Wig Number" does — but
+        // attachWigNumbers() now resolves all four fields together in one
+        // batched request, since every OTHER caller wants that. Restoring
+        // these two right after the call keeps this self-heal path
+        // sub_type/wig_number-only in effect (nothing gets persisted for
+        // wig_name/vendor below, and this response won't show a fresher
+        // wig_name than what's actually saved either), without a second,
+        // separate Shopify round-trip just to ask for two fields we'd
+        // immediately throw away.
+        const wigNameSnapshot = new Map(uncheckedSubType.map(r => [r.id, r.wig_name]));
+        const vendorSnapshot = new Map(uncheckedSubType.map(r => [r.id, r.vendor]));
         const resolved = await attachWigNumbers(client, uncheckedSubType);
+        uncheckedSubType.forEach(r => {
+          r.wig_name = wigNameSnapshot.get(r.id);
+          r.vendor = vendorSnapshot.get(r.id);
+        });
         const toUpdate = uncheckedSubType.filter(r => r.barcode && resolved.has(r.barcode));
         if (toUpdate.length > 0) {
           await Promise.all(toUpdate.map(r =>
@@ -519,6 +662,7 @@ router.get('/', async (req, res) => {
       const { card, section } = categorizeRow(r);
       r.category = card;
       r.section = section;
+      r.display_name = buildDisplayName({ subType: r.sub_type, wigName: r.wig_name, rawName: r.name });
     });
     res.json(rows);
   } catch (e) {
@@ -535,10 +679,10 @@ router.get('/', async (req, res) => {
 // extra formatting). Reuses the same pdfkit table-drawing approach already
 // proven in poInvoices.js's GET /:id/export-pdf rather than inventing a new
 // PDF layout from scratch. Columns match what the Manager list actually
-// shows (SKU, Name, Color, Wig number, Demo date) rather than the mobile
-// screen's merged single-column layout (§16) — that merge only exists to
-// cope with narrow phone width, a printed LETTER page has plenty of room for
-// separate columns.
+// shows (SKU, Name, Brand, Color, Wig No., Demo date — updated 2026-09-18,
+// Hera) rather than the mobile screen's merged single-column layout (§16) —
+// that merge only exists to cope with narrow phone width, a printed LETTER
+// page has plenty of room for separate columns.
 router.get('/export-pdf', async (req, res) => {
   try {
     const { location } = req.query;
@@ -559,7 +703,20 @@ router.get('/export-pdf', async (req, res) => {
     // the export or blanking it.
     try {
       const client = await getClient();
+      // wig_name/vendor snapshot (2026-09-18, Hera: only Buyer's "Refresh Wig
+      // Number" button backfills these two — this export, like GET /'s own
+      // sub_type self-heal above, must not incidentally do it too just
+      // because attachWigNumbers() now resolves all four fields in one
+      // batched request). Restored right after the call so neither this PDF
+      // render nor the UPDATE below reflects a wig_name/vendor value that
+      // was never actually saved through the one path Hera wants for them.
+      const wigNameSnapshot = new Map(rows.map(r => [r.id, r.wig_name]));
+      const vendorSnapshot = new Map(rows.map(r => [r.id, r.vendor]));
       const resolved = await attachWigNumbers(client, rows);
+      rows.forEach(r => {
+        r.wig_name = wigNameSnapshot.get(r.id);
+        r.vendor = vendorSnapshot.get(r.id);
+      });
       const toUpdate = rows.filter(r => r.barcode && resolved.has(r.barcode));
       if (toUpdate.length > 0) {
         // sub_type refreshed together with wig_number here too (2026-09-17,
@@ -592,6 +749,10 @@ router.get('/export-pdf', async (req, res) => {
       const { card, section } = categorizeRow(r);
       r.category = card;
       r.section = section;
+      // display_name (2026-09-18, Hera: PDF columns follow the same Name/
+      // Brand/"Wig No." change as the on-screen list — see the cols array
+      // below and buildDisplayName() above).
+      r.display_name = buildDisplayName({ subType: r.sub_type, wigName: r.wig_name, rawName: r.name });
     });
 
     const PDFDocument = require('pdfkit');
@@ -613,13 +774,20 @@ router.get('/export-pdf', async (req, res) => {
     // walking the floor comparing it against this printed list, same idea as
     // the blank "Count" column on PO Receiving's export-pdf (poInvoices.js).
     // key: null means cellValue() below always renders it empty.
+    // Columns (2026-09-18, Hera: PDF follows the same Name/Brand/"Wig No."
+    // change as the on-screen list — Name is now the computed display_name
+    // rather than raw custom.name, and there's a new Brand column for
+    // vendor). Widths trimmed to fit the new column into the same overall
+    // table width (LETTER page usable width is 532pt at this doc's margins;
+    // this totals 530pt, same as before).
     const cols = [
-      { label: 'SKU', width: 80, key: 'barcode' },
-      { label: 'Name', width: 125, key: 'name' },
-      { label: 'Color', width: 75, key: 'variant_name' },
-      { label: 'Wig number', width: 60, key: 'wig_number' },
-      { label: 'Demo date', width: 60, key: '__date' },
-      { label: 'Check', width: 130, key: null },
+      { label: 'SKU', width: 70, key: 'barcode' },
+      { label: 'Name', width: 120, key: 'display_name' },
+      { label: 'Brand', width: 70, key: 'vendor' },
+      { label: 'Color', width: 65, key: 'variant_name' },
+      { label: 'Wig No.', width: 55, key: 'wig_number' },
+      { label: 'Demo date', width: 55, key: '__date' },
+      { label: 'Check', width: 95, key: null },
     ];
     const startX = doc.page.margins.left;
     const tableWidth = cols.reduce((s, c) => s + c.width, 0);
@@ -763,6 +931,7 @@ router.post('/', async (req, res) => {
     const {
       location, shopifyLocationId, barcode, name, variantName,
       productId, variantId, inventoryItemId, wigNumber, subType,
+      wigName, vendor,
     } = req.body;
     if (!location || !shopifyLocationId || !barcode || !productId || !variantId || !inventoryItemId) {
       return res.status(400).json({ error: 'Missing required fields' });
@@ -832,10 +1001,16 @@ router.post('/', async (req, res) => {
     const inserted = await pool.query(
       `INSERT INTO wig_demos
         (location, shopify_location_id, shopify_product_id, shopify_variant_id,
-         inventory_item_id, barcode, name, variant_name, wig_number, sub_type)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+         inventory_item_id, barcode, name, variant_name, wig_number, sub_type,
+         wig_name, vendor)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
        RETURNING *`,
-      [location, shopifyLocationId, productId, variantId, inventoryItemId, barcode, name || null, variantName || null, wigNumber || null, subType]
+      // wigName/vendor (2026-09-18, Hera): stored with ?? rather than ||, same
+      // reasoning as subType above — '' is a meaningful, already-resolved
+      // "Shopify checked, genuinely has no value" state here (GET /lookup
+      // always resolves both before the modal can even open), not something
+      // to collapse into the NULL "never checked" state.
+      [location, shopifyLocationId, productId, variantId, inventoryItemId, barcode, name || null, variantName || null, wigNumber || null, subType, wigName ?? null, vendor ?? null]
     );
 
     // category/section (2026-09-17, Hera: a demo made just now landed in the
@@ -851,6 +1026,10 @@ router.post('/', async (req, res) => {
     const { card: newCard, section: newSection } = categorizeRow(newRow);
     newRow.category = newCard;
     newRow.section = newSection;
+    // display_name (2026-09-18, Hera): same reasoning as category/section
+    // just above — computed here too so the Name column is correct on the
+    // very first render of a brand new demo, not just after a reload.
+    newRow.display_name = buildDisplayName({ subType: newRow.sub_type, wigName: newRow.wig_name, rawName: newRow.name });
 
     res.json({ success: true, row: newRow, replaced, replaceWarning });
   } catch (e) {
@@ -976,10 +1155,14 @@ router.post('/import', async (req, res) => {
         const inserted = await pool.query(
           `INSERT INTO wig_demos
             (location, shopify_location_id, shopify_product_id, shopify_variant_id,
-             inventory_item_id, barcode, name, variant_name, wig_number, sub_type)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+             inventory_item_id, barcode, name, variant_name, wig_number, sub_type,
+             wig_name, vendor)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
            RETURNING *`,
-          [location, shopifyLocationId, info.productId, info.variantId, info.inventoryItemId, sku, info.name || null, info.variantName || null, info.wigNumber || null, info.subType]
+          // wigName/vendor stored with ?? not || (2026-09-18, Hera) — same
+          // reasoning as POST / above, '' is a meaningful already-resolved
+          // state here since fetchWigVariant() always resolves both live.
+          [location, shopifyLocationId, info.productId, info.variantId, info.inventoryItemId, sku, info.name || null, info.variantName || null, info.wigNumber || null, info.subType, info.wigName ?? null, info.vendor ?? null]
         );
         imported.push(inserted.rows[0]);
       } catch (e) {
@@ -1017,13 +1200,33 @@ router.post('/import', async (req, res) => {
 router.post('/refresh-wig-numbers', async (req, res) => {
   try {
     const { location } = req.body || {};
+    // wig_name/vendor backfill scope (2026-09-18, Hera: "通过在 buyer 页面点击
+    // refresh 按钮来拿" — Buyer's own button, specifically, is the one and
+    // only backfill path for these two on pre-existing rows; Manager's own
+    // "Refresh Wig Number" button, which hits this exact same route just
+    // scoped to one location, must NOT also do it). `location` present is
+    // already how this route tells the two callers apart (see the route
+    // comment above) — reused here as the same signal for this new decision.
+    const isBuyerGlobalRefresh = !location;
     const result = location
       ? await pool.query('SELECT * FROM wig_demos WHERE location = $1 ORDER BY created_at DESC', [location])
       : await pool.query('SELECT * FROM wig_demos ORDER BY location, created_at DESC');
     const rows = result.rows;
 
     const client = await getClient();
+    // See isBuyerGlobalRefresh above: snapshot wig_name/vendor before the
+    // call and restore them right after, same technique as GET /'s self-heal
+    // and GET /export-pdf above, ONLY when this is Manager's scoped call —
+    // Buyer's global call is left alone so it actually persists them below.
+    const wigNameSnapshot = isBuyerGlobalRefresh ? null : new Map(rows.map(r => [r.id, r.wig_name]));
+    const vendorSnapshot = isBuyerGlobalRefresh ? null : new Map(rows.map(r => [r.id, r.vendor]));
     const resolved = await attachWigNumbers(client, rows);
+    if (!isBuyerGlobalRefresh) {
+      rows.forEach(r => {
+        r.wig_name = wigNameSnapshot.get(r.id);
+        r.vendor = vendorSnapshot.get(r.id);
+      });
+    }
     const toUpdate = rows.filter(r => r.barcode && resolved.has(r.barcode));
     if (toUpdate.length > 0) {
       // sub_type is refreshed together with wig_number now (2026-09-17, Hera
@@ -1033,23 +1236,34 @@ router.post('/refresh-wig-numbers', async (req, res) => {
       // this is written as-is (not `|| null`) — unlike wig_number, '' here is
       // a meaningful, intentionally-persisted "Shopify confirmed no value"
       // state, not "blank because we skip it" (see the sub_type migration
-      // note in server/database/init.js).
-      await Promise.all(toUpdate.map(r =>
-        pool.query(
-          'UPDATE wig_demos SET wig_number = $1, sub_type = $2 WHERE id = $3',
-          [r.wig_number || null, r.sub_type, r.id]
-        )
-      ));
+      // note in server/database/init.js). wig_name/vendor follow the same
+      // ?? (not ||) treatment as POST / above, only for Buyer's global call.
+      if (isBuyerGlobalRefresh) {
+        await Promise.all(toUpdate.map(r =>
+          pool.query(
+            'UPDATE wig_demos SET wig_number = $1, sub_type = $2, wig_name = $3, vendor = $4 WHERE id = $5',
+            [r.wig_number || null, r.sub_type, r.wig_name ?? null, r.vendor ?? null, r.id]
+          )
+        ));
+      } else {
+        await Promise.all(toUpdate.map(r =>
+          pool.query(
+            'UPDATE wig_demos SET wig_number = $1, sub_type = $2 WHERE id = $3',
+            [r.wig_number || null, r.sub_type, r.id]
+          )
+        ));
+      }
     }
 
     sortByWigNumber(rows);
-    // Same category/section annotation as GET / above, so Manager's
-    // "Refresh Wig Number" button can re-render its cards straight from this
-    // response without re-deriving the mapping itself.
+    // Same category/section/display_name annotation as GET / above, so
+    // either button can re-render straight from this response without
+    // re-deriving anything itself.
     rows.forEach(r => {
       const { card, section } = categorizeRow(r);
       r.category = card;
       r.section = section;
+      r.display_name = buildDisplayName({ subType: r.sub_type, wigName: r.wig_name, rawName: r.name });
     });
     res.json(rows);
   } catch (e) {

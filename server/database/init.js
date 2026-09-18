@@ -1095,6 +1095,23 @@ const initDatabase = async () => {
     // load after this deploys, per Hera's explicit choice — see the spec).
     await client.query(`ALTER TABLE wig_demos ADD COLUMN IF NOT EXISTS sub_type TEXT`).catch(() => {});
 
+    // Migration: wig_name and vendor on the row itself (2026-09-18, Hera —
+    // the Name column shown everywhere (Buyer list, Manager list, Manager's
+    // Add Demo modal, exported PDF) is now a computed value built from
+    // custom.wig_name + the sub_type abbreviation, and a new Brand column
+    // shows the Shopify product's vendor; see server/routes/wigDemo.js's
+    // buildDisplayName()/subTypeAbbr() for the exact combination rule and
+    // claude/DEMO_WIG_FEATURE_SPEC.md for the design discussion). Same NULL-
+    // vs-'' convention as wig_number/sub_type above: NULL means "never
+    // checked against Shopify yet", '' means "checked, Shopify genuinely has
+    // no value". Written at creation time (POST / and POST /import) and
+    // backfilled for pre-existing rows only by Buyer's "Refresh Wig Number"
+    // button (Hera's explicit choice — unlike sub_type, Manager's own page
+    // load does NOT self-heal these two; a row with no wig_name yet just
+    // shows "-" in the Name column until Buyer runs Refresh).
+    await client.query(`ALTER TABLE wig_demos ADD COLUMN IF NOT EXISTS wig_name TEXT`).catch(() => {});
+    await client.query(`ALTER TABLE wig_demos ADD COLUMN IF NOT EXISTS vendor TEXT`).catch(() => {});
+
     await client.query('COMMIT');
     console.log('✓ Database initialized successfully');
   } catch (e) {
