@@ -196,6 +196,28 @@ function buildDisplayName({ subType, wigName, rawName }) {
   return parts.join(' ');
 }
 
+// Same combination as buildDisplayName() above, but split into the "@ FW "
+// prefix and the wig_name itself as two separate pieces (2026-09-18, Hera —
+// after seeing real Android/iOS screenshots of Manager's list on a phone:
+// the prefix needs to render in a different, smaller/greyed style than
+// wig_name, which is only possible if the two are separate React children
+// rather than one already-joined string). Only ManagerWigDemo.js's list
+// needs this split — everywhere else (Buyer's list, the Add Demo modal, the
+// exported PDF) still just uses the single combined buildDisplayName()
+// string above, so this doesn't touch any of those call sites. Kept as its
+// own small function rather than reworking buildDisplayName()'s return
+// shape, so nothing else has to change to accommodate it — same "@"/abbr
+// rules, just returned as {prefix, main} instead of one joined string.
+function buildDisplayNameParts({ subType, wigName, rawName }) {
+  if (!wigName) return { prefix: '', main: '-' };
+  const abbr = subTypeAbbr(subType);
+  const hasAt = (rawName || '').includes('@');
+  const prefixTokens = [];
+  if (hasAt) prefixTokens.push('@');
+  if (abbr) prefixTokens.push(abbr);
+  return { prefix: prefixTokens.length ? prefixTokens.join(' ') + ' ' : '', main: wigName };
+}
+
 // Wig Number: the same product-level custom.wig_number metafield already
 // used elsewhere in this codebase (see attachWigNumbers() in transfers.js
 // and attachPoWigNumbers() in poInvoices.js) — a manufacturer-assigned
@@ -663,6 +685,15 @@ router.get('/', async (req, res) => {
       r.category = card;
       r.section = section;
       r.display_name = buildDisplayName({ subType: r.sub_type, wigName: r.wig_name, rawName: r.name });
+      // display_name_prefix/display_name_main (2026-09-18, Hera): only this
+      // endpoint's list (ManagerWigDemo.js) needs the "@ FW " prefix and
+      // wig_name split apart for separate mobile styling — see
+      // buildDisplayNameParts() above. r.display_name itself is left as-is
+      // (still the single combined string) in case anything else reading
+      // this same response ever wants it.
+      const nameParts = buildDisplayNameParts({ subType: r.sub_type, wigName: r.wig_name, rawName: r.name });
+      r.display_name_prefix = nameParts.prefix;
+      r.display_name_main = nameParts.main;
     });
     res.json(rows);
   } catch (e) {

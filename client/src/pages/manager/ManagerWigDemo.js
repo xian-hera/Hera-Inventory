@@ -39,6 +39,18 @@ function formatDemoDate(dateStr) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+// Short "YY.MM.DD" date format (2026-09-18, Hera, mobile-only — see the
+// .mwd-date-desktop/.mwd-date-mobile split below): "Demo date" header and
+// this shorter value only show at phone widths; desktop/tablet keeps the
+// full "Demo date" header and formatDemoDate()'s "YYYY-MM-DD" value exactly
+// as before this change.
+function formatDemoDateShort(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(d.getFullYear() % 100)}.${pad(d.getMonth() + 1)}.${pad(d.getDate())}`;
+}
+
 // ─── Card grouping (2026-09-17, Hera) ───────────────────────────────────────
 // Manager's list is now split into one card per product custom.sub_type,
 // plus a SOLDE card for cleared-out stock (split further into the same 5
@@ -66,25 +78,36 @@ const SOLDE_SECTION_ORDER = ['FULL', 'HALF', 'LACE', 'HUMAN HAIR', 'TOPPERS'];
 
 // A single demo row — same column layout as the old flat list, reused for
 // every card/section's list below.
+//
+// display_name_prefix/display_name_main (2026-09-18, Hera, mobile-only
+// styling — see the .mwd-* rules below): GET / now sends these two split
+// out of display_name specifically so the "@ FW " prefix can render in a
+// different, smaller/greyed style than wig_name on phone widths, per
+// buildDisplayNameParts() in server/routes/wigDemo.js. Older cached
+// responses (or any future endpoint that reuses this component without
+// those two fields) fall back to the combined display_name as a single
+// "main" piece with no separate prefix, so this never breaks if they're
+// ever missing.
 function DemoRow({ item }) {
+  const hasSplitName = item.display_name_prefix !== undefined || item.display_name_main !== undefined;
+  const namePrefix = item.display_name_prefix || '';
+  const nameMain = hasSplitName ? (item.display_name_main || '-') : (item.display_name || '-');
   return (
-    <div style={{
-      display: 'grid', gridTemplateColumns: '1fr 90px 90px 80px',
-      gap: '10px', padding: '10px 0', borderBottom: '1px solid #f1f1f1',
-      alignItems: 'start',
-    }}>
-      <div>
-        <div style={{ fontSize: '12px', wordBreak: 'break-word' }}>{item.barcode}</div>
-        <div style={{ fontSize: '12px', fontWeight: '500', wordBreak: 'break-word', marginTop: '2px' }}>
-          {item.display_name || '-'}
+    <div className="mwd-row mwd-data-row">
+      <div className="mwd-name-cell">
+        <div className="mwd-sku">{item.barcode}</div>
+        <div className="mwd-name-line">
+          {namePrefix && <span className="mwd-name-prefix">{namePrefix}</span>}
+          {nameMain}
         </div>
-        <div style={{ fontSize: '12px', color: '#6d7175', marginTop: '2px', wordBreak: 'break-word' }}>
-          {item.variant_name || '-'}
-        </div>
+        <div className="mwd-color-line">{item.variant_name || '-'}</div>
       </div>
-      <div style={{ fontSize: '12px', wordBreak: 'break-word' }}>{item.vendor || '-'}</div>
-      <div style={{ fontSize: '12px' }}>{formatDemoDate(item.created_at)}</div>
-      <div style={{ fontSize: '12px', wordBreak: 'break-word' }}>{item.wig_number || '-'}</div>
+      <div className="mwd-vendor">{item.vendor || '-'}</div>
+      <div>
+        <span className="mwd-date-desktop">{formatDemoDate(item.created_at)}</span>
+        <span className="mwd-date-mobile">{formatDemoDateShort(item.created_at)}</span>
+      </div>
+      <div className="mwd-wignum">{item.wig_number || '-'}</div>
     </div>
   );
 }
@@ -101,16 +124,31 @@ function DemoRow({ item }) {
 // 这一列的右边") — inserted right after the stacked SKU/Name/Color column, at
 // 90px, same width as Demo date next to it. "Wig number" header relabeled
 // "Wig No." per Hera, same change on Buyer's page.
+//
+// Mobile-only overrides (2026-09-18, Hera, after seeing real Android/iOS
+// screenshots): the grid-template-columns and per-cell styling above used
+// to live inline on each row; they've moved into the .mwd-* classes defined
+// in the <style> block near the top of ManagerWigDemo()'s render (the
+// .mwd-row/.mwd-header-row/.mwd-data-row rules there are exactly the same
+// values that used to be inline here) specifically so a @media (max-width:
+// 767px) block can override them — an inline style attribute can't be
+// overridden by a stylesheet rule at all, media query or not. See that
+// <style> block's own comment for the full list of what changes on phone
+// widths (SKU/Vendor/the "@ FW " Name prefix all become smaller/greyed and
+// stop wrapping, "Demo date"/its value swap for "Date"/"YY.MM.DD", Wig No.
+// right-aligns) and why — same "both markups always rendered, @media just
+// toggles, no JS width detection" approach src/pages/Home.js already uses
+// for its own mobile/desktop nav split. Desktop/tablet (>=768px) renders
+// pixel-identical to before this round.
 const DEMO_ROW_HEADER = (
-  <div style={{
-    display: 'grid', gridTemplateColumns: '1fr 90px 90px 80px',
-    gap: '10px', padding: '8px 0', borderBottom: '1px solid #e1e3e5',
-    fontSize: '12px', fontWeight: '600', color: '#6d7175',
-  }}>
+  <div className="mwd-row mwd-header-row">
     <span>SKU / Name / Color</span>
     <span>Vendor</span>
-    <span>Demo date</span>
-    <span>Wig No.</span>
+    <span>
+      <span className="mwd-date-desktop">Demo date</span>
+      <span className="mwd-date-mobile">Date</span>
+    </span>
+    <span className="mwd-wignum">Wig No.</span>
   </div>
 );
 
@@ -690,6 +728,67 @@ function ManagerWigDemo() {
         { content: 'How to Use', onAction: () => setShowHelp(true) },
       ]}
     >
+      {/* Demo row mobile layout (2026-09-18, Hera, after seeing real
+          Android/iOS screenshots): on phone widths the SKU/Name/Color
+          column was cramped enough to cause ugly mid-word wraps — even the
+          SKU itself wrapping across lines — and the Wig No. column sat
+          left-aligned with empty space to its right instead of hugging the
+          screen edge. Same approach as src/pages/Home.js's
+          home-nav-mobile/home-nav-desktop split: both the "Demo date" and
+          "Date" markup (and both date formats) are always rendered, and a
+          single @media (max-width: 767px) block — matching this page's
+          existing .wig-demo-mobile-bottom-safe-area breakpoint — just
+          toggles which is visible and restyles the rest. No JS width
+          detection or resize listener. Desktop/tablet (>=768px) is
+          pixel-identical to before this round: the non-media-query rules
+          below are exactly the inline styles DemoRow/DEMO_ROW_HEADER used
+          to carry directly.
+          Mobile-only changes, per Hera:
+            1) SKU: small/greyed like the card header's "N demos" text, no wrap.
+            2) Name's "@ FW " prefix: same small/greyed style, no wrap;
+               wig_name itself keeps its current look. The whole Name line
+               (prefix + wig_name together) must not wrap.
+            3) Vendor value: same small/greyed style, no wrap.
+            4) "Demo date" header -> "Date"; value "YYYY-MM-DD" -> "YY.MM.DD".
+            5) Wig No. column right-aligned, hugging the right edge.
+          "No wrap" is paired with overflow:hidden + text-overflow:ellipsis
+          rather than letting long values push the grid wider than the
+          screen (a bare 1fr grid track sized to unwrapped content would
+          force horizontal scrolling instead) — Hera asked for no wrapping,
+          not for the page to scroll sideways, so a clipped "…" is the safer
+          reading of that when a value still doesn't fit. The 78px/56px/40px
+          mobile column widths for Vendor/Date/Wig No. are a first-pass
+          estimate (Vendor's short-name case like "SENSATIONNEL", the new
+          8-character date, and a typical 4-character Wig No. value) rather
+          than something measured on a real device — flagged here the same
+          way the 96px .wig-demo-mobile-bottom-safe-area height was. */}
+      <style>{`
+        .mwd-row { display: grid; grid-template-columns: 1fr 90px 90px 80px; gap: 10px; }
+        .mwd-header-row { padding: 8px 0; border-bottom: 1px solid #e1e3e5; font-size: 12px; font-weight: 600; color: #6d7175; }
+        .mwd-data-row { padding: 10px 0; border-bottom: 1px solid #f1f1f1; align-items: start; }
+        .mwd-name-cell { min-width: 0; }
+        .mwd-sku { font-size: 12px; word-break: break-word; }
+        .mwd-name-line { font-size: 12px; font-weight: 500; word-break: break-word; margin-top: 2px; }
+        .mwd-color-line { font-size: 12px; color: #6d7175; margin-top: 2px; word-break: break-word; }
+        .mwd-vendor { font-size: 12px; word-break: break-word; }
+        .mwd-date-desktop { display: inline; }
+        .mwd-date-mobile { display: none; }
+        .mwd-wignum { font-size: 12px; word-break: break-word; text-align: left; }
+        @media (max-width: 767px) {
+          .mwd-row { grid-template-columns: 1fr 78px 56px 40px; }
+          .mwd-sku, .mwd-vendor {
+            color: #6d7175; font-weight: 400;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+          }
+          .mwd-name-line {
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis; word-break: normal;
+          }
+          .mwd-name-prefix { color: #6d7175; font-weight: 400; }
+          .mwd-date-desktop { display: none; }
+          .mwd-date-mobile { display: inline; }
+          .mwd-wignum { text-align: right; }
+        }
+      `}</style>
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">
