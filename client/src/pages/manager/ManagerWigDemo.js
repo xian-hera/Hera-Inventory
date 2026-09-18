@@ -88,12 +88,19 @@ const SOLDE_SECTION_ORDER = ['FULL', 'HALF', 'LACE', 'HUMAN HAIR', 'TOPPERS'];
 // those two fields) fall back to the combined display_name as a single
 // "main" piece with no separate prefix, so this never breaks if they're
 // ever missing.
-function DemoRow({ item }) {
+// showDate (2026-09-18, Hera, mobile-only — see the useState comment in
+// ManagerWigDemo() and the .mwd-date-toggle/.mwd-row.mwd-dateoff rules in
+// the <style> block below): only changes anything on phone widths. The
+// .mwd-date-desktop span's content is always rendered regardless of
+// showDate, so desktop keeps showing the full date unconditionally — the
+// mwd-dateoff class it adds only matches a CSS rule that lives inside the
+// @media (max-width: 767px) block, so it's a no-op above that width.
+function DemoRow({ item, showDate }) {
   const hasSplitName = item.display_name_prefix !== undefined || item.display_name_main !== undefined;
   const namePrefix = item.display_name_prefix || '';
   const nameMain = hasSplitName ? (item.display_name_main || '-') : (item.display_name || '-');
   return (
-    <div className="mwd-row mwd-data-row">
+    <div className={`mwd-row mwd-data-row${showDate ? '' : ' mwd-dateoff'}`}>
       <div className="mwd-name-cell">
         <div className="mwd-sku">{item.barcode}</div>
         <div className="mwd-name-line">
@@ -105,7 +112,7 @@ function DemoRow({ item }) {
       <div className="mwd-vendor">{item.vendor || '-'}</div>
       <div>
         <span className="mwd-date-desktop">{formatDemoDate(item.created_at)}</span>
-        <span className="mwd-date-mobile">{formatDemoDateShort(item.created_at)}</span>
+        {showDate && <span className="mwd-date-mobile">{formatDemoDateShort(item.created_at)}</span>}
       </div>
       <div className="mwd-wignum">{item.wig_number || '-'}</div>
     </div>
@@ -140,29 +147,35 @@ function DemoRow({ item }) {
 // toggles, no JS width detection" approach src/pages/Home.js already uses
 // for its own mobile/desktop nav split. Desktop/tablet (>=768px) renders
 // pixel-identical to before this round.
-const DEMO_ROW_HEADER = (
-  <div className="mwd-row mwd-header-row">
-    <span>SKU / Name / Color</span>
-    <span>Vendor</span>
-    <span>
-      <span className="mwd-date-desktop">Demo date</span>
-      <span className="mwd-date-mobile">Date</span>
-    </span>
-    <span className="mwd-wignum">Wig No.</span>
-  </div>
-);
+// DEMO_ROW_HEADER used to be a plain module-level constant; it's now a
+// function taking showDate (2026-09-18, Hera's Date ON/OFF toggle) so the
+// header row's Date column can collapse in step with each DemoRow below it
+// — same mwd-dateoff/mobile-only reasoning as DemoRow above.
+function DemoRowHeader({ showDate }) {
+  return (
+    <div className={`mwd-row mwd-header-row${showDate ? '' : ' mwd-dateoff'}`}>
+      <span>SKU / Name / Color</span>
+      <span>Vendor</span>
+      <span>
+        <span className="mwd-date-desktop">Demo date</span>
+        {showDate && <span className="mwd-date-mobile">Date</span>}
+      </span>
+      <span className="mwd-wignum">Wig No.</span>
+    </div>
+  );
+}
 
 // A list of demos under one card/section — shows the "No demos" subdued line
 // instead of an empty column header when there aren't any (Hera: a card or
 // section with 0 demos still shows, just with nothing under it).
-function DemoList({ items }) {
+function DemoList({ items, showDate }) {
   if (items.length === 0) {
     return <Text tone="subdued" variant="bodySm">No demos.</Text>;
   }
   return (
     <div>
-      {DEMO_ROW_HEADER}
-      {items.map(item => <DemoRow key={item.id} item={item} />)}
+      <DemoRowHeader showDate={showDate} />
+      {items.map(item => <DemoRow key={item.id} item={item} showDate={showDate} />)}
     </div>
   );
 }
@@ -412,6 +425,21 @@ function ManagerWigDemo() {
   const [showHelp, setShowHelp] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
   const [refreshingWigNumbers, setRefreshingWigNumbers] = useState(false);
+
+  // Date ON/OFF toggle (2026-09-18, Hera, mobile-only): a switch in the
+  // "Current demos" card's top-right corner, defaulting OFF, that shows/
+  // hides the Date column in the list — Hera's own words: "以上都是仅针对
+  // mobile 上的，意思是宽度侦测之后的结果，而不是永久显示". The "mobile-only"
+  // part isn't handled by this state at all — it's handled by CSS: the
+  // toggle button itself is hidden on desktop (.mwd-date-toggle, same
+  // display:none/@media pattern as everything else on this page), and the
+  // .mwd-row.mwd-dateoff rule that actually collapses the Date column only
+  // exists inside the @media (max-width: 767px) block, so on desktop this
+  // state has zero visual effect no matter what it's set to — Date always
+  // shows there via .mwd-date-desktop, same as before this change. Resets
+  // to OFF on every page re-entry (no persistence), matching Hera's
+  // "默认为 OFF" — there was no request to remember it across visits.
+  const [showDate, setShowDate] = useState(false);
 
   // Which cards are expanded (2026-09-17, Hera: cards default collapsed to a
   // one-line "name + demo count" header, same as Buyer's per-location cards
@@ -737,7 +765,7 @@ function ManagerWigDemo() {
           home-nav-mobile/home-nav-desktop split: both the "Demo date" and
           "Date" markup (and both date formats) are always rendered, and a
           single @media (max-width: 767px) block — matching this page's
-          existing .wig-demo-mobile-bottom-safe-area breakpoint — just
+          existing .mobile-bottom-safe-area breakpoint — just
           toggles which is visible and restyles the rest. No JS width
           detection or resize listener. Desktop/tablet (>=768px) is
           pixel-identical to before this round: the non-media-query rules
@@ -761,7 +789,7 @@ function ManagerWigDemo() {
           estimate (Vendor's short-name case like "SENSATIONNEL", the new
           8-character date, and a typical 4-character Wig No. value) rather
           than something measured on a real device — flagged here the same
-          way the 96px .wig-demo-mobile-bottom-safe-area height was. */}
+          way the 96px .mobile-bottom-safe-area height was. */}
       <style>{`
         .mwd-row { display: grid; grid-template-columns: 1fr 90px 90px 80px; gap: 10px; }
         .mwd-header-row { padding: 8px 0; border-bottom: 1px solid #e1e3e5; font-size: 12px; font-weight: 600; color: #6d7175; }
@@ -774,10 +802,26 @@ function ManagerWigDemo() {
         .mwd-date-desktop { display: inline; }
         .mwd-date-mobile { display: none; }
         .mwd-wignum { font-size: 12px; word-break: break-word; text-align: left; }
+        .mwd-date-toggle { display: none; }
         @media (max-width: 767px) {
           .mwd-row { grid-template-columns: 1fr 78px 56px 40px; }
-          .mwd-sku, .mwd-vendor {
+          /* Date ON/OFF (2026-09-18, Hera): when the toggle is OFF, DemoRow/
+             DemoRowHeader add this class and stop rendering the
+             .mwd-date-mobile span's text — this rule is what actually
+             reclaims that column's 56px for the SKU/Name column. Track
+             count in grid-template-columns stays at 4 either way (only the
+             Date track's own width changes), so the number of gaps stays
+             the same too — nothing needs to shift into a different track. */
+          .mwd-row.mwd-dateoff { grid-template-columns: 1fr 78px 0px 40px; }
+          .mwd-sku, .mwd-wignum {
             color: #6d7175; font-weight: 400;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+          }
+          /* Vendor (2026-09-18, Hera, second pass: "再缩小一号") — one step
+             smaller than the 12px SKU/Wig No. use, on top of the same
+             greyed/no-wrap treatment those two already had. */
+          .mwd-vendor {
+            font-size: 11px; color: #6d7175; font-weight: 400;
             white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
           }
           .mwd-name-line {
@@ -787,6 +831,11 @@ function ManagerWigDemo() {
           .mwd-date-desktop { display: none; }
           .mwd-date-mobile { display: inline; }
           .mwd-wignum { text-align: right; }
+          /* Date ON/OFF toggle button (2026-09-18, Hera): top-right corner
+             of the "Current demos" card, mobile-only — hidden entirely on
+             desktop/tablet by the base .mwd-date-toggle { display: none }
+             rule above, shown only inside this same @media block. */
+          .mwd-date-toggle { display: inline-flex; }
         }
       `}</style>
       <Layout>
@@ -806,7 +855,30 @@ function ManagerWigDemo() {
                     from the last successful load (`[]` on first mount), so
                     the count doesn't show a stale non-zero number if it's
                     somehow read before the first fetch resolves. */}
-                <Text variant="headingSm">Current demos ({items.length})</Text>
+                {/* Date ON/OFF toggle (2026-09-18, Hera): "在 current demos
+                    这个 card 的右上角加一个开关，date ON，date OFF，默认为
+                    OFF" — mobile-only (see .mwd-date-toggle in the <style>
+                    block above, and the useState comment for showDate near
+                    the top of this component); on desktop this button never
+                    renders visibly and showDate has no effect either way. */}
+                <InlineStack align="space-between" blockAlign="center">
+                  <Text variant="headingSm">Current demos ({items.length})</Text>
+                  <button
+                    type="button"
+                    className="mwd-date-toggle"
+                    onClick={() => setShowDate(v => !v)}
+                    style={{
+                      alignItems: 'center', gap: '4px',
+                      padding: '4px 10px', borderRadius: '999px',
+                      border: '1px solid ' + (showDate ? '#008060' : '#c9cccf'),
+                      background: showDate ? '#e3f5f0' : '#f6f6f7',
+                      color: showDate ? '#008060' : '#6d7175',
+                      fontSize: '12px', fontWeight: '600', cursor: 'pointer',
+                    }}
+                  >
+                    Date {showDate ? 'ON' : 'OFF'}
+                  </button>
+                </InlineStack>
 
                 <InlineStack align="space-between" blockAlign="center" wrap gap="200">
                   <Text variant="bodySm" tone="subdued">Scan barcode to add a new demo or search</Text>
@@ -916,7 +988,7 @@ function ManagerWigDemo() {
                         expanded={expandedCards.has(cat)}
                         onToggle={() => toggleCardExpanded(cat)}
                       >
-                        <DemoList items={catItems} />
+                        <DemoList items={catItems} showDate={showDate} />
                       </CategoryCard>
                     );
                   }
@@ -937,7 +1009,7 @@ function ManagerWigDemo() {
                         {SOLDE_SECTION_ORDER.map(section => (
                           <div key={section}>
                             <SectionDivider title={section} count={(soldeBySection[section] || []).length} />
-                            <DemoList items={soldeBySection[section] || []} />
+                            <DemoList items={soldeBySection[section] || []} showDate={showDate} />
                           </div>
                         ))}
                       </BlockStack>
@@ -956,7 +1028,7 @@ function ManagerWigDemo() {
                     onToggle={() => toggleCardExpanded('UNKNOWN')}
                     critical
                   >
-                    <DemoList items={unknownItems} />
+                    <DemoList items={unknownItems} showDate={showDate} />
                   </CategoryCard>
                 )}
               </>
@@ -972,10 +1044,14 @@ function ManagerWigDemo() {
           this page — nothing here can resize or move it — so this just
           reserves a fixed block of empty space at the very end of the page
           content instead, pushing the last card up above it. The
-          .wig-demo-mobile-bottom-safe-area class (client/public/index.html)
-          only gives this height on phone-width screens; on desktop it's 0
-          height and invisible, same as not being there at all. */}
-      <div className="wig-demo-mobile-bottom-safe-area" aria-hidden="true" />
+          .mobile-bottom-safe-area class (client/public/index.html) only
+          gives this height on phone-width screens; on desktop it's 0 height
+          and invisible, same as not being there at all. Originally named
+          .wig-demo-mobile-bottom-safe-area when this was the only page using
+          it; renamed the same day once Hera asked for the same spacer on
+          ManagerCountingTasksList.js, ManagerPOReceiving.js and
+          ManagerHome.js too. */}
+      <div className="mobile-bottom-safe-area" aria-hidden="true" />
 
       {popupOpen && (
         <AddDemoModal

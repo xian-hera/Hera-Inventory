@@ -34,15 +34,20 @@
         overflow-y: scroll;
         scrollbar-gutter: stable;
       }
-      /* 2026-09-18, Hera: Manager 端 Wig DEMO 页面在 Android 上用 Shopify 自带的 app
-         打开时，页面最下面一张卡片会被 Shopify 原生的底部按钮/导航条挡住、点不到。这条
-         底部按钮是 Shopify app 自己画在页面上面的原生 UI，不是这个网页的一部分，我们这边
-         没办法去改它的大小或者位置，只能反过来在网页内容的最底部留出一段固定空间，把最后
-         一张卡片"顶"上去，让它不会被挡住。只在手机宽度的屏幕上生效（768px 是 Polaris 自己
-         用的手机/桌面断点，跟其它地方保持一致），桌面浏览器打开不受影响。用到这个类的地方
-         见 ManagerWigDemo.js 页面最下面的 spacer。 */
+      /* 2026-09-18, Hera: Manager 端页面在 Android 上用 Shopify 自带的 app 打开时，
+         页面最下面的内容会被 Shopify 原生的底部按钮/导航条挡住、点不到。这条底部按钮是
+         Shopify app 自己画在页面上面的原生 UI，不是这个网页的一部分，我们这边没办法去改
+         它的大小或者位置，只能反过来在网页内容的最底部留出一段固定空间，把最后的内容
+         "顶"上去，让它不会被挡住。只在手机宽度的屏幕上生效（768px 是 Polaris 自己用的
+         手机/桌面断点，跟其它地方保持一致），桌面浏览器打开不受影响。
+         这条规则最初（2026-09-18）只在 ManagerWigDemo.js 用，类名当时叫
+         .wig-demo-mobile-bottom-safe-area；同一天晚些时候 Hera 要求 Weekly Inventory
+         Count（ManagerCountingTasksList.js）、PO Receiving（ManagerPOReceiving.js）、
+         Manager 首页（ManagerHome.js）这三个页面也要加同样的底部留白，所以改成了这个更
+         通用的类名，四个页面共用同一条规则、同一个 96px 数值——这个数值本身还是最早那次
+         的估计值，没有在真机上量过，等 Hera 确认这个高度够不够用。 */
       @media (max-width: 767px) {
-        .wig-demo-mobile-bottom-safe-area {
+        .mobile-bottom-safe-area {
           height: 96px;
         }
       }

@@ -11,6 +11,27 @@ function formatDate(dateStr) {
   return `${d.getFullYear()}.${months[d.getMonth()]}.${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
 }
 
+// Mobile-only compact date: drops the "YYYY." prefix when the date falls in
+// the current year — "2026.SEP.16 08:49" becomes "SEP.16 08:49" — since on a
+// narrow phone screen the year is rarely useful and its 5 extra characters
+// were part of what pushed this row's columns into wrapping onto their own
+// lines (see the flex row below). Only a genuinely past/future year keeps it.
+function formatDateCompact(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  const months = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+  const datePart = `${months[d.getMonth()]}.${String(d.getDate()).padStart(2,'0')}`;
+  const timePart = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+  const yearPrefix = d.getFullYear() === new Date().getFullYear() ? '' : `${d.getFullYear()}.`;
+  return `${yearPrefix}${datePart} ${timePart}`;
+}
+
+// Mobile-only supplier truncation — max 15 characters, ellipsis beyond that.
+function truncateSupplier(name) {
+  if (!name) return '';
+  return name.length > 15 ? `${name.slice(0, 15)}…` : name;
+}
+
 // List of invoices the buyer has sent to this location, still awaiting the
 // manager's count. "Publish date" shown here is the buyer's Send to store
 // date (sent_to_store_at), not the invoice's own date.
@@ -65,6 +86,33 @@ function ManagerPOReceiving() {
 
   return (
     <Page title="PO Receiving" backAction={{ onAction: () => navigate('/manager') }}>
+      {/* Same technique as the top-level Hub Home page: layout switches
+          purely on viewport width (768px breakpoint) via a media query, not
+          JS/resize-listener logic. Both the desktop and mobile version of
+          the supplier name and date are always rendered; the media query
+          just toggles which one is visible. Below 768px the columns also
+          get tighter fixed widths (see .po-col-*) so all of them still fit
+          on one line instead of each wrapping onto its own line. */}
+      <style>{`
+        .po-row { display: flex; align-items: center; flex-wrap: nowrap; gap: 12px; }
+        .po-col-first { flex: 1 1 160px; min-width: 0; }
+        .po-col-date { flex: 0 0 150px; text-align: center; }
+        .po-col-qty { flex: 0 0 100px; text-align: center; }
+        .po-col-ratio { flex: 0 0 70px; text-align: right; }
+        .po-col-status { flex: 0 0 110px; text-align: right; }
+        .po-supplier-mobile, .po-date-mobile { display: none; }
+        @media (max-width: 767px) {
+          .po-row { gap: 6px; }
+          .po-col-first { flex: 1 1 90px; }
+          .po-col-date { flex: 0 0 100px; }
+          .po-col-qty { flex: 0 0 80px; }
+          .po-col-ratio { flex: 0 0 55px; }
+          .po-col-status { flex: 0 0 85px; }
+          .po-supplier-desktop, .po-date-desktop { display: none; }
+          .po-supplier-mobile { display: inline; font-size: 11px; color: #6d7175; }
+          .po-date-mobile { display: inline; }
+        }
+      `}</style>
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">
@@ -97,20 +145,28 @@ function ManagerPOReceiving() {
                           distributed space based on each row's own content
                           width, so a shorter PO/supplier block on one row
                           shifted every column after it left, row by row. */}
-                      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
-                        <div style={{ flex: '1 1 160px', minWidth: 0 }}>
+                      <div className="po-row">
+                        <div className="po-col-first">
                           <BlockStack gap="0">
                             <Text fontWeight="semibold" truncate>{inv.po_number || inv.invoice_number}</Text>
-                            <Text variant="bodySm" tone="subdued" truncate>{inv.supplier_name}</Text>
+                            <span className="po-supplier-desktop">
+                              <Text variant="bodySm" tone="subdued" truncate>{inv.supplier_name}</Text>
+                            </span>
+                            <span className="po-supplier-mobile">{truncateSupplier(inv.supplier_name)}</span>
                           </BlockStack>
                         </div>
-                        <div style={{ flex: '0 0 150px', textAlign: 'center' }}>
-                          <Text variant="bodySm" tone="subdued" alignment="center">{formatDate(inv.sent_to_store_at)}</Text>
+                        <div className="po-col-date">
+                          <span className="po-date-desktop">
+                            <Text variant="bodySm" tone="subdued" alignment="center">{formatDate(inv.sent_to_store_at)}</Text>
+                          </span>
+                          <span className="po-date-mobile">
+                            <Text variant="bodySm" tone="subdued" alignment="center">{formatDateCompact(inv.sent_to_store_at)}</Text>
+                          </span>
                         </div>
-                        <div style={{ flex: '0 0 100px', textAlign: 'center' }}>
+                        <div className="po-col-qty">
                           <Text variant="bodySm" tone="subdued" alignment="center">Qty: {inv.total_quantity}</Text>
                         </div>
-                        <div style={{ flex: '0 0 70px', textAlign: 'right' }}>
+                        <div className="po-col-ratio">
                           <Text
                             variant="bodySm"
                             fontWeight="medium"
@@ -152,17 +208,25 @@ function ManagerPOReceiving() {
                             Date/status need their own fixed width so they
                             stay lined up regardless of how long ref_no/
                             supplier_name happen to be on a given row. */}
-                        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
-                          <div style={{ flex: '1 1 160px', minWidth: 0 }}>
+                        <div className="po-row">
+                          <div className="po-col-first">
                             <BlockStack gap="0">
                               <span style={{ fontWeight: 600, textDecoration: 'underline' }}>{h.ref_no}</span>
-                              <Text variant="bodySm" tone="subdued" truncate>{h.summary?.supplier_name}</Text>
+                              <span className="po-supplier-desktop">
+                                <Text variant="bodySm" tone="subdued" truncate>{h.summary?.supplier_name}</Text>
+                              </span>
+                              <span className="po-supplier-mobile">{truncateSupplier(h.summary?.supplier_name)}</span>
                             </BlockStack>
                           </div>
-                          <div style={{ flex: '0 0 150px', textAlign: 'center' }}>
-                            <Text variant="bodySm" tone="subdued" alignment="center">{formatDate(h.created_at)}</Text>
+                          <div className="po-col-date">
+                            <span className="po-date-desktop">
+                              <Text variant="bodySm" tone="subdued" alignment="center">{formatDate(h.created_at)}</Text>
+                            </span>
+                            <span className="po-date-mobile">
+                              <Text variant="bodySm" tone="subdued" alignment="center">{formatDateCompact(h.created_at)}</Text>
+                            </span>
                           </div>
-                          <div style={{ flex: '0 0 110px', textAlign: 'right' }}>
+                          <div className="po-col-status">
                             <span style={{
                               display: 'inline-block', padding: '4px 12px', borderRadius: '999px',
                               background: '#E1E3E5', color: '#3F4448', fontSize: '13px', fontWeight: 600, whiteSpace: 'nowrap',
