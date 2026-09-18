@@ -783,7 +783,7 @@ router.get('/export-pdf', async (req, res) => {
     const cols = [
       { label: 'SKU', width: 70, key: 'barcode' },
       { label: 'Name', width: 120, key: 'display_name' },
-      { label: 'Brand', width: 70, key: 'vendor' },
+      { label: 'Vendor', width: 70, key: 'vendor' },
       { label: 'Color', width: 65, key: 'variant_name' },
       { label: 'Wig No.', width: 55, key: 'wig_number' },
       { label: 'Demo date', width: 55, key: '__date' },

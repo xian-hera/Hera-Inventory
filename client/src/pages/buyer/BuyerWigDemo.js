@@ -358,23 +358,39 @@ function BuyerWigDemo() {
                               No. keep their wordBreak safety net below, plus
                               the 10px gap between columns from that same
                               round. Widths rebalanced 2026-09-18 to fit the
-                              new Brand column into the same overall row. */}
+                              new Brand column into the same overall row.
+                              Spacing widened again 2026-09-18 (Hera, after
+                              deploying that change: "SKU+Name 列的宽度需求已经
+                              非常低了，现在需要拉开 Brand，Color，Wig No. 之间的
+                              间距，尤其是 Brand 和 Color 之间，请充分拉大") — base
+                              gap between every column raised 10px→16px, plus
+                              two dedicated empty spacer tracks (44px, 40px)
+                              inserted between Vendor/Color and Color/Wig No.
+                              specifically, since those two gaps were the ones
+                              called out as too tight. Checkbox↔SKU/Name and
+                              Wig No.↔Demo date keep just the base 16px gap —
+                              Hera didn't flag those. Each spacer needs an
+                              empty <span>/<div> of its own in both the header
+                              and every data row so the later columns don't
+                              shift into the wrong grid track. */}
                           <div style={{
-                            display: 'grid', gridTemplateColumns: '32px 1fr 90px 105px 75px 90px',
-                            gap: '10px', padding: '8px 0', borderBottom: '2px solid #e1e3e5',
+                            display: 'grid', gridTemplateColumns: '32px 1fr 90px 44px 105px 40px 75px 90px',
+                            gap: '16px', padding: '8px 0', borderBottom: '2px solid #e1e3e5',
                             fontSize: '12px', fontWeight: '600', color: '#6d7175',
                           }}>
                             <Checkbox checked={allSelected} indeterminate={someSelected && !allSelected} onChange={toggleAllInCard} />
                             <span>SKU / Name</span>
-                            <span>Brand</span>
+                            <span>Vendor</span>
+                            <span />
                             <span>Color</span>
+                            <span />
                             <span>Wig No.</span>
                             <span>Demo date</span>
                           </div>
                           {rows.map(item => (
                             <div key={item.id} style={{
-                              display: 'grid', gridTemplateColumns: '32px 1fr 90px 105px 75px 90px',
-                              gap: '10px', padding: '10px 0', borderBottom: '1px solid #f1f1f1',
+                              display: 'grid', gridTemplateColumns: '32px 1fr 90px 44px 105px 40px 75px 90px',
+                              gap: '16px', padding: '10px 0', borderBottom: '1px solid #f1f1f1',
                               alignItems: 'start',
                             }}>
                               <Checkbox checked={selectedIds.includes(item.id)} onChange={() => toggleSelectOne(item.id)} />
@@ -385,7 +401,9 @@ function BuyerWigDemo() {
                                 </div>
                               </div>
                               <div style={{ fontSize: '13px', wordBreak: 'break-word' }}>{item.vendor || '-'}</div>
+                              <div />
                               <div style={{ fontSize: '13px', wordBreak: 'break-word' }}>{item.variant_name || '-'}</div>
+                              <div />
                               <div style={{ fontSize: '13px', wordBreak: 'break-word' }}>{item.wig_number || '-'}</div>
                               <div style={{ fontSize: '13px' }}>{formatDemoDate(item.created_at)}</div>
                             </div>
