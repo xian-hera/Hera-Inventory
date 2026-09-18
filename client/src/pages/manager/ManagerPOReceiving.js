@@ -244,6 +244,19 @@ function ManagerPOReceiving() {
           </BlockStack>
         </Layout.Section>
       </Layout>
+
+      {/* Bottom safe-area spacer (2026-09-18, Hera): same fix as
+          ManagerWigDemo.js — on Android, opening this page inside Shopify's
+          own app leaves the last card sitting right under Shopify's native
+          bottom button/nav bar, unreachable to tap. See the
+          .mobile-bottom-safe-area comment in client/public/index.html for
+          the full explanation; only takes effect on phone-width screens.
+          NOTE (2026-09-18, Hera): this div was added here once already, but
+          a separate edit to this file's mobile layout (the .po-* column
+          system above) replaced the whole return block and dropped it —
+          that's why the bottom-padding fix "stopped working". Re-added here,
+          now after the .po-* layout changes rather than before them. */}
+      <div className="mobile-bottom-safe-area" aria-hidden="true" />
     </Page>
   );
 }

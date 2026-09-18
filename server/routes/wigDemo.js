@@ -1126,6 +1126,18 @@ router.post('/import', async (req, res) => {
     const imported = [];
     const skipped = [];
 
+    // --- Phase 1: resolve each row's Shopify variant, but don't write
+    // anything yet (Hera, 2026-09-18). A CSV only has SKU + Location, not
+    // the Shopify product ID — the only way to find out that two different
+    // SKUs on the same row set point at the same product (Phase 2 below)
+    // is to look every row up first, before any inventory is moved. Same
+    // per-row skip checks as before (missing fields / duplicated
+    // (location, sku) pair in this CSV / unknown location / already the
+    // current demo / not found-Active-WIG) happen here exactly as before;
+    // only the availableQty/subType checks and the actual Shopify write
+    // move down into Phase 3, since those can no longer safely run until
+    // Phase 2 has ruled the row in.
+    const resolved = []; // { sku, location, shopifyLocationId, info }
     for (const r of rows) {
       const sku = (r.sku || '').toString().trim();
       const location = (r.location || '').toString().trim();
@@ -1161,6 +1173,64 @@ router.post('/import', async (req, res) => {
           skipped.push({ sku, location, reason: 'not found, not Active, or not a WIG product' });
           continue;
         }
+
+        resolved.push({ sku, location, shopifyLocationId, info });
+      } catch (e) {
+        // Partial-failure handling, same approach as everywhere else in this
+        // file: one row's Shopify error doesn't stop the rest of the batch.
+        console.error(`POST /api/wig-demo/import: row lookup failed (${location}/${sku}):`, e.message);
+        skipped.push({ sku, location, reason: e.message });
+      }
+
+      await new Promise(r => setTimeout(r, 350));
+    }
+
+    // --- Phase 2: same-product collision check (Hera, 2026-09-18):
+    // "如果一个 CSV 里还有 product ID 相同的 SKU，它们会都被添加为 DEMO，而我们如果
+    // 通过扫描来添加，则会按照设计的逻辑，后一个替换掉前一个。因此我们需要在 Buyer 端
+    // 的 CSV 那里添加一个逻辑，如果 CSV 里存在 product ID 相同的 SKU，则跳过这两个
+    // SKU，并进行提示"
+    // Scanning (POST / above, `sameSkuReplace` / the "different variant"
+    // replace branch) can safely auto-replace because a scan-then-scan
+    // sequence has an unambiguous order — the second scan is obviously the
+    // one Hera wants kept. A CSV import has no such order: several rows for
+    // the same product at the same location arrive in one batch with no
+    // signal for which one should "win". So rather than guessing a winner,
+    // every row sharing a (location, Shopify product ID) with another row
+    // in THIS import is skipped and reported, exactly as Hera asked —
+    // neither gets imported, and both show up in the result Modal's
+    // skipped list so she can fix the CSV (keep only the intended SKU for
+    // that product) and re-import.
+    const productGroups = new Map(); // `${location}::${productId}` -> resolved entries
+    resolved.forEach(entry => {
+      const gKey = `${entry.location}::${entry.info.productId}`;
+      if (!productGroups.has(gKey)) productGroups.set(gKey, []);
+      productGroups.get(gKey).push(entry);
+    });
+
+    const toProcess = [];
+    productGroups.forEach(group => {
+      if (group.length > 1) {
+        const skus = group.map(e => e.sku).join(', ');
+        group.forEach(e => {
+          skipped.push({
+            sku: e.sku,
+            location: e.location,
+            reason: `same product as another SKU in this import (${skus}) — CSV import does not auto-replace like scanning does; keep only one of them and re-import`,
+          });
+        });
+      } else {
+        toProcess.push(group[0]);
+      }
+    });
+
+    // --- Phase 3: commit — availableQty / sub type checks, the actual
+    // Shopify inventory move, and the DB insert. Same checks and same
+    // partial-failure handling as before, just running over `toProcess`
+    // (resolved rows minus the Phase 2 collisions above) instead of inline
+    // in the Phase 1 loop.
+    for (const { sku, location, shopifyLocationId, info } of toProcess) {
+      try {
         if (info.availableQty < 1) {
           skipped.push({ sku, location, reason: `no available stock (${info.availableQty})` });
           continue;

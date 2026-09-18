@@ -160,7 +160,15 @@ function DemoRowHeader({ showDate }) {
         <span className="mwd-date-desktop">Demo date</span>
         {showDate && <span className="mwd-date-mobile">Date</span>}
       </span>
-      <span className="mwd-wignum">Wig No.</span>
+      {/* "Wig No." -> "No." on mobile (2026-09-18, Hera: the full label was
+          getting clipped in that narrow 40px column) — same
+          desktop-span/mobile-span swap as the Demo date/Date header just
+          above, via .mwd-date-desktop/.mwd-date-mobile (generic display
+          toggles, not actually date-specific despite the class name). */}
+      <span className="mwd-wignum">
+        <span className="mwd-date-desktop">Wig No.</span>
+        <span className="mwd-date-mobile">No.</span>
+      </span>
     </div>
   );
 }
@@ -375,7 +383,7 @@ function HowToUseOverlay({ onClose }) {
         </ol>
 
         <div style={{ fontSize: '15px', lineHeight: 1.6, marginBottom: '16px' }}>
-          The list shows every current demo at your location: SKU / Name / Color, the date it became a demo, and its Wig number.
+          The list shows every current demo at your location, and the date that it is made a demo, date is toggled off by defualt on mobile. Click Refresh button on the top right corner to solve the missing or out dated info in the list.
         </div>
 
         <div style={{ fontSize: '15px', lineHeight: 1.6, marginBottom: '16px' }}>
@@ -751,7 +759,15 @@ function ManagerWigDemo() {
     <Page
       title="Wig DEMO"
       backAction={{ onAction: () => navigate('/manager') }}
+      // Refresh (2026-09-18, Hera: "把 manager 端的 refresh 按钮放到右上角
+      // 去，label 改成 Refresh。这样在 mobile 下，它会被藏进 3 个 dots
+      // 里") — moved here from its old spot next to Search (see the
+      // handleRefreshWigNumbers comment above for what it actually does;
+      // unchanged). Polaris's Page secondaryActions is what collapses into
+      // that "•••" overflow menu on narrow widths on its own — nothing
+      // extra to wire up for the mobile part of this ask.
       secondaryActions={[
+        { content: 'Refresh', onAction: handleRefreshWigNumbers, loading: refreshingWigNumbers, disabled: refreshingWigNumbers },
         { content: 'Export PDF', onAction: handleExportPdf, loading: exportingPdf, disabled: exportingPdf },
         { content: 'How to Use', onAction: () => setShowHelp(true) },
       ]}
@@ -813,6 +829,19 @@ function ManagerWigDemo() {
              Date track's own width changes), so the number of gaps stays
              the same too — nothing needs to shift into a different track. */
           .mwd-row.mwd-dateoff { grid-template-columns: 1fr 78px 0px 40px; }
+          /* Name/Color/SKU stacking order (2026-09-18, Hera: "把目前 SKU 第
+             一行，Name 第二行，color 第三行的顺序，改成 Name / Color / SKU",
+             mobile-only) — .mwd-name-cell becomes a column flexbox only
+             inside this @media block, so the order property below has
+             something to act on; desktop/tablet never gets display:flex
+             here and keeps the plain block stacking (source order: SKU,
+             Name, Color) exactly as before this change. No markup
+             duplicated or reordered — same single-DOM-order + CSS-only
+             approach as the rest of this page's mobile styling. */
+          .mwd-name-cell { display: flex; flex-direction: column; }
+          .mwd-sku { order: 3; }
+          .mwd-name-line { order: 1; }
+          .mwd-color-line { order: 2; }
           .mwd-sku, .mwd-wignum {
             color: #6d7175; font-weight: 400;
             white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -836,6 +865,18 @@ function ManagerWigDemo() {
              desktop/tablet by the base .mwd-date-toggle { display: none }
              rule above, shown only inside this same @media block. */
           .mwd-date-toggle { display: inline-flex; }
+          /* Search field + Search button (2026-09-18, Hera: "search 按钮
+             保持现在的宽度不变，然后剩下的宽度 flex 给搜索框，它俩一起占满
+             左右宽度") — mwd-search-controls becomes full width so there's
+             actually room to flex into, and mwd-search-field (the
+             TextField's own wrapper div) grows to fill whatever's left
+             after the Search button's natural width. The Search button
+             itself needs no rule: a plain flex child defaults to
+             flex: 0 1 auto, so it keeps its current width instead of
+             growing. Desktop/tablet gets neither rule, so that row keeps
+             shrink-wrapping to its content exactly as before this change. */
+          .mwd-search-controls { width: 100%; }
+          .mwd-search-field { flex: 1 1 auto; min-width: 0; }
         }
       `}</style>
       <Layout>
@@ -882,14 +923,29 @@ function ManagerWigDemo() {
 
                 <InlineStack align="space-between" blockAlign="center" wrap gap="200">
                   <Text variant="bodySm" tone="subdued">Scan barcode to add a new demo or search</Text>
-                  <InlineStack gap="100" blockAlign="center">
+                  {/* Refresh Wig Number moved out of here (2026-09-18, Hera)
+                      — it now lives in the Page's secondaryActions, top
+                      right, renamed "Refresh" (see above). This group is
+                      just the search field + Search button now.
+                      mwd-search-controls/mwd-search-field (2026-09-18, Hera:
+                      "search 按钮保持现在的宽度不变，然后剩下的宽度 flex 给
+                      搜索框，它俩一起占满左右宽度", mobile-only) — the base
+                      rules here are a no-op (matching how this looked
+                      before this change); the @media (max-width: 767px)
+                      rules in the <style> block above give this wrapper
+                      div 100% width and let the search field's own wrapper
+                      grow into whatever's left after the Search button's
+                      natural width, so together they span the row edge to
+                      edge. Desktop/tablet is unaffected — still its normal
+                      shrink-to-content width next to the hint text. */}
+                  <div className="mwd-search-controls" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     {/* Polaris TextField has no font-size variant of its own
                         (it always renders at Polaris's standard input size),
                         so matching it to the small bodySm text used elsewhere
                         on this page needs a scoped CSS override on the
                         underlying <input> — no existing convention for this
                         in the codebase to reuse, this is the first one. */}
-                    <div className="wig-demo-search-field" style={{ minWidth: '180px' }}>
+                    <div className="wig-demo-search-field mwd-search-field" style={{ minWidth: '180px' }}>
                       <style>{`.wig-demo-search-field input { font-size: 12px; }`}</style>
                       <TextField
                         label="" labelHidden
@@ -901,17 +957,7 @@ function ManagerWigDemo() {
                       />
                     </div>
                     <Button onClick={runSearch} loading={searchLoading}>Search</Button>
-                    {/* Refresh Wig Number (Hera, 2026-09-17): right of
-                        Search, becoming the rightmost button in this row —
-                        Search shifts left within this same group. */}
-                    <Button
-                      onClick={handleRefreshWigNumbers}
-                      loading={refreshingWigNumbers}
-                      disabled={refreshingWigNumbers}
-                    >
-                      Refresh Wig Number
-                    </Button>
-                  </InlineStack>
+                  </div>
                 </InlineStack>
 
                 {searchOpen && (
