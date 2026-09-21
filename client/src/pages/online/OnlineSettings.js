@@ -13,6 +13,15 @@ import { useNavigate } from 'react-router-dom';
 // (Operation/Purchasing default to 3591) — see server/routes/settings.js.
 const ONLINE_PIN_VERIFIED_KEY = 'online_pin_verified';
 
+// Display labels for the PIN List modal (2026-09-21, Hera) — keyed by the
+// same backend `key` GET /api/settings/pin/list returns, in the order she
+// asked for: Operation, Online, Purchasing.
+const PIN_LIST_SECTIONS = [
+  { key: 'crm_pin', label: 'Operation' },
+  { key: 'online_pin', label: 'Online' },
+  { key: 'buyer_pin', label: 'Purchasing' },
+];
+
 function OnlineSettings() {
   const navigate = useNavigate();
 
@@ -26,6 +35,34 @@ function OnlineSettings() {
   const [modalError, setModalError]     = useState('');
   const [success, setSuccess]           = useState(false);
   const [loading, setLoading]           = useState(false);
+
+  // ── PIN List modal state (2026-09-21, Hera) ───────────────────────────────
+  // Shows all three sections' current PINs in one place, "in case they
+  // forget" — reached only from inside Online Settings, which already sits
+  // behind online_pin. See GET /api/settings/pin/list in server/routes/
+  // settings.js for why a given section can come back `null` ("Unknown").
+  const [showPinList, setShowPinList] = useState(false);
+  const [pinList, setPinList]         = useState(null);
+  const [pinListError, setPinListError] = useState('');
+  const [pinListLoading, setPinListLoading] = useState(false);
+
+  const openPinList = async () => {
+    setShowPinList(true);
+    setPinListLoading(true);
+    setPinListError('');
+    try {
+      const res = await fetch('/api/settings/pin/list');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to load PIN list.');
+      setPinList(data);
+    } catch (e) {
+      setPinListError(e.message);
+    } finally {
+      setPinListLoading(false);
+    }
+  };
+
+  const closePinList = () => setShowPinList(false);
 
   const openModal = () => {
     setStep('verify');
@@ -112,6 +149,9 @@ function OnlineSettings() {
             <Button size="large" fullWidth onClick={openModal}>
               Set PIN
             </Button>
+            <Button size="large" fullWidth onClick={openPinList}>
+              PIN List
+            </Button>
             <Button size="large" fullWidth tone="critical" onClick={handleLogout}>
               Log out
             </Button>
@@ -179,6 +219,50 @@ function OnlineSettings() {
                   Changing the PIN will sign out all devices. They will need to re-enter the new PIN.
                 </Text>
               </>
+            )}
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
+
+      {/* ── PIN List Modal (2026-09-21, Hera) ── */}
+      <Modal
+        open={showPinList}
+        onClose={closePinList}
+        title="PIN List"
+        secondaryActions={[{ content: 'Close', onAction: closePinList }]}
+      >
+        <Modal.Section>
+          <BlockStack gap="300">
+            {pinListError && (
+              <Banner tone="critical" onDismiss={() => setPinListError('')}>{pinListError}</Banner>
+            )}
+            <Banner tone="warning">
+              Anyone who can open Online can see this. Only share it with people who should already have these PINs.
+            </Banner>
+            {pinListLoading ? (
+              <Text tone="subdued">Loading…</Text>
+            ) : pinList && (
+              <BlockStack gap="200">
+                {PIN_LIST_SECTIONS.map(({ key, label }) => (
+                  <div
+                    key={key}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      padding: '8px 0',
+                      borderBottom: '1px solid #f1f1f1',
+                    }}
+                  >
+                    <Text fontWeight="semibold">{label}</Text>
+                    {pinList[key] ? (
+                      <Text variant="bodyLg" fontWeight="bold">{pinList[key]}</Text>
+                    ) : (
+                      <Text tone="subdued" variant="bodySm">Unknown — re-set to record it</Text>
+                    )}
+                  </div>
+                ))}
+              </BlockStack>
             )}
           </BlockStack>
         </Modal.Section>
