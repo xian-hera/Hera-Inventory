@@ -36,11 +36,16 @@ import CRMSettings from './pages/crm/CRMSettings';
 import HairdresserList from './pages/crm/HairdresserList';
 import HairdresserDetail from './pages/crm/HairdresserDetail';
 import SettleCommissions from './pages/crm/SettleCommissions';
-import BirthdayReward from './pages/crm/BirthdayReward';
-import BirthdayOrders from './pages/crm/BirthdayOrders';
-import InfluencerList from './pages/crm/InfluencerList';
-import InfluencerDetail from './pages/crm/InfluencerDetail';
 import EmployeeCap from './pages/crm/EmployeeCap';
+// Online — new section split out of CRM/Growth (2026-09-21, Hera): Birthday
+// Reward + Influencer Management, moved here from ./pages/crm, gated by
+// their own online_pin instead of crm_pin. See pages/online/OnlineHome.js.
+import OnlineHome from './pages/online/OnlineHome';
+import OnlineSettings from './pages/online/OnlineSettings';
+import BirthdayReward from './pages/online/BirthdayReward';
+import BirthdayOrders from './pages/online/BirthdayOrders';
+import InfluencerList from './pages/online/InfluencerList';
+import InfluencerDetail from './pages/online/InfluencerDetail';
 import ProductDatabaseSettings from './pages/buyer/ProductDatabaseSettings';
 import BuyerPOReceiving from './pages/buyer/BuyerPOReceiving';
 import BuyerPOImportInvoice from './pages/buyer/BuyerPOImportInvoice';
@@ -157,11 +162,15 @@ function App() {
           <Route path="/crm/hairdressers" element={<HairdresserList />} />
           <Route path="/crm/hairdressers/settle-commissions" element={<SettleCommissions />} />
           <Route path="/crm/hairdressers/:id" element={<HairdresserDetail />} />
-          <Route path="/crm/birthday-reward" element={<BirthdayReward />} />
-          <Route path="/crm/birthday-reward/orders" element={<BirthdayOrders />} />
-          <Route path="/crm/influencers" element={<InfluencerList />} />
-          <Route path="/crm/influencers/:id" element={<InfluencerDetail />} />
           <Route path="/crm/employee-cap" element={<EmployeeCap />} />
+
+          {/* Online — new section split out of CRM/Growth (2026-09-21, Hera) */}
+          <Route path="/online" element={<OnlineHome />} />
+          <Route path="/online/settings" element={<OnlineSettings />} />
+          <Route path="/online/birthday-reward" element={<BirthdayReward />} />
+          <Route path="/online/birthday-reward/orders" element={<BirthdayOrders />} />
+          <Route path="/online/influencers" element={<InfluencerList />} />
+          <Route path="/online/influencers/:id" element={<InfluencerDetail />} />
         </Routes>
       </BrowserRouter>
     </AppProvider>

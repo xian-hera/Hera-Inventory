@@ -4,13 +4,25 @@ const crypto = require('crypto');
 const { pool } = require('../database/init');
 
 // PIN is stored as a SHA-256 hash in app_settings table
-// key: 'buyer_pin' or 'crm_pin'
+// key: 'buyer_pin', 'crm_pin' (displayed as "Operation" on the frontend,
+// 2026-09-21 — see claude/PROJECT_CONTEXT.md-style note in App Home: the
+// key/route/localStorage name was kept as "crm" to match the existing
+// Buyer/Manager-style internal-name-vs-display-name convention, only the
+// front-end label changed), or 'online_pin' (new section added 2026-09-21,
+// holds Birthday Reward + Influencer Management, moved out of crm_pin's
+// gate — its own independent PIN/login state, default PIN 0000 instead of
+// the 3591 the other two keys default to).
 // value: { hash: <sha256>, hint: <string> }
 
 const hashPin = (pin) => crypto.createHash('sha256').update(pin).digest('hex');
 
-const DEFAULT_PIN = '3591';
-const DEFAULT_HASH = hashPin(DEFAULT_PIN);
+const VALID_PIN_KEYS = ['buyer_pin', 'crm_pin', 'online_pin'];
+
+// Per-key default PIN (used only when no row exists yet for that key, i.e.
+// it has never been changed). buyer_pin/crm_pin keep the original 3591;
+// online_pin's default is 0000, per Hera's spec for the new Online section.
+const DEFAULT_PINS = { buyer_pin: '3591', crm_pin: '3591', online_pin: '0000' };
+const defaultStoredValue = (key) => ({ hash: hashPin(DEFAULT_PINS[key]), hint: '' });
 
 // ── POST /api/settings/pin/verify ─────────────────────────────────────────────
 // Body: { key: 'buyer_pin' | 'crm_pin', pin: '1234' }
@@ -19,14 +31,14 @@ router.post('/pin/verify', async (req, res) => {
   try {
     const { key, pin } = req.body;
     if (!key || !pin) return res.status(400).json({ error: 'key and pin are required' });
-    if (!['buyer_pin', 'crm_pin'].includes(key)) return res.status(400).json({ error: 'Invalid key' });
+    if (!VALID_PIN_KEYS.includes(key)) return res.status(400).json({ error: 'Invalid key' });
 
     const { rows } = await pool.query(
       `SELECT value FROM app_settings WHERE key = $1`,
       [key]
     );
 
-    const stored = rows[0]?.value || { hash: DEFAULT_HASH, hint: '' };
+    const stored = rows[0]?.value || defaultStoredValue(key);
     const inputHash = hashPin(String(pin));
 
     if (inputHash !== stored.hash) {
@@ -46,7 +58,7 @@ router.post('/pin/verify', async (req, res) => {
 router.get('/pin/hint', async (req, res) => {
   try {
     const { key } = req.query;
-    if (!key || !['buyer_pin', 'crm_pin'].includes(key)) {
+    if (!key || !VALID_PIN_KEYS.includes(key)) {
       return res.status(400).json({ error: 'Invalid key' });
     }
 
@@ -72,7 +84,7 @@ router.post('/pin/update', async (req, res) => {
     if (!key || !currentPin || !newPin) {
       return res.status(400).json({ error: 'key, currentPin, and newPin are required' });
     }
-    if (!['buyer_pin', 'crm_pin'].includes(key)) {
+    if (!VALID_PIN_KEYS.includes(key)) {
       return res.status(400).json({ error: 'Invalid key' });
     }
     if (!/^\d{4}$/.test(newPin)) {
@@ -84,7 +96,7 @@ router.post('/pin/update', async (req, res) => {
       `SELECT value FROM app_settings WHERE key = $1`,
       [key]
     );
-    const stored = rows[0]?.value || { hash: DEFAULT_HASH, hint: '' };
+    const stored = rows[0]?.value || defaultStoredValue(key);
     const currentHash = hashPin(String(currentPin));
 
     if (currentHash !== stored.hash) {

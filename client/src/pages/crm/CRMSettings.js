@@ -154,7 +154,7 @@ function CRMSettings() {
   };
 
   return (
-    <Page title="CRM Settings" backAction={{ onAction: () => navigate('/crm') }}>
+    <Page title="Operation Settings" backAction={{ onAction: () => navigate('/crm') }}>
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">

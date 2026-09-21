@@ -89,10 +89,30 @@ router.get('/manager', async (req, res) => {
       // Table may not exist yet
     }
 
+    // Transfer (2026-09-21, Hera): same rows Manager's Transfer Home shows
+    // on the Receiving + Sending cards (History excluded) — this location
+    // is either the to_location on an in_transit/receiving transfer, or the
+    // from_location on a loading/good_to_go/pending one. See
+    // GET /api/transfers/manager/home in transfers.js — kept in sync with
+    // that route's two status lists.
+    let transferCount = 0;
+    try {
+      const transferRes = await pool.query(
+        `SELECT COUNT(*) FROM transfers
+         WHERE (to_location = $1 AND status IN ('in_transit','receiving'))
+            OR (from_location = $1 AND status IN ('loading','good_to_go','pending'))`,
+        [location]
+      );
+      transferCount = parseInt(transferRes.rows[0].count);
+    } catch (e) {
+      // Table may not exist yet
+    }
+
     res.json({
       weeklyCountingTasks: parseInt(weeklyRes.rows[0].count),
       labelPrintTasks:     labelPrintCount,
       poReceivingTasks:    poReceivingCount,
+      transferTasks:       transferCount,
     });
   } catch (e) {
     console.error('GET /api/badges/manager error:', e);

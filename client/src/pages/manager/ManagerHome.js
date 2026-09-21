@@ -37,7 +37,7 @@ function ManagerHome() {
   const [location, setLocation]       = useState('');
   const [confirmed, setConfirmed]     = useState(false);
   const [showWarning, setShowWarning] = useState(false);
-  const [badges, setBadges]           = useState({ inventoryCount: 0, labelPrint: 0, poReceiving: 0 });
+  const [badges, setBadges]           = useState({ inventoryCount: 0, labelPrint: 0, poReceiving: 0, transfer: 0 });
 
   useEffect(() => {
     const saved = localStorage.getItem('managerLocation');
@@ -56,6 +56,7 @@ function ManagerHome() {
           inventoryCount: data.weeklyCountingTasks || 0,
           labelPrint:     data.labelPrintTasks     || 0,
           poReceiving:    data.poReceivingTasks     || 0,
+          transfer:       data.transferTasks        || 0,
         });
       })
       .catch(() => {});
@@ -72,7 +73,7 @@ function ManagerHome() {
     setConfirmed(false);
     setLocation('');
     localStorage.removeItem('managerLocation');
-    setBadges({ inventoryCount: 0, labelPrint: 0, poReceiving: 0 });
+    setBadges({ inventoryCount: 0, labelPrint: 0, poReceiving: 0, transfer: 0 });
   };
 
   const handleNavigate = (path) => {
@@ -147,7 +148,10 @@ function ManagerHome() {
             </Button>
 
             <Button size="large" fullWidth onClick={() => handleNavigate('/manager/transfer')}>
-              Transfer
+              <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                Transfer
+                <Badge count={badges.transfer} />
+              </span>
             </Button>
 
             <Button size="large" fullWidth onClick={() => handleNavigate('/manager/label-print')}>

@@ -67,7 +67,7 @@ function CRMHome() {
 
   return (
     <Page
-      title="CRM / Growth"
+      title="Operation"
       backAction={{ onAction: () => navigate('/') }}
       secondaryActions={ready ? [{ content: 'Settings', onAction: () => navigate('/crm/settings') }] : []}
     >
@@ -78,12 +78,10 @@ function CRMHome() {
               <Button size="large" fullWidth onClick={() => navigate('/crm/hairdressers')}>
                 Hairdresser Management
               </Button>
-              <Button size="large" fullWidth onClick={() => navigate('/crm/birthday-reward')}>
-                Birthday Reward
-              </Button>
-              <Button size="large" fullWidth onClick={() => navigate('/crm/influencers')}>
-                Influencer Management
-              </Button>
+              {/* Birthday Reward and Influencer Management moved to the new
+                  Online section (2026-09-21, Hera) — they now live under
+                  /online, gated by their own independent online_pin, not
+                  this crm_pin. See client/src/pages/online/OnlineHome.js. */}
               <Button size="large" fullWidth onClick={() => navigate('/crm/employee-cap')}>
                 Employee Cap
               </Button>
@@ -95,7 +93,7 @@ function CRMHome() {
       <Modal
         open={showModal}
         onClose={handleClose}
-        title="CRM Access"
+        title="Operation Access"
         primaryAction={{
           content: 'Confirm',
           onAction: handleConfirm,

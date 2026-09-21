@@ -121,7 +121,10 @@ function Home() {
           <div className="home-nav-mobile">
             <BlockStack gap="400">
               <Button size="large" fullWidth onClick={() => navigate('/crm')}>
-                CRM / Growth
+                Operation
+              </Button>
+              <Button size="large" fullWidth onClick={() => navigate('/online')}>
+                Online
               </Button>
               <Button size="large" fullWidth onClick={handleBuyerClick}>
                 Purchasing
@@ -138,7 +141,10 @@ function Home() {
           <div className="home-nav-desktop">
             <BlockStack gap="400">
               <Button size="large" fullWidth onClick={() => navigate('/crm')}>
-                CRM / Growth
+                Operation
+              </Button>
+              <Button size="large" fullWidth onClick={() => navigate('/online')}>
+                Online
               </Button>
               <Button size="large" fullWidth onClick={handleBuyerClick}>
                 Purchasing
