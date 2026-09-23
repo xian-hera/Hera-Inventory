@@ -80,17 +80,6 @@ function BuyerPOCommitLater() {
   // committing invoices.
   const anyCommitting = useMemo(() => invoices.some(inv => inv.committing), [invoices]);
 
-  // Invoices whose last background commit attempt failed (persisted on
-  // po_invoices.commit_error by runInvoiceCommit — see
-  // server/routes/poInvoices.js) and aren't currently mid-retry. Surfaced
-  // both as a summary banner above the table and per-row in the Status
-  // column below, since the commit runs server-side and the failure is
-  // otherwise invisible to anyone who wasn't watching at the moment it ran.
-  const failedInvoices = useMemo(
-    () => filteredInvoices.filter(inv => inv.commit_error && !inv.committing),
-    [filteredInvoices]
-  );
-
   useEffect(() => {
     if (!anyCommitting) return;
     const interval = setInterval(() => fetchInvoices(search, true), 1500);
@@ -122,6 +111,17 @@ function BuyerPOCommitLater() {
     if (supplierFilter.length > 0 && !supplierFilter.includes(inv.supplier_name)) return false;
     return true;
   }), [invoices, statusFilter, locationFilter, supplierFilter]);
+
+  // Invoices whose last background commit attempt failed (persisted on
+  // po_invoices.commit_error by runInvoiceCommit — see
+  // server/routes/poInvoices.js) and aren't currently mid-retry. Surfaced
+  // both as a summary banner above the table and per-row in the Status
+  // column below, since the commit runs server-side and the failure is
+  // otherwise invisible to anyone who wasn't watching at the moment it ran.
+  const failedInvoices = useMemo(
+    () => filteredInvoices.filter(inv => inv.commit_error && !inv.committing),
+    [filteredInvoices]
+  );
 
   const archivedSelected = statusFilter.includes('archived');
   const isDefaultStatusFilter = statusFilter.length === DEFAULT_STATUS_FILTER.length
