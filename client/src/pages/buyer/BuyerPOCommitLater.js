@@ -80,6 +80,17 @@ function BuyerPOCommitLater() {
   // committing invoices.
   const anyCommitting = useMemo(() => invoices.some(inv => inv.committing), [invoices]);
 
+  // Invoices whose last background commit attempt failed (persisted on
+  // po_invoices.commit_error by runInvoiceCommit — see
+  // server/routes/poInvoices.js) and aren't currently mid-retry. Surfaced
+  // both as a summary banner above the table and per-row in the Status
+  // column below, since the commit runs server-side and the failure is
+  // otherwise invisible to anyone who wasn't watching at the moment it ran.
+  const failedInvoices = useMemo(
+    () => filteredInvoices.filter(inv => inv.commit_error && !inv.committing),
+    [filteredInvoices]
+  );
+
   useEffect(() => {
     if (!anyCommitting) return;
     const interval = setInterval(() => fetchInvoices(search, true), 1500);
@@ -248,6 +259,9 @@ function BuyerPOCommitLater() {
       if (inv.committing) {
         return <Text variant="bodySm">{`Committing ${inv.committed_count || 0} / ${inv.item_count || 0}`}</Text>;
       }
+      if (inv.commit_error) {
+        return <Text tone="critical" variant="bodySm" fontWeight="medium">Commit failed</Text>;
+      }
       const p = STATUS_PILLS[inv.status] || STATUS_PILLS.pending;
       return <Badge tone={p.tone}>{p.label}</Badge>;
     })(),
@@ -268,6 +282,18 @@ function BuyerPOCommitLater() {
           <BlockStack gap="400">
             {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
             {anyCommitting && <Text variant="bodySm" tone="subdued">It is OK to leave this page</Text>}
+
+            {failedInvoices.length > 0 && (
+              <Banner tone="critical">
+                <BlockStack gap="100">
+                  {failedInvoices.map(inv => (
+                    <Text key={inv.id} variant="bodySm">
+                      {(inv.po_number || inv.invoice_number)}: {inv.commit_error}
+                    </Text>
+                  ))}
+                </BlockStack>
+              </Banner>
+            )}
 
             <Card>
               <BlockStack gap="200">

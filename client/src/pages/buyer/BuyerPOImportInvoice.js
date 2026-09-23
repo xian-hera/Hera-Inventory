@@ -115,6 +115,13 @@ function BuyerPOImportInvoice() {
   // clicked), including one who reloads this page mid-commit.
   const [committing, setCommitting] = useState(false);
   const [invoiceCommitting, setInvoiceCommitting] = useState(false);
+  // Persisted on po_invoices by runInvoiceCommit() when a background commit
+  // fails partway through — see server/routes/poInvoices.js. Without this,
+  // a failed commit leaves the invoice silently stuck at its pre-commit
+  // status (e.g. still "Store counted") with no visible explanation at all,
+  // since the commit itself runs server-side and the failure is nowhere
+  // else surfaced to whoever opens this page afterward.
+  const [commitError, setCommitError] = useState(null);
   const [exportingPdf, setExportingPdf] = useState(false);
   const [sendingToStore, setSendingToStore] = useState(false);
   const [status, setStatus] = useState('pending');
@@ -262,6 +269,7 @@ function BuyerPOImportInvoice() {
     setHasMissingCost(inv.has_missing_cost);
     setSelectedIds(new Set());
     setInvoiceCommitting(!!inv.committing);
+    setCommitError(inv.commit_error || null);
   };
 
   // ── Load an existing pending invoice (quiet=true skips the full-page
@@ -1015,6 +1023,7 @@ function BuyerPOImportInvoice() {
     // that hasn't been counted yet.
     setCommitting(true);
     setError('');
+    setCommitError(null); // optimistic — the server also clears it when it re-acquires the lock
     try {
       await persistPromotionalFlag(isPromotional);
       // The commit itself now runs in the background on the server — this
@@ -1117,6 +1126,17 @@ function BuyerPOImportInvoice() {
             {error && (
               <Banner tone="critical" onDismiss={() => setError('')}>
                 <div style={{ whiteSpace: 'pre-line' }}>{error}</div>
+              </Banner>
+            )}
+
+            {/* Persisted failure from a past background commit attempt (see
+                commitError state above) — distinct from `error`, which is
+                only ever a local, this-page-session message. Dismissing this
+                only hides it locally; it comes back on reload until a fresh
+                commit attempt actually clears it server-side. */}
+            {commitError && !invoiceCommitting && (
+              <Banner tone="critical" onDismiss={() => setCommitError(null)}>
+                <div style={{ whiteSpace: 'pre-line' }}>Commit failed: {commitError}</div>
               </Banner>
             )}
 
