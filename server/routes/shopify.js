@@ -385,6 +385,17 @@ router.post('/sync-locations', async (req, res) => {
 // Rule 2 — contains letters: all words must appear in product_title OR all words in custom_name (ILIKE, AND per word)
 // Special chars / [ ] - @ # are treated as literals.
 // Supports pagination: ?q=...&offset=0  returns { total, results[] }
+//
+// Rule 1 fallback (added 2026-09-23): if the local-index search above finds
+// nothing (only tried on the first page, offset 0), fall back to a live
+// Shopify barcode: search — the same approach the barcode-scanner path
+// already uses (fetchWigVariant in wigDemo.js / fetchInventoryForBarcode
+// above). This exists because variant_search_index can only ever store the
+// single "primary" barcode Shopify's GraphQL API exposes per variant (see
+// syncVariantIndex.js), so a variant's non-primary/secondary barcode can
+// never be found via the local index no matter what — only a live query
+// against Shopify itself (whose barcode: search matches ANY barcode
+// attached to a variant) can find it.
 router.get('/search', async (req, res) => {
   try {
     const { q, offset, types } = req.query;
@@ -421,6 +432,51 @@ router.get('/search', async (req, res) => {
          LIMIT $${skuParams.length + 1} OFFSET $${skuParams.length + 2}`,
         [...skuParams, PAGE_SIZE, skip]
       );
+
+      // Local index found nothing — fall back to a live Shopify barcode:
+      // search (see the comment above this route for why). Only attempted
+      // on the first page: this is a fallback for "nothing found locally",
+      // not a paginated data source in its own right.
+      if (total === 0 && skip === 0) {
+        try {
+          const session = await getSession();
+          if (session) {
+            const shopify = getShopify();
+            const client = new shopify.clients.Graphql({ session });
+            const gqlQuery = `
+              query searchByBarcode($barcode: String!) {
+                productVariants(first: 10, query: $barcode) {
+                  edges {
+                    node {
+                      id sku barcode
+                      metafield(namespace: "custom", key: "name") { value }
+                      product { id title productType }
+                    }
+                  }
+                }
+              }
+            `;
+            const response = await shopifyRequest(client, gqlQuery, { barcode: activeFilter(`barcode:${raw}`) });
+            let liveResults = (response.data?.productVariants?.edges || []).map(({ node: v }) => ({
+              productId: v.product.id,
+              variantId: v.id,
+              name: v.metafield?.value || v.product.title,
+              barcode: v.barcode || v.sku,
+              productType: v.product.productType,
+            }));
+            if (typeList.length > 0) {
+              liveResults = liveResults.filter(r => typeList.includes(r.productType));
+            }
+            if (liveResults.length > 0) {
+              return res.json({ total: liveResults.length, results: liveResults });
+            }
+          }
+        } catch (e) {
+          console.error('GET /api/shopify/search: live Shopify barcode fallback failed:', e.message);
+          // Fall through to the (empty) local result below rather than
+          // failing the whole search because the fallback attempt errored.
+        }
+      }
 
       return res.json({
         total,
