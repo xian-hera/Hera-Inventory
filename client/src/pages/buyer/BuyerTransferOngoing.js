@@ -36,15 +36,34 @@ const STATUS_FILTER_VALUES = [
 ];
 const DEFAULT_STATUS_SELECTION = STATUS_FILTER_VALUES.filter(s => s !== 'archived');
 
+// Tags filter sentinel (2026-09-23, Hera) — its own checkbox in the Tags
+// filter's list, alongside every Tag pool tag (see TAG_FILTER_ALL usage
+// below). Selecting it means "don't filter by tag at all", which is also
+// this filter's default and its fallback once every specific tag gets
+// unchecked — a transfer with no tags at all only ever matches this state.
+const TAG_FILTER_ALL = '__all__';
+
+// Same small-pill look as BuyerTransferCreate.js's TAG_CHIP_STYLE (kept as
+// its own copy here rather than a shared import, matching how this file
+// already duplicates its own small style constants rather than reaching
+// into sibling pages).
+const TAG_PILL_STYLE = {
+  display: 'inline-flex', alignItems: 'center',
+  padding: '2px 8px', borderRadius: '12px',
+  background: '#e4e5e7', fontSize: '12px', whiteSpace: 'nowrap',
+};
+
 function toggleInList(list, value) {
   return list.includes(value) ? list.filter(v => v !== value) : [...list, value];
 }
 
-// Shared Popover+Checkbox-list multi-select — used for all three filters.
+// Shared Popover+Checkbox-list multi-select — used for all four filters.
 // `selected: null` means "not yet initialized" (still waiting on data the
 // options themselves depend on, e.g. locations) and is treated as "show
 // everything" by the caller's filter predicate, not as "nothing selected".
-function MultiSelectFilter({ label, options, selected, onChange }) {
+// `showSelectAll` (2026-09-23, Hera — From/To only) adds two buttons above
+// the checkbox list that select/deselect every option in one click.
+function MultiSelectFilter({ label, options, selected, onChange, showSelectAll }) {
   const [open, setOpen] = useState(false);
   const current = selected || [];
   return (
@@ -59,6 +78,12 @@ function MultiSelectFilter({ label, options, selected, onChange }) {
     >
       <Popover.Section>
         <BlockStack gap="150">
+          {showSelectAll && (
+            <InlineStack gap="150">
+              <Button variant="plain" onClick={() => onChange(options.map(o => o.value))}>Select all</Button>
+              <Button variant="plain" onClick={() => onChange([])}>Deselect all</Button>
+            </InlineStack>
+          )}
           {options.map(opt => (
             <Checkbox
               key={opt.value}
@@ -87,6 +112,13 @@ function BuyerTransferOngoing() {
   const [selectedFrom, setSelectedFrom] = useState(null); // null until locations load, see MultiSelectFilter
   const [selectedTo, setSelectedTo] = useState(null);
 
+  // Tags filter (2026-09-23, Hera) — options come from the Tag pool
+  // (BuyerTransferSettings.js's list, same GET /api/transfers/tags the
+  // Create Transfer page uses), not from tags actually seen on current
+  // transfers, same reasoning as From/To using the full location list.
+  const [tagPool, setTagPool] = useState([]);
+  const [selectedTags, setSelectedTags] = useState([TAG_FILTER_ALL]);
+
   const fetchOngoing = useCallback(async () => {
     setLoading(true);
     setError('');
@@ -103,6 +135,16 @@ function BuyerTransferOngoing() {
   }, []);
 
   useEffect(() => { fetchOngoing(); }, [fetchOngoing]);
+
+  // Tags filter options — the Tag pool, fetched once (same endpoint Create
+  // Transfer's tag picker uses). Left empty on failure — the filter then
+  // just shows the "All" checkbox with nothing else to pick.
+  useEffect(() => {
+    fetch('/api/transfers/tags')
+      .then(res => res.json())
+      .then(data => setTagPool(Array.isArray(data) ? data.map(t => t.tag) : []))
+      .catch(() => setTagPool([]));
+  }, []);
 
   // From/To filter options — full Shopify location list, not just whatever
   // shows up in the current transfers. Defaults to "everything checked".
@@ -122,8 +164,27 @@ function BuyerTransferOngoing() {
       });
   }, []);
 
+  // Tags filter's "All" checkbox behaves like a select/deselect toggle
+  // rather than an ordinary list member (2026-09-23, Hera spec): checking
+  // "All" clears every specific tag and shows everything again; checking
+  // any specific tag drops "All"; unchecking the last remaining specific
+  // tag falls back to "All" rather than leaving the filter matching
+  // nothing. MultiSelectFilter still just hands back its own toggled list —
+  // this wrapper reconciles that against TAG_FILTER_ALL before storing it.
+  const handleTagsChange = (newList) => {
+    const hadAll = selectedTags.includes(TAG_FILTER_ALL);
+    const hasAllNow = newList.includes(TAG_FILTER_ALL);
+    if (hasAllNow && !hadAll) {
+      setSelectedTags([TAG_FILTER_ALL]);
+      return;
+    }
+    const cleaned = newList.filter(v => v !== TAG_FILTER_ALL);
+    setSelectedTags(cleaned.length > 0 ? cleaned : [TAG_FILTER_ALL]);
+  };
+
   const visibleTransfers = transfers.filter(tr => (
     selectedStatuses.includes(tr.status)
+    && (selectedTags.includes(TAG_FILTER_ALL) || selectedTags.some(t => (tr.tags || []).includes(t)))
     && (selectedFrom === null || selectedFrom.includes(tr.from_location))
     && (selectedTo === null || selectedTo.includes(tr.to_location))
   ));
@@ -180,6 +241,7 @@ function BuyerTransferOngoing() {
   };
 
   const statusOptions = STATUS_FILTER_VALUES.map(v => ({ value: v, label: STATUS_LABELS[v] || v }));
+  const tagFilterOptions = [{ value: TAG_FILTER_ALL, label: 'All' }, ...tagPool.map(t => ({ value: t, label: t }))];
   const locationOptions = locationNames.map(n => ({ value: n, label: n }));
 
   return (
@@ -198,16 +260,24 @@ function BuyerTransferOngoing() {
                   onChange={setSelectedStatuses}
                 />
                 <MultiSelectFilter
+                  label="Tags"
+                  options={tagFilterOptions}
+                  selected={selectedTags}
+                  onChange={handleTagsChange}
+                />
+                <MultiSelectFilter
                   label="From"
                   options={locationOptions}
                   selected={selectedFrom}
                   onChange={setSelectedFrom}
+                  showSelectAll
                 />
                 <MultiSelectFilter
                   label="To"
                   options={locationOptions}
                   selected={selectedTo}
                   onChange={setSelectedTo}
+                  showSelectAll
                 />
               </InlineStack>
               <InlineStack gap="200" wrap>
@@ -248,6 +318,7 @@ function BuyerTransferOngoing() {
                           />
                         </th>
                         <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Transfer</th>
+                        <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Tags</th>
                         <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>From</th>
                         <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>To</th>
                         <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Status</th>
@@ -268,6 +339,15 @@ function BuyerTransferOngoing() {
                             onClick={() => navigate(`/buyer/transfer/${tr.id}`)}
                           >
                             {tr.shopify_transfer_name || tr.transfer_no}
+                          </td>
+                          <td style={{ padding: '10px' }}>
+                            {(tr.tags || []).length > 0 && (
+                              <InlineStack gap="100" wrap>
+                                {tr.tags.map(tag => (
+                                  <span key={tag} style={TAG_PILL_STYLE}>{tag}</span>
+                                ))}
+                              </InlineStack>
+                            )}
                           </td>
                           <td style={{ padding: '10px' }}>{tr.from_location}</td>
                           <td style={{ padding: '10px' }}>{tr.to_location}</td>

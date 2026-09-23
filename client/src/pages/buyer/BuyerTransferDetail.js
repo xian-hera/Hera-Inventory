@@ -8,6 +8,16 @@ import { StatusBadge, HoldBadge, AutoCommittedBadge } from '../shared/transferSt
 
 const HQ_LOCATION_NAME = 'HQ';
 
+// Same small-pill look as BuyerTransferOngoing.js's TAG_PILL_STYLE / Create
+// Transfer's TAG_CHIP_STYLE — own copy here rather than a shared import,
+// matching how these transfer pages already each keep their own small
+// style constants.
+const TAG_PILL_STYLE = {
+  display: 'inline-flex', alignItems: 'center',
+  padding: '2px 8px', borderRadius: '12px',
+  background: '#e4e5e7', fontSize: '12px', whiteSpace: 'nowrap',
+};
+
 // Buyer's Transfer detail page.
 //
 // 2026-09-15 rewrite (spec doc section 11, 改动一/四/五/六/七): Buyer can now
@@ -593,7 +603,7 @@ function BuyerTransferDetail() {
               {held && !editing && <Text tone="critical" fontWeight="bold">This transfer is on hold. No one — including you — can advance its status until you release it.</Text>}
 
               <InlineStack align="space-between" blockAlign="start" wrap>
-                <InlineStack gap="600" wrap>
+                <InlineStack gap="600" wrap blockAlign="center">
                   <BlockStack gap="050">
                     <Text variant="bodySm" tone="subdued">From</Text>
                     <Text fontWeight="bold">{transfer.from_location}</Text>
@@ -602,6 +612,17 @@ function BuyerTransferDetail() {
                     <Text variant="bodySm" tone="subdued">To</Text>
                     <Text fontWeight="bold">{transfer.to_location}</Text>
                   </BlockStack>
+                  {/* Tags (2026-09-23, Hera) — shown as pills to the right of
+                      From/To, same small-pill style as the Ongoing Transfer
+                      list's Tags column and Create Transfer's tag picker.
+                      Nothing rendered at all when the transfer has no tags. */}
+                  {(transfer.tags || []).length > 0 && (
+                    <InlineStack gap="100" wrap blockAlign="center">
+                      {transfer.tags.map(tag => (
+                        <span key={tag} style={TAG_PILL_STYLE}>{tag}</span>
+                      ))}
+                    </InlineStack>
+                  )}
                 </InlineStack>
 
                 {editing ? (

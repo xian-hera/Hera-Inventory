@@ -129,7 +129,15 @@ async function ensureShipment(shopifyClient, transferRow, items) {
     }
   `;
   const input = {
-    transferId: transferRow.shopify_transfer_id,
+    // 2026-09-23 bug fix: InventoryShipmentCreateInput's field is named
+    // `movementId` (confirmed directly from Shopify's own schema-validation
+    // error: "transferId (Field is not defined on InventoryShipmentCreateInput),
+    // movementId (Expected value to not be null)") — it still holds the
+    // Transfer's gid despite the "movement" name, `transferId` was never a
+    // real field. This was silently failing every Good to go / Commit that
+    // reached ensureShipment(), which is why transfers were getting stuck
+    // showing this error and never leaving Loading.
+    movementId: transferRow.shopify_transfer_id,
     lineItems: items.map(i => ({
       inventoryItemId: i.inventory_item_id,
       quantity: i.qty_loaded != null ? i.qty_loaded : i.quantity,
@@ -188,7 +196,9 @@ async function ensureShipmentInTransit(shopifyClient, transferRow, items) {
     }
   `;
   const input = {
-    transferId: transferRow.shopify_transfer_id,
+    // Same movementId fix as ensureShipment() above — same input type,
+    // same bug, same Shopify-confirmed field name.
+    movementId: transferRow.shopify_transfer_id,
     lineItems: items.map(i => ({
       inventoryItemId: i.inventory_item_id,
       quantity: i.qty_loaded != null ? i.qty_loaded : i.quantity,
@@ -573,9 +583,13 @@ router.get('/history', async (req, res) => {
 // BuyerTransferOngoing.js decide what to display.
 router.get('/ongoing', async (req, res) => {
   try {
+    // 2026-09-23 (Hera): Ongoing Transfer's Tags column + Tags filter need
+    // each transfer's tags — added to this SELECT alongside the columns the
+    // page already used. `tags` is a TEXT[] on the transfers table (set at
+    // Create Transfer, see POST / above); pg returns it as a JS array.
     const result = await pool.query(
       `SELECT id, transfer_no, shopify_transfer_id, shopify_transfer_name, shopify_transfer_url,
-              from_location, to_location, status, created_at, on_hold, auto_committed
+              from_location, to_location, status, created_at, on_hold, auto_committed, tags
        FROM transfers
        ORDER BY created_at DESC`
     );
