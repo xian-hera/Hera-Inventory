@@ -1278,24 +1278,128 @@ router.get('/manager/receiving/:id', async (req, res) => {
   }
 });
 
-// PATCH /api/po-invoices/manager/receiving/:id/items/:itemId/count — body: { count }
+// Multi-count history (2026-09-24, Hera). Every modal Submit / Correct
+// appends one entry to po_invoice_items.count_history; store_count is then
+// recomputed from it (still the ABSOLUTE counted quantity every other part
+// of this file reads — buyer view, commit, manager history — so nothing
+// downstream changes):
+//   - no Correct yet  → sum of every submitted count;
+//   - after a Correct → the invoice quantity at that Correct + every count
+//     submitted after it (e.g. Correct 10, then Submit 3 → 13). A Correct
+//     overrides everything before it, but its entries stay in the history
+//     so the green tally bars still show how many times it was counted.
+// This intentionally differs from Weekly Inventory Count's computePOH
+// (ManagerTaskDetail.js), where a count after Correct restarts from 0.
+function computeStoreCount(history) {
+  let total = null;
+  for (const h of history) {
+    if (h.type === 'correct') total = Number(h.value) || 0;
+    else if (h.type === 'counted') total = (total || 0) + (Number(h.value) || 0);
+  }
+  return total;
+}
+
+// PATCH /api/po-invoices/manager/receiving/:id/items/:itemId/count
+// body: { type: 'counted', value } | { type: 'correct' }   (legacy { count } = counted)
 // Saved immediately on every modal submit (not batched until the final
 // Submit) so leaving/closing the app mid-count never loses progress.
 router.patch('/manager/receiving/:id/items/:itemId/count', async (req, res) => {
+  const client = await pool.connect();
   try {
     const { id, itemId } = req.params;
-    const { count } = req.body;
-    const c = parseInt(count, 10);
-    if (isNaN(c) || c < 0) return res.status(400).json({ error: 'Invalid count' });
-    const result = await pool.query(
-      `UPDATE po_invoice_items SET store_count = $1 WHERE id = $2 AND invoice_id = $3 RETURNING *`,
-      [c, itemId, id]
+    const type = req.body.type === 'correct' ? 'correct' : 'counted';
+    await client.query('BEGIN');
+    const cur = await client.query(
+      'SELECT * FROM po_invoice_items WHERE id = $1 AND invoice_id = $2 FOR UPDATE',
+      [itemId, id]
     );
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Item not found' });
+    if (cur.rows.length === 0) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Item not found' }); }
+    const item = cur.rows[0];
+
+    let entry;
+    if (type === 'correct') {
+      entry = { type: 'correct', value: Number(item.quantity) || 0, at: new Date().toISOString() };
+    } else {
+      const c = parseInt(req.body.value !== undefined ? req.body.value : req.body.count, 10);
+      if (isNaN(c) || c < 0) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Invalid count' }); }
+      entry = { type: 'counted', value: c, at: new Date().toISOString() };
+    }
+
+    let history = Array.isArray(item.count_history) ? item.count_history : [];
+    // An item counted before this feature existed has a store_count but no
+    // history — keep that count as the first entry so new counts add to it.
+    if (history.length === 0 && item.store_count !== null && item.store_count !== undefined) {
+      history = [{ type: 'counted', value: Number(item.store_count), at: null, legacy: true }];
+    }
+    history = [...history, entry];
+    const storeCount = computeStoreCount(history);
+
+    const result = await client.query(
+      `UPDATE po_invoice_items SET store_count = $1, count_history = $2::jsonb WHERE id = $3 AND invoice_id = $4 RETURNING *`,
+      [storeCount, JSON.stringify(history), itemId, id]
+    );
+    await client.query('COMMIT');
     res.json(result.rows[0]);
   } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
     console.error('PATCH /api/po-invoices/manager/receiving/:id/items/:itemId/count error:', e);
     res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
+  }
+});
+
+// POST /api/po-invoices/manager/receiving/:id/items/mark-correct
+// body: { itemIds: [id, id, ...] }
+// Desktop-only bulk version of the single-item { type: 'correct' } PATCH
+// above ("Mark all Correct" / "Mark selected Correct" on the manager
+// counting page) — same per-item logic (append a 'correct' entry to
+// count_history, recompute store_count via computeStoreCount), just looped
+// over every id in one request/transaction instead of one popup submit at
+// a time. Unknown/missing item ids are silently skipped rather than
+// failing the whole batch, since the id list comes from the client's own
+// current view of the invoice.
+router.post('/manager/receiving/:id/items/mark-correct', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { id } = req.params;
+    const itemIds = Array.isArray(req.body.itemIds) ? req.body.itemIds : [];
+    if (itemIds.length === 0) {
+      client.release();
+      return res.status(400).json({ error: 'No items selected' });
+    }
+    await client.query('BEGIN');
+    const updated = [];
+    for (const itemId of itemIds) {
+      const cur = await client.query(
+        'SELECT * FROM po_invoice_items WHERE id = $1 AND invoice_id = $2 FOR UPDATE',
+        [itemId, id]
+      );
+      if (cur.rows.length === 0) continue;
+      const item = cur.rows[0];
+
+      const entry = { type: 'correct', value: Number(item.quantity) || 0, at: new Date().toISOString() };
+      let history = Array.isArray(item.count_history) ? item.count_history : [];
+      if (history.length === 0 && item.store_count !== null && item.store_count !== undefined) {
+        history = [{ type: 'counted', value: Number(item.store_count), at: null, legacy: true }];
+      }
+      history = [...history, entry];
+      const storeCount = computeStoreCount(history);
+
+      const result = await client.query(
+        `UPDATE po_invoice_items SET store_count = $1, count_history = $2::jsonb WHERE id = $3 AND invoice_id = $4 RETURNING *`,
+        [storeCount, JSON.stringify(history), itemId, id]
+      );
+      updated.push(result.rows[0]);
+    }
+    await client.query('COMMIT');
+    res.json({ items: updated });
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('POST /api/po-invoices/manager/receiving/:id/items/mark-correct error:', e);
+    res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
   }
 });
 
@@ -1407,7 +1511,7 @@ router.post('/pending/:id/cancel-store-task', async (req, res) => {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Invoice not found, or not in a state that can be cancelled' });
     }
-    await client.query(`UPDATE po_invoice_items SET store_count = NULL WHERE invoice_id = $1`, [id]);
+    await client.query(`UPDATE po_invoice_items SET store_count = NULL, count_history = '[]'::jsonb WHERE invoice_id = $1`, [id]);
     await client.query('COMMIT');
     res.json(result.rows[0]);
   } catch (e) {

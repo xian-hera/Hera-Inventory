@@ -28,6 +28,30 @@ function cleanBarcode(raw) {
   return raw.replace(/^[^0-9]+/, '');
 }
 
+// Multi-count (2026-09-24, Hera): one green tally bar per Submit / Correct
+// saved for a line item (server keeps them in count_history and recomputes
+// store_count — see computeStoreCount() in server/routes/poInvoices.js).
+function countHistory(item) {
+  const h = Array.isArray(item && item.count_history) ? item.count_history : [];
+  if (h.length === 0 && item && item.store_count !== null && item.store_count !== undefined) {
+    return [{ type: 'counted', value: item.store_count, legacy: true }];
+  }
+  return h;
+}
+
+function TallyBars({ count }) {
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', marginRight: '6px', verticalAlign: 'middle' }}>
+      {Array.from({ length: Math.min(count, 10) }).map((_, i) => (
+        <span key={i} style={{
+          display: 'inline-block', width: '3px', height: '16px',
+          background: 'green', marginRight: '2px', borderRadius: '1px',
+        }} />
+      ))}
+    </span>
+  );
+}
+
 function ManagerPOReceivingDetail() {
   const navigate = useNavigate();
   const { invoiceId } = useParams();
@@ -58,6 +82,16 @@ function ManagerPOReceivingDetail() {
   // touch the server or the counted/total summary line above the table.
   const [itemFilter, setItemFilter] = useState('all');
 
+  // Bulk "Mark Correct" (2026-09-24, Hera) — desktop only, mobile is
+  // completely unaffected (see the .po-select-col / .po-bulk-actions CSS
+  // classes below, same show/hide-by-media-query technique as Home.js /
+  // ManagerPOReceiving.js). Selection is scoped to whatever's currently
+  // visible under itemFilter — "select all" / "Mark all Correct" act on
+  // filteredItems, not every item in the invoice, so switching the pill
+  // filter always shows a consistent set of checkboxes to work from.
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [markingCorrect, setMarkingCorrect] = useState(false);
+
   const barcodeBuffer = useRef('');
   const barcodeTimer = useRef(null);
   const popupRef = useRef(null);
@@ -83,6 +117,10 @@ function ManagerPOReceivingDetail() {
   }, [invoiceId]);
 
   useEffect(() => { fetchInvoice(); }, [fetchInvoice]);
+
+  // Reset the bulk-select checkboxes whenever the visible set changes, so a
+  // stale selection never silently includes rows the manager can't see.
+  useEffect(() => { setSelectedIds(new Set()); }, [itemFilter]);
 
   // Body-scroll lock while any modal is open — never let a modal's presence
   // widen the page such that closing it leaves the page needing horizontal
@@ -151,14 +189,16 @@ function ManagerPOReceivingDetail() {
 
   // Persisted immediately on every submit (Correct button or manual count) —
   // never batched — so leaving/closing mid-count never loses progress.
-  const saveCount = async (item, count) => {
+  // `entry` is { type: 'counted', value } or { type: 'correct' }; the server
+  // appends it to the item's count history and returns the new total.
+  const saveCount = async (item, entry) => {
     setSavingCount(true);
     setCountError('');
     try {
       const res = await fetch(`/api/po-invoices/manager/receiving/${invoiceId}/items/${item.id}/count`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ count }),
+        body: JSON.stringify(entry),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
@@ -179,7 +219,7 @@ function ManagerPOReceivingDetail() {
 
   const handleCorrect = () => {
     if (!popupItem) return;
-    saveCount(popupItem, Number(popupItem.quantity));
+    saveCount(popupItem, { type: 'correct' });
   };
 
   const handleSubmitCount = () => {
@@ -187,7 +227,40 @@ function ManagerPOReceivingDetail() {
     if (countInput === '') { setCountError('input your count'); return; }
     const value = parseInt(countInput, 10);
     if (isNaN(value) || value < 0) { setCountError('input your count'); return; }
-    saveCount(popupItem, value);
+    saveCount(popupItem, { type: 'counted', value });
+  };
+
+  // Desktop-only bulk "Mark Correct" — hits the new bulk endpoint once for
+  // however many item ids are passed in, rather than looping the single-item
+  // PATCH client-side, so it's one request/one transaction either way.
+  const markCorrectBulk = async (itemIds) => {
+    if (!itemIds.length) return;
+    setMarkingCorrect(true);
+    setError('');
+    try {
+      const res = await fetch(`/api/po-invoices/manager/receiving/${invoiceId}/items/mark-correct`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itemIds }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      const byId = new Map((data.items || []).map(i => [i.id, i]));
+      setItems(prev => prev.map(i => (byId.has(i.id) ? { ...i, ...byId.get(i.id) } : i)));
+      setSelectedIds(new Set());
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setMarkingCorrect(false);
+    }
+  };
+
+  const toggleSelectItem = (id) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
   };
 
   // ── Notes — manager can reply even without a buyer note; same "one note
@@ -312,11 +385,32 @@ function ManagerPOReceivingDetail() {
     return true;
   });
 
+  const allFilteredSelected = filteredItems.length > 0 && filteredItems.every(item => selectedIds.has(item.id));
+  const toggleSelectAll = () => {
+    setSelectedIds(allFilteredSelected ? new Set() : new Set(filteredItems.map(item => item.id)));
+  };
+  const handleMarkAllCorrect = () => markCorrectBulk(filteredItems.map(item => item.id));
+  const handleMarkSelectedCorrect = () => markCorrectBulk(Array.from(selectedIds));
+
   return (
     // Wrapper caps width at 100% of the viewport at all times — the whole
     // point being that a modal opening/closing never leaves the page in a
     // state that needs horizontal scrolling.
     <div style={{ maxWidth: '100vw', overflowX: 'hidden' }}>
+      {/* Desktop-only bulk "Mark Correct" UI (checkbox column + Mark
+          all/selected Correct buttons) — pure CSS media-query toggle, same
+          technique as Home.js / ManagerPOReceiving.js. Both markups are
+          effectively "always there"; below 768px these two classes just
+          collapse to nothing, so mobile's table and layout are byte-for-byte
+          what they were before this feature existed. */}
+      <style>{`
+        .po-select-col { display: none; }
+        .po-bulk-actions { display: none; }
+        @media (min-width: 768px) {
+          .po-select-col { display: table-cell; }
+          .po-bulk-actions { display: flex; }
+        }
+      `}</style>
       <Page
         title={invoice.po_number || invoice.invoice_number}
         backAction={{ onAction: () => navigate('/manager/po-receiving') }}
@@ -403,11 +497,33 @@ function ManagerPOReceivingDetail() {
                 })}
               </InlineStack>
 
+              {/* Bulk "Mark Correct" — desktop only (see .po-bulk-actions
+                  above). "Mark all Correct" and "Mark selected Correct" both
+                  act on filteredItems (whatever the current All/Not
+                  counted/Off qty pill shows), matching the select-all
+                  checkbox in the table header below. */}
+              <div className="po-bulk-actions" style={{ justifyContent: 'flex-end', gap: '8px' }}>
+                <Button onClick={handleMarkAllCorrect} loading={markingCorrect} disabled={markingCorrect || filteredItems.length === 0}>
+                  Mark all Correct
+                </Button>
+                <Button onClick={handleMarkSelectedCorrect} loading={markingCorrect} disabled={markingCorrect || selectedIds.size === 0}>
+                  Mark selected Correct
+                </Button>
+              </div>
+
               <Card>
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                     <thead>
                       <tr style={{ borderBottom: '2px solid #e1e3e5' }}>
+                        <th className="po-select-col" style={{ padding: '8px 10px', textAlign: 'left' }}>
+                          <input
+                            type="checkbox"
+                            checked={allFilteredSelected}
+                            onChange={toggleSelectAll}
+                            aria-label="Select all"
+                          />
+                        </th>
                         <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Name / SKU</th>
                         {/* Wig number — no header per Hera's spec; blank for a
                             non-WIG line item, so this column carries no label
@@ -428,6 +544,14 @@ function ManagerPOReceivingDetail() {
                             onClick={() => openPopup(item)}
                             style={{ borderBottom: '1px solid #f1f1f1', cursor: 'pointer' }}
                           >
+                            <td className="po-select-col" style={{ padding: '10px' }} onClick={e => e.stopPropagation()}>
+                              <input
+                                type="checkbox"
+                                checked={selectedIds.has(item.id)}
+                                onChange={() => toggleSelectItem(item.id)}
+                                aria-label={`Select ${item.name || item.sku || 'item'}`}
+                              />
+                            </td>
                             <td style={{ padding: '10px' }}>
                               <div style={{ fontWeight: 500 }}>{item.name || '-'}</div>
                               <div style={{ fontSize: '12px', color: '#6d7175' }}>{item.sku || '-'}</div>
@@ -435,6 +559,7 @@ function ManagerPOReceivingDetail() {
                             <td style={{ padding: '10px', color: '#6d7175' }}>{item.wig_number || ''}</td>
                             <td style={{ padding: '10px' }}>{item.quantity}</td>
                             <td style={{ padding: '10px' }}>
+                              {counted && <TallyBars count={countHistory(item).length} />}
                               {!counted ? (
                                 <Text tone="subdued">not counted</Text>
                               ) : matches ? (
@@ -499,6 +624,9 @@ function ManagerPOReceivingDetail() {
                   <div style={{ fontSize: '13px', color: '#6d7175' }}>{popupItem.sku}</div>
                 </div>
 
+                <div style={{ fontSize: '13px', color: '#6d7175', marginBottom: '-8px' }}>
+                  Enter only what you counted this time — not the total.
+                </div>
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                   <input
                     inputMode="numeric"
@@ -522,6 +650,21 @@ function ManagerPOReceivingDetail() {
                     fontSize: '14px', color: '#d72c0d' }}>
                     {countError}
                   </div>
+                )}
+
+                {countHistory(popupItem).length > 0 && (
+                  <BlockStack gap="100">
+                    <Text variant="bodySm" tone="subdued">Count history</Text>
+                    {countHistory(popupItem).map((h, i) => (
+                      <InlineStack key={i} gap="200" blockAlign="center">
+                        <TallyBars count={1} />
+                        <Text>{h.type === 'correct' ? 'Correct' : String(h.value)}</Text>
+                      </InlineStack>
+                    ))}
+                    <Text variant="bodySm" tone="subdued">
+                      Total {popupItem.store_count === null || popupItem.store_count === undefined ? 0 : popupItem.store_count}
+                    </Text>
+                  </BlockStack>
                 )}
 
                 <button onClick={handleCorrect} disabled={savingCount} style={{

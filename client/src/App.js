@@ -15,6 +15,7 @@ import BuyerStockLosses from './pages/buyer/BuyerStockLosses';
 import BuyerWigDemo from './pages/buyer/BuyerWigDemo';
 import BuyerStockLossesSettings from './pages/buyer/BuyerStockLossesSettings';
 import ManagerRestockPlan from './pages/manager/ManagerRestockPlan';
+import ManagerRestockTasks from './pages/manager/ManagerRestockTasks'; // Restock tasks layer, 2026-09-24
 import BuyerLabelTemplates from './pages/buyer/BuyerLabelTemplates';
 import BuyerLabelEditor from './pages/buyer/BuyerLabelEditor';
 import ManagerHome from './pages/manager/ManagerHome';
@@ -155,7 +156,8 @@ function App() {
           <Route path="/manager/zero-qty-report" element={<ManagerZeroQtyReport />} />
           <Route path="/manager/stock-losses" element={<ManagerStockLosses />} />
           <Route path="/manager/wig-demo" element={<ManagerWigDemo />} />
-          <Route path="/manager/restock-plan" element={<ManagerRestockPlan />} />
+          <Route path="/manager/restock-plan" element={<ManagerRestockTasks />} />
+          <Route path="/manager/restock-plan/:taskId" element={<ManagerRestockPlan />} />
           <Route path="/manager/label-print" element={<ManagerLabelPrintTasks />} />
           <Route path="/manager/label-print/:taskId" element={<ManagerLabelPrintTaskDetail />} />
           <Route path="/manager/price-change/:taskId" element={<ManagerPriceChangeDetail />} />

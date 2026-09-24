@@ -213,52 +213,39 @@ function ManagerTaskHistoryDetail() {
       )
     : filteredItems;
 
+  // 2026-09-24 (Hera): the History detail now shows the task the way the
+  // buyer sees an archived task — Name / SKU / Detail / Result — built from
+  // the task's LATEST state (the history row is updated on every re-submit
+  // and buyer commit; see syncTaskHistory in server/routes/tasks.js), so the
+  // manager sees the values the buyer actually committed. This replaced the
+  // earlier System / Scans / Actual table built from a submit-time snapshot.
   const rows = displayedItems.map(item => {
-    const nameSku = (
-      <div>
-        <div style={{ fontSize: '14px', fontWeight: '500' }}>{item.name || '-'}</div>
-        <div style={{ fontSize: '12px', color: '#6d7175' }}>{item.barcode || '-'}</div>
-      </div>
-    );
-
-    if (isScanCountMode) {
-      return [
-        <div>{nameSku}</div>,
-        <div>{item.soh !== null ? String(item.soh) : ''}</div>,
-        <div />,
-        <div>{String(item.scan_count || 0)}</div>,
-      ];
+    let detailText = '';
+    let result = '';
+    if (item.soh !== null && item.soh !== undefined && item.poh !== null && item.poh !== undefined) {
+      const delta = item.is_correct ? 0 : item.poh - item.soh;
+      if (item.is_correct || delta === 0) {
+        const isUnscannedMatch = isScanCountMode && !item.ever_scanned;
+        result = (
+          <span style={{ color: isUnscannedMatch ? '#d72c0d' : 'green', fontSize: '18px' }}
+            title={isUnscannedMatch ? 'Never scanned — system already showed 0' : undefined}>✓</span>
+        );
+      } else {
+        detailText = `System ${item.soh}  Actual ${item.poh}`;
+        result = (
+          <Text tone={delta > 0 ? 'success' : 'critical'} fontWeight="bold">
+            {delta > 0 ? `+${delta}` : `${delta}`}
+          </Text>
+        );
+      }
     }
-
-    const scanCount = (item.scan_history || []).length;
-    const scanBars  = Array.from({ length: Math.min(scanCount, 10) }).map((_, i) => (
-      <span key={i} style={{
-        display: 'inline-block', width: '3px', height: '16px',
-        background: 'green', marginRight: '2px', borderRadius: '1px',
-      }} />
-    ));
-
-    let pohDisplay = '';
-    if (item.poh !== null && item.poh !== undefined) {
-      const isMatch = item.is_correct || item.poh === item.soh;
-      pohDisplay = (
-        <span style={{
-          background: isMatch ? '#008060' : 'transparent',
-          color:      isMatch ? 'white'   : 'inherit',
-          padding:    isMatch ? '2px 8px' : '0',
-          borderRadius: '4px',
-          fontWeight: isMatch ? 'bold' : 'normal',
-        }}>
-          {item.poh}
-        </span>
-      );
-    }
-
     return [
-      <div>{nameSku}</div>,
-      <div>{item.soh !== null ? String(item.soh) : ''}</div>,
-      <div><InlineStack gap="050">{scanBars}</InlineStack></div>,
-      <div>{pohDisplay}</div>,
+      item.name || '-',
+      item.barcode || '-',
+      detailText,
+      item.is_committed
+        ? <span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: '8px', background: '#cdfee1', color: '#0c5132', fontSize: '12px', fontWeight: 600 }}>committed</span>
+        : result,
     ];
   });
 
@@ -389,8 +376,8 @@ function ManagerTaskHistoryDetail() {
 
               <Card>
                 <DataTable
-                  columnContentTypes={isScanCountMode ? ['text', 'numeric', 'text', 'numeric'] : ['text', 'numeric', 'text', 'text']}
-                  headings={isScanCountMode ? ['Name / SKU', 'System', '', 'Scans'] : ['Name / SKU', 'System', 'Scans', 'Actual']}
+                  columnContentTypes={['text', 'text', 'text', 'text']}
+                  headings={['Name', 'SKU', 'Detail', 'Result']}
                   rows={rows}
                 />
               </Card>

@@ -52,6 +52,7 @@ function TaskDetail() {
   const [publishing, setPublishing] = useState(false);
   const [deletingItems, setDeletingItems] = useState(false);
   const [editingItemId, setEditingItemId] = useState(null);
+  const [sendingBack, setSendingBack] = useState(false);
   const [editingValue, setEditingValue] = useState('');
 
   // quiet=true skips the full-page loading spinner — used while polling for
@@ -315,6 +316,24 @@ function TaskDetail() {
     </InlineStack>
   );
 
+  // Send Back to Store (2026-09-24, Hera): reviewing → counting, so the store
+  // can keep counting and re-submit. Already-committed items stay locked.
+  const handleSendBack = async () => {
+    if (!window.confirm('Send this task back to the store? It becomes an active counting task again and the manager can keep counting and re-submit.')) return;
+    setSendingBack(true);
+    setError('');
+    try {
+      const res = await fetch(`/api/tasks/${taskId}/send-back`, { method: 'PATCH' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Failed to send back');
+      await fetchTask();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSendingBack(false);
+    }
+  };
+
   const rows = task.items.map(item => {
     let detail = '';
     let result = '';
@@ -416,6 +435,7 @@ function TaskDetail() {
 
             <Card>
               <BlockStack gap="300">
+                <InlineStack align="space-between" blockAlign="start" wrap>
                 <InlineStack gap="200" wrap>
                   <Button onClick={() => setShowNoteInput(true)}>Add note</Button>
                   <Button
@@ -461,6 +481,12 @@ function TaskDetail() {
                       </Button>
                     </>
                   )}
+                </InlineStack>
+                {task.status === 'reviewing' && !isCommittingOnServer && (
+                  <Button onClick={handleSendBack} loading={sendingBack} disabled={committing}>
+                    Send Back to Store
+                  </Button>
+                )}
                 </InlineStack>
 
                 {showNoteInput && (

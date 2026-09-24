@@ -6,6 +6,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Page, Card, BlockStack, InlineStack, Text, Button, Banner, Spinner } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import { HtmlTooltip, FrIcon, adminUrl, TH, TD, postJson } from './newProductsShared';
+import FullBleed from '../../components/FullBleed';
 
 const DESC_CHARS = 60;
 
@@ -50,6 +51,7 @@ function GroupCard({ group, onChanged, setBanner }) {
           <Button variant="primary" onClick={() => act('finalize')} loading={busy === 'finalize'} disabled={!selected.length || !!busy}>Mark selected as finalized</Button>
         </InlineStack>
       </InlineStack>
+      <FullBleed>
       <Card padding="0">
         <div style={{ padding: '4px 12px 8px' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'auto' }}>
@@ -98,6 +100,7 @@ function GroupCard({ group, onChanged, setBanner }) {
           </table>
         </div>
       </Card>
+      </FullBleed>
     </BlockStack>
   );
 }
@@ -121,8 +124,9 @@ function OnlineNewProducts() {
   useEffect(() => { load(); }, [load]);
 
   return (
+    // Fixed-width page; only each group's table is full width (FullBleed) —
+    // Hera 2026-09-24.
     <Page
-      fullWidth
       title="New products"
       backAction={{ onAction: () => navigate('/online') }}
       secondaryActions={[

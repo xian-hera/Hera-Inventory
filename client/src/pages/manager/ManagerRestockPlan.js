@@ -3,7 +3,7 @@ import {
   Page, Layout, Card, Button, BlockStack, InlineStack,
   Text, Banner, Spinner
 } from '@shopify/polaris';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { fetchLocationMap } from '../shared/locationMap';
 
 function resolveKey(e) {
@@ -27,9 +27,22 @@ function cleanBarcode(raw) {
   return raw.replace(/^[^0-9]+/, '');
 }
 
+// Restock task detail (2026-09-24, Hera): this page used to be the single
+// Restock list for the whole location; it is now the detail page of ONE
+// restock task (see ManagerRestockTasks.js). Everything on the page works
+// exactly as before — it just reads/writes the items of this task only.
 function ManagerRestockPlan() {
   const navigate = useNavigate();
+  const { taskId } = useParams();
   const location = localStorage.getItem('managerLocation') || '';
+  const [taskName, setTaskName] = useState('');
+
+  useEffect(() => {
+    fetch(`/api/reports/restock-tasks/${taskId}`)
+      .then(r => r.json())
+      .then(d => setTaskName(d && d.name ? d.name : ''))
+      .catch(() => {});
+  }, [taskId]);
 
   const [items, setItems]               = useState([]);
   const [loadingItems, setLoadingItems] = useState(true);
@@ -65,8 +78,9 @@ function ManagerRestockPlan() {
   const loadItems = useCallback(async () => {
     if (!location) { setLoadingItems(false); return; }
     try {
-      const res  = await fetch(`/api/reports/restock?location=${encodeURIComponent(location)}`);
+      const res  = await fetch(`/api/reports/restock?taskId=${encodeURIComponent(taskId)}`);
       const data = await res.json();
+      if (!res.ok || !Array.isArray(data)) throw new Error((data && data.error) || 'Failed');
       setItems(data);
       const types = [...new Set(data.map(i => i.product_type).filter(Boolean))];
       setActiveTypes(types.length > 0 ? types : null);
@@ -75,7 +89,7 @@ function ManagerRestockPlan() {
     } finally {
       setLoadingItems(false);
     }
-  }, [location]);
+  }, [location, taskId]);
 
   useEffect(() => { loadItems(); }, [loadItems]);
 
@@ -167,6 +181,7 @@ function ManagerRestockPlan() {
           location, shopify_location_id: popupData.locationId,
           soh: popupSoh, restock_qty: qty,
           product_type: popupData.productType || null,
+          task_id: taskId,
         }),
       });
       const saved = await res.json();
@@ -287,7 +302,7 @@ function ManagerRestockPlan() {
   });
 
   return (
-    <Page title="Restock" backAction={{ onAction: () => navigate('/manager') }}>
+    <Page title={taskName || 'Restock'} backAction={{ onAction: () => navigate('/manager/restock-plan') }}>
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">

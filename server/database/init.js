@@ -745,6 +745,10 @@ const initDatabase = async () => {
     // shown on the buyer side is store_count - quantity, computed at
     // display time, not stored separately.
     await client.query(`ALTER TABLE po_invoice_items ADD COLUMN IF NOT EXISTS store_count INTEGER`).catch(() => {});
+    // Multi-count history for Store counting (2026-09-24, Hera): one entry per
+    // modal Submit / Correct; store_count is recomputed from it — see
+    // computeStoreCount() in server/routes/poInvoices.js.
+    await client.query(`ALTER TABLE po_invoice_items ADD COLUMN IF NOT EXISTS count_history JSONB NOT NULL DEFAULT '[]'::jsonb`).catch(() => {});
 
     // Migration: distinguishes a line item the buyer added by searching this
     // supplier's SKU library directly (TRUE) from one that came in through a
@@ -1183,6 +1187,80 @@ const initDatabase = async () => {
         PRIMARY KEY (metafield, choice_value)
       )
     `);
+
+    // ── Restock tasks (2026-09-24, Hera) ──────────────────────────────────
+    // Restock used to be one shared list per location; now each list is a
+    // task (name + optional creator) so two managers at the same location
+    // can keep separate lists. restock_plans rows belong to a task, and the
+    // same barcode may appear in several tasks — so the old one-row-per
+    // (barcode, location) uniqueness is replaced by (task_id, barcode).
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS restock_tasks (
+        id SERIAL PRIMARY KEY,
+        location TEXT NOT NULL,
+        name TEXT NOT NULL,
+        creator TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    // restock_plans itself predates init.js (created by hand); this CREATE is
+    // a no-op on the live database and only matters for a fresh one.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS restock_plans (
+        id SERIAL PRIMARY KEY,
+        barcode TEXT NOT NULL,
+        name TEXT,
+        location TEXT NOT NULL,
+        shopify_location_id TEXT,
+        soh INTEGER,
+        restock_qty INTEGER,
+        product_type TEXT,
+        is_done BOOLEAN NOT NULL DEFAULT FALSE,
+        expires_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await client.query(`ALTER TABLE restock_plans ADD COLUMN IF NOT EXISTS task_id INTEGER`);
+    // Drop the old unique (barcode, location) rule — constraint or bare
+    // unique index, whatever its name — but keep the new task-based index.
+    await client.query(`
+      DO $$
+      DECLARE r record;
+      BEGIN
+        FOR r IN
+          SELECT con.conname FROM pg_constraint con
+          JOIN pg_class c ON c.oid = con.conrelid
+          WHERE c.relname = 'restock_plans' AND con.contype = 'u'
+        LOOP
+          EXECUTE format('ALTER TABLE restock_plans DROP CONSTRAINT %I', r.conname);
+        END LOOP;
+        FOR r IN
+          SELECT i.relname FROM pg_index x
+          JOIN pg_class i ON i.oid = x.indexrelid
+          JOIN pg_class t ON t.oid = x.indrelid
+          WHERE t.relname = 'restock_plans' AND x.indisunique AND NOT x.indisprimary
+            AND i.relname <> 'restock_plans_task_barcode_key'
+        LOOP
+          EXECUTE format('DROP INDEX IF EXISTS %I', r.relname);
+        END LOOP;
+      END $$;
+    `);
+    // One-time move of the existing per-location lists into a task named
+    // "existing task" (creator left empty) — Hera 2026-09-24. Only rows that
+    // have no task yet are touched, so this is a no-op after the first boot.
+    await client.query(`
+      DO $$
+      DECLARE loc TEXT; tid INTEGER;
+      BEGIN
+        FOR loc IN SELECT DISTINCT location FROM restock_plans WHERE task_id IS NULL LOOP
+          INSERT INTO restock_tasks (location, name, creator) VALUES (loc, 'existing task', NULL) RETURNING id INTO tid;
+          UPDATE restock_plans SET task_id = tid WHERE task_id IS NULL AND location = loc;
+        END LOOP;
+      END $$;
+    `);
+    await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS restock_plans_task_barcode_key ON restock_plans (task_id, barcode)`);
 
     await client.query('COMMIT');
     console.log('✓ Database initialized successfully');

@@ -325,15 +325,92 @@ router.delete('/drafts', async (req, res) => {
 // RESTOCK PLANS  (manager-side)
 // ═══════════════════════════════════════════════════════════════════════════
 
-// GET /api/reports/restock?location=MTL01
-router.get('/restock', async (req, res) => {
+// ─── Restock tasks (2026-09-24, Hera) ───────────────────────────────────────
+// Each restock list is now a task (name + optional creator) so several
+// managers at one location can keep separate lists. Items still expire 15
+// days after their last update (unchanged); tasks never expire — managers
+// delete them from the task list.
+
+// GET /api/reports/restock-tasks?location=MTL01
+router.get('/restock-tasks', async (req, res) => {
   try {
     const { location } = req.query;
     if (!location) return res.status(400).json({ error: 'location required' });
     await pool.query('DELETE FROM restock_plans WHERE expires_at < NOW()');
     const result = await pool.query(
-      'SELECT * FROM restock_plans WHERE location = $1 ORDER BY created_at ASC',
+      `SELECT t.*, COUNT(p.id)::int AS item_count
+         FROM restock_tasks t
+         LEFT JOIN restock_plans p ON p.task_id = t.id
+        WHERE t.location = $1
+        GROUP BY t.id
+        ORDER BY t.created_at DESC, t.id DESC`,
       [location]
+    );
+    res.json(result.rows);
+  } catch (e) {
+    console.error('GET /api/reports/restock-tasks error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/reports/restock-tasks  { location, name, creator? }
+router.post('/restock-tasks', async (req, res) => {
+  try {
+    const location = String(req.body.location || '').trim();
+    const name = String(req.body.name || '').trim();
+    const creator = String(req.body.creator || '').trim() || null;
+    if (!location || !name) return res.status(400).json({ error: 'location and name required' });
+    const result = await pool.query(
+      'INSERT INTO restock_tasks (location, name, creator) VALUES ($1, $2, $3) RETURNING *',
+      [location, name, creator]
+    );
+    res.json(result.rows[0]);
+  } catch (e) {
+    console.error('POST /api/reports/restock-tasks error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/reports/restock-tasks/:id
+router.get('/restock-tasks/:id', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM restock_tasks WHERE id = $1', [req.params.id]);
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Task not found' });
+    res.json(result.rows[0]);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// DELETE /api/reports/restock-tasks  { ids } — deletes the tasks and their items.
+router.delete('/restock-tasks', async (req, res) => {
+  const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids.map(Number).filter(Boolean) : [];
+  if (!ids.length) return res.status(400).json({ error: 'ids required' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM restock_plans WHERE task_id = ANY($1)', [ids]);
+    await client.query('DELETE FROM restock_tasks WHERE id = ANY($1)', [ids]);
+    await client.query('COMMIT');
+    res.json({ success: true });
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('DELETE /api/reports/restock-tasks error:', e);
+    res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
+  }
+});
+
+// GET /api/reports/restock?taskId=12  (items of one restock task)
+router.get('/restock', async (req, res) => {
+  try {
+    const taskId = parseInt(req.query.taskId, 10);
+    if (!taskId) return res.status(400).json({ error: 'taskId required — please reload the app' });
+    await pool.query('DELETE FROM restock_plans WHERE expires_at < NOW()');
+    const result = await pool.query(
+      'SELECT * FROM restock_plans WHERE task_id = $1 ORDER BY created_at ASC',
+      [taskId]
     );
     res.json(result.rows);
   } catch (e) {
@@ -346,13 +423,15 @@ router.get('/restock', async (req, res) => {
 router.put('/restock', async (req, res) => {
   try {
     const { barcode, name, location, shopify_location_id, soh, restock_qty, product_type } = req.body;
+    const taskId = parseInt(req.body.task_id, 10);
     if (!barcode || !location) return res.status(400).json({ error: 'barcode and location required' });
+    if (!taskId) return res.status(400).json({ error: 'task_id required — please reload the app' });
 
     const result = await pool.query(
       `INSERT INTO restock_plans
-         (barcode, name, location, shopify_location_id, soh, restock_qty, product_type, is_done, expires_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, FALSE, NOW() + INTERVAL '15 days', NOW())
-       ON CONFLICT (barcode, location) DO UPDATE SET
+         (barcode, name, location, shopify_location_id, soh, restock_qty, product_type, is_done, expires_at, updated_at, task_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, FALSE, NOW() + INTERVAL '15 days', NOW(), $8)
+       ON CONFLICT (task_id, barcode) DO UPDATE SET
          name                = EXCLUDED.name,
          shopify_location_id = EXCLUDED.shopify_location_id,
          soh                 = EXCLUDED.soh,
@@ -361,8 +440,9 @@ router.put('/restock', async (req, res) => {
          expires_at          = NOW() + INTERVAL '15 days',
          updated_at          = NOW()
        RETURNING *`,
-      [barcode, name, location, shopify_location_id, soh, restock_qty, product_type || null]
+      [barcode, name, location, shopify_location_id, soh, restock_qty, product_type || null, taskId]
     );
+    await pool.query('UPDATE restock_tasks SET updated_at = NOW() WHERE id = $1', [taskId]);
     res.json(result.rows[0]);
   } catch (e) {
     console.error('PUT /api/reports/restock error:', e);
@@ -389,8 +469,10 @@ router.patch('/restock/:id/done', async (req, res) => {
 // DELETE /api/reports/restock
 router.delete('/restock', async (req, res) => {
   try {
-    const { ids, location, all } = req.body;
-    if (all && location) {
+    const { ids, location, all, task_id } = req.body;
+    if (all && task_id) {
+      await pool.query('DELETE FROM restock_plans WHERE task_id = $1', [task_id]);
+    } else if (all && location) {
       await pool.query('DELETE FROM restock_plans WHERE location = $1', [location]);
     } else if (ids && ids.length > 0) {
       await pool.query('DELETE FROM restock_plans WHERE id = ANY($1)', [ids]);

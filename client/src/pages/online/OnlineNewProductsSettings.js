@@ -248,6 +248,8 @@ function OnlineNewProductsSettings() {
                 </Card>
               </>
             )}
+            {/* Room for dropdowns opened near the bottom (2026-09-24, Hera). */}
+            <div style={{ height: '33vh' }} />
           </BlockStack>
         </Layout.Section>
       </Layout>

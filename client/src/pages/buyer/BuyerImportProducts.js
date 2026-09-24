@@ -10,6 +10,7 @@ import { useNavigate } from 'react-router-dom';
 import MultiSelectDropdown from '../../components/MultiSelectDropdown';
 import { useLocationMap } from '../shared/locationMap';
 import ImportTable from './importProducts/ImportTable';
+import FullBleed from '../../components/FullBleed';
 import {
   MAX_ROWS, MAX_COLUMNS, PRESETS, buildColumns, buildRows, groupRows, validate,
   productLevelConflicts, buildPayload, cellValue, colFor,
@@ -336,8 +337,9 @@ function BuyerImportProducts() {
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
+    // Fixed-width page like Buyer Home; only the pre-import table breaks out
+    // to full width (FullBleed) — Hera 2026-09-24.
     <Page
-      fullWidth
       title="Import Products"
       backAction={stage === 'importing' ? undefined : { onAction: () => navigate('/buyer') }}
       secondaryActions={stage === 'importing' ? [] : [{ content: 'Settings', onAction: () => navigate('/buyer/import-products/settings') }]}
@@ -450,6 +452,7 @@ function BuyerImportProducts() {
         </div>
 
         {stage === 'table' && (
+          <FullBleed>
           <ImportTable
             columns={columns}
             rows={rows}
@@ -467,6 +470,7 @@ function BuyerImportProducts() {
             onToggleAll={setSelectedIds}
             onEdit={onEdit}
           />
+          </FullBleed>
         )}
 
         {stage === 'importing' && job && (

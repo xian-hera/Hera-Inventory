@@ -174,6 +174,12 @@ function ManagerTaskDetail() {
   }, []);
 
   const openPopup = async (item) => {
+    // After "Send Back to Store" (2026-09-24), items the buyer already
+    // committed are locked — their change already reached Shopify.
+    if (item.is_committed) {
+      setErrorPopup(`"${item.name || item.barcode}" was already committed by the buyer and can't be changed.`);
+      return;
+    }
     setPopupItem(item);
     setCountInput('');
     setCountWarning('');

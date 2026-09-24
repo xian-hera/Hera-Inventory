@@ -206,6 +206,49 @@ router.patch('/:id/notes', async (req, res) => {
   }
 });
 
+// Weekly Inventory Count → manager History (2026-09-24, Hera): one row per
+// task, always showing the task's latest state (see upsertManagerHistory in
+// managerHistory.js). Called on manager submit / complete-scan, on buyer
+// commit and on "Send Back to Store". Never throws — history is secondary
+// bookkeeping and must not block the real action.
+const HISTORY_LABELS = {
+  reviewing: 'Waiting for buyer review',
+  archived: 'Committed by buyer',
+  counting: 'Sent back to store',
+};
+async function syncTaskHistory(taskId, { bumpCreatedAt = false, label } = {}) {
+  try {
+    const taskRes = await pool.query('SELECT * FROM tasks WHERE id = $1', [taskId]);
+    const task = taskRes.rows[0];
+    if (!task) return;
+    const itemsRes = await pool.query('SELECT * FROM task_items WHERE task_id = $1 ORDER BY id', [taskId]);
+    const anyCommitted = itemsRes.rows.some(i => i.is_committed);
+    const finalLabel = label
+      || (task.status === 'reviewing' && anyCommitted ? 'Partially committed by buyer' : HISTORY_LABELS[task.status] || task.status);
+    const { upsertManagerHistory } = require('./managerHistory');
+    await upsertManagerHistory({
+      kind: 'task',
+      location: task.location,
+      ref_no: task.task_no,
+      label: finalLabel,
+      summary: { types: task.types },
+      detail: {
+        task_no: task.task_no,
+        types: task.types,
+        location: task.location,
+        status: task.status,
+        scan_count_mode: task.scan_count_mode,
+        notes: task.notes,
+        task_created_at: task.created_at,
+        items: itemsRes.rows,
+      },
+      bumpCreatedAt,
+    });
+  } catch (e) {
+    console.error(`Failed to sync manager history for task ${taskId}:`, e.message);
+  }
+}
+
 // A commit that's been sitting in `committing = TRUE` longer than this is
 // treated as abandoned (e.g. the server restarted mid-commit, such as a
 // Render redeploy) rather than genuinely in progress, and can be reclaimed
@@ -382,6 +425,8 @@ async function runTaskCommit(id, itemIds) {
       `UPDATE tasks SET committing = FALSE, commit_warnings = $1, updated_at = NOW() WHERE id = $2`,
       [JSON.stringify(errors), id]
     ).catch(e => console.error(`Failed to clear committing flag for task ${id}:`, e.message));
+    // Manager History follows the buyer's committed values (2026-09-24).
+    await syncTaskHistory(id);
   }
 }
 
@@ -441,34 +486,14 @@ router.patch('/:id/submit', async (req, res) => {
       [id]
     );
 
-    // Freeze a snapshot of this task for the manager's own History (Weekly
-    // Inventory Count page) — see server/routes/managerHistory.js. Captured
-    // from what the manager was just looking at, not re-read afterward, so
-    // a later buyer edit (poh is editable while status is 'reviewing') never
-    // changes what this History entry shows. A failure here is logged only —
-    // it must never block the manager's actual submit.
-    try {
-      const itemsRes = await pool.query('SELECT * FROM task_items WHERE task_id = $1 ORDER BY id', [id]);
-      const { insertManagerHistory } = require('./managerHistory');
-      await insertManagerHistory({
-        kind: 'task',
-        location: task.location,
-        ref_no: task.task_no,
-        label: 'Submitted',
-        summary: { types: task.types },
-        detail: {
-          task_no: task.task_no,
-          types: task.types,
-          location: task.location,
-          scan_count_mode: task.scan_count_mode,
-          notes: task.notes,
-          task_created_at: task.created_at,
-          items: itemsRes.rows,
-        },
-      });
-    } catch (histErr) {
-      console.error(`Failed to record manager history for task ${id} submit:`, histErr.message);
-    }
+    // Manager History (Weekly Inventory Count page) — see
+    // server/routes/managerHistory.js. Since 2026-09-24 (Hera) there is ONE
+    // history row per task that follows the task's latest state: this
+    // submit (or a re-submit after Send Back to Store) and every later buyer
+    // commit update the same row, so the manager sees the values the buyer
+    // actually committed. (Previously this froze a separate snapshot at
+    // submit time that never changed afterward.) Never blocks the submit.
+    await syncTaskHistory(id, { bumpCreatedAt: true });
 
     res.json({ success: true });
   } catch (e) {
@@ -493,6 +518,9 @@ router.patch('/:taskId/items/:itemId/poh', async (req, res) => {
     );
     if (itemRes.rows.length === 0) return res.status(404).json({ error: 'Item not found' });
     const item = itemRes.rows[0];
+    // Committed items are locked (e.g. after Send Back to Store): their
+    // change already reached Shopify and a new value would never be re-applied.
+    if (item.is_committed) return res.status(400).json({ error: 'This item was already committed and can no longer be changed.' });
 
     const isCorrect = item.soh !== null && pohVal === item.soh;
 
@@ -514,6 +542,10 @@ router.patch('/:taskId/items/:itemId/scan', async (req, res) => {
   try {
     const { itemId } = req.params;
     const { scan_history, poh, soh } = req.body;
+    const lock = await pool.query('SELECT is_committed FROM task_items WHERE id = $1', [itemId]);
+    if (lock.rows[0] && lock.rows[0].is_committed) {
+      return res.status(400).json({ error: 'This item was already committed and can no longer be changed.' });
+    }
     // is_correct 不再信任前端传来的值，服务端根据 poh === soh 重新计算，
     // 避免前端逻辑错误（例如按"最后一次操作类型"而非"数量是否一致"判断）污染数据库。
     const isCorrect = soh !== null && soh !== undefined && poh === soh;
@@ -549,10 +581,15 @@ router.patch('/:taskId/items/:itemId/scan-count', async (req, res) => {
     const { taskId, itemId } = req.params;
     const result = await pool.query(
       `UPDATE task_items SET scan_count = scan_count + 1, ever_scanned = TRUE
-       WHERE id = $1 AND task_id = $2 RETURNING id, scan_count`,
+       WHERE id = $1 AND task_id = $2 AND is_committed = FALSE RETURNING id, scan_count`,
       [itemId, taskId]
     );
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Item not found' });
+    if (result.rows.length === 0) {
+      // Committed (locked) items keep their tally unchanged.
+      const cur = await pool.query('SELECT id, scan_count FROM task_items WHERE id = $1 AND task_id = $2', [itemId, taskId]);
+      if (cur.rows.length === 0) return res.status(404).json({ error: 'Item not found' });
+      return res.json(cur.rows[0]);
+    }
     res.json(result.rows[0]);
   } catch (e) {
     console.error('PATCH /:taskId/items/:itemId/scan-count error:', e);
@@ -568,7 +605,7 @@ router.patch('/:taskId/items/:itemId/scan-count', async (req, res) => {
 router.patch('/:id/restart-scan', async (req, res) => {
   try {
     const { id } = req.params;
-    await pool.query('UPDATE task_items SET scan_count = 0, ever_scanned = FALSE WHERE task_id = $1', [id]);
+    await pool.query('UPDATE task_items SET scan_count = 0, ever_scanned = FALSE WHERE task_id = $1 AND is_committed = FALSE', [id]);
     res.json({ success: true });
   } catch (e) {
     console.error('PATCH /:id/restart-scan error:', e);
@@ -607,6 +644,7 @@ router.patch('/:id/complete-scan', async (req, res) => {
     const warnings = [];
 
     for (const item of items.rows) {
+      if (item.is_committed) continue; // locked — already applied to Shopify
       try {
         const info = await fetchInventoryForBarcode(client, item.barcode, shopifyLocationId);
         if (!info) {
@@ -637,28 +675,9 @@ router.patch('/:id/complete-scan', async (req, res) => {
     // reusing the `items` fetched at the top of this handler) so the frozen
     // snapshot has the final soh/poh/is_correct values just written above,
     // not the pre-scan-complete state.
-    try {
-      const finalItemsRes = await pool.query('SELECT * FROM task_items WHERE task_id = $1 ORDER BY id', [id]);
-      const { insertManagerHistory } = require('./managerHistory');
-      await insertManagerHistory({
-        kind: 'task',
-        location: task.rows[0].location,
-        ref_no: task.rows[0].task_no,
-        label: 'Submitted',
-        summary: { types: task.rows[0].types },
-        detail: {
-          task_no: task.rows[0].task_no,
-          types: task.rows[0].types,
-          location: task.rows[0].location,
-          scan_count_mode: task.rows[0].scan_count_mode,
-          notes: task.rows[0].notes,
-          task_created_at: task.rows[0].created_at,
-          items: finalItemsRes.rows,
-        },
-      });
-    } catch (histErr) {
-      console.error(`Failed to record manager history for task ${id} complete-scan:`, histErr.message);
-    }
+    // (Since 2026-09-24: one history row per task that follows its latest
+    // state — see syncTaskHistory above.)
+    await syncTaskHistory(id, { bumpCreatedAt: true });
 
     if (warnings.length > 0) return res.json({ success: true, warnings });
     res.json({ success: true });
@@ -680,6 +699,38 @@ router.delete('/:taskId/items', async (req, res) => {
     res.json({ success: true });
   } catch (e) {
     console.error('DELETE /api/tasks/:taskId/items error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PATCH /api/tasks/:id/send-back — buyer "Send Back to Store" (2026-09-24,
+// Hera). reviewing → counting, so the task is active again on the store's
+// list and the manager can keep counting and re-submit. Counts are kept.
+// Already-committed items stay locked (see the guards on /poh, /scan,
+// /scan-count, /restart-scan and /complete-scan).
+router.patch('/:id/send-back', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const taskRes = await pool.query('SELECT * FROM tasks WHERE id = $1', [id]);
+    const task = taskRes.rows[0];
+    if (!task) return res.status(404).json({ error: 'Task not found' });
+    if (task.status !== 'reviewing') return res.status(400).json({ error: 'Only a task in reviewing can be sent back.' });
+    if (task.committing) {
+      const startedAt = task.commit_started_at ? new Date(task.commit_started_at).getTime() : 0;
+      if (Date.now() - startedAt < TASK_COMMIT_STALE_MS) {
+        return res.status(409).json({ error: 'This task is being committed — wait for it to finish.' });
+      }
+    }
+    const notes = Array.isArray(task.notes) ? task.notes : [];
+    const updatedNotes = [...notes, { text: 'Sent back to store', created_at: new Date().toISOString() }];
+    await pool.query(
+      `UPDATE tasks SET status = 'counting', notes = $1, updated_at = NOW() WHERE id = $2 AND status = 'reviewing'`,
+      [JSON.stringify(updatedNotes), id]
+    );
+    await syncTaskHistory(id);
+    res.json({ success: true });
+  } catch (e) {
+    console.error('PATCH /api/tasks/:id/send-back error:', e);
     res.status(500).json({ error: e.message });
   }
 });

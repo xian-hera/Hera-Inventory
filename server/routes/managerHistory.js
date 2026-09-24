@@ -26,6 +26,33 @@ async function insertManagerHistory({ kind, location, ref_no, label, summary, de
   );
 }
 
+// One History row per task (2026-09-24, Hera): Weekly Inventory Count keeps
+// a single entry per task that always follows the task's latest state —
+// re-submitted after "Send Back to Store", buyer commit, etc. Updates the
+// newest existing row for (kind, location, ref_no) and drops any older
+// duplicates; inserts when there is none. bumpCreatedAt moves the row's
+// date (and its 15-day retention clock) to now — used on manager submits,
+// not on buyer-side updates.
+async function upsertManagerHistory({ kind, location, ref_no, label, summary, detail, bumpCreatedAt = false }) {
+  const existing = await pool.query(
+    `SELECT id FROM manager_history WHERE kind = $1 AND location = $2 AND ref_no = $3 ORDER BY created_at DESC, id DESC`,
+    [kind, location, ref_no]
+  );
+  if (existing.rows.length === 0) {
+    await insertManagerHistory({ kind, location, ref_no, label, summary, detail });
+    return;
+  }
+  const keepId = existing.rows[0].id;
+  await pool.query(
+    `UPDATE manager_history
+        SET label = $2, summary = $3, detail = $4${bumpCreatedAt ? ', created_at = NOW()' : ''}
+      WHERE id = $1`,
+    [keepId, label, JSON.stringify(summary || {}), JSON.stringify(detail || {})]
+  );
+  const extra = existing.rows.slice(1).map(r => r.id);
+  if (extra.length) await pool.query('DELETE FROM manager_history WHERE id = ANY($1)', [extra]);
+}
+
 // Lazy cleanup (no cron job) — run on every list read, same pattern box_pos'
 // 90-day retention (boxPo.js) and po_invoices' 200-row retention use.
 async function pruneExpired() {
@@ -68,4 +95,4 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-module.exports = { router, insertManagerHistory };
+module.exports = { router, insertManagerHistory, upsertManagerHistory };
