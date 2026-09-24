@@ -4,6 +4,7 @@ import {
 } from '@shopify/polaris';
 import { useNavigate, useParams } from 'react-router-dom';
 import { StatusBadge } from './transferStatus';
+import MobileModalSafeArea from '../../components/MobileModalSafeArea';
 
 // Shared Loading / Pending / Good to go / In transit detail page — used by
 // BOTH Warehouse (HQ-origin card, see WarehouseTransferDetail.js) and Manager
@@ -457,6 +458,8 @@ function TransferPrepDetail({ role, showWigNumber, backPath, dispatchLabel }) {
             </BlockStack>
           </Layout.Section>
         </Layout>
+      {/* Lift Polaris modals above Shopify's Android bottom buttons (2026-09-24) */}
+      <MobileModalSafeArea />
       </Page>
     </div>
   );

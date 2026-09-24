@@ -774,7 +774,7 @@ function ManagerTaskDetail() {
           }}>
             <div style={{
               position: 'fixed', top: '50%', left: '16px', right: '16px',
-              transform: 'translateY(-50%)',
+              transform: 'translateY(-50%)', maxHeight: 'calc(100vh - 176px)', overflowY: 'auto',
               background: 'white', borderRadius: '12px', padding: '24px',
               maxWidth: '400px', margin: '0 auto', zIndex: 1001,
             }}>
@@ -837,7 +837,7 @@ function ManagerTaskDetail() {
           }}>
             <div style={{
               position: 'fixed', top: '50%', left: '16px', right: '16px',
-              transform: 'translateY(-50%)',
+              transform: 'translateY(-50%)', maxHeight: 'calc(100vh - 176px)', overflowY: 'auto',
               background: 'white', borderRadius: '12px', padding: '24px',
               maxWidth: '480px', margin: '0 auto', zIndex: 1001,
             }}>

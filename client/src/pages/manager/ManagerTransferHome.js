@@ -194,6 +194,10 @@ function ManagerTransferHome() {
           </BlockStack>
         </Layout.Section>
       </Layout>
+      {/* Bottom safe area (2026-09-24, Hera): keeps the last content above
+          Shopify's native bottom buttons on Android; same 80px spacer as the
+          other manager pages, on every device. */}
+      <div style={{ height: 'var(--shopify-safe-area-inset-bottom, 80px)' }} aria-hidden="true" />
     </Page>
   );
 }

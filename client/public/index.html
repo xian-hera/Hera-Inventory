@@ -46,10 +46,12 @@
          Manager 首页（ManagerHome.js）这三个页面也要加同样的底部留白，所以改成了这个更
          通用的类名，四个页面共用同一条规则、同一个 96px 数值——这个数值本身还是最早那次
          的估计值，没有在真机上量过，等 Hera 确认这个高度够不够用。 */
-      @media (max-width: 767px) {
-        .mobile-bottom-safe-area {
-          height: 96px;
-        }
+      /* 2026-09-24, Hera: unified with the inline spacers used on the other
+         manager pages — 80px (or Shopify's own safe-area inset when it
+         provides one) on EVERY device, no longer phone-only / 96px. The class
+         name is kept so the pages already using it need no change. */
+      .mobile-bottom-safe-area {
+        height: var(--shopify-safe-area-inset-bottom, 80px);
       }
     </style>
   </head>

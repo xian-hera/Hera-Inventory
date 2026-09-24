@@ -4,6 +4,7 @@ import {
 } from '@shopify/polaris';
 import { useNavigate, useParams } from 'react-router-dom';
 import { StatusBadge } from './transferStatus';
+import MobileModalSafeArea from '../../components/MobileModalSafeArea';
 
 // Same keydown-buffer barcode-scanner listening pattern as
 // ManagerPOReceivingDetail.js — kept as its own local copy per this
@@ -609,7 +610,7 @@ function TransferReceivingDetail({ role, backPath }) {
           }}>
             <div style={{
               position: 'fixed', top: '50%', left: '16px', right: '16px',
-              transform: 'translateY(-50%)',
+              transform: 'translateY(-50%)', maxHeight: 'calc(100vh - 176px)', overflowY: 'auto',
               background: 'white', borderRadius: '12px', padding: '24px',
               maxWidth: '480px', margin: '0 auto', zIndex: 1001,
             }}>
@@ -705,6 +706,8 @@ function TransferReceivingDetail({ role, backPath }) {
             </div>
           </div>
         )}
+      {/* Lift Polaris modals above Shopify's Android bottom buttons (2026-09-24) */}
+      <MobileModalSafeArea />
       </Page>
     </div>
   );

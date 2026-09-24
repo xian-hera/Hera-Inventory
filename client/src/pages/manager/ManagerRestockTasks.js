@@ -4,6 +4,7 @@ import {
   DataTable, Checkbox, BlockStack,
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
+import MobileModalSafeArea from '../../components/MobileModalSafeArea';
 
 // Restock tasks (2026-09-24, Hera) — a layer above the Restock page, modeled
 // on ManagerLabelPrintTasks.js. Several managers at the same location can
@@ -90,7 +91,7 @@ function ManagerRestockTasks() {
 
   return (
     <Page
-      title={`Restock${location ? ` — ${location}` : ''}`}
+      title="Restock"
       backAction={{ onAction: () => navigate('/manager') }}
       primaryAction={{ content: 'New task', onAction: () => setShowNew(true), disabled: !location }}
       secondaryActions={selectedIds.length > 0 ? [{
@@ -163,6 +164,12 @@ function ManagerRestockTasks() {
           <Text>Delete {selectedIds.length} selected task{selectedIds.length > 1 ? 's' : ''} and all their items? This cannot be undone.</Text>
         </Modal.Section>
       </Modal>
+      {/* Bottom safe area (2026-09-24, Hera): keeps the last content above
+          Shopify's native bottom buttons on Android; same 80px spacer as the
+          other manager pages, on every device. */}
+      <div style={{ height: 'var(--shopify-safe-area-inset-bottom, 80px)' }} aria-hidden="true" />
+      {/* Lift Polaris modals above Shopify's Android bottom buttons (2026-09-24) */}
+      <MobileModalSafeArea />
     </Page>
   );
 }

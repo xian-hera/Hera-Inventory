@@ -248,7 +248,7 @@ function AddDemoModal({ data, loading, submitting, error, onClose, onSubmit }) {
         style={{
           background: 'white', borderRadius: '16px', padding: '24px',
           width: 'calc(100% - 32px)', maxWidth: '460px',
-          maxHeight: '90vh', overflowY: 'auto', position: 'relative',
+          maxHeight: 'calc(100vh - 176px)', overflowY: 'auto', position: 'relative',
           cursor: 'default',
         }}
       >

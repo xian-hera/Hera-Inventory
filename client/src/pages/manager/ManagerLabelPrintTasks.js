@@ -5,6 +5,7 @@ import {
   DataTable, Checkbox,
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
+import MobileModalSafeArea from '../../components/MobileModalSafeArea';
 
 function formatDate(str) {
   if (!str) return '';
@@ -248,6 +249,9 @@ function ManagerLabelPrintTasks() {
         </Layout.Section>
       </Layout>
 
+      {/* Lift the Polaris modals above Shopify's Android bottom buttons (2026-09-24) */}
+      <MobileModalSafeArea />
+
       {/* New task modal */}
       <Modal
         open={showNew}
@@ -286,6 +290,10 @@ function ManagerLabelPrintTasks() {
           </Text>
         </Modal.Section>
       </Modal>
+      {/* Bottom safe area (2026-09-24, Hera): keeps the last content above
+          Shopify's native bottom buttons on Android; same 80px spacer as the
+          other manager pages, on every device. */}
+      <div style={{ height: 'var(--shopify-safe-area-inset-bottom, 80px)' }} aria-hidden="true" />
     </Page>
   );
 }

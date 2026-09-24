@@ -6,6 +6,7 @@ import {
   DataTable,
 } from '@shopify/polaris';
 import { useParams, useNavigate } from 'react-router-dom';
+import MobileModalSafeArea from '../../components/MobileModalSafeArea';
 
 const CUSTOM_NAME_NAMESPACE = 'custom';
 const CUSTOM_NAME_KEY = 'name';
@@ -849,6 +850,12 @@ ${barcodeScript}</head><body>${allLabels}</body></html>`;
           <Text>Remove {selectedIds.length} selected item{selectedIds.length !== 1 ? 's' : ''} from the print task?</Text>
         </Modal.Section>
       </Modal>
+      {/* Bottom safe area (2026-09-24, Hera): keeps the last content above
+          Shopify's native bottom buttons on Android; same 80px spacer as the
+          other manager pages, on every device. */}
+      <div style={{ height: 'var(--shopify-safe-area-inset-bottom, 80px)' }} aria-hidden="true" />
+      {/* Lift Polaris modals above Shopify's Android bottom buttons (2026-09-24) */}
+      <MobileModalSafeArea />
     </Page>
   );
 }

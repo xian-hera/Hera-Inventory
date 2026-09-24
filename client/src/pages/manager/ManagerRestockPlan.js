@@ -398,7 +398,7 @@ function ManagerRestockPlan() {
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
           background: 'rgba(0,0,0,0.6)', zIndex: 1000 }}>
           <div style={{ position: 'fixed', top: '50%', left: '16px', right: '16px',
-            transform: 'translateY(-50%)', background: 'white', borderRadius: '12px', padding: '24px',
+            transform: 'translateY(-50%)', maxHeight: 'calc(100vh - 176px)', overflowY: 'auto', background: 'white', borderRadius: '12px', padding: '24px',
             maxWidth: '480px', margin: '0 auto', zIndex: 1001 }}>
             {loadingSoh ? <InlineStack align="center"><Spinner /></InlineStack> : (
               <>
@@ -459,7 +459,7 @@ function ManagerRestockPlan() {
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
           background: 'rgba(0,0,0,0.6)', zIndex: 1000 }}>
           <div style={{ position: 'fixed', top: '50%', left: '16px', right: '16px',
-            transform: 'translateY(-50%)', background: 'white', borderRadius: '12px', padding: '24px',
+            transform: 'translateY(-50%)', maxHeight: 'calc(100vh - 176px)', overflowY: 'auto', background: 'white', borderRadius: '12px', padding: '24px',
             maxWidth: '400px', margin: '0 auto', zIndex: 1001 }}>
             <button onClick={() => setShowAddByTyping(false)} style={{ position: 'absolute',
               top: '12px', right: '12px', background: 'none', border: 'none',
@@ -533,6 +533,10 @@ function ManagerRestockPlan() {
           </div>
         </div>
       )}
+      {/* Bottom safe area (2026-09-24, Hera): keeps the last content above
+          Shopify's native bottom buttons on Android; same 80px spacer as the
+          other manager pages, on every device. */}
+      <div style={{ height: 'var(--shopify-safe-area-inset-bottom, 80px)' }} aria-hidden="true" />
     </Page>
   );
 }
