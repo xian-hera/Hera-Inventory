@@ -5,6 +5,7 @@ import {
 } from '@shopify/polaris';
 import { useNavigate, useParams } from 'react-router-dom';
 import { fetchLocationMap } from '../shared/locationMap';
+import useKeyboardInset from '../../components/useKeyboardInset';
 
 const TYPE_LABEL_MAP = {
   'Hair & Skin Care': 'Care',
@@ -96,6 +97,9 @@ function ManagerTaskDetail() {
   const [showCompleteConfirm, setShowCompleteConfirm] = useState(false);
   const [restarting, setRestarting]                   = useState(false);
   const [completingScan, setCompletingScan]           = useState(false);
+  // Keep the Scan / Type-in-SKU popups inside the visible area when the
+  // soft keyboard opens (2026-09-24, Hera — trial page).
+  useKeyboardInset(!!popupItem || showSkuInput);
 
   const barcodeBuffer = useRef('');
   const barcodeTimer  = useRef(null);
@@ -773,8 +777,8 @@ function ManagerTaskDetail() {
             background: 'rgba(0,0,0,0.6)', zIndex: 1000,
           }}>
             <div style={{
-              position: 'fixed', top: '50%', left: '16px', right: '16px',
-              transform: 'translateY(-50%)', maxHeight: 'calc(100vh - 176px)', overflowY: 'auto',
+              position: 'fixed', top: 'var(--kb-center-y, 50%)', left: '16px', right: '16px',
+              transform: 'translateY(-50%)', maxHeight: 'var(--kb-avail-h, calc(100vh - 176px))', overflowY: 'auto',
               background: 'white', borderRadius: '12px', padding: '24px',
               maxWidth: '400px', margin: '0 auto', zIndex: 1001,
             }}>
@@ -836,8 +840,8 @@ function ManagerTaskDetail() {
             background: 'rgba(0,0,0,0.6)', zIndex: 1000,
           }}>
             <div style={{
-              position: 'fixed', top: '50%', left: '16px', right: '16px',
-              transform: 'translateY(-50%)', maxHeight: 'calc(100vh - 176px)', overflowY: 'auto',
+              position: 'fixed', top: 'var(--kb-center-y, 50%)', left: '16px', right: '16px',
+              transform: 'translateY(-50%)', maxHeight: 'var(--kb-avail-h, calc(100vh - 176px))', overflowY: 'auto',
               background: 'white', borderRadius: '12px', padding: '24px',
               maxWidth: '480px', margin: '0 auto', zIndex: 1001,
             }}>

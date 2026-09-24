@@ -53,6 +53,36 @@
       .mobile-bottom-safe-area {
         height: var(--shopify-safe-area-inset-bottom, 80px);
       }
+      /* 2026-09-24, Hera: on phones, Polaris (13.9.5) itself moves the page
+         title onto its own line under the back arrow whenever a page has a
+         back button (its "mediumTitle"/"longTitle" header rules turn the
+         header row into a two-row grid below 48em / 65em). Hera wants the
+         title right of the back arrow, like on desktop. These rules keep
+         Polaris's grid but put back arrow, title and the "..." actions on
+         one row; a long title wraps inside its own column. Pages without a
+         back arrow are not affected. Applies to every frontend at phone
+         width, since the rule is global. */
+      @media (max-width: 47.9975em) {
+        .Polaris-Page-Header--mediumTitle:not(.Polaris-Page-Header--noBreadcrumbs) .Polaris-Page-Header__Row {
+          grid-template-columns: auto minmax(0, 1fr) auto;
+          grid-template-areas: 'breadcrumbs title actions';
+          column-gap: var(--p-space-100);
+          align-items: center;
+        }
+      }
+      @media (max-width: 64.9975em) {
+        .Polaris-Page-Header--longTitle:not(.Polaris-Page-Header--noBreadcrumbs) .Polaris-Page-Header__Row {
+          grid-template-columns: auto minmax(0, 1fr) auto;
+          grid-template-areas: 'breadcrumbs title actions';
+          column-gap: var(--p-space-100);
+          align-items: center;
+        }
+      }
+      .Polaris-Page-Header--mediumTitle:not(.Polaris-Page-Header--noBreadcrumbs) .Polaris-Page-Header__TitleWrapper,
+      .Polaris-Page-Header--longTitle:not(.Polaris-Page-Header--noBreadcrumbs) .Polaris-Page-Header__TitleWrapper {
+        margin-top: 0;
+        min-width: 0;
+      }
     </style>
   </head>
   <body>

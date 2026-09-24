@@ -137,7 +137,8 @@ function ManagerLabelPrintTasks() {
 
   return (
     <Page
-      title={`Label print tasks${location ? ` — ${location}` : ''}`}
+      // Plain title, no location suffix (2026-09-24, Hera).
+      title="Label print tasks"
       backAction={{ onAction: () => navigate('/manager') }}
       primaryAction={{ content: 'New task', onAction: () => setShowNew(true) }}
       secondaryActions={[
