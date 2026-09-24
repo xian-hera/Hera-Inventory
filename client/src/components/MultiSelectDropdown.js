@@ -1,7 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
 import ReactDOM from 'react-dom';
 
-function MultiSelectDropdown({ label, options, selected, onChange, placeholder = 'ALL', showSelectAll = false }) {
+// formatDisplay (optional, 2026-09-24): custom text for the closed button,
+// called as formatDisplay(selected, allValues). Every existing caller omits
+// it and keeps the default "comma-joined selected labels" text.
+function MultiSelectDropdown({ label, options, selected, onChange, placeholder = 'ALL', showSelectAll = false, formatDisplay }) {
   const [open, setOpen] = useState(false);
   const [dropStyle, setDropStyle] = useState({});
   const btnRef = useRef(null);
@@ -64,7 +67,9 @@ function MultiSelectDropdown({ label, options, selected, onChange, placeholder =
     if (!opt) return value;
     return typeof opt === 'string' ? opt : opt.label;
   };
-  const displayText = selected.length === 0 ? placeholder : selected.map(labelForValue).join(', ');
+  const displayText = formatDisplay
+    ? formatDisplay(selected, allValues)
+    : (selected.length === 0 ? placeholder : selected.map(labelForValue).join(', '));
 
   return (
     <div style={{ position: 'relative', minWidth: '140px' }}>

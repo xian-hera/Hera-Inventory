@@ -386,8 +386,7 @@ function BuyerImportProducts() {
                   <InlineStack gap="400" blockAlign="end" wrap>
                     {PRESETS.map(p => (p.key === 'channel' ? (
                       <div key={p.key} style={{ minWidth: 170 }}>
-                        <Select label="Channel" options={[{ label: 'Point of Sale', value: 'Point of Sale' }]} value="Point of Sale" onChange={() => {}} disabled
-                          helpText="Other channels can't be chosen here." />
+                        <Select label="Channel" options={[{ label: 'Point of Sale', value: 'Point of Sale' }]} value="Point of Sale" onChange={() => {}} disabled />
                       </div>
                     ) : (
                       <div key={p.key} style={{ minWidth: 150 }}>
@@ -408,6 +407,13 @@ function BuyerImportProducts() {
                         onChange={setLocations}
                         placeholder="None"
                         showSelectAll
+                        // Shown the other way round (Hera 2026-09-24): name the
+                        // locations that are NOT selected.
+                        formatDisplay={(sel, all) => {
+                          if (!sel.length) return 'None';
+                          const excluded = all.filter(v => !sel.includes(v));
+                          return excluded.length ? `Excluding ${excluded.join(', ')}` : 'All locations';
+                        }}
                       />
                     </div>
                   </InlineStack>
