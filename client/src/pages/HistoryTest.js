@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Page, Card, BlockStack, Text, Banner, Spinner } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
+import { fetchLocationMap } from './shared/locationMap';
 
 const TEST_BARCODE = '827298696117';
 
@@ -15,8 +16,7 @@ function HistoryTest() {
   useEffect(() => {
     const fetch_ = async () => {
       try {
-        const locRes  = await fetch('/api/shopify/locations');
-        const locData = await locRes.json();
+        const locData = await fetchLocationMap(); // shared location map (2026-09-24)
         const loc     = locData.find(l => l.name === location);
         const locationId = loc ? encodeURIComponent(loc.id) : '';
 

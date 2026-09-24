@@ -4,6 +4,7 @@ import {
   Text, Banner, Spinner, TextField, Tooltip
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
+import { fetchLocationMap } from '../shared/locationMap';
 
 function BuyerTransferCreate() {
   const navigate = useNavigate();
@@ -44,8 +45,7 @@ function BuyerTransferCreate() {
   const [createError, setCreateError] = useState('');
 
   useEffect(() => {
-    fetch('/api/shopify/locations')
-      .then(r => r.json())
+    fetchLocationMap() // shared location map (2026-09-24)
       .then(data => setLocations(Array.isArray(data) ? data : []))
       .catch(() => setLocations([]))
       .finally(() => setLocationsLoading(false));

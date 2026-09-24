@@ -4,6 +4,7 @@ import {
   Text, Checkbox, Banner, Spinner
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
+import { fetchLocationMap } from '../shared/locationMap';
 
 // ─── Built-in reasons ─────────────────────────────────────────────────────────
 const BUILT_IN_REASONS = [
@@ -523,8 +524,7 @@ function ManagerStockLosses() {
     setLoadingSoh(true);
     setError('');
     try {
-      const locRes  = await fetch('/api/shopify/locations');
-      const locData = await locRes.json();
+      const locData = await fetchLocationMap(); // shared location map (2026-09-24)
       const loc     = locData.find(l => l.name === location);
       if (!loc) throw new Error('Location not found');
       const res  = await fetch(`/api/shopify/inventory?barcode=${encodeURIComponent(barcode)}&locationId=${encodeURIComponent(loc.id)}`);
@@ -545,8 +545,7 @@ function ManagerStockLosses() {
     setSkuSearching(true);
     setSkuError('');
     try {
-      const locRes  = await fetch('/api/shopify/locations');
-      const locData = await locRes.json();
+      const locData = await fetchLocationMap(); // shared location map (2026-09-24)
       const loc     = locData.find(l => l.name === location);
       if (!loc) throw new Error('Location not found');
       const res  = await fetch(`/api/shopify/inventory?barcode=${encodeURIComponent(skuInput.trim())}&locationId=${encodeURIComponent(loc.id)}`);

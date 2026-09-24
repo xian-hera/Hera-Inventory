@@ -21,6 +21,15 @@ const initDatabase = async () => {
       )
     `);
 
+    // Migration: is_active on location_map (2026-09-24, Hera — shared location
+    // map). location_map is now the single source of every location list in
+    // the frontend (GET /api/shopify/location-map). Sync Locations never
+    // deletes a row — a location that is deactivated/removed/renamed in
+    // Shopify just gets is_active = false so it disappears from dropdowns,
+    // while old tasks/POs/transfers that still look up its shopify id by
+    // name keep working. Existing rows default to TRUE until the first sync.
+    await client.query(`ALTER TABLE location_map ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE`).catch(() => {});
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS tasks (
         id SERIAL PRIMARY KEY,

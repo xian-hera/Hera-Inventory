@@ -4,6 +4,7 @@ import {
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import { STATUS_LABELS, StatusBadge, HoldBadge, AutoCommittedBadge } from '../shared/transferStatus';
+import { fetchLocationMap } from '../shared/locationMap';
 
 // Buyer's Ongoing Transfer list — every transfer, all statuses (this page
 // used to exclude 'committed'/'archived' server-side; as of 2026-09-16 the
@@ -149,8 +150,7 @@ function BuyerTransferOngoing() {
   // From/To filter options — full Shopify location list, not just whatever
   // shows up in the current transfers. Defaults to "everything checked".
   useEffect(() => {
-    fetch('/api/shopify/locations')
-      .then(res => res.json())
+    fetchLocationMap() // shared location map (2026-09-24)
       .then(data => {
         const names = (Array.isArray(data) ? data : []).map(l => l.name).filter(Boolean);
         setLocationNames(names);

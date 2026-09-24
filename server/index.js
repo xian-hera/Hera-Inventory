@@ -82,6 +82,13 @@ const startServer = async () => {
       console.log(`Server running on port ${PORT}`);
       console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
     });
+    // Shared location map (2026-09-24): refresh location_map from Shopify once
+    // per boot so a deploy never serves a stale list. Fire-and-forget — a
+    // failure here only logs; the existing rows stay as they were and the
+    // Buyer Settings "Sync Locations" button can retry.
+    require('./routes/shopify').syncLocationMap()
+      .then(r => console.log(`[location-map] synced at startup: ${r.active.length} active`))
+      .catch(e => console.error('[location-map] startup sync failed:', e.message));
   } catch (e) {
     console.error('Failed to start server:', e);
     process.exit(1);

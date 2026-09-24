@@ -5,12 +5,11 @@ import {
   Text, Checkbox, Banner, Button, Modal, Tooltip
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
+import { useLocationMap } from '../shared/locationMap';
 
-const LOCATIONS = [
-  'MTL01','MTL02','MTL03','MTL04','MTL05','MTL06',
-  'MTL07','MTL08','MTL09','MTL10','MTL11',
-  'EDM01','EDM02','CAL01','OTT01','OTT02','OTT03','QC01','HQ'
-];
+// Location list: comes from the shared location map (pages/shared/locationMap.js,
+// 2026-09-24). The hardcoded 19-code LOCATIONS constant that used to live here
+// (the display order of the per-location cards below) was removed.
 
 // Import — one-time bulk migration tool (Hera, 2026-09-15: bring in the wig
 // demo list currently tracked elsewhere), removed 2026-09-16 after that
@@ -56,6 +55,7 @@ function BuyerWigDemo() {
   // location codes; a location's full list only renders while its code is
   // in this set.
   const [expandedLocations, setExpandedLocations] = useState(new Set());
+  const { names: locationNames, loading: locationsLoading } = useLocationMap();
   const toggleLocationExpanded = (loc) => {
     setExpandedLocations(prev => {
       const next = new Set(prev);
@@ -237,14 +237,19 @@ function BuyerWigDemo() {
   };
 
   // Group into one card per location — only locations that currently have at
-  // least one demo get a card, in LOCATIONS order (not just whatever order
-  // rows happen to come back in).
+  // least one demo get a card, in the shared location map's order (not just
+  // whatever order rows happen to come back in). Any location that has demos
+  // but isn't in the shared list (e.g. a store deactivated in Shopify, or the
+  // list failed to load) is appended at the end rather than silently hidden.
   const byLocation = {};
   items.forEach(item => {
     if (!byLocation[item.location]) byLocation[item.location] = [];
     byLocation[item.location].push(item);
   });
-  const locationsWithDemos = LOCATIONS.filter(loc => byLocation[loc]?.length > 0);
+  const locationsWithDemos = locationsLoading ? [] : [
+    ...locationNames.filter(loc => byLocation[loc]?.length > 0),
+    ...[...new Set(items.map(i => i.location).filter(Boolean))].filter(loc => !locationNames.includes(loc)).sort(),
+  ];
 
   return (
     <Page title="Wig DEMO" backAction={{ onAction: () => navigate('/buyer') }}>
@@ -294,7 +299,7 @@ function BuyerWigDemo() {
               </InlineStack>
             </InlineStack>
 
-            {loading ? (
+            {(loading || locationsLoading) ? (
               <Text alignment="center" tone="subdued">Loading...</Text>
             ) : locationsWithDemos.length === 0 ? (
               <Card>

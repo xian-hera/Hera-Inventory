@@ -5,12 +5,13 @@ import {
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import MultiSelectDropdown from '../../components/MultiSelectDropdown';
+import { useLocationMap } from '../shared/locationMap';
 
-const LOCATIONS = [
-  'MTL01','MTL02','MTL03','MTL04','MTL05','MTL06',
-  'MTL07','MTL08','MTL09','MTL10','MTL11',
-  'EDM01','EDM02','CAL01','OTT01','OTT02','OTT03','QC01','HQ'
-];
+// Location list: comes from the shared location map (pages/shared/locationMap.js,
+// 2026-09-24). The hardcoded 19-code LOCATIONS constant that used to live here
+// (Location filter options + the group order used by the always-on location
+// sort below) was removed; the shared map is already in that same
+// MTL/EDM/CAL/OTT/QC/HQ order.
 
 const STATUS_OPTIONS = ['counting','reviewing','committed','auto_committed','draft','archived'];
 
@@ -53,9 +54,9 @@ function getStatusBadge(status) {
 
 // Always-on location sort (item 1: the old toggleable Sort button was
 // removed — the list is now unconditionally grouped by location). Order
-// follows LOCATIONS' own M/E/C/O/Q/H group sequence (MTL, EDM, CAL, OTT,
-// QC, HQ prefixes), which is already how that array is laid out above.
-const LOCATION_ORDER = new Map(LOCATIONS.map((loc, i) => [loc, i]));
+// follows the shared location map's own M/E/C/O/Q/H group sequence (MTL,
+// EDM, CAL, OTT, QC, HQ prefixes) — the LOCATION_ORDER lookup is now built
+// inside the component from that list (see locationOrder below).
 
 // Row-level divider styling — this needs a plain <table> (not Polaris
 // DataTable) to render as one continuous line: DataTable lays out each cell
@@ -89,6 +90,8 @@ function CountingTasksList() {
   const [selectedStatuses, setSelectedStatuses]   = useState(['counting','reviewing','committed','auto_committed','draft']);
   const [date, setDate]                           = useState('ALL');
   const [selectedIds, setSelectedIds]             = useState([]);
+  const { names: locationNames } = useLocationMap();
+  const locationOrder = useMemo(() => new Map(locationNames.map((loc, i) => [loc, i])), [locationNames]);
 
   const fetchTasks = useCallback(async () => {
     setLoading(true);
@@ -116,11 +119,11 @@ function CountingTasksList() {
   // API) intact.
   const displayedTasks = useMemo(() => {
     return [...tasks].sort((a, b) => {
-      const ai = LOCATION_ORDER.has(a.location) ? LOCATION_ORDER.get(a.location) : LOCATIONS.length;
-      const bi = LOCATION_ORDER.has(b.location) ? LOCATION_ORDER.get(b.location) : LOCATIONS.length;
+      const ai = locationOrder.has(a.location) ? locationOrder.get(a.location) : locationNames.length;
+      const bi = locationOrder.has(b.location) ? locationOrder.get(b.location) : locationNames.length;
       return ai - bi;
     });
-  }, [tasks]);
+  }, [tasks, locationOrder, locationNames.length]);
 
   const toggleSelectAll = () => {
     setSelectedIds(selectedIds.length === tasks.length ? [] : tasks.map(t => t.id));
@@ -176,7 +179,7 @@ function CountingTasksList() {
                 />
                 <MultiSelectDropdown
                   label="Location"
-                  options={LOCATIONS}
+                  options={locationNames}
                   selected={selectedLocations}
                   onChange={setSelectedLocations}
                 />

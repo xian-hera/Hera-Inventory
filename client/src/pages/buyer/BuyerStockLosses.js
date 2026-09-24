@@ -5,12 +5,11 @@ import {
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import MultiSelectDropdown from '../../components/MultiSelectDropdown';
+import { useLocationMap } from '../shared/locationMap';
 
-const LOCATIONS = [
-  'MTL01','MTL02','MTL03','MTL04','MTL05','MTL06',
-  'MTL07','MTL08','MTL09','MTL10','MTL11',
-  'EDM01','EDM02','CAL01','OTT01','OTT02','OTT03','QC01','HQ'
-];
+// Location list: comes from the shared location map (pages/shared/locationMap.js,
+// 2026-09-24). The hardcoded 19-code LOCATIONS constant that used to live here
+// (the Location filter's options) was removed.
 
 // All uppercase, matching Shopify admin product types
 const TYPE_OPTIONS = [
@@ -95,6 +94,7 @@ function BuyerStockLosses() {
 
   const [selectedTypes, setSelectedTypes]       = useState([]);
   const [selectedLocations, setSelectedLocations] = useState([]);
+  const { names: locationNames } = useLocationMap();
   const [selectedStatuses, setSelectedStatuses] = useState(['reviewing', 'committed']);
   const [selectedReason, setSelectedReason]     = useState('ALL');
   const [date, setDate]                         = useState('ALL');
@@ -300,7 +300,7 @@ function BuyerStockLosses() {
                 />
                 <MultiSelectDropdown
                   label="Location"
-                  options={LOCATIONS}
+                  options={locationNames}
                   selected={selectedLocations}
                   onChange={setSelectedLocations}
                 />

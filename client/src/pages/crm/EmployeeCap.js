@@ -4,12 +4,12 @@ import {
   Text, Button, Spinner, Banner, Select, TextField, DataTable,
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
+import { useLocationMap } from '../shared/locationMap';
 
-const BRANCHES = [
-  'MTL01','MTL02','MTL03','MTL04','MTL05','MTL06',
-  'MTL07','MTL08','MTL09','MTL10','MTL11',
-  'OTT01','OTT02','OTT03','QC01','EDM01','EDM02','CAL01','HQ',
-];
+// Branch list: comes from the shared location map (pages/shared/locationMap.js,
+// 2026-09-24). The hardcoded 19-code BRANCHES constant that used to live here
+// (the Branch filter's options, in its own OTT-before-EDM order) was removed;
+// the filter now uses the shared canonical order (Hera OK'd the reorder).
 
 function EmployeeCap() {
   const navigate = useNavigate();
@@ -38,6 +38,7 @@ function EmployeeCap() {
   const [lastRefreshed,setLastRefreshed]= useState(null);
   const [season,       setSeason]       = useState('current');
   const [filterBranch, setFilterBranch] = useState('ALL');
+  const { names: branchNames } = useLocationMap();
   const [filterStatus, setFilterStatus] = useState('all');
   const [page,         setPage]         = useState(1);
   const [totalPages,   setTotalPages]   = useState(1);
@@ -241,7 +242,7 @@ function EmployeeCap() {
 
   const branchOptions = [
     { label: 'ALL', value: 'ALL' },
-    ...BRANCHES.map(b => ({ label: b, value: b })),
+    ...branchNames.map(b => ({ label: b, value: b })),
   ];
 
   const statusOptions = [

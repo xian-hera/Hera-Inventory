@@ -5,12 +5,13 @@ import {
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import MultiSelectDropdown from '../../components/MultiSelectDropdown';
+import { useLocationMap } from '../shared/locationMap';
 
-const LOCATIONS = [
-  'MTL01','MTL02','MTL03','MTL04','MTL05','MTL06',
-  'MTL07','MTL08','MTL09','MTL10','MTL11',
-  'EDM01','EDM02','CAL01','OTT01','OTT02','OTT03','QC01'
-];
+// Location list: comes from the shared location map (pages/shared/locationMap.js,
+// 2026-09-24) with HQ filtered out — this page's hardcoded list never
+// included HQ, and Hera confirmed 2026-09-24 it should stay that way. The
+// hardcoded 18-code LOCATIONS constant that used to live here (Location
+// filter options + group order for the location sort below) was removed.
 
 // 改动一：9个 Type
 const TYPE_OPTIONS = [
@@ -31,9 +32,10 @@ function typeDisplay(type) {
 
 // Always-on location sort (item 3: the old toggleable Sort-by-name button
 // was removed — the list is now unconditionally grouped by location).
-// LOCATIONS above is already laid out in M/E/C/O/Q/H group order (MTL, EDM,
-// CAL, OTT, QC prefixes; this list has no HQ entries today).
-const LOCATION_ORDER = new Map(LOCATIONS.map((loc, i) => [loc, i]));
+// The shared location map is already laid out in M/E/C/O/Q/H group order
+// (MTL, EDM, CAL, OTT, QC prefixes; HQ is filtered out on this page).
+// (The LOCATION_ORDER lookup is now built inside the component from the
+// shared map — see locationOrder below.)
 
 // Row-level divider styling — needs a plain <table> (not Polaris DataTable)
 // to render as one continuous line: DataTable lays out each cell
@@ -75,6 +77,8 @@ function ZeroQtyReport() {
   const [selectedStatuses, setSelectedStatuses] = useState(['reviewing', 'committed']);
   const [date, setDate]                         = useState('ALL');
   const [selectedIds, setSelectedIds]           = useState([]);
+  const { names: locationNames } = useLocationMap({ excludeHQ: true });
+  const locationOrder = new Map(locationNames.map((loc, i) => [loc, i]));
   // 改动五.3：每行的 adjustment 编辑值，key = report.id
   const [adjustments, setAdjustments]           = useState({});
 
@@ -213,8 +217,8 @@ function ZeroQtyReport() {
   // Always grouped/sorted by location (M/E/C/O/Q/H group order); a stable
   // sort keeps each group's original relative order intact.
   const sortedReports = [...reports].sort((a, b) => {
-    const ai = LOCATION_ORDER.has(a.location) ? LOCATION_ORDER.get(a.location) : LOCATIONS.length;
-    const bi = LOCATION_ORDER.has(b.location) ? LOCATION_ORDER.get(b.location) : LOCATIONS.length;
+    const ai = locationOrder.has(a.location) ? locationOrder.get(a.location) : locationNames.length;
+    const bi = locationOrder.has(b.location) ? locationOrder.get(b.location) : locationNames.length;
     return ai - bi;
   });
 
@@ -267,7 +271,7 @@ function ZeroQtyReport() {
                 />
                 <MultiSelectDropdown
                   label="Location"
-                  options={LOCATIONS}
+                  options={locationNames}
                   selected={selectedLocations}
                   onChange={setSelectedLocations}
                 />

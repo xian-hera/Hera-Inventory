@@ -4,6 +4,7 @@ import {
   Text, DataTable, Banner, TextField, Spinner
 } from '@shopify/polaris';
 import { useNavigate, useParams } from 'react-router-dom';
+import { fetchLocationMap } from '../shared/locationMap';
 
 const TYPE_LABEL_MAP = {
   'Hair & Skin Care': 'Care',
@@ -181,8 +182,7 @@ function ManagerTaskDetail() {
     setShowResetConfirm(false);
     setLoadingSoh(true);
     try {
-      const locRes  = await fetch('/api/shopify/locations');
-      const locData = await locRes.json();
+      const locData = await fetchLocationMap(); // shared location map (2026-09-24)
       const loc     = locData.find(l => l.name === location);
       if (!loc) throw new Error('Location not found');
       const res  = await fetch(`/api/shopify/inventory?barcode=${encodeURIComponent(item.barcode)}&locationId=${encodeURIComponent(loc.id)}`);
@@ -203,8 +203,7 @@ function ManagerTaskDetail() {
   const openHistory = async (barcode) => {
     setHistoryLoading(true);
     try {
-      const locRes  = await fetch('/api/shopify/locations');
-      const locData = await locRes.json();
+      const locData = await fetchLocationMap(); // shared location map (2026-09-24)
       const loc     = locData.find(l => l.name === location);
       const locationId = loc ? encodeURIComponent(loc.id) : '';
       const res  = await fetch(`/api/shopify/inventory-history/${encodeURIComponent(barcode)}?locationId=${locationId}`);

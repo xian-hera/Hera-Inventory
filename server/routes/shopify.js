@@ -344,35 +344,139 @@ router.get('/inventory', async (req, res) => {
   }
 });
 
-// POST /api/shopify/sync-locations
-router.post('/sync-locations', async (req, res) => {
+// ─── Shared location map (2026-09-24, Hera) ─────────────────────────────────
+// location_map is the ONE location list every frontend page reads (via GET
+// /location-map below) — it replaced the 19-code LOCATIONS constants that
+// used to be hardcoded in ~10 pages, and the per-page live calls to GET
+// /locations above. Kept up to date by syncLocationMap(): the "Sync
+// Locations" button in Buyer Settings, plus one automatic run at server
+// startup (see server/index.js) so every deploy self-heals.
+
+// Canonical display order, identical to the order the old hardcoded lists
+// used: MTL → EDM → CAL → OTT → QC → any other prefix (alphabetical) → HQ
+// last; numeric order within a prefix (MTL02 before MTL10). A brand-new
+// code like MTL12 or TOR01 slots in automatically.
+const LOCATION_PREFIX_ORDER = ['MTL', 'EDM', 'CAL', 'OTT', 'QC'];
+function locationSortKey(name) {
+  const upper = String(name || '').toUpperCase().trim();
+  if (upper === 'HQ') return [LOCATION_PREFIX_ORDER.length + 1, '', 0, upper];
+  const m = upper.match(/^([A-Z]+)(\d*)$/);
+  const prefix = m ? m[1] : upper;
+  const num = m && m[2] ? parseInt(m[2], 10) : 0;
+  const idx = LOCATION_PREFIX_ORDER.indexOf(prefix);
+  // Unknown prefixes share one group, ordered alphabetically by prefix.
+  return [idx === -1 ? LOCATION_PREFIX_ORDER.length : idx, idx === -1 ? prefix : '', num, upper];
+}
+function compareLocationNames(a, b) {
+  const ka = locationSortKey(a);
+  const kb = locationSortKey(b);
+  for (let i = 0; i < ka.length; i++) {
+    if (ka[i] < kb[i]) return -1;
+    if (ka[i] > kb[i]) return 1;
+  }
+  return 0;
+}
+
+// Pulls every Shopify location (active AND inactive, so we can tell which
+// is which) and reconciles location_map inside one transaction:
+//   - upsert name → id for every location Shopify returns, is_active = Shopify's isActive
+//   - any row whose name Shopify no longer returns (deleted / renamed) → is_active = false
+// Rows are NEVER deleted: tasks.js / poInvoices.js / reports.js / wigDemo.js
+// still resolve a stored location name to its shopify id through this table
+// for older records.
+async function syncLocationMap() {
+  const session = await getSession();
+  if (!session) throw new Error('No session');
+
+  const shopify = getShopify();
+  const client = new shopify.clients.Graphql({ session });
+  const { pool } = require('../database/init');
+
+  const query = `{
+    locations(first: 250, includeInactive: true) {
+      edges { node { id name isActive } }
+    }
+  }`;
+
+  const response = await shopifyRequest(client, query);
+  const edges = response?.data?.locations?.edges;
+  if (!Array.isArray(edges)) throw new Error('Unexpected response from Shopify locations query');
+  const locations = edges
+    .map(e => ({ id: e.node.id, name: (e.node.name || '').trim(), isActive: e.node.isActive !== false }))
+    .filter(l => l.name);
+
+  // Safety net: an empty/zero-active answer is almost certainly a Shopify-side
+  // problem, not "we closed every store" — refuse rather than hide everything.
+  if (!locations.some(l => l.isActive)) {
+    throw new Error('Shopify returned no active locations — location map left unchanged');
+  }
+
+  const db = await pool.connect();
   try {
-    const session = await getSession();
-    if (!session) return res.status(401).json({ error: 'No session' });
-
-    const shopify = getShopify();
-    const client = new shopify.clients.Graphql({ session });
-    const { pool } = require('../database/init');
-
-    const query = `{
-      locations(first: 50) {
-        edges { node { id name } }
-      }
-    }`;
-
-    const response = await shopifyRequest(client, query);
-    const locations = response.data.locations.edges.map(e => ({ id: e.node.id, name: e.node.name }));
+    await db.query('BEGIN');
+    const before = await db.query('SELECT location_name, is_active FROM location_map');
+    const wasActive = new Map(before.rows.map(r => [r.location_name, r.is_active]));
 
     for (const loc of locations) {
-      await pool.query(
-        `INSERT INTO location_map (location_name, shopify_location_id, updated_at)
-         VALUES ($1, $2, NOW())
-         ON CONFLICT (location_name) DO UPDATE SET shopify_location_id = $2, updated_at = NOW()`,
-        [loc.name, loc.id]
+      await db.query(
+        `INSERT INTO location_map (location_name, shopify_location_id, is_active, updated_at)
+         VALUES ($1, $2, $3, NOW())
+         ON CONFLICT (location_name) DO UPDATE
+           SET shopify_location_id = $2, is_active = $3, updated_at = NOW()`,
+        [loc.name, loc.id, loc.isActive]
       );
     }
+    const returnedNames = locations.map(l => l.name);
+    await db.query(
+      `UPDATE location_map SET is_active = FALSE, updated_at = NOW()
+       WHERE is_active = TRUE AND NOT (location_name = ANY($1))`,
+      [returnedNames]
+    );
+    await db.query('COMMIT');
 
-    res.json({ success: true, synced: locations });
+    const activeNow = locations.filter(l => l.isActive).map(l => l.name);
+    const added = activeNow.filter(n => wasActive.get(n) !== true);
+    const deactivated = [...wasActive.entries()]
+      .filter(([n, act]) => act === true && !activeNow.includes(n))
+      .map(([n]) => n);
+
+    return {
+      active: activeNow.sort(compareLocationNames),
+      added: added.sort(compareLocationNames),
+      deactivated: deactivated.sort(compareLocationNames),
+    };
+  } catch (e) {
+    await db.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally {
+    db.release();
+  }
+}
+
+// GET /api/shopify/location-map — active locations, canonical order.
+// Same { id, name } shape as GET /locations so pages could switch over as a
+// drop-in replacement.
+router.get('/location-map', async (req, res) => {
+  try {
+    const { pool } = require('../database/init');
+    const result = await pool.query(
+      'SELECT location_name, shopify_location_id FROM location_map WHERE is_active = TRUE'
+    );
+    const list = result.rows
+      .map(r => ({ id: r.shopify_location_id, name: r.location_name }))
+      .sort((a, b) => compareLocationNames(a.name, b.name));
+    res.json(list);
+  } catch (e) {
+    console.error('GET /api/shopify/location-map error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/shopify/sync-locations — Buyer Settings "Sync Locations" button.
+router.post('/sync-locations', async (req, res) => {
+  try {
+    const result = await syncLocationMap();
+    res.json({ success: true, ...result });
   } catch (e) {
     console.error('POST /api/shopify/sync-locations error:', e);
     res.status(500).json({ error: e.message });
@@ -1101,4 +1205,4 @@ router.post('/sync-variant-index', async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-module.exports = { router, getDepartment, fetchInventoryForBarcode };
+module.exports = { router, getDepartment, fetchInventoryForBarcode, syncLocationMap };

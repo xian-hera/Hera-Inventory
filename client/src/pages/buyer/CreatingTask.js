@@ -8,15 +8,15 @@ import { useNavigate } from 'react-router-dom';
 import MultiSelectDropdown from '../../components/MultiSelectDropdown';
 import SearchWithFilters from '../../components/SearchWithFilters';
 import InfoTooltip from '../../components/InfoTooltip';
+import { useLocationMap } from '../shared/locationMap';
 
 const SCAN_COUNT_TOOLTIP_TEXT =
   'Users scan each item they find on the shelf without manually counting. Each scan is automatically counted, and the final quantity is calculated when the scan is complete. Scans of unlisted items will be ignored.';
 
-const LOCATIONS = [
-  'MTL01','MTL02','MTL03','MTL04','MTL05','MTL06',
-  'MTL07','MTL08','MTL09','MTL10','MTL11',
-  'EDM01','EDM02','CAL01','OTT01','OTT02','OTT03','QC01','HQ'
-];
+// Location list: comes from the shared location map (pages/shared/locationMap.js,
+// 2026-09-24). The hardcoded 19-code LOCATIONS constant that used to live here
+// (the Location multi-select's options) was removed so a new store only needs
+// Buyer Settings → Sync Locations instead of a code change.
 
 const TYPE_OPTIONS = [
   'Braid',
@@ -57,6 +57,7 @@ function CreatingTask() {
 
   const [selectedTypes, setSelectedTypes]       = useState([]);
   const [selectedLocations, setSelectedLocations] = useState([]);
+  const { names: locationNames } = useLocationMap();
   const [scanCount, setScanCount]               = useState(false);
 
   const [metafieldRows, setMetafieldRows]       = useState([]);
@@ -391,7 +392,7 @@ function CreatingTask() {
                     />
                     <MultiSelectDropdown
                       label="Location"
-                      options={LOCATIONS}
+                      options={locationNames}
                       selected={selectedLocations}
                       onChange={setSelectedLocations}
                       placeholder="Select locations"

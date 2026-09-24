@@ -17,7 +17,20 @@ async function shopifyRequest(client, query, variables = null, retries = 3) {
       return variables ? await client.request(query, { variables }) : await client.request(query);
     } catch (e) {
       const is429 = e?.response?.status === 429 || e?.message?.includes('hrottled');
-      if (is429 && i < retries - 1) {
+      // Shopify's own transient server-side errors (502/503/504 — "Service
+      // Unavailable", "Bad Gateway", "Gateway Timeout") — same idea as the
+      // 429 retry above, since these are Shopify's servers hiccuping, not a
+      // real problem with the request itself, and used to kill the whole
+      // commit outright on the first one (see PO-A145 incident, 2026-09).
+      // The @shopify/shopify-api client wraps these as
+      // `Shopify internal error: { "networkStatusCode": 5xx, ... }` in
+      // e.message rather than setting e.response.status reliably, so the
+      // check matches on both.
+      const status = e?.response?.status;
+      const is5xx = (typeof status === 'number' && status >= 500 && status < 600)
+        || /"networkStatusCode"\s*:\s*5\d\d/.test(e?.message || '')
+        || /\b(Service Unavailable|Bad Gateway|Gateway Timeout)\b/i.test(e?.message || '');
+      if ((is429 || is5xx) && i < retries - 1) {
         await new Promise(r => setTimeout(r, (i + 1) * 1000));
         continue;
       }

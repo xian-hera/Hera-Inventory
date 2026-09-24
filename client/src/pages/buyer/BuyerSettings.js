@@ -3,6 +3,7 @@ import {
   Page, Layout, Button, BlockStack, TextField, Banner, Modal, Text
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
+import { clearLocationMapCache } from '../shared/locationMap';
 
 const PIN_VERIFIED_KEY = 'buyer_pin_verified';
 
@@ -18,6 +19,32 @@ function BuyerSettings() {
   const [modalError, setModalError]     = useState('');
   const [success, setSuccess]           = useState(false);
   const [loading, setLoading]           = useState(false);
+
+  // Sync Locations (2026-09-24, Hera) — refreshes the shared location map
+  // (server location_map table) from Shopify. Every page's location list
+  // reads from that map, so this is what to press after adding, renaming or
+  // deactivating a location in Shopify.
+  const [syncingLocations, setSyncingLocations] = useState(false);
+  const [locationSyncResult, setLocationSyncResult] = useState(null); // { tone, lines[] }
+
+  const handleSyncLocations = async () => {
+    setSyncingLocations(true);
+    setLocationSyncResult(null);
+    try {
+      const res = await fetch('/api/shopify/sync-locations', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      clearLocationMapCache();
+      const lines = [`${(data.active || []).length} active locations synced from Shopify: ${(data.active || []).join(', ')}`];
+      if ((data.added || []).length) lines.push(`New: ${data.added.join(', ')}`);
+      if ((data.deactivated || []).length) lines.push(`No longer active (hidden from lists): ${data.deactivated.join(', ')}`);
+      setLocationSyncResult({ tone: 'success', lines });
+    } catch (e) {
+      setLocationSyncResult({ tone: 'critical', lines: [`Sync failed: ${e.message}`] });
+    } finally {
+      setSyncingLocations(false);
+    }
+  };
 
   const openModal = () => {
     setStep('verify');
@@ -102,6 +129,13 @@ function BuyerSettings() {
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">
+            {locationSyncResult && (
+              <Banner tone={locationSyncResult.tone} onDismiss={() => setLocationSyncResult(null)}>
+                <BlockStack gap="100">
+                  {locationSyncResult.lines.map((line, i) => <Text as="p" key={i}>{line}</Text>)}
+                </BlockStack>
+              </Banner>
+            )}
             <Button size="large" fullWidth onClick={() => navigate('/buyer/label-templates')}>
               Label Template
             </Button>
@@ -110,6 +144,9 @@ function BuyerSettings() {
             </Button>
             <Button size="large" fullWidth onClick={() => navigate('/buyer/product-database')}>
               Product Database
+            </Button>
+            <Button size="large" fullWidth onClick={handleSyncLocations} loading={syncingLocations}>
+              Sync Locations
             </Button>
             <Button size="large" fullWidth onClick={openModal}>
               Set PIN

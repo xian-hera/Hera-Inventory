@@ -4,6 +4,7 @@ import {
   Text, Banner, TextField, Button
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
+import { fetchLocationMap } from '../shared/locationMap';
 
 // ─── Barcode-scanner keyboard-emulation helpers ────────────────────────────
 // Same approach as ManagerStockLosses.js / ManagerInventoryCount-style pages:
@@ -473,8 +474,7 @@ function ManagerWigDemo() {
 
   useEffect(() => {
     if (!location) return;
-    fetch('/api/shopify/locations')
-      .then(r => r.json())
+    fetchLocationMap() // shared location map (2026-09-24)
       .then(data => {
         const loc = (Array.isArray(data) ? data : []).find(l => l.name === location);
         if (loc) setShopifyLocationId(loc.id);

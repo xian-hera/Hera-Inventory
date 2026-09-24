@@ -4,12 +4,12 @@ import {
   Select, Text, Banner
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
+import { useLocationMap } from '../shared/locationMap';
 
-const LOCATIONS = [
-  'MTL01','MTL02','MTL03','MTL04','MTL05','MTL06',
-  'MTL07','MTL08','MTL09','MTL10','MTL11',
-  'EDM01','EDM02','CAL01','OTT01','OTT02','OTT03','QC01','HQ'
-];
+// Location list: comes from the shared location map (pages/shared/locationMap.js,
+// 2026-09-24). The hardcoded 19-code LOCATIONS constant that used to live here
+// (this device's "Select location" dropdown) was removed. A location already
+// saved on this device (localStorage 'managerLocation') is unaffected.
 
 const BADGE_STYLE = {
   display: 'inline-flex',
@@ -35,6 +35,7 @@ function Badge({ count }) {
 function ManagerHome() {
   const navigate = useNavigate();
   const [location, setLocation]       = useState('');
+  const { names: locationNames, error: locationsError } = useLocationMap();
   const [confirmed, setConfirmed]     = useState(false);
   const [showWarning, setShowWarning] = useState(false);
   const [badges, setBadges]           = useState({ inventoryCount: 0, labelPrint: 0, poReceiving: 0, transfer: 0 });
@@ -83,7 +84,7 @@ function ManagerHome() {
 
   const locationOptions = [
     { label: 'Select location', value: '' },
-    ...LOCATIONS.map(l => ({ label: l, value: l })),
+    ...locationNames.map(l => ({ label: l, value: l })),
   ];
 
   return (
@@ -91,6 +92,9 @@ function ManagerHome() {
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">
+            {locationsError && !confirmed && (
+              <Banner tone="critical">Could not load the location list: {locationsError}</Banner>
+            )}
             {showWarning && (
               <Banner tone="critical" onDismiss={() => setShowWarning(false)}>
                 Please select a location first.

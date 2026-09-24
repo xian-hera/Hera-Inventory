@@ -7,12 +7,11 @@ import {
 } from '@shopify/polaris';
 import { useNavigate, useParams } from 'react-router-dom';
 import InfoTooltip from '../../components/InfoTooltip';
+import { useLocationMap } from '../shared/locationMap';
 
-const LOCATIONS = [
-  'MTL01','MTL02','MTL03','MTL04','MTL05','MTL06',
-  'MTL07','MTL08','MTL09','MTL10','MTL11',
-  'EDM01','EDM02','CAL01','OTT01','OTT02','OTT03','QC01','HQ'
-];
+// Location list: comes from the shared location map (pages/shared/locationMap.js,
+// 2026-09-24). The hardcoded 19-code LOCATIONS constant that used to live here
+// (the Receiving Location <select>'s options) was removed.
 
 const ADJUSTMENT_TOOLTIP = `Enter adjustment as amount or percentage.
 Amount:
@@ -150,6 +149,7 @@ function BuyerPOImportInvoice() {
   const supplierFieldRef = useRef(null);
   const [supplier, setSupplier] = useState(null); // { id, name, currency, fx_rate }
   const [location, setLocation] = useState('');
+  const { names: locationNames } = useLocationMap();
   const [confirmed, setConfirmed] = useState(false);
 
   const [editingFxRate, setEditingFxRate] = useState(false);
@@ -1192,7 +1192,13 @@ function BuyerPOImportInvoice() {
                         }}
                       >
                         <option value="">location</option>
-                        {LOCATIONS.map(l => <option key={l} value={l}>{l}</option>)}
+                        {locationNames.map(l => <option key={l} value={l}>{l}</option>)}
+                        {/* An existing invoice whose saved location is not (or not yet)
+                            in the shared list still shows its real value instead of
+                            the blank placeholder. */}
+                        {location && !locationNames.includes(location) && (
+                          <option key={location} value={location}>{location}</option>
+                        )}
                       </select>
                     </div>
 

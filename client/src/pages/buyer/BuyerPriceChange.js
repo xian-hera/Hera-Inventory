@@ -5,12 +5,13 @@ import {
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import MultiSelectDropdown from '../../components/MultiSelectDropdown';
+import { useLocationMap } from '../shared/locationMap';
 
-const LOCATIONS = [
-  'MTL01','MTL02','MTL03','MTL04','MTL05','MTL06',
-  'MTL07','MTL08','MTL09','MTL10','MTL11',
-  'EDM01','EDM02','CAL01','OTT01','OTT02','OTT03','QC01','HQ'
-];
+// Location list: comes from the shared location map (pages/shared/locationMap.js,
+// 2026-09-24). The hardcoded 19-code LOCATIONS constant that used to live here
+// (the Location multi-select's options, and its "everything selected by
+// default" initial value) was removed — the default-all selection is now
+// applied once, as soon as the shared list has loaded (see below).
 
 const LABEL_TYPE_OPTIONS = [
   { value: 'Regular price', label: 'Regular price' },
@@ -29,7 +30,17 @@ function BuyerPriceChange() {
   const navigate = useNavigate();
   const csvInputRef = useRef(null);
 
-  const [selectedLocations, setSelectedLocations] = useState([...LOCATIONS]);
+  const [selectedLocations, setSelectedLocations] = useState([]);
+  const { names: locationNames } = useLocationMap();
+  // Default = every location selected (same as before the shared map). Applied
+  // exactly once, when the list first arrives, and only if the user hasn't
+  // already picked something in the meantime.
+  const locationsDefaultedRef = useRef(false);
+  useEffect(() => {
+    if (locationsDefaultedRef.current || locationNames.length === 0) return;
+    locationsDefaultedRef.current = true;
+    setSelectedLocations(prev => (prev.length === 0 ? [...locationNames] : prev));
+  }, [locationNames]);
   const [items, setItems]           = useState([]);
   const [selectedSkus, setSelectedSkus] = useState([]);
   const [loading, setLoading]       = useState(false);
@@ -297,7 +308,7 @@ function BuyerPriceChange() {
               <InlineStack gap="400" wrap align="start">
                 <MultiSelectDropdown
                   label="Location"
-                  options={LOCATIONS}
+                  options={locationNames}
                   selected={selectedLocations}
                   onChange={setSelectedLocations}
                   showSelectAll={true}

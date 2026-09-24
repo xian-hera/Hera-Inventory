@@ -4,6 +4,7 @@ import {
   Text, Banner, Spinner, TextField, Tooltip
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
+import { fetchLocationMap } from '../shared/locationMap';
 
 // Create BOX PO (see claude/BOX_PO_FEATURE_SPEC.md section 2): Card1 collects
 // Supplier + Total BOXES (required) + optional Date, then Confirm collapses
@@ -47,8 +48,7 @@ function BuyerBoxPOCreate() {
       .then(data => setSuppliers(Array.isArray(data) ? data : []))
       .catch(() => setSuppliers([]))
       .finally(() => setSuppliersLoading(false));
-    fetch('/api/shopify/locations')
-      .then(r => r.json())
+    fetchLocationMap() // shared location map (2026-09-24)
       .then(data => setLocations(Array.isArray(data) ? data : []))
       .catch(() => setLocations([]))
       .finally(() => setLocationsLoading(false));
