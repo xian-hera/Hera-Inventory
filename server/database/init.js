@@ -1121,6 +1121,69 @@ const initDatabase = async () => {
     await client.query(`ALTER TABLE wig_demos ADD COLUMN IF NOT EXISTS wig_name TEXT`).catch(() => {});
     await client.query(`ALTER TABLE wig_demos ADD COLUMN IF NOT EXISTS vendor TEXT`).catch(() => {});
 
+    // ── Import Products (buyer) + New products (online) — 2026-09-24 ──────────
+    // See claude/IMPORT_PRODUCTS_FEATURE_SPEC.md.
+    // new_arrival: products created by Import Products → Add new (POS only !=
+    // true). status 'new' shows on Online → New products, 'finalized' on the
+    // Finalized page; Publish deletes the row. cached = last Refresh snapshot.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS new_arrival (
+        id SERIAL PRIMARY KEY,
+        shopify_product_id TEXT UNIQUE NOT NULL,
+        title TEXT,
+        product_type TEXT,
+        skus TEXT[] NOT NULL DEFAULT '{}',
+        status TEXT NOT NULL DEFAULT 'new',
+        finalized_at TIMESTAMPTZ,
+        cached JSONB,
+        refreshed_at TIMESTAMPTZ,
+        refresh_error TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    // One row per New Arrival tag to remove later (rows outlive new_arrival,
+    // which is deleted at publish).
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS new_arrival_tag_removals (
+        id SERIAL PRIMARY KEY,
+        shopify_product_id TEXT NOT NULL,
+        tag TEXT NOT NULL,
+        added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        remove_at TIMESTAMPTZ NOT NULL
+      )
+    `);
+    // Online → New products → Settings → Groups.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS online_np_groups (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        product_types TEXT[] NOT NULL DEFAULT '{}',
+        metafields JSONB NOT NULL DEFAULT '[]'
+      )
+    `);
+    // Import Products → Settings → Categories (in-use categories per type).
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS import_category_pool (
+        product_type TEXT NOT NULL,
+        category_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        full_name TEXT NOT NULL,
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        PRIMARY KEY (product_type, category_id)
+      )
+    `);
+    // Import Products → Settings → Sub types / Sub collections / Display
+    // sections. PK (metafield, choice_value): one choice belongs to one type.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS import_metafield_assignments (
+        metafield TEXT NOT NULL,
+        choice_value TEXT NOT NULL,
+        product_type TEXT NOT NULL,
+        PRIMARY KEY (metafield, choice_value)
+      )
+    `);
+
     await client.query('COMMIT');
     console.log('✓ Database initialized successfully');
   } catch (e) {

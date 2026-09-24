@@ -82,6 +82,10 @@ function OnlineHome() {
         <Layout>
           <Layout.Section>
             <BlockStack gap="400">
+              {/* New Products (2026-09-24, Hera): at the top of the list */}
+              <Button size="large" fullWidth onClick={() => navigate('/online/new-products')}>
+                New Products
+              </Button>
               <Button size="large" fullWidth onClick={() => navigate('/online/birthday-reward')}>
                 Birthday Reward
               </Button>

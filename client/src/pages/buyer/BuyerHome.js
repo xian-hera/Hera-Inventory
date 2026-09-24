@@ -52,7 +52,12 @@ function BuyerHome() {
   }, []);
 
   return (
-    <Page title="Task" backAction={{ onAction: () => navigate('/') }}>
+    <Page
+      title="Task"
+      backAction={{ onAction: () => navigate('/') }}
+      // Import Products (2026-09-24, Hera): top-right button, Desktop only.
+      secondaryActions={[{ content: 'Import Products', onAction: () => navigate('/buyer/import-products') }]}
+    >
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">

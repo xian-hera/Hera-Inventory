@@ -8,6 +8,7 @@ const birthdayRoute = require('./routes/birthday');
 const { router: birthdayConfigRouter, registerRestartFn } = require('./routes/birthdayConfig');
 const { startBirthdayScheduler } = require('./jobs/birthdayScheduler');
 const { startSyncScheduler } = require('./jobs/syncVariantIndex');
+const { startNewArrivalScheduler } = require('./jobs/newArrivalScheduler');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -56,6 +57,8 @@ app.use('/api/transfers', require('./routes/transfers'));
 app.use('/api/box-po', require('./routes/boxPo'));
 app.use('/api/manager-history', require('./routes/managerHistory').router);
 app.use('/api/wig-demo', require('./routes/wigDemo'));
+app.use('/api/import-products', require('./routes/importProducts'));
+app.use('/api/new-products', require('./routes/newProducts'));
 
 // Serve static files in production
 if (process.env.NODE_ENV === 'production') {
@@ -78,6 +81,7 @@ const startServer = async () => {
     await startBirthdayScheduler();
     registerRestartFn(startBirthdayScheduler);
     await startSyncScheduler();
+    startNewArrivalScheduler();
     app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
       console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);

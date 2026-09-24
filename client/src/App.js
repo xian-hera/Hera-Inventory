@@ -46,6 +46,12 @@ import BirthdayReward from './pages/online/BirthdayReward';
 import BirthdayOrders from './pages/online/BirthdayOrders';
 import InfluencerList from './pages/online/InfluencerList';
 import InfluencerDetail from './pages/online/InfluencerDetail';
+// Import Products (buyer) + New products (online) — 2026-09-24, see claude/IMPORT_PRODUCTS_FEATURE_SPEC.md
+import BuyerImportProducts from './pages/buyer/BuyerImportProducts';
+import BuyerImportProductsSettings from './pages/buyer/BuyerImportProductsSettings';
+import OnlineNewProducts from './pages/online/OnlineNewProducts';
+import OnlineNewProductsFinalized from './pages/online/OnlineNewProductsFinalized';
+import OnlineNewProductsSettings from './pages/online/OnlineNewProductsSettings';
 import ProductDatabaseSettings from './pages/buyer/ProductDatabaseSettings';
 import BuyerPOReceiving from './pages/buyer/BuyerPOReceiving';
 import BuyerPOImportInvoice from './pages/buyer/BuyerPOImportInvoice';
@@ -108,6 +114,8 @@ function App() {
           <Route path="/buyer/po-receiving/suppliers" element={<BuyerPOSuppliers />} />
           <Route path="/buyer/po-receiving/suppliers/new" element={<BuyerPOSupplierAdd />} />
           <Route path="/buyer/po-receiving/suppliers/:supplierId" element={<BuyerPOSupplierDetail />} />
+          <Route path="/buyer/import-products" element={<BuyerImportProducts />} />
+          <Route path="/buyer/import-products/settings" element={<BuyerImportProductsSettings />} />
           <Route path="/buyer/po-receiving/settings" element={<BuyerPOSettings />} />
           <Route path="/buyer/transfer" element={<BuyerTransfer />} />
           <Route path="/buyer/transfer/history" element={<BuyerTransferHistory />} />
@@ -171,6 +179,9 @@ function App() {
           <Route path="/online/birthday-reward/orders" element={<BirthdayOrders />} />
           <Route path="/online/influencers" element={<InfluencerList />} />
           <Route path="/online/influencers/:id" element={<InfluencerDetail />} />
+          <Route path="/online/new-products" element={<OnlineNewProducts />} />
+          <Route path="/online/new-products/finalized" element={<OnlineNewProductsFinalized />} />
+          <Route path="/online/new-products/settings" element={<OnlineNewProductsSettings />} />
         </Routes>
       </BrowserRouter>
     </AppProvider>
