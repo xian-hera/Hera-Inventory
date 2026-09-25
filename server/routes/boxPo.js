@@ -2,13 +2,17 @@ const express = require('express');
 const router = express.Router();
 const { pool } = require('../database/init');
 
-// BOX PO feature — Buyer creates a task (Supplier/Total Boxes/Date + a list
-// of Destination Location/BOX qty rows), publishes it (status: incoming),
-// Warehouse counts what actually arrived per location and submits (status:
-// received), Buyer reviews and confirms (status: confirmed). Purely internal
-// to this app — no Shopify API calls anywhere in this file. See
-// claude/BOX_PO_FEATURE_SPEC.md in the project's Claude knowledge base for
-// the full narrated spec every endpoint below implements.
+// BOX PO feature — Buyer creates a task (Supplier/optional Date + a list of
+// Destination Location/BOX qty rows; total_boxes is derived from that list,
+// not entered separately), publishes it (status: incoming). From there,
+// either Warehouse OR the Buyer can count what actually arrived per location
+// and submit (status: received) — the /:id/count and /:id/submit endpoints
+// below don't distinguish who calls them. Buyer then reviews and confirms
+// (status: confirmed). Purely internal to this app — no Shopify API calls
+// anywhere in this file. See claude/BOX_PO_FEATURE_SPEC.md in the project's
+// Claude knowledge base for the full narrated spec every endpoint below
+// implements (note: that doc predates the Buyer-can-also-count change and
+// the single-step Create flow, both from 2026-09-25).
 //
 // IMPORTANT — route registration order: GET '/:id' below must stay AFTER
 // every other GET route with a fixed path (recent/ongoing/past/warehouse/home)
@@ -57,18 +61,23 @@ async function cleanupExpiredConfirmed() {
 }
 
 // POST /api/box-po — Create BOX PO's "Create" button (publish).
-// body: { supplierId, totalBoxes, date, note, items: [{ location, boxQty }] }
+// body: { supplierId, date, note, items: [{ location, boxQty }] }
+// total_boxes is no longer collected from the Buyer (Create BOX PO's
+// simplified single-step flow, 2026-09-25, Hera) — it's computed here as the
+// sum of the submitted line items' boxQty, which also happens to retire the
+// old "Total BOXES doesn't match the line items" mismatch case entirely,
+// since the two can no longer disagree.
 router.post('/', async (req, res) => {
-  const { supplierId, totalBoxes, date, note, items } = req.body;
+  const { supplierId, date, note, items } = req.body;
 
   if (!supplierId) return res.status(400).json({ error: 'Supplier is required' });
-  const totalBoxesNum = Number(totalBoxes);
-  if (!Number.isFinite(totalBoxesNum) || totalBoxesNum <= 0) {
-    return res.status(400).json({ error: 'Total BOXES is required' });
-  }
   if (!Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: 'At least one line item is required' });
   }
+  const totalBoxesNum = items.reduce((sum, item) => {
+    const qty = Number(item.boxQty);
+    return sum + (Number.isFinite(qty) && qty > 0 ? qty : 0);
+  }, 0);
 
   const dbClient = await pool.connect();
   try {

@@ -119,6 +119,25 @@ export function titleCase(v) {
   return subCollectionKey(v).replace(/(^|[\s\-/(])([a-z\u00e0-\u00ff])/g, (m, p, c) => p + c.toUpperCase());
 }
 
+// custom.sub_collection is a LIST metafield. A cell may hold one value,
+// several ("Bang, Wrap" or "Bang; Wrap"), or Shopify's JSON ('["Bang"]').
+// Items are shown and written as plain text joined by ", " — the server
+// turns that into the JSON list Shopify expects (2026-09-25).
+export function subCollectionItems(v) {
+  const s = String(v == null ? '' : v).trim();
+  if (!s) return [];
+  if (s.startsWith('[')) {
+    try {
+      const arr = JSON.parse(s);
+      if (Array.isArray(arr)) return arr.map(x => String(x == null ? '' : x).trim()).filter(Boolean);
+    } catch (e) { /* not JSON */ }
+  }
+  return s.split(/[;,]/).map(x => x.trim()).filter(Boolean);
+}
+export function formatSubCollection(v) {
+  return subCollectionItems(v).map(titleCase).join(', ');
+}
+
 // Display section is only imported for HAIR & SKIN CARE: for any other Type
 // its column is shown greyed out and ignored (and named in the report).
 export function applyTypeRules(columns, productType) {
@@ -135,7 +154,7 @@ export function normalizeSubCollections(rows, columns) {
   return rows.map(r => {
     const v = r.values[sc.id];
     if (isBlank(v)) return r;
-    return { ...r, values: { ...r.values, [sc.id]: titleCase(v) } };
+    return { ...r, values: { ...r.values, [sc.id]: formatSubCollection(v) } };
   });
 }
 
@@ -386,8 +405,9 @@ export function validate({ rows, columns, groups, mode, presets, pools, precheck
         const poolName = POOL_METAFIELDS[`${c.level}.${c.namespace}.${c.key}`];
         if (isSubCollectionCol(c)) {
           const opts = subCollectionOptions(r, columns, pools, isFirst, presets);
+          const missing = opts === null ? [] : subCollectionItems(v).filter(item => !opts.some(x => subCollectionKey(x) === subCollectionKey(item)));
           if (opts === null) addWarn(r, c, 'No Sub type on this row — will still be imported');
-          else if (!opts.some(x => subCollectionKey(x) === subCollectionKey(v))) addWarn(r, c, `"${v}" is not assigned to this Sub type in Import Settings — will still be imported`);
+          else if (missing.length) addWarn(r, c, `${missing.map(m => `"${m}"`).join(', ')} not assigned to this Sub type in Import Settings — will still be imported`);
         } else if (poolName) {
           const pool = pools[poolName] || [];
           if (!pool.some(x => lc(x) === lc(v))) addCell(r, c, `"${v}" is not assigned to this Type in Import Settings`);
@@ -492,7 +512,7 @@ export function buildPayload({ groups, columns, mode, presets, precheck, skip })
         fields[f] = c.preset ? presetToField(c.preset, cell.value) : cell.value;
       } else if (c.kind === 'metafield' || (c.kind === 'preset' && c.namespace)) {
         let value = c.preset ? presetToField(c.preset, cell.value) : cell.value;
-        if (isSubCollectionCol(c) && !isBlank(value)) value = titleCase(value); // always Title Case (2026-09-25)
+        if (isSubCollectionCol(c) && !isBlank(value)) value = formatSubCollection(value); // plain items, Title Case (2026-09-25)
         productMetafields.push({ namespace: c.namespace, key: c.key, value });
       }
     }

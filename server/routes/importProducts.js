@@ -201,6 +201,21 @@ function titleCase(v) {
   return subCollectionKey(v).replace(/(^|[\s\-/(])([a-zà-ÿ])/g, (m, p, c) => p + c.toUpperCase());
 }
 
+// custom.sub_collection is a LIST metafield (list.single_line_text_field):
+// Shopify returns '["Bang","Wrap"]'. Each item is its own value; a plain
+// (non-JSON) value is treated as one item (2026-09-25).
+function listItems(raw) {
+  const s = String(raw == null ? '' : raw).trim();
+  if (!s) return [];
+  if (s.startsWith('[')) {
+    try {
+      const arr = JSON.parse(s);
+      if (Array.isArray(arr)) return arr.map(x => String(x == null ? '' : x)).filter(x => x.trim());
+    } catch (e) { /* not JSON — fall through */ }
+  }
+  return [s];
+}
+
 const subCollectionSyncRunning = new Set();
 
 // Every distinct sub_collection value used by ACTIVE products of one type.
@@ -226,9 +241,10 @@ async function collectSubCollections(productType) {
       if (String(n.productType || '').toLowerCase() !== productType.toLowerCase()) continue;
       if (n.status !== 'ACTIVE') continue;
       productCount++;
-      const raw = n.metafield && n.metafield.value;
-      const key = subCollectionKey(raw);
-      if (key && !values.has(key)) values.set(key, titleCase(raw));
+      for (const item of listItems(n.metafield && n.metafield.value)) {
+        const key = subCollectionKey(item);
+        if (key && !values.has(key)) values.set(key, titleCase(item));
+      }
     }
     if (!data.products.pageInfo.hasNextPage) break;
     after = data.products.pageInfo.endCursor;
@@ -505,4 +521,4 @@ router.get('/import/:jobId', (req, res) => {
 
 module.exports = router;
 // Exposed for tests.
-module.exports._subCollections = { subCollectionKey, titleCase, collectSubCollections, applySubCollectionSync };
+module.exports._subCollections = { subCollectionKey, titleCase, listItems, collectSubCollections, applySubCollectionSync };

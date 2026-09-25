@@ -8,9 +8,15 @@ import { Tooltip } from '@shopify/polaris';
 import {
   PRESETS, PRESET_BY_KEY, POOL_METAFIELDS, cellValue, effectiveCell,
   isSubCollectionCol, isDisplaySectionCol, subCollectionOptions,
+  subCollectionItems, subCollectionKey,
 } from './importModel';
 
 const PRESET_BG = '#f1f8f3';
+// Cell grid lines (2026-09-25, Hera): every cell gets a right + top border.
+const GRID = '1px solid #e1e3e5';
+const GROUP_LINE = '1px solid #8c9196'; // above the first row of each product
+const CHECK_COL = 40;
+const INFO_COL = 230;
 const METAFIELD_BG = '#f0f5fd';
 const MAX_CHARS = 55;
 const CHAR_PX = 7.2;
@@ -73,7 +79,8 @@ export function poolFor(col, pools, rowCtx) {
   return null;
 }
 
-function DropdownEditor({ anchorRect, original, pool, isCategory, emptyMessage, onPick, onCancel }) {
+// original === null → no "current value" option (used by "Add collection").
+function DropdownEditor({ anchorRect, original, originalLabel, pool, isCategory, emptyMessage, onPick, onCancel }) {
   const [query, setQuery] = useState('');
   const ref = useRef(null);
   useEffect(() => {
@@ -90,8 +97,8 @@ function DropdownEditor({ anchorRect, original, pool, isCategory, emptyMessage, 
   const filtered = pool.filter(o => !q || (isCategory ? leaf(o) : String(o).toLowerCase()).includes(q));
   const options = [];
   // The CSV's own value (blank counts as a value) is always the first option.
-  options.push({ value: original, label: original === '' ? '(empty)' : original, isOriginal: true });
-  for (const o of filtered) if (o !== original) options.push({ value: o, label: o });
+  if (original !== null) options.push({ value: original, label: original === '' ? '(empty)' : original, isOriginal: true });
+  for (const o of filtered) if (o !== original) options.push({ value: o, label: o === '' ? '(none — clear this cell)' : o });
 
   const top = Math.min(anchorRect.bottom + 2, window.innerHeight - 320);
   return ReactDOM.createPortal(
@@ -120,7 +127,7 @@ function DropdownEditor({ anchorRect, original, pool, isCategory, emptyMessage, 
             onMouseEnter={e => { e.currentTarget.style.background = '#f1f2f3'; }}
             onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
           >
-            {o.label}{o.isOriginal ? '  · CSV value' : ''}
+            {o.label}{o.isOriginal ? `  · ${originalLabel || 'CSV value'}` : ''}
           </div>
         ))}
         {filtered.length === 0 && q && <div style={{ padding: 8, fontSize: 13, color: '#6d7175' }}>No match</div>}
@@ -200,19 +207,50 @@ function ImportTable({
 
   const th = {
     position: 'sticky', top: 0, zIndex: 2, background: '#f7f7f7', textAlign: 'left',
-    fontSize: 13, fontWeight: 600, padding: '10px 8px', borderBottom: '1px solid #e1e3e5', whiteSpace: 'nowrap',
+    fontSize: 13, fontWeight: 600, padding: '10px 8px', borderBottom: '1px solid #c9cccf', borderRight: GRID, whiteSpace: 'nowrap',
+  };
+
+  // Column widths only take effect when the table itself has an explicit
+  // width: with width:auto the browser squeezed every column into the
+  // window (3–4 letters per line) and ignored the dragged widths
+  // (fixed 2026-09-25). The table is now exactly as wide as its columns.
+  const totalWidth = CHECK_COL + INFO_COL + ordered.reduce((sum, c) => sum + widthOf(c), 0);
+
+  // Second horizontal scrollbar above the header, kept in sync with the
+  // table's own one — the table scrolls vertically inside its box, so the
+  // bottom scrollbar is often off-screen (2026-09-25, Hera).
+  const topBarRef = useRef(null);
+  const bodyRef = useRef(null);
+  // The bar being scrolled by the user "owns" the sync for one frame, so the
+  // echo scroll event from the other bar is ignored.
+  const scrollOwner = useRef(null);
+  const syncScroll = (from, to) => {
+    if (scrollOwner.current && scrollOwner.current !== from) return;
+    scrollOwner.current = from;
+    if (from.current && to.current) to.current.scrollLeft = from.current.scrollLeft;
+    window.requestAnimationFrame(() => { scrollOwner.current = null; });
   };
   const stickyLeft = (left, z = 1) => ({ position: 'sticky', left, zIndex: z });
 
   return (
-    <div style={{
-      border: '1px solid #e1e3e5', borderRadius: 12, background: '#fff',
-      height: 'calc(100vh - 170px)', minHeight: 360, overflow: 'auto',
-    }}>
-      <table style={{ borderCollapse: 'separate', borderSpacing: 0, tableLayout: 'fixed', fontSize: 13 }}>
+    <div style={{ border: '1px solid #e1e3e5', borderRadius: 12, background: '#fff', overflow: 'hidden' }}>
+    <div
+      ref={topBarRef}
+      onScroll={() => syncScroll(topBarRef, bodyRef)}
+      style={{ overflowX: 'auto', overflowY: 'hidden', borderBottom: GRID, background: '#fafafa' }}
+      aria-label="Scroll the table left or right"
+    >
+      <div style={{ width: totalWidth, height: 1 }} />
+    </div>
+    <div
+      ref={bodyRef}
+      onScroll={() => syncScroll(bodyRef, topBarRef)}
+      style={{ height: 'calc(100vh - 186px)', minHeight: 360, overflow: 'auto' }}
+    >
+      <table style={{ borderCollapse: 'separate', borderSpacing: 0, tableLayout: 'fixed', fontSize: 13, width: totalWidth }}>
         <colgroup>
-          <col style={{ width: 40 }} />
-          <col style={{ width: 230 }} />
+          <col style={{ width: CHECK_COL }} />
+          <col style={{ width: INFO_COL }} />
           {ordered.map(c => <col key={c.id} style={{ width: widthOf(c) }} />)}
         </colgroup>
         <thead>
@@ -220,7 +258,7 @@ function ImportTable({
             <th style={{ ...th, ...stickyLeft(0, 3) }}>
               <input type="checkbox" checked={allSelected} onChange={() => onToggleAll(allSelected ? [] : orderedRows.map(r => r.id))} />
             </th>
-            <th style={{ ...th, ...stickyLeft(40, 3), borderRight: '1px solid #e1e3e5' }}>Check</th>
+            <th style={{ ...th, ...stickyLeft(CHECK_COL, 3), borderRight: '1px solid #c9cccf' }}>Check</th>
             {ordered.map(c => {
               const disabled = colDisabled(c) && !c.preset;
               const title = c.kind === 'unmatched' ? `Will be ignored — ${c.reason || 'not matched'}`
@@ -236,7 +274,8 @@ function ImportTable({
                   {title ? <Tooltip content={title}>{inner}</Tooltip> : inner}
                   <span
                     onMouseDown={(e) => { e.preventDefault(); dragRef.current = { id: c.id, x: e.clientX, start: widthOf(c) }; document.body.style.cursor = 'col-resize'; }}
-                    style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 6, cursor: 'col-resize', borderRight: '1px solid #e1e3e5' }}
+                    title="Drag to resize"
+                    style={{ position: 'absolute', right: -3, top: 0, bottom: 0, width: 7, cursor: 'col-resize', zIndex: 1 }}
                   />
                 </th>
               );
@@ -257,8 +296,8 @@ function ImportTable({
             const blocking = rowErr.length + Object.keys(cellErr).length;
             const skipped = g && (validation.skip[g.key] || []).length > 0;
             const rowBg = blocking ? '#fdeceb' : skipped ? '#fff4f4' : '#fff';
-            const topBorder = isFirst ? '1px solid #c9cccf' : '1px solid #f1f1f1';
-            const td = { padding: '8px', borderTop: topBorder, verticalAlign: 'top', background: rowBg, wordBreak: 'break-word', whiteSpace: 'pre-wrap' };
+            const topBorder = isFirst ? GROUP_LINE : GRID;
+            const td = { padding: '8px', borderTop: topBorder, borderRight: GRID, verticalAlign: 'top', background: rowBg, wordBreak: 'break-word', whiteSpace: 'pre-wrap' };
             const msgs = [...rowErr, ...Object.values(cellErr), ...skipMsgs];
             const warnMsgs = Object.values(cellWarn);
             return (
@@ -266,7 +305,7 @@ function ImportTable({
                 <td style={{ ...td, ...stickyLeft(0) }}>
                   <input type="checkbox" checked={selectedIds.includes(r.id)} onChange={() => onToggleRow(r.id)} />
                 </td>
-                <td style={{ ...td, ...stickyLeft(40), borderRight: '1px solid #e1e3e5', fontSize: 12 }}>
+                <td style={{ ...td, ...stickyLeft(CHECK_COL), borderRight: '1px solid #c9cccf', fontSize: 12 }}>
                   <div style={{ color: '#6d7175' }}>
                     {isFirst ? `Row ${r.rowNumber}` : `↳ Row ${r.rowNumber} · variant`}
                     {matchedTitle ? ` · ${matchedTitle}` : ''}
@@ -306,7 +345,38 @@ function ImportTable({
                     outline: err ? '1px solid #d72c0d' : warn ? '1px solid #e8a33d' : undefined,
                     outlineOffset: -1,
                   };
-                  const content = (
+                  // Sub collection is a list (2026-09-25, Hera): one line per
+                  // item, click an item to change it, blue "Add collection"
+                  // adds another, red × removes an added item.
+                  const isSc = isSubCollectionCol(c) && !disabled;
+                  const scItems = isSc ? subCollectionItems(eff.value) : [];
+                  const saveItems = (items) => onEdit(r.id, c.id, items.join(', '));
+                  const openAt = (e, itemIndex) => {
+                    e.stopPropagation();
+                    setEditing({ rowId: r.id, colId: c.id, itemIndex, rect: e.currentTarget.getBoundingClientRect() });
+                  };
+                  const scContent = isSc ? (
+                    <div style={style}>
+                      {scItems.map((it, i) => (
+                        <div key={`${i}-${it}`} style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginBottom: 2 }}>
+                          <span onClick={(e) => openAt(e, i)} style={{ cursor: 'pointer' }}>{it}</span>
+                          {i > 0 && (
+                            <span
+                              role="button"
+                              aria-label={`Remove ${it}`}
+                              onClick={(e) => { e.stopPropagation(); saveItems(scItems.filter((_, j) => j !== i)); }}
+                              style={{ color: '#d72c0d', cursor: 'pointer', fontWeight: 700, lineHeight: 1.2 }}
+                            >×</span>
+                          )}
+                        </div>
+                      ))}
+                      <span
+                        onClick={(e) => openAt(e, 'add')}
+                        style={{ color: '#005bd3', cursor: 'pointer', fontWeight: 400, fontSize: 12 }}
+                      >Add collection</span>
+                    </div>
+                  ) : null;
+                  const content = isSc ? scContent : (
                     <span style={style}>
                       {display === '' ? ' ' : String(display)}
                       {c.kind === 'field' && c.field === 'handle' && mode === 'add' && isFirst && !String(eff.value).trim() && display
@@ -319,6 +389,9 @@ function ImportTable({
                       style={cellStyle}
                       onClick={(e) => {
                         if (disabled || isEditing) return;
+                        // Sub collection: an empty cell click = Add collection;
+                        // otherwise items / links handle their own clicks.
+                        if (isSc) { if (!scItems.length) openAt(e, 'add'); return; }
                         setEditing({ rowId: r.id, colId: c.id, rect: e.currentTarget.getBoundingClientRect() });
                       }}
                     >
@@ -331,7 +404,28 @@ function ImportTable({
                       ) : (err || conflict || warn || productOnlyRow) ? (
                         <Tooltip content={err || conflict || warn || 'Product-level field — the first row of this product is used'}>{content}</Tooltip>
                       ) : content}
-                      {isEditing && pool && (
+                      {isEditing && pool && isSc && (() => {
+                        const idx = editing.itemIndex;
+                        const taken = new Set(scItems.filter((_, j) => j !== idx).map(subCollectionKey));
+                        const list = (Array.isArray(pool) ? pool : []).filter(o => !taken.has(subCollectionKey(o)));
+                        return (
+                          <DropdownEditor
+                            anchorRect={editing.rect}
+                            original={idx === 'add' ? null : scItems[idx]}
+                            originalLabel="current"
+                            pool={idx === 0 && scItems.length === 1 ? [...list, ''] : list}
+                            emptyMessage={pool && pool.needsSubType ? 'Choose sub type first.' : ''}
+                            onPick={(v) => {
+                              setEditing(null);
+                              const next = [...scItems];
+                              if (idx === 'add') { if (v) next.push(v); } else if (v === '') next.splice(idx, 1); else next[idx] = v;
+                              saveItems(next);
+                            }}
+                            onCancel={() => setEditing(null)}
+                          />
+                        );
+                      })()}
+                      {isEditing && pool && !isSc && (
                         <DropdownEditor
                           anchorRect={editing.rect}
                           original={String(r.values[c.id] == null ? '' : r.values[c.id])}
@@ -353,6 +447,7 @@ function ImportTable({
           )}
         </tbody>
       </table>
+    </div>
     </div>
   );
 }

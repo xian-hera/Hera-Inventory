@@ -14,7 +14,7 @@ import FullBleed from '../../components/FullBleed';
 import {
   MAX_ROWS, MAX_COLUMNS, PRESETS, buildColumns, buildRows, groupRows, validate,
   productLevelConflicts, buildPayload, cellValue, colFor,
-  applyTypeRules, normalizeSubCollections, isSubTypeCol, isSubCollectionCol, subCollectionOptions, subCollectionKey,
+  applyTypeRules, normalizeSubCollections, isSubTypeCol, isSubCollectionCol, subCollectionOptions, subCollectionKey, subCollectionItems,
 } from './importProducts/importModel';
 
 const NARROW = { maxWidth: '62.375rem', margin: '0 auto', width: '100%' };
@@ -228,7 +228,9 @@ function BuyerImportProducts() {
           const tmp = { ...r, edits };
           const current = String(cellValue(tmp, scCol)).trim();
           const opts = subCollectionOptions(tmp, columns, pools, true, presets) || [];
-          if (current && !opts.some(o => subCollectionKey(o) === subCollectionKey(current))) {
+          // Cleared when any of its items doesn't belong to the new Sub type.
+          const items = subCollectionItems(current);
+          if (items.length && !items.every(it => opts.some(o => subCollectionKey(o) === subCollectionKey(it)))) {
             const scOrig = r.values[scCol.id] == null ? '' : String(r.values[scCol.id]);
             if (scOrig === '') delete edits[scCol.id]; else edits[scCol.id] = '';
           }
