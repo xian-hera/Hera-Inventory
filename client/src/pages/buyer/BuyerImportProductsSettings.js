@@ -2,17 +2,22 @@
 // Spec: claude/IMPORT_PRODUCTS_FEATURE_SPEC.md §9.
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  Page, Layout, Card, BlockStack, InlineStack, Text, Button, Banner, Select, Tag, Divider, ChoiceList, Spinner,
+  Page, Layout, Card, BlockStack, InlineStack, Text, Button, Banner, Select, Tag, Divider, ChoiceList, Spinner, Tooltip,
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import MultiSelectDropdown from '../../components/MultiSelectDropdown';
 import { useLocationMap } from '../shared/locationMap';
 
+// 2026-09-25 (Hera): only Sub types is still assigned with this card.
+// The Sub collections and Display sections entries were removed from this
+// list: Display section now uses the metafield's own choices in the import
+// table (only for HAIR & SKIN CARE), and Sub collections has its own card
+// below (SubCollectionsCard), since custom.sub_collection is free text.
 const ASSIGN_CARDS = [
   { field: 'sub_type', title: 'Sub types', noun: 'sub types' },
-  { field: 'sub_collection', title: 'Sub collections', noun: 'sub collections' },
-  { field: 'display_section', title: 'Display sections', noun: 'display sections' },
 ];
+
+const subCollectionKey = (v) => String(v == null ? '' : v).trim().replace(/\s+/g, ' ').toLowerCase();
 
 function fmt(iso) {
   if (!iso) return '';
@@ -22,7 +27,7 @@ function fmt(iso) {
 }
 
 // One Sub types / Sub collections / Display sections card.
-function AssignCard({ field, title, noun, types, onDirtyChange, registerSave }) {
+function AssignCard({ field, title, noun, types, onDirtyChange, registerSave, onSaved }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState('');
@@ -68,12 +73,13 @@ function AssignCard({ field, title, noun, types, onDirtyChange, registerSave }) 
       if (!res.ok) throw new Error(data.error || 'Save failed');
       setOriginal(assign);
       setSaved('Saved.');
+      if (onSaved) onSaved();
     } catch (e) {
       setError(e.message);
     } finally {
       setSaving(false);
     }
-  }, [field, assign]);
+  }, [field, assign, onSaved]);
   useEffect(() => { registerSave(field, save, () => setAssign(original)); }, [field, save, original, registerSave]);
 
   const unassigned = choices.filter(c => !assign[c]);
@@ -123,6 +129,283 @@ function AssignCard({ field, title, noun, types, onDirtyChange, registerSave }) 
   );
 }
 
+// ─── Sub collections card (2026-09-25, Hera) ────────────────────────────────
+// Per Type: Sync pulls the sub_collection values ACTIVE products use; each
+// value is then assigned to one sub type. Duplicate makes an unassigned copy
+// of a value so it can also go under another sub type; Delete duplicated
+// removes an unassigned copy (one copy of every value always stays).
+// Shown only once every sub type has been assigned (saved) in Sub types.
+let uidCounter = 0;
+const withUid = (rows) => rows.map(r => ({ ...r, uid: `s${r.id}` }));
+const rowsEqual = (a, b) => JSON.stringify((a || []).map(r => [r.id, r.value, r.subType || null]))
+  === JSON.stringify((b || []).map(r => [r.id, r.value, r.subType || null]));
+
+function PillButton({ children, onClick, active }) {
+  // Grey pill = not assigned yet (clickable), like Polaris Tag.
+  return (
+    <Tag onClick={onClick}>
+      <span style={{ fontWeight: active ? 600 : undefined }}>{children}</span>
+    </Tag>
+  );
+}
+
+function SubCollectionsCard({ types, subTypeVersion, onDirtyChange, registerSave }) {
+  const FIELD = 'sub_collection_values';
+  const [subTypeInfo, setSubTypeInfo] = useState(null); // { allAssigned, byType: {type: [subType]} }
+  const [type, setType] = useState('');
+  const [saved, setSavedRows] = useState({});   // type → rows from server
+  const [drafts, setDrafts] = useState({});     // type → rows being edited
+  const [status, setStatus] = useState({});     // type → sync status
+  const [loadingType, setLoadingType] = useState(false);
+  const [mode, setMode] = useState(null);       // null | 'duplicate' | 'delete'
+  const [subType, setSubType] = useState('');
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  // Sub types: is everything assigned (saved), and which belong to each type.
+  useEffect(() => {
+    let stop = false;
+    fetch('/api/import-products/settings/assignments/sub_type').then(r => r.json()).then(d => {
+      if (stop) return;
+      const assignments = d.assignments || {};
+      const choices = d.choices || [];
+      const byType = {};
+      for (const [st, t] of Object.entries(assignments)) (byType[t] = byType[t] || []).push(st);
+      Object.values(byType).forEach(l => l.sort());
+      setSubTypeInfo({ allAssigned: choices.every(c => assignments[c]), byType });
+    }).catch(e => !stop && setError(e.message));
+    return () => { stop = true; };
+  }, [subTypeVersion]);
+
+  useEffect(() => { if (!type && types.length) setType(types[0]); }, [types, type]);
+
+  const loadType = useCallback(async (t, { keepDraft } = {}) => {
+    if (!t) return;
+    setLoadingType(true);
+    try {
+      const res = await fetch(`/api/import-products/settings/sub-collections?type=${encodeURIComponent(t)}`);
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || 'Load failed');
+      const rows = withUid(d.rows || []);
+      setSavedRows(s => ({ ...s, [t]: rows }));
+      if (!keepDraft) setDrafts(s => ({ ...s, [t]: rows }));
+      setStatus(s => ({ ...s, [t]: d.status || {} }));
+      return d;
+    } catch (e) {
+      setError(e.message);
+      return null;
+    } finally {
+      setLoadingType(false);
+    }
+  }, []);
+
+  // Load a type the first time it is picked (drafts of other types are kept).
+  useEffect(() => {
+    if (type && !saved[type]) loadType(type);
+    setMode(null);
+    setSubType('');
+  }, [type]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const dirtyTypes = Object.keys(drafts).filter(t => !rowsEqual(drafts[t], saved[t]));
+  const dirty = dirtyTypes.length > 0;
+  useEffect(() => { onDirtyChange(FIELD, dirty); }, [dirty, onDirtyChange]);
+
+  const running = !!(status[type] && status[type].running);
+  // Poll while this type's sync runs; reload the list when it finishes.
+  useEffect(() => {
+    if (!running || !type) return undefined;
+    const t = setInterval(async () => {
+      const d = await loadType(type);
+      if (d && !(d.status && d.status.running)) {
+        const sum = d.status && d.status.lastSummary;
+        if (d.status && d.status.lastError) setNotice('');
+        else if (sum) setNotice(`Synced ${type}: ${sum.total} value(s) in use · ${sum.added} added · ${sum.removed} removed.`);
+      }
+    }, 3000);
+    return () => clearInterval(t);
+  }, [running, type, loadType]);
+
+  const save = useCallback(async () => {
+    setSaving(true); setError(''); setNotice('');
+    try {
+      let dropped = 0;
+      for (const t of dirtyTypes) {
+        const res = await fetch('/api/import-products/settings/sub-collections', {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type: t, rows: drafts[t].map(r => ({ id: r.id, value: r.value, subType: r.subType || null })) }),
+        });
+        const d = await res.json();
+        if (!res.ok) throw new Error(`${t}: ${d.error || 'Save failed'}`);
+        dropped += d.dropped || 0;
+        const rows = withUid(d.rows || []);
+        setSavedRows(s => ({ ...s, [t]: rows }));
+        setDrafts(s => ({ ...s, [t]: rows }));
+      }
+      setNotice(dropped ? `Saved. ${dropped} value(s) were no longer in use and had already been removed by a sync.` : 'Saved.');
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }, [dirtyTypes, drafts]);
+  const discard = useCallback(() => { setDrafts(saved); setMode(null); }, [saved]);
+  useEffect(() => { registerSave(FIELD, save, discard); }, [save, discard, registerSave]);
+
+  const sync = async () => {
+    setError(''); setNotice('');
+    if (drafts[type] && !rowsEqual(drafts[type], saved[type])) {
+      setError(`Save or discard your changes for ${type} before syncing.`);
+      return;
+    }
+    try {
+      const res = await fetch('/api/import-products/settings/sub-collections/sync', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type }),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || 'Could not start');
+      setStatus(s => ({ ...s, [type]: { ...(s[type] || {}), running: true } }));
+      setNotice('Sync started — you can leave this page.');
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  if (!subTypeInfo) {
+    return <Card><BlockStack gap="300"><Text variant="headingMd" as="h2">Sub collections</Text><Spinner size="small" /></BlockStack></Card>;
+  }
+  if (!subTypeInfo.allAssigned) {
+    return (
+      <Card>
+        <BlockStack gap="300">
+          <Text variant="headingMd" as="h2">Sub collections</Text>
+          <Text tone="subdued">Finish assigning Sub Types first.</Text>
+        </BlockStack>
+      </Card>
+    );
+  }
+
+  const rows = drafts[type] || [];
+  const subTypesHere = subTypeInfo.byType[type] || [];
+  const countByKey = rows.reduce((m, r) => { const k = subCollectionKey(r.value); m[k] = (m[k] || 0) + 1; return m; }, {});
+  const unassigned = rows.filter(r => !r.subType);
+  const assigned = rows.filter(r => r.subType);
+  const assignedHere = subType ? rows.filter(r => r.subType === subType) : [];
+  const setRows = (fn) => setDrafts(s => ({ ...s, [type]: fn(s[type] || []) }));
+
+  const clickValue = (r) => {
+    setError(''); setNotice('');
+    if (mode === 'duplicate') {
+      uidCounter += 1;
+      setRows(list => {
+        const i = list.findIndex(x => x.uid === r.uid);
+        const copy = { id: null, value: r.value, subType: null, uid: `n${uidCounter}` };
+        return [...list.slice(0, i + 1), copy, ...list.slice(i + 1)];
+      });
+      setMode(null);
+      return;
+    }
+    if (mode === 'delete') {
+      if (r.subType || (countByKey[subCollectionKey(r.value)] || 0) < 2) {
+        setError(`"${r.value}" can't be deleted — only an unassigned copy of a duplicated value can be deleted.`);
+      } else {
+        setRows(list => list.filter(x => x.uid !== r.uid));
+      }
+      setMode(null);
+      return;
+    }
+    if (r.subType) return;
+    if (!subType) { setError('Select a sub type below first.'); return; }
+    const k = subCollectionKey(r.value);
+    if (rows.some(x => x.subType === subType && subCollectionKey(x.value) === k)) {
+      setError(`"${r.value}" is already assigned to ${subType}. Use a different sub type.`);
+      return;
+    }
+    setRows(list => list.map(x => (x.uid === r.uid ? { ...x, subType } : x)));
+  };
+
+  const st = status[type] || {};
+  return (
+    <Card>
+      <BlockStack gap="300">
+        <Text variant="headingMd" as="h2">Sub collections</Text>
+        <Text tone="subdued">Select type to see all sub collections currently in use. Clickable means not assigned to a sub type yet.</Text>
+        {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
+        {notice && <Banner tone="success" onDismiss={() => setNotice('')}>{notice}</Banner>}
+        <InlineStack align="space-between" blockAlign="end">
+          <InlineStack gap="300" blockAlign="end">
+            <div style={{ minWidth: 220 }}>
+              <Select label="Type" labelHidden options={types.map(t => ({ label: t, value: t }))} value={type} onChange={setType} />
+            </div>
+            <Tooltip content="If you wish to add a new sub collection that never used, do it in Shopify product page">
+              <Button variant="primary" onClick={sync} loading={running} disabled={!type}>Sync</Button>
+            </Tooltip>
+          </InlineStack>
+          <InlineStack gap="200">
+            <Tooltip content="Click this button then click the duplicated value you wish to delete.">
+              <Button pressed={mode === 'delete'} onClick={() => setMode(m => (m === 'delete' ? null : 'delete'))} disabled={!rows.length}>Delete duplicated</Button>
+            </Tooltip>
+            <Tooltip content="Click this button then click a value to duplicate one, if that value is shared in more than one sub types.">
+              <Button pressed={mode === 'duplicate'} onClick={() => setMode(m => (m === 'duplicate' ? null : 'duplicate'))} disabled={!rows.length}>Duplicate</Button>
+            </Tooltip>
+          </InlineStack>
+        </InlineStack>
+        {running && <InlineStack gap="200"><Spinner size="small" /><Text tone="subdued">Syncing {type}…</Text></InlineStack>}
+        {st.lastSuccessAt && <Text variant="bodySm" tone="subdued">Last synced {fmt(st.lastSuccessAt)}</Text>}
+        {st.lastError && <Banner tone="critical">Last sync failed ({fmt(st.lastErrorAt)}): {st.lastError}</Banner>}
+        {mode && (
+          <Text tone="subdued">
+            {mode === 'duplicate' ? 'Click a value to duplicate it.' : 'Click an unassigned duplicated value to delete it.'}
+          </Text>
+        )}
+
+        {loadingType && !rows.length ? <Spinner size="small" /> : (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+            {!rows.length && <Text tone="subdued">No sub collections for {type || 'this type'} yet — click Sync.</Text>}
+            {unassigned.map(r => (
+              <PillButton key={r.uid} onClick={() => clickValue(r)} active={mode === 'delete' && (countByKey[subCollectionKey(r.value)] || 0) > 1}>
+                {r.value}
+              </PillButton>
+            ))}
+            {assigned.length > 0 && (
+              <span style={{ color: '#6d7175' }}>
+                {assigned.map((r, i) => (
+                  <span key={r.uid} title={`Assigned to ${r.subType}`}>
+                    {mode === 'duplicate'
+                      ? <span onClick={() => clickValue(r)} style={{ cursor: 'pointer', textDecoration: 'underline' }}>{r.value}</span>
+                      : r.value}
+                    {i < assigned.length - 1 ? ', ' : ''}
+                  </span>
+                ))}
+              </span>
+            )}
+          </div>
+        )}
+
+        <div style={{ maxWidth: 260 }}>
+          <Select
+            label="Select sub type to assign sub collections"
+            options={[{ label: subTypesHere.length ? 'Select sub type' : 'No sub types for this type', value: '' }, ...subTypesHere.map(x => ({ label: x, value: x }))]}
+            value={subType}
+            onChange={setSubType}
+          />
+        </div>
+        {subType && (
+          <InlineStack gap="200" wrap>
+            {assignedHere.length === 0 && <Text tone="subdued">None assigned to {subType}.</Text>}
+            {assignedHere.map(r => (
+              <Tag key={r.uid} onRemove={() => setRows(list => list.map(x => (x.uid === r.uid ? { ...x, subType: null } : x)))}>{r.value}</Tag>
+            ))}
+          </InlineStack>
+        )}
+        <InlineStack align="end">
+          <Button variant="primary" onClick={save} loading={saving} disabled={!dirty}>Save</Button>
+        </InlineStack>
+      </BlockStack>
+    </Card>
+  );
+}
+
 function BuyerImportProductsSettings() {
   const navigate = useNavigate();
   const { names: locationNames } = useLocationMap();
@@ -142,6 +425,9 @@ function BuyerImportProductsSettings() {
   const [blankMode, setBlankMode] = useState('keep');
   const [savedBlankMode, setSavedBlankMode] = useState('keep');
   const [blankMsg, setBlankMsg] = useState('');
+  // Bumped when Sub types is saved, so Sub collections re-checks it.
+  const [subTypeVersion, setSubTypeVersion] = useState(0);
+  const onSubTypesSaved = useCallback(() => setSubTypeVersion(v => v + 1), []);
 
   const dirtyRef = useRef({});
   const saversRef = useRef({});
@@ -311,8 +597,10 @@ function BuyerImportProductsSettings() {
             </Card>
 
             {ASSIGN_CARDS.map(c => (
-              <AssignCard key={c.field} {...c} types={types} onDirtyChange={onDirtyChange} registerSave={registerSave} />
+              <AssignCard key={c.field} {...c} types={types} onDirtyChange={onDirtyChange} registerSave={registerSave}
+                onSaved={c.field === 'sub_type' ? onSubTypesSaved : undefined} />
             ))}
+            <SubCollectionsCard types={types} subTypeVersion={subTypeVersion} onDirtyChange={onDirtyChange} registerSave={registerSave} />
 
             {/* Update existing — empty cells */}
             <Card>

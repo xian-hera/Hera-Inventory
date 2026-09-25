@@ -123,6 +123,42 @@ async function sweepStuckPhotoRows() {
 // previous crash/restart), then periodically thereafter.
 setTimeout(sweepStuckPhotoRows, 15000);
 setInterval(sweepStuckPhotoRows, 2 * 60 * 1000);
+
+// 2026-09-25, Hera — Commit rules:
+//   - Only 'reviewing' entries can be committed. 'committed' / 'archived' /
+//     'pending' entries are refused (an archived entry can never be
+//     committed again, so its loss can't be deducted twice).
+//   - A successful commit archives the entry right away
+//     (status 'archived', committed_at + archived_at set).
+//   - If Shopify rejects the adjustment (userErrors, or no adjustment group
+//     returned), the entry stays 'reviewing' and the error goes back to the
+//     buyer instead of being marked done.
+//   - Each commit holds a row lock (SELECT ... FOR UPDATE inside a
+//     transaction) while it talks to Shopify, so a double click, or
+//     "Commit" + "Commit all" at the same time, can't deduct the same entry
+//     twice: the second request waits, then sees the entry is no longer
+//     'reviewing' and skips it.
+function entryLabel(row) {
+  return row.name ? `${row.name} (${row.barcode})` : `Barcode ${row.barcode}`;
+}
+
+// Throws when Shopify did not apply the adjustment.
+function assertAdjustApplied(adjustRes, row) {
+  const topErrors = adjustRes?.errors;
+  if (topErrors && (Array.isArray(topErrors) ? topErrors.length : true)) {
+    const msg = Array.isArray(topErrors) ? topErrors.map(e => e.message).join(', ') : (topErrors.message || String(topErrors));
+    throw new Error(`${entryLabel(row)}: Shopify rejected the adjustment — ${msg}`);
+  }
+  const payload = adjustRes?.data?.inventoryAdjustQuantities;
+  const userErrors = payload?.userErrors || [];
+  if (userErrors.length > 0) {
+    throw new Error(`${entryLabel(row)}: Shopify rejected the adjustment — ${userErrors.map(e => e.message).join(', ')}`);
+  }
+  if (!payload?.inventoryAdjustmentGroup?.id) {
+    throw new Error(`${entryLabel(row)}: Shopify did not confirm the adjustment`);
+  }
+}
+
 router.get('/', async (req, res) => {
   try {
     const { location } = req.query;
@@ -248,13 +284,21 @@ router.post('/', async (req, res) => {
 
 // PATCH /api/stock-losses/:id/commit
 router.patch('/:id/commit', async (req, res) => {
+  // Row lock held for the whole commit — see "Commit rules" above.
+  const db = await pool.connect();
   try {
     const { id } = req.params;
-    const entry = await pool.query('SELECT * FROM stock_losses WHERE id = $1', [id]);
-    if (entry.rows.length === 0) return res.status(404).json({ error: 'Entry not found' });
+    await db.query('BEGIN');
+    const entry = await db.query('SELECT * FROM stock_losses WHERE id = $1 FOR UPDATE', [id]);
+    if (entry.rows.length === 0) { await db.query('ROLLBACK'); return res.status(404).json({ error: 'Entry not found' }); }
     const row = entry.rows[0];
 
-    if (row.status === 'committed') return res.json({ success: true, alreadyCommitted: true });
+    // Only 'reviewing' can be committed (was: only 'committed' was skipped,
+    // so an archived entry could be committed — and deducted — again).
+    if (row.status !== 'reviewing') {
+      await db.query('ROLLBACK');
+      return res.status(409).json({ error: `${entryLabel(row)} is ${row.status} and can't be committed.` });
+    }
 
     const { getShopify, getSession, activeFilter } = require('../shopify');
     const session = await getSession();
@@ -269,7 +313,7 @@ router.patch('/:id/commit', async (req, res) => {
       }
     `);
     const invItemId = variantRes.data?.productVariants?.edges?.[0]?.node?.inventoryItem?.id;
-    if (!invItemId) return res.status(404).json({ error: 'Inventory item not found in Shopify' });
+    if (!invItemId) { await db.query('ROLLBACK'); return res.status(404).json({ error: `${entryLabel(row)}: inventory item not found in Shopify` }); }
 
     // changeFromQuantity became a required argument as of Shopify API version
     // 2026-04 (compare-and-swap protection against concurrent inventory
@@ -282,7 +326,7 @@ router.patch('/:id/commit', async (req, res) => {
     // see Shopify changelog "Making idempotency mandatory for inventory
     // adjustments and refund mutations"). A fresh UUID per call is correct:
     // this is a new inventory change each time, not a retry of a prior one.
-    await client.request(`
+    const adjustRes = await client.request(`
       mutation {
         inventoryAdjustQuantities(input: {
           reason: "shrinkage",
@@ -299,15 +343,22 @@ router.patch('/:id/commit', async (req, res) => {
         }
       }
     `);
+    // Shopify refused → stays 'reviewing', error shown to the buyer.
+    assertAdjustApplied(adjustRes, row);
 
-    await pool.query(
-      "UPDATE stock_losses SET status = 'committed', committed_at = NOW() WHERE id = $1",
+    // Committed → archived straight away (Hera 2026-09-25).
+    await db.query(
+      "UPDATE stock_losses SET status = 'archived', committed_at = NOW(), archived_at = NOW() WHERE id = $1",
       [id]
     );
+    await db.query('COMMIT');
     res.json({ success: true });
   } catch (e) {
+    try { await db.query('ROLLBACK'); } catch (_) { /* already closed */ }
     console.error('PATCH /api/stock-losses/:id/commit error:', e);
     res.status(500).json({ error: e.message });
+  } finally {
+    db.release();
   }
 });
 
@@ -348,12 +399,23 @@ router.patch('/commit-many', async (req, res) => {
 
     const errors = [];
 
+    let committedCount = 0;
     for (const id of ids) {
+      // One transaction + row lock per entry — see "Commit rules" above.
+      const db = await pool.connect();
+      let row = null;
       try {
-        const entry = await pool.query('SELECT * FROM stock_losses WHERE id = $1', [id]);
-        if (entry.rows.length === 0) { errors.push(`ID ${id}: not found`); continue; }
-        const row = entry.rows[0];
-        if (row.status === 'committed') continue;
+        await db.query('BEGIN');
+        const entry = await db.query('SELECT * FROM stock_losses WHERE id = $1 FOR UPDATE', [id]);
+        if (entry.rows.length === 0) { await db.query('ROLLBACK'); errors.push(`ID ${id}: not found`); continue; }
+        row = entry.rows[0];
+        // Only 'reviewing' can be committed; anything else is skipped and
+        // reported (was: only 'committed' was skipped).
+        if (row.status !== 'reviewing') {
+          await db.query('ROLLBACK');
+          errors.push(`${entryLabel(row)} is ${row.status} — skipped`);
+          continue;
+        }
 
         const variantRes = await client.request(`
           query {
@@ -363,14 +425,14 @@ router.patch('/commit-many', async (req, res) => {
           }
         `);
         const invItemId = variantRes.data?.productVariants?.edges?.[0]?.node?.inventoryItem?.id;
-        if (!invItemId) { errors.push(`Barcode ${row.barcode}: inventory item not found`); continue; }
+        if (!invItemId) { await db.query('ROLLBACK'); errors.push(`${entryLabel(row)}: inventory item not found`); continue; }
 
         // See the single-item /:id/commit route above for why changeFromQuantity
         // is explicitly null here (required as of API 2026-04; null opts out
         // of the compare-and-swap check, matching this mutation's pre-2026-04
         // behavior) and why @idempotent(key: ...) is now required too (a
         // separate 2026-04 breaking change; fresh UUID per call is correct).
-        await client.request(`
+        const adjustRes = await client.request(`
           mutation {
             inventoryAdjustQuantities(input: {
               reason: "shrinkage",
@@ -387,18 +449,28 @@ router.patch('/commit-many', async (req, res) => {
             }
           }
         `);
+        // Shopify refused → stays 'reviewing', reported in warnings.
+        assertAdjustApplied(adjustRes, row);
 
-        await pool.query(
-          "UPDATE stock_losses SET status = 'committed', committed_at = NOW() WHERE id = $1",
+        // Committed → archived straight away (Hera 2026-09-25).
+        await db.query(
+          "UPDATE stock_losses SET status = 'archived', committed_at = NOW(), archived_at = NOW() WHERE id = $1",
           [id]
         );
+        await db.query('COMMIT');
+        committedCount++;
       } catch (e) {
-        errors.push(`ID ${id}: ${e.message}`);
+        try { await db.query('ROLLBACK'); } catch (_) { /* already closed */ }
+        const label = row ? entryLabel(row) : `ID ${id}`;
+        const msg = e.message || String(e);
+        errors.push(msg.startsWith(label) ? msg : `${label}: ${msg}`);
+      } finally {
+        db.release();
       }
     }
 
-    if (errors.length > 0) return res.json({ success: true, warnings: errors });
-    res.json({ success: true });
+    if (errors.length > 0) return res.json({ success: true, committedCount, warnings: errors });
+    res.json({ success: true, committedCount });
   } catch (e) {
     console.error('PATCH /api/stock-losses/commit-many error:', e);
     res.status(500).json({ error: e.message });
@@ -410,11 +482,15 @@ router.patch('/archive', async (req, res) => {
   try {
     const { ids } = req.body;
     if (!ids || ids.length === 0) return res.status(400).json({ error: 'No ids provided' });
-    await pool.query(
-      "UPDATE stock_losses SET status = 'archived', archived_at = NOW() WHERE id = ANY($1)",
+    // Only 'committed' entries can be archived (Hera 2026-09-25). New commits
+    // archive themselves; this is for entries committed before that change.
+    const result = await pool.query(
+      "UPDATE stock_losses SET status = 'archived', archived_at = NOW() WHERE id = ANY($1) AND status = 'committed' RETURNING id",
       [ids]
     );
-    res.json({ success: true });
+    const archivedIds = result.rows.map(r => r.id);
+    const skippedCount = ids.filter(id => !archivedIds.includes(Number(id))).length;
+    res.json({ success: true, archivedIds, skippedCount });
   } catch (e) {
     console.error('PATCH /api/stock-losses/archive error:', e);
     res.status(500).json({ error: e.message });

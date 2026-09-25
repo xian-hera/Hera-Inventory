@@ -93,14 +93,63 @@ export const PRESETS = [
 export const PRESET_BY_KEY = Object.fromEntries(PRESETS.map(p => [p.key, p]));
 
 // Dropdown columns backed by Settings pools (spec §6.4).
+// 2026-09-25 (Hera): Sub collection and Display section were taken out of
+// this map. Sub collection's options now depend on the row's Sub type
+// (subCollectionOptions below); Display section offers the metafield's own
+// choices and is only imported when the Type is HAIR & SKIN CARE.
 export const POOL_METAFIELDS = {
   'product.custom.sub_type': 'subTypes',
-  'product.custom.sub_collection': 'subCollections',
-  'variant.custom.display_section': 'displaySections',
 };
 
 const lc = (s) => String(s == null ? '' : s).trim().toLowerCase();
 const isBlank = (v) => v === undefined || v === null || String(v).trim() === '';
+
+// ─── Sub type → Sub collection, Display section (2026-09-25, Hera) ──────────
+export const DISPLAY_SECTION_TYPE = 'HAIR & SKIN CARE';
+const isMf = (c, level, key) => c && c.kind === 'metafield' && c.level === level && lc(c.namespace) === 'custom' && lc(c.key) === key;
+export const isSubTypeCol = (c) => isMf(c, 'product', 'sub_type');
+export const isSubCollectionCol = (c) => isMf(c, 'product', 'sub_collection');
+export const isDisplaySectionCol = (c) => isMf(c, 'variant', 'display_section');
+
+export function subCollectionKey(v) {
+  return String(v == null ? '' : v).trim().replace(/\s+/g, ' ').toLowerCase();
+}
+// Same rule as the server: "KIDS" → "Kids", "lace front" → "Lace Front".
+export function titleCase(v) {
+  return subCollectionKey(v).replace(/(^|[\s\-/(])([a-z\u00e0-\u00ff])/g, (m, p, c) => p + c.toUpperCase());
+}
+
+// Display section is only imported for HAIR & SKIN CARE: for any other Type
+// its column is shown greyed out and ignored (and named in the report).
+export function applyTypeRules(columns, productType) {
+  const hsc = lc(productType) === lc(DISPLAY_SECTION_TYPE);
+  return columns.map(c => (isDisplaySectionCol(c) && !hsc
+    ? { ...c, kind: 'unmatched', typeSkipped: true, reason: `Display section is only imported for ${DISPLAY_SECTION_TYPE}` }
+    : c));
+}
+
+// Sub collection values from the CSV are shown/imported in Title Case.
+export function normalizeSubCollections(rows, columns) {
+  const sc = columns.find(isSubCollectionCol);
+  if (!sc) return rows;
+  return rows.map(r => {
+    const v = r.values[sc.id];
+    if (isBlank(v)) return r;
+    return { ...r, values: { ...r.values, [sc.id]: titleCase(v) } };
+  });
+}
+
+// Options for a row's Sub collection cell: the values assigned (in Import
+// Settings) to the row's Sub type. null = the row has no Sub type yet.
+export function subCollectionOptions(row, columns, pools, isFirstOfGroup, presets) {
+  const stCol = columns.find(isSubTypeCol);
+  if (!stCol) return null;
+  const st = String(effectiveCell(row, stCol, { isFirstOfGroup, presets: presets || {} }).value).trim();
+  if (!st) return null;
+  const map = pools.subCollectionsBySubType || {};
+  const hit = Object.keys(map).find(k => lc(k) === lc(st));
+  return hit ? map[hit] : [];
+}
 
 export function parseBool(v) {
   const s = lc(v);
@@ -300,6 +349,10 @@ export function effectiveCell(row, col, { isFirstOfGroup, presets }) {
 //           skip: {groupKey: [msg]} (group will be skipped, not blocking) }
 export function validate({ rows, columns, groups, mode, presets, pools, precheck }) {
   const cellErrors = {};
+  // Non-blocking notes (orange) — e.g. a Sub collection not listed under the
+  // row's Sub type: it is still imported (Hera 2026-09-25).
+  const cellWarnings = {};
+  const addWarn = (r, c, m) => { (cellWarnings[r.id] = cellWarnings[r.id] || {})[c.id] = m; };
   const rowErrors = {};
   const skip = {};
   const addCell = (r, c, m) => { (cellErrors[r.id] = cellErrors[r.id] || {})[c.id] = m; };
@@ -331,7 +384,11 @@ export function validate({ rows, columns, groups, mode, presets, pools, precheck
       }
       if (c.kind === 'metafield') {
         const poolName = POOL_METAFIELDS[`${c.level}.${c.namespace}.${c.key}`];
-        if (poolName) {
+        if (isSubCollectionCol(c)) {
+          const opts = subCollectionOptions(r, columns, pools, isFirst, presets);
+          if (opts === null) addWarn(r, c, 'No Sub type on this row — will still be imported');
+          else if (!opts.some(x => subCollectionKey(x) === subCollectionKey(v))) addWarn(r, c, `"${v}" is not assigned to this Sub type in Import Settings — will still be imported`);
+        } else if (poolName) {
           const pool = pools[poolName] || [];
           if (!pool.some(x => lc(x) === lc(v))) addCell(r, c, `"${v}" is not assigned to this Type in Import Settings`);
         } else if (c.def && c.def.type === 'boolean' && parseBool(v) === null) {
@@ -382,7 +439,7 @@ export function validate({ rows, columns, groups, mode, presets, pools, precheck
       }
     }
   }
-  return { cellErrors, rowErrors, skip };
+  return { cellErrors, cellWarnings, rowErrors, skip };
 }
 
 // Product-level value conflicts inside a group (first row wins, highlighted).
@@ -434,7 +491,9 @@ export function buildPayload({ groups, columns, mode, presets, precheck, skip })
         if (m) { optionNames[Number(m[1]) - 1] = String(cell.value).trim(); continue; }
         fields[f] = c.preset ? presetToField(c.preset, cell.value) : cell.value;
       } else if (c.kind === 'metafield' || (c.kind === 'preset' && c.namespace)) {
-        productMetafields.push({ namespace: c.namespace, key: c.key, value: c.preset ? presetToField(c.preset, cell.value) : cell.value });
+        let value = c.preset ? presetToField(c.preset, cell.value) : cell.value;
+        if (isSubCollectionCol(c) && !isBlank(value)) value = titleCase(value); // always Title Case (2026-09-25)
+        productMetafields.push({ namespace: c.namespace, key: c.key, value });
       }
     }
 

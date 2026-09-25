@@ -91,6 +91,11 @@ function BuyerStockLosses() {
   const [loading, setLoading]                   = useState(false);
   const [error, setError]                       = useState('');
   const [committing, setCommitting]             = useState(false);
+  // Rows whose single Commit request is in flight — their button is
+  // disabled so a double tap can't send a second commit (2026-09-25).
+  const [committingIds, setCommittingIds]       = useState([]);
+  // Non-error results of bulk actions (e.g. how many were committed).
+  const [notice, setNotice]                     = useState('');
 
   const [selectedTypes, setSelectedTypes]       = useState([]);
   const [selectedLocations, setSelectedLocations] = useState([]);
@@ -134,14 +139,26 @@ function BuyerStockLosses() {
   useEffect(() => { fetchEntries(); }, [fetchEntries]);
 
   const handleCommitOne = async (id) => {
+    if (committingIds.includes(id)) return;
+    setCommittingIds(prev => [...prev, id]);
     try {
       const res = await fetch(`/api/stock-losses/${id}/commit`, { method: 'PATCH' });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       fetchEntries();
     } catch (e) {
+      // Shopify rejected / entry not reviewing: nothing was marked committed.
       setError(e.message);
+    } finally {
+      setCommittingIds(prev => prev.filter(x => x !== id));
     }
+  };
+
+  // Commit results: warnings (entries Shopify rejected or that were skipped)
+  // go to the red banner; the committed count to the green one.
+  const showCommitResult = (data) => {
+    if (data.warnings?.length > 0) setError(`Not committed:\n${data.warnings.join('\n')}`);
+    if (data.committedCount > 0) setNotice(`${data.committedCount} entr${data.committedCount > 1 ? 'ies' : 'y'} committed and archived.`);
   };
 
   const handleCommitSelected = async () => {
@@ -155,7 +172,8 @@ function BuyerStockLosses() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      if (data.warnings?.length > 0) setError(data.warnings.join('\n'));
+      // was: if (data.warnings?.length > 0) setError(data.warnings.join('\n'));
+      showCommitResult(data);
       setSelectedIds([]);
       fetchEntries();
     } catch (e) {
@@ -177,7 +195,8 @@ function BuyerStockLosses() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      if (data.warnings?.length > 0) setError(data.warnings.join('\n'));
+      // was: if (data.warnings?.length > 0) setError(data.warnings.join('\n'));
+      showCommitResult(data);
       setSelectedIds([]);
       fetchEntries();
     } catch (e) {
@@ -213,6 +232,11 @@ function BuyerStockLosses() {
         body: JSON.stringify({ ids: selectedIds }),
       });
       if (!res.ok) throw new Error('Archive failed');
+      // Only committed entries can be archived (2026-09-25).
+      const data = await res.json().catch(() => ({}));
+      if (data.skippedCount > 0) {
+        setError(`${data.skippedCount} entr${data.skippedCount > 1 ? 'ies were' : 'y was'} not archived — only committed entries can be archived.`);
+      }
       setSelectedIds([]);
       fetchEntries();
     } catch (e) {
@@ -247,7 +271,7 @@ function BuyerStockLosses() {
     })();
 
     const actionCell = entry.status === 'reviewing' ? (
-      <Button size="slim" onClick={() => handleCommitOne(entry.id)} loading={committing}>
+      <Button size="slim" onClick={() => handleCommitOne(entry.id)} loading={committing || committingIds.includes(entry.id)} disabled={committingIds.includes(entry.id)}>
         Commit
       </Button>
     ) : statusBadge;
@@ -288,7 +312,13 @@ function BuyerStockLosses() {
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">
-            {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
+            {/* One line per message, so each rejected entry is readable (2026-09-25). */}
+            {error && (
+              <Banner tone="critical" onDismiss={() => setError('')}>
+                {error.split('\n').map((line, i) => <div key={i}>{line}</div>)}
+              </Banner>
+            )}
+            {notice && <Banner tone="success" onDismiss={() => setNotice('')}>{notice}</Banner>}
 
             <Card>
               <InlineStack gap="400" wrap>

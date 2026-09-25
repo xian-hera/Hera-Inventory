@@ -1188,6 +1188,34 @@ const initDatabase = async () => {
       )
     `);
 
+    // Import Products → Settings → Sub collections (2026-09-25, Hera).
+    // custom.sub_collection is a free-text metafield, so the values come from
+    // a per-Type Sync of what ACTIVE products use. Each row is one value
+    // under one Type; sub_type NULL = not assigned yet. The same value may
+    // appear more than once (Duplicate button) so it can sit under several
+    // sub types — but never twice under the same sub type (index below).
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS import_sub_collection_values (
+        id SERIAL PRIMARY KEY,
+        product_type TEXT NOT NULL,
+        value TEXT NOT NULL,
+        sub_type TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS import_sub_collection_values_assigned_key
+        ON import_sub_collection_values (product_type, LOWER(value), sub_type)
+        WHERE sub_type IS NOT NULL
+    `);
+    // Display section and Sub collection are no longer assigned through
+    // import_metafield_assignments (Hera 2026-09-25: Display section uses the
+    // metafield's own choices; Sub collection moved to the table above).
+    // Old rows for those two are cleared; Sub type rows are untouched.
+    await client.query(
+      "DELETE FROM import_metafield_assignments WHERE metafield IN ('display_section', 'sub_collection')"
+    );
+
     // ── Restock tasks (2026-09-24, Hera) ──────────────────────────────────
     // Restock used to be one shared list per location; now each list is a
     // task (name + optional creator) so two managers at the same location

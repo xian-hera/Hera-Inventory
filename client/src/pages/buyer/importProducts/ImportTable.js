@@ -5,7 +5,10 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import ReactDOM from 'react-dom';
 import { Tooltip } from '@shopify/polaris';
-import { PRESETS, PRESET_BY_KEY, POOL_METAFIELDS, cellValue, effectiveCell } from './importModel';
+import {
+  PRESETS, PRESET_BY_KEY, POOL_METAFIELDS, cellValue, effectiveCell,
+  isSubCollectionCol, isDisplaySectionCol, subCollectionOptions,
+} from './importModel';
 
 const PRESET_BG = '#f1f8f3';
 const METAFIELD_BG = '#f0f5fd';
@@ -51,9 +54,18 @@ export function orderColumns(columns, presetsOn, metafieldsOn) {
 }
 
 // Dropdown pool for a column, or null for a textbox column.
-export function poolFor(col, pools) {
+// Sub collection (2026-09-25): depends on the row's Sub type — returns
+// { needsSubType: true } when the row has none. Display section: the
+// metafield definition's own choices (read from Shopify at each import).
+export function poolFor(col, pools, rowCtx) {
   if (col.preset) return PRESET_BY_KEY[col.preset].options;
   if (col.kind === 'field' && col.field === 'category') return (pools.categories || []).map(c => c.fullName);
+  if (isSubCollectionCol(col)) {
+    if (!rowCtx) return [];
+    const opts = subCollectionOptions(rowCtx.row, rowCtx.columns, pools, rowCtx.isFirstOfGroup, rowCtx.presets);
+    return opts === null ? { needsSubType: true } : opts;
+  }
+  if (isDisplaySectionCol(col)) return (col.def && col.def.choices) || [];
   if (col.kind === 'metafield') {
     const name = POOL_METAFIELDS[`${col.level}.${col.namespace}.${col.key}`];
     if (name) return pools[name] || [];
@@ -61,7 +73,7 @@ export function poolFor(col, pools) {
   return null;
 }
 
-function DropdownEditor({ anchorRect, original, pool, isCategory, onPick, onCancel }) {
+function DropdownEditor({ anchorRect, original, pool, isCategory, emptyMessage, onPick, onCancel }) {
   const [query, setQuery] = useState('');
   const ref = useRef(null);
   useEffect(() => {
@@ -88,6 +100,10 @@ function DropdownEditor({ anchorRect, original, pool, isCategory, onPick, onCanc
       zIndex: 100000, background: '#fff', border: '1px solid #c9cccf', borderRadius: 8,
       boxShadow: '0 4px 16px rgba(0,0,0,0.18)', padding: 6,
     }}>
+      {emptyMessage ? (
+        <div style={{ padding: 8, fontSize: 13, color: '#6d7175' }}>{emptyMessage}</div>
+      ) : (
+      <>
       <input
         autoFocus
         value={query}
@@ -109,6 +125,8 @@ function DropdownEditor({ anchorRect, original, pool, isCategory, onPick, onCanc
         ))}
         {filtered.length === 0 && q && <div style={{ padding: 8, fontSize: 13, color: '#6d7175' }}>No match</div>}
       </div>
+      </>
+      )}
     </div>,
     document.body
   );
@@ -232,6 +250,7 @@ function ImportTable({
             const g = info && info.g;
             const rowErr = (validation.rowErrors[r.id] || []);
             const cellErr = validation.cellErrors[r.id] || {};
+            const cellWarn = (validation.cellWarnings && validation.cellWarnings[r.id]) || {};
             const skipMsgs = g && isFirst ? (validation.skip[g.key] || []) : [];
             const pcRow = precheck && precheck.rows ? precheck.rows[r.rowNumber] : null;
             const matchedTitle = mode === 'update' && pcRow && !pcRow.errors.length ? pcRow.productTitle : '';
@@ -241,6 +260,7 @@ function ImportTable({
             const topBorder = isFirst ? '1px solid #c9cccf' : '1px solid #f1f1f1';
             const td = { padding: '8px', borderTop: topBorder, verticalAlign: 'top', background: rowBg, wordBreak: 'break-word', whiteSpace: 'pre-wrap' };
             const msgs = [...rowErr, ...Object.values(cellErr), ...skipMsgs];
+            const warnMsgs = Object.values(cellWarn);
             return (
               <tr key={r.id}>
                 <td style={{ ...td, ...stickyLeft(0) }}>
@@ -256,6 +276,9 @@ function ImportTable({
                       {blocking ? '✕ ' : '⚠ '}{m}
                     </div>
                   ))}
+                  {warnMsgs.map((m, i) => (
+                    <div key={`w${i}`} style={{ color: '#b98900', marginTop: 2 }}>⚠ {m}</div>
+                  ))}
                   {!msgs.length && precheck && <div style={{ color: '#008060' }}>✓ Ready</div>}
                 </td>
                 {ordered.map(c => {
@@ -263,6 +286,7 @@ function ImportTable({
                   const productOnlyRow = c.level === 'product' && !isFirst && mode === 'add';
                   const disabled = colDisabled(c) || productOnlyRow;
                   const err = cellErr[c.id];
+                  const warn = cellWarn[c.id];
                   const conflict = conflicts[r.id] && conflicts[r.id][c.id];
                   let display = eff.value;
                   let style = {};
@@ -274,12 +298,12 @@ function ImportTable({
                     style = { color: '#8c9196', fontStyle: 'italic' };
                   }
                   const isEditing = editing && editing.rowId === r.id && editing.colId === c.id;
-                  const pool = poolFor(c, pools);
+                  const pool = poolFor(c, pools, { row: r, columns, isFirstOfGroup: isFirst, presets });
                   const cellStyle = {
                     ...td,
-                    background: err ? '#fbe9e7' : conflict ? '#fff8e1' : (colBg(c) || td.background),
+                    background: err ? '#fbe9e7' : (conflict || warn) ? '#fff8e1' : (colBg(c) || td.background),
                     cursor: disabled ? 'default' : 'pointer',
-                    outline: err ? '1px solid #d72c0d' : undefined,
+                    outline: err ? '1px solid #d72c0d' : warn ? '1px solid #e8a33d' : undefined,
                     outlineOffset: -1,
                   };
                   const content = (
@@ -304,14 +328,15 @@ function ImportTable({
                           onCommit={(v) => { setEditing(null); onEdit(r.id, c.id, v); }}
                           onCancel={() => setEditing(null)}
                         />
-                      ) : (err || conflict || productOnlyRow) ? (
-                        <Tooltip content={err || conflict || 'Product-level field — the first row of this product is used'}>{content}</Tooltip>
+                      ) : (err || conflict || warn || productOnlyRow) ? (
+                        <Tooltip content={err || conflict || warn || 'Product-level field — the first row of this product is used'}>{content}</Tooltip>
                       ) : content}
                       {isEditing && pool && (
                         <DropdownEditor
                           anchorRect={editing.rect}
                           original={String(r.values[c.id] == null ? '' : r.values[c.id])}
-                          pool={pool}
+                          pool={Array.isArray(pool) ? pool : []}
+                          emptyMessage={pool && pool.needsSubType ? 'Choose sub type first.' : ''}
                           isCategory={c.kind === 'field' && c.field === 'category'}
                           onPick={(v) => { setEditing(null); onEdit(r.id, c.id, v); }}
                           onCancel={() => setEditing(null)}

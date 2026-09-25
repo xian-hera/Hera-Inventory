@@ -14,6 +14,7 @@ import FullBleed from '../../components/FullBleed';
 import {
   MAX_ROWS, MAX_COLUMNS, PRESETS, buildColumns, buildRows, groupRows, validate,
   productLevelConflicts, buildPayload, cellValue, colFor,
+  applyTypeRules, normalizeSubCollections, isSubTypeCol, isSubCollectionCol, subCollectionOptions, subCollectionKey,
 } from './importProducts/importModel';
 
 const NARROW = { maxWidth: '62.375rem', margin: '0 auto', width: '100%' };
@@ -58,7 +59,7 @@ function BuyerImportProducts() {
   const [columns, setColumns] = useState([]);
   const [ignoredHeaders, setIgnoredHeaders] = useState([]);
   const [rows, setRows] = useState([]);
-  const [pools, setPools] = useState({ categories: [], subTypes: [], subCollections: [], displaySections: [] });
+  const [pools, setPools] = useState({ categories: [], subTypes: [], subCollections: [], subCollectionsBySubType: {}, displaySections: [] });
 
   // ── Presets ──
   const [presets, setPresets] = useState(Object.fromEntries(PRESETS.map(p => [p.key, p.defaultValue])));
@@ -135,9 +136,12 @@ function BuyerImportProducts() {
       if (!defsRes.ok) throw new Error(defs.error || 'Could not load metafield definitions');
       if (!optRes.ok) throw new Error(opts.error || 'Could not load options');
       const built = buildColumns(csv.headers, defs);
-      setColumns(built.columns);
+      // Display section only counts for HAIR & SKIN CARE (2026-09-25).
+      const typedColumns = applyTypeRules(built.columns, productType);
+      setColumns(typedColumns);
       setIgnoredHeaders(built.ignoredHeaders);
-      const r = buildRows(csv.data, built.columns);
+      // Sub collection values in Title Case (2026-09-25).
+      const r = normalizeSubCollections(buildRows(csv.data, typedColumns), typedColumns);
       if (!r.length) throw new Error('No data rows found in the CSV.');
       setRows(r);
       setPools(opts);
@@ -216,6 +220,20 @@ function BuyerImportProducts() {
       // Picking the CSV value again removes the edit — except an explicit blank
       // on a preset column, which must stay so the preset doesn't refill it.
       if (String(value) === orig && !(orig === '' && col && col.preset)) delete edits[colId]; else edits[colId] = value;
+      // Changing the Sub type clears a Sub collection that doesn't belong to
+      // the new Sub type (Hera 2026-09-25).
+      if (col && isSubTypeCol(col)) {
+        const scCol = columns.find(isSubCollectionCol);
+        if (scCol) {
+          const tmp = { ...r, edits };
+          const current = String(cellValue(tmp, scCol)).trim();
+          const opts = subCollectionOptions(tmp, columns, pools, true, presets) || [];
+          if (current && !opts.some(o => subCollectionKey(o) === subCollectionKey(current))) {
+            const scOrig = r.values[scCol.id] == null ? '' : String(r.values[scCol.id]);
+            if (scOrig === '') delete edits[scCol.id]; else edits[scCol.id] = '';
+          }
+        }
+      }
       return { ...r, edits };
     });
     setRows(next);
@@ -332,7 +350,11 @@ function BuyerImportProducts() {
 
   const locked = stage !== 'start';
   const presetsLocked = stage !== 'presets';
-  const unmatchedCols = columns.filter(c => c.kind === 'unmatched');
+  // typeSkipped = Display section on a Type other than HAIR & SKIN CARE:
+  // reported separately from "not matched" (2026-09-25).
+  const unmatchedCols = columns.filter(c => c.kind === 'unmatched' && !c.typeSkipped);
+  const typeSkippedCols = columns.filter(c => c.typeSkipped);
+  const warningCount = Object.values(validation.cellWarnings || {}).reduce((n, m) => n + Object.keys(m).length, 0);
   const counts = allResults.reduce((m, r) => { m[r.result] = (m[r.result] || 0) + 1; return m; }, {});
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -437,6 +459,12 @@ function BuyerImportProducts() {
                 {unmatchedCols.length > 0 && (
                   <Banner tone="warning">Column {unmatchedCols.map(c => `"${c.header}"`).join(', ')} not matched — will be ignored.</Banner>
                 )}
+                {typeSkippedCols.map(c => (
+                  <Banner key={c.id} tone="warning">Column "{c.header}" will be ignored — {c.reason}.</Banner>
+                ))}
+                {warningCount > 0 && (
+                  <Banner tone="warning">{warningCount} sub collection value(s) are not listed under their row's sub type in Import Settings (orange cells). They will still be imported.</Banner>
+                )}
                 {checking && <Banner tone="info"><InlineStack gap="200" blockAlign="center"><Spinner size="small" /><span>Checking against Shopify…</span></InlineStack></Banner>}
                 {checkError && <Banner tone="critical">Check against Shopify failed: {checkError}</Banner>}
                 {blockingCount > 0 && <Banner tone="critical">{blockingCount} row(s) have values that must be fixed before importing (red cells).</Banner>}
@@ -496,6 +524,9 @@ function BuyerImportProducts() {
             <BlockStack gap="300">
               {job && job.fatal && <Banner tone="critical">Import stopped after {job.done || 0} of {job.total || 0} products — {job.fatal}. The remaining {(job.total || 0) - (job.done || 0)} were not processed.</Banner>}
               {unmatchedCols.length > 0 && <Banner tone="warning">Column {unmatchedCols.map(c => `"${c.header}"`).join(', ')} not matched</Banner>}
+              {typeSkippedCols.map(c => (
+                <Banner key={c.id} tone="warning">Column "{c.header}" was not imported — {c.reason}.</Banner>
+              ))}
               <InlineStack align="space-between" blockAlign="center">
                 <Text variant="headingSm">
                   {(counts.success || 0)} imported · {(counts.partial || 0)} partial · {(counts.failed || 0)} failed
