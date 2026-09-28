@@ -1210,7 +1210,16 @@ router.get('/manager/receiving/:id', async (req, res) => {
     );
     if (invRes.rows.length === 0) return res.status(404).json({ error: 'Invoice not found' });
     const invoice = invRes.rows[0];
-    const itemsRes = await pool.query('SELECT * FROM po_invoice_items WHERE invoice_id = $1 ORDER BY id ASC', [id]);
+    // Line items are ordered alphabetically by Name (2026-09-28, Hera) —
+    // case-insensitive, and a blank/NULL name (rare — only when a row has no
+    // CSV name and no supplier-mapping fallback either) sorts to the end
+    // instead of first. `id ASC` as the tiebreaker keeps ties (same name, or
+    // several blanks) in their original insertion order rather than an
+    // unstable/arbitrary one.
+    const itemsRes = await pool.query(
+      `SELECT * FROM po_invoice_items WHERE invoice_id = $1 ORDER BY LOWER(name) ASC NULLS LAST, id ASC`,
+      [id]
+    );
     const items = itemsRes.rows;
 
     const supplierCarriesWig = (invoice.types_carrying || []).includes('WIG');
