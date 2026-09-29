@@ -5,6 +5,10 @@ import {
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import { fetchLocationMap } from '../shared/locationMap';
+// Store location: remembered per Shopify account, loaded before this page
+// renders by ManagerLocationGate (2026-09-29) — replaces reading
+// localStorage 'managerLocation' directly. See client/src/accountMemory.js.
+import { getManagerLocation } from '../../accountMemory';
 
 // ─── Built-in reasons ─────────────────────────────────────────────────────────
 const BUILT_IN_REASONS = [
@@ -387,7 +391,7 @@ function InstructionPopup({ instruction, onClose }) {
 // ─── Main page ────────────────────────────────────────────────────────────────
 function ManagerStockLosses() {
   const navigate = useNavigate();
-  const location = localStorage.getItem('managerLocation') || '';
+  const location = getManagerLocation() || '';
 
   const [items, setItems]             = useState([]);
   const [selectedIds, setSelectedIds] = useState([]);

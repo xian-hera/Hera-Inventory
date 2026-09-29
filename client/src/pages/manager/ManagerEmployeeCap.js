@@ -4,10 +4,14 @@ import {
   Text, Spinner, Banner,
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
+// Store location: remembered per Shopify account, loaded before this page
+// renders by ManagerLocationGate (2026-09-29) — replaces reading
+// localStorage 'managerLocation' directly. See client/src/accountMemory.js.
+import { getManagerLocation } from '../../accountMemory';
 
 function ManagerEmployeeCap() {
   const navigate  = useNavigate();
-  const location  = localStorage.getItem('managerLocation') || '';
+  const location  = getManagerLocation() || '';
 
   const [empCount,      setEmpCount]      = useState(null);
   const [employees,     setEmployees]      = useState([]);

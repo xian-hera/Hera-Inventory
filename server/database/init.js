@@ -285,6 +285,34 @@ const initDatabase = async () => {
       )
     `);
 
+    // ─── Per-account memory (2026-09-29, Hera) ──────────────────────────────────
+    // Replaces the per-device localStorage memory, which iOS (Shopify app)
+    // kept wiping. account_id = the Shopify staff user ID from the App Bridge
+    // session token (see server/accountAuth.js).
+    //
+    // pin_sessions: "this account entered the correct PIN for this section";
+    // valid until expires_at (30 days). Changing a section's PIN deletes all
+    // of that section's rows, so everyone has to enter the new PIN.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS pin_sessions (
+        account_id TEXT NOT NULL,
+        pin_key    TEXT NOT NULL,
+        expires_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        PRIMARY KEY (account_id, pin_key)
+      )
+    `);
+    // manager_locations: the Store location this account last confirmed on
+    // Manager Home. Never expires; overwritten only when the account
+    // confirms a different location.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS manager_locations (
+        account_id TEXT PRIMARY KEY,
+        location   TEXT NOT NULL,
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
     // ─── Employee Cap ────────────────────────────────────────────────────────────
 
     // employees: synced from Connecteam

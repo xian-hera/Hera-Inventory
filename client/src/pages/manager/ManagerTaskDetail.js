@@ -6,6 +6,10 @@ import {
 import { useNavigate, useParams } from 'react-router-dom';
 import { fetchLocationMap } from '../shared/locationMap';
 import useKeyboardInset from '../../components/useKeyboardInset';
+// Store location: remembered per Shopify account, loaded before this page
+// renders by ManagerLocationGate (2026-09-29) — replaces reading
+// localStorage 'managerLocation' directly. See client/src/accountMemory.js.
+import { getManagerLocation } from '../../accountMemory';
 
 const TYPE_LABEL_MAP = {
   'Hair & Skin Care': 'Care',
@@ -105,7 +109,7 @@ function ManagerTaskDetail() {
   const barcodeTimer  = useRef(null);
   const popupRef      = useRef(null);
   const taskRef       = useRef(null);
-  const location      = localStorage.getItem('managerLocation') || '';
+  const location      = getManagerLocation() || '';
 
   useEffect(() => { popupRef.current = popupItem; }, [popupItem]);
   useEffect(() => { taskRef.current = task; }, [task]);

@@ -5,6 +5,10 @@ import {
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import MultiSelectDropdown from '../../components/MultiSelectDropdown';
+// Store location: remembered per Shopify account, loaded before this page
+// renders by ManagerLocationGate (2026-09-29) — replaces reading
+// localStorage 'managerLocation' directly. See client/src/accountMemory.js.
+import { getManagerLocation } from '../../accountMemory';
 
 // 改动一：9个 Type
 const TYPE_OPTIONS = [
@@ -43,7 +47,7 @@ function ManagerCountingTasksList() {
   const [history, setHistory]               = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
 
-  const location = localStorage.getItem('managerLocation') || '';
+  const location = getManagerLocation() || '';
 
   const fetchTasks = useCallback(async () => {
     if (!location) return;

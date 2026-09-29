@@ -5,6 +5,10 @@ import {
 } from '@shopify/polaris';
 import { useNavigate, useParams } from 'react-router-dom';
 import { fetchLocationMap } from '../shared/locationMap';
+// Store location: remembered per Shopify account, loaded before this page
+// renders by ManagerLocationGate (2026-09-29) — replaces reading
+// localStorage 'managerLocation' directly. See client/src/accountMemory.js.
+import { getManagerLocation } from '../../accountMemory';
 
 function resolveKey(e) {
   if (e.key && e.key !== 'Unidentified' && e.key.length === 1) return e.key;
@@ -34,7 +38,7 @@ function cleanBarcode(raw) {
 function ManagerRestockPlan() {
   const navigate = useNavigate();
   const { taskId } = useParams();
-  const location = localStorage.getItem('managerLocation') || '';
+  const location = getManagerLocation() || '';
   const [taskName, setTaskName] = useState('');
 
   useEffect(() => {

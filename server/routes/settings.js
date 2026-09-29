@@ -2,6 +2,10 @@ const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
 const { pool } = require('../database/init');
+// Per-account PIN memory (2026-09-29): a correct PIN is also remembered for
+// the current Shopify account (30 days), and a PIN change logs every account
+// out of that section. See routes/accountMemory.js.
+const { rememberPinForAccount, forgetPinForAllAccounts } = require('./accountMemory');
 
 // PIN is stored as a SHA-256 hash in app_settings table
 // key: 'buyer_pin', 'crm_pin' (displayed as "Operation" on the frontend,
@@ -89,7 +93,12 @@ router.post('/pin/verify', async (req, res) => {
       return res.status(401).json({ error: 'Incorrect PIN' });
     }
 
-    res.json({ success: true, hint: stored.hint || '' });
+    // `remembered`: true if this was saved for the current Shopify account
+    // (false = no account identified; the frontend then relies on its
+    // localStorage fallback). Never turns a correct PIN into a failure.
+    const remembered = await rememberPinForAccount(req, key);
+
+    res.json({ success: true, hint: stored.hint || '', remembered });
   } catch (e) {
     console.error('POST /api/settings/pin/verify error:', e);
     res.status(500).json({ error: e.message });
@@ -157,6 +166,9 @@ router.post('/pin/update', async (req, res) => {
        ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
       [key, JSON.stringify(newValue)]
     );
+
+    // New PIN → every account has to enter it again for this section.
+    await forgetPinForAllAccounts(key);
 
     res.json({ success: true });
   } catch (e) {

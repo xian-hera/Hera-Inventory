@@ -5,6 +5,10 @@ import {
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import MobileModalSafeArea from '../../components/MobileModalSafeArea';
+// Store location: remembered per Shopify account, loaded before this page
+// renders by ManagerLocationGate (2026-09-29) — replaces reading
+// localStorage 'managerLocation' directly. See client/src/accountMemory.js.
+import { getManagerLocation } from '../../accountMemory';
 
 // Restock tasks (2026-09-24, Hera) — a layer above the Restock page, modeled
 // on ManagerLabelPrintTasks.js. Several managers at the same location can
@@ -13,7 +17,7 @@ import MobileModalSafeArea from '../../components/MobileModalSafeArea';
 // select tasks to delete. Tasks never expire; managers delete them here.
 function ManagerRestockTasks() {
   const navigate = useNavigate();
-  const location = localStorage.getItem('managerLocation') || '';
+  const location = getManagerLocation() || '';
 
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);

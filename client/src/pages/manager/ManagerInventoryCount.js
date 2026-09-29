@@ -1,6 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Page, Layout, Button, BlockStack } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
+// Store location: remembered per Shopify account, loaded before this page
+// renders by ManagerLocationGate (2026-09-29) — replaces reading
+// localStorage 'managerLocation' directly. See client/src/accountMemory.js.
+import { getManagerLocation } from '../../accountMemory';
 
 const BADGE_STYLE = {
   display: 'inline-flex',
@@ -26,7 +30,7 @@ function Badge({ count }) {
 function ManagerInventoryCount() {
   const navigate = useNavigate();
   const [weeklyCount, setWeeklyCount] = useState(0);
-  const location = localStorage.getItem('managerLocation') || '';
+  const location = getManagerLocation() || '';
 
   useEffect(() => {
     if (!location) return;

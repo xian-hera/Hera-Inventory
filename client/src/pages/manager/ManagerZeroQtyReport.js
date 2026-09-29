@@ -5,6 +5,10 @@ import {
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import { fetchLocationMap } from '../shared/locationMap';
+// Store location: remembered per Shopify account, loaded before this page
+// renders by ManagerLocationGate (2026-09-29) — replaces reading
+// localStorage 'managerLocation' directly. See client/src/accountMemory.js.
+import { getManagerLocation } from '../../accountMemory';
 
 function computePOH(scanHistory, soh) {
   if (!scanHistory || scanHistory.length === 0) return null;
@@ -64,7 +68,7 @@ function ManagerZeroQtyReport() {
   const barcodeTimer  = useRef(null);
   const popupRef      = useRef(null);
   const typeInRef     = useRef(false);
-  const location      = localStorage.getItem('managerLocation') || '';
+  const location      = getManagerLocation() || '';
 
   useEffect(() => { popupRef.current = popupData; }, [popupData]);
   useEffect(() => { typeInRef.current = showTypeIn; }, [showTypeIn]);

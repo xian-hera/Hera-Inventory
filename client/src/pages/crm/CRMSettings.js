@@ -3,6 +3,7 @@ import {
   Page, Layout, Button, BlockStack, TextField, Banner, Modal, Text
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
+import { logoutPin } from '../../accountMemory';
 
 const CRM_PIN_VERIFIED_KEY = 'crm_pin_verified';
 
@@ -54,8 +55,12 @@ function CRMSettings() {
 
   const closeModal = () => setShowModal(false);
 
-  const handleLogout = () => {
+  // Log out (2026-09-29): also forgets the PIN for the current Shopify
+  // account on the server (all devices of that account), not just this
+  // device. Waits for that before leaving so Home doesn't still see it.
+  const handleLogout = async () => {
     localStorage.removeItem(CRM_PIN_VERIFIED_KEY);
+    await logoutPin('crm_pin');
     navigate('/');
   };
 
@@ -101,6 +106,8 @@ function CRMSettings() {
       });
       if (res.ok) {
         localStorage.removeItem(CRM_PIN_VERIFIED_KEY);
+        // (server side, /pin/update also logs every Shopify account out of
+        // this section — everyone must enter the new PIN, 2026-09-29)
         setSuccess(true);
         setTimeout(() => closeModal(), 1400);
       } else {

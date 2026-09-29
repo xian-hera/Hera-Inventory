@@ -3,6 +3,10 @@ import {
   Page, Layout, Card, BlockStack, InlineStack, Text, Spinner, Banner
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
+// Store location: remembered per Shopify account, loaded before this page
+// renders by ManagerLocationGate (2026-09-29) — replaces reading
+// localStorage 'managerLocation' directly. See client/src/accountMemory.js.
+import { getManagerLocation } from '../../accountMemory';
 
 function formatDate(dateStr) {
   if (!dateStr) return '';
@@ -37,7 +41,7 @@ function truncateSupplier(name) {
 // date (sent_to_store_at), not the invoice's own date.
 function ManagerPOReceiving() {
   const navigate = useNavigate();
-  const location = localStorage.getItem('managerLocation') || '';
+  const location = getManagerLocation() || '';
 
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);

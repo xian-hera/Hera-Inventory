@@ -56,12 +56,14 @@ function BuyerPOInvoiceDetail() {
       .catch(() => {});
   }, [invoiceId]);
 
+  // Back (top-left) returns to Purchase Order List, the page this detail is
+  // opened from (2026-09-29, Hera). Delete goes back there too.
   const handleDelete = async () => {
     if (!window.confirm('Delete this invoice record? This only removes the local history — it does not reverse the Shopify inventory or cost changes already made. This cannot be undone.')) return;
     try {
       const res = await fetch(`/api/po-invoices/committed/${invoiceId}`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Delete failed');
-      navigate('/buyer/po-receiving');
+      navigate('/buyer/po-receiving/commit-later');
     } catch (e) {
       setError(e.message);
     }
@@ -97,14 +99,14 @@ function BuyerPOInvoiceDetail() {
 
   if (loading) {
     return (
-      <Page title="Invoice" backAction={{ onAction: () => navigate('/buyer/po-receiving') }}>
+      <Page title="Invoice" backAction={{ onAction: () => navigate('/buyer/po-receiving/commit-later') }}>
         <Layout><Layout.Section><InlineStack align="center"><Spinner /></InlineStack></Layout.Section></Layout>
       </Page>
     );
   }
   if (!invoice) {
     return (
-      <Page title="Invoice" backAction={{ onAction: () => navigate('/buyer/po-receiving') }}>
+      <Page title="Invoice" backAction={{ onAction: () => navigate('/buyer/po-receiving/commit-later') }}>
         <Layout><Layout.Section>{error && <Banner tone="critical">{error}</Banner>}</Layout.Section></Layout>
       </Page>
     );
@@ -164,7 +166,7 @@ function BuyerPOInvoiceDetail() {
           {invoice.is_promotional && <Badge>Promotional</Badge>}
         </InlineStack>
       }
-      backAction={{ onAction: () => navigate('/buyer/po-receiving') }}
+      backAction={{ onAction: () => navigate('/buyer/po-receiving/commit-later') }}
       secondaryActions={[
         { content: 'Export PDF', onAction: handleExportPdf, loading: exportingPdf, disabled: exportingPdf },
         { content: 'Delete', destructive: true, onAction: handleDelete },

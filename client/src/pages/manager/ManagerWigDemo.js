@@ -5,6 +5,10 @@ import {
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import { fetchLocationMap } from '../shared/locationMap';
+// Store location: remembered per Shopify account, loaded before this page
+// renders by ManagerLocationGate (2026-09-29) — replaces reading
+// localStorage 'managerLocation' directly. See client/src/accountMemory.js.
+import { getManagerLocation } from '../../accountMemory';
 
 // ─── Barcode-scanner keyboard-emulation helpers ────────────────────────────
 // Same approach as ManagerStockLosses.js / ManagerInventoryCount-style pages:
@@ -410,7 +414,7 @@ function HowToUseOverlay({ onClose }) {
 // ─── Main page ────────────────────────────────────────────────────────────────
 function ManagerWigDemo() {
   const navigate = useNavigate();
-  const location = localStorage.getItem('managerLocation') || '';
+  const location = getManagerLocation() || '';
 
   const [shopifyLocationId, setShopifyLocationId] = useState('');
   const [items, setItems]             = useState([]);

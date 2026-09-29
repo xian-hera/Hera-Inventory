@@ -1,8 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { Page, Layout, Button, BlockStack, Text, TextField, Banner, Modal } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
+// PIN check/verify now go through the current Shopify account first, with
+// the old localStorage 30-day check as the fallback (2026-09-29) — see
+// client/src/accountMemory.js.
+import { isPinVerified, verifyPin } from '../../accountMemory';
 
-const CRM_PIN_VERIFIED_KEY = 'crm_pin_verified';
+// localStorage key ('crm_pin_verified') moved to PIN_LOCAL_KEYS in client/src/accountMemory.js (2026-09-29).
 const PIN_EXPIRY_DAYS      = 30;
 
 function CRMHome() {
@@ -22,39 +26,33 @@ function CRMHome() {
       .then(data => setHint(data.hint || ''))
       .catch(() => {});
 
-    if (isDeviceVerified()) {
-      setReady(true);
-    } else {
-      setShowModal(true);
-    }
+    let cancelled = false;
+    isPinVerified('crm_pin').then((ok) => {
+      if (cancelled) return;
+      if (ok) setReady(true);
+      else setShowModal(true);
+    });
+    return () => { cancelled = true; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const isDeviceVerified = () => {
-    try {
-      const stored = localStorage.getItem(CRM_PIN_VERIFIED_KEY);
-      if (!stored) return false;
-      const { expiry } = JSON.parse(stored);
-      return Date.now() < expiry;
-    } catch (e) { return false; }
-  };
+  // isDeviceVerified() (localStorage 30-day check) now lives in
+  // accountMemory.js as the fallback inside isPinVerified().
 
   const handleConfirm = async () => {
     setVerifying(true);
     setPinError('');
     try {
-      const res = await fetch('/api/settings/pin/verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: 'crm_pin', pin: pinInput }),
-      });
-      if (res.ok) {
-        const expiry = Date.now() + PIN_EXPIRY_DAYS * 24 * 60 * 60 * 1000;
-        localStorage.setItem(CRM_PIN_VERIFIED_KEY, JSON.stringify({ expiry }));
+      // verifyPin(): remembers it for the Shopify account (30 days) and
+      // still writes the old localStorage entry as the fallback.
+      const result = await verifyPin('crm_pin', pinInput);
+      if (result.ok) {
         setShowModal(false);
         setReady(true);
-      } else {
+      } else if (result.wrong) {
         setPinError('Incorrect PIN. Please try again.');
         setPinInput('');
+      } else {
+        setPinError('Network error. Please try again.');
       }
     } catch (e) {
       setPinError('Network error. Please try again.');
@@ -131,7 +129,7 @@ function CRMHome() {
               </Text>
             )}
             <Text variant="bodySm" tone="subdued">
-              This device will be remembered for {PIN_EXPIRY_DAYS} days after a successful login.
+              This Shopify account will be remembered for {PIN_EXPIRY_DAYS} days after a successful login, on any device.
             </Text>
           </BlockStack>
         </Modal.Section>

@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs');
 const { setupShopify } = require('./shopify');
 const { initDatabase } = require('./database/init');
 const birthdayRoute = require('./routes/birthday');
@@ -49,6 +50,8 @@ app.use('/api/hairdressers', require('./routes/hairdressers'));
 app.use('/api/birthday-config', birthdayConfigRouter);
 app.use('/api/influencers', require('./routes/influencers'));
 app.use('/api/settings', require('./routes/settings'));
+// Per-account PIN + Store location memory (2026-09-29) — see routes/accountMemory.js
+app.use('/api/account-memory', require('./routes/accountMemory').router);
 app.use('/api/employees', require('./routes/employees'));
 app.use('/api/po-suppliers', require('./routes/poSuppliers'));
 app.use('/api/po-invoices', require('./routes/poInvoices'));
@@ -62,9 +65,28 @@ app.use('/api/new-products', require('./routes/newProducts'));
 
 // Serve static files in production
 if (process.env.NODE_ENV === 'production') {
-  app.use(express.static(path.join(__dirname, '../client/build')));
+  // index.html is NOT served by express.static any more (index: false) but by
+  // the '*' handler below, so the Shopify API key can be filled into its
+  // <meta name="shopify-api-key"> tag (2026-09-29). App Bridge needs that tag
+  // to hand out session tokens (see server/accountAuth.js). The key is the
+  // app's public client ID, same value as SHOPIFY_API_KEY. All other build
+  // files (JS/CSS/fonts) are still served by express.static exactly as before.
+  app.use(express.static(path.join(__dirname, '../client/build'), { index: false }));
+  const indexPath = path.join(__dirname, '../client/build', 'index.html');
+  let indexHtml = null;
   app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, '../client/build', 'index.html'));
+    try {
+      if (indexHtml === null) {
+        indexHtml = fs.readFileSync(indexPath, 'utf8')
+          .split('__SHOPIFY_API_KEY__').join(process.env.SHOPIFY_API_KEY || '');
+      }
+      res.set('Cache-Control', 'no-cache');
+      res.type('html').send(indexHtml);
+    } catch (e) {
+      // Same outcome as before this change if anything goes wrong reading it.
+      console.error('[index.html] inject failed, serving file as-is:', e.message);
+      res.sendFile(indexPath);
+    }
   });
 }
 

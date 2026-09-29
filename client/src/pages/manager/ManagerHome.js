@@ -5,11 +5,20 @@ import {
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import { useLocationMap } from '../shared/locationMap';
+// Store location is remembered per Shopify account (2026-09-29) — loaded
+// by ManagerLocationGate before this page renders; see
+// client/src/accountMemory.js. localStorage 'managerLocation' is still
+// written as the fallback.
+import { getManagerLocation, saveManagerLocation, beginChangeManagerLocation } from '../../accountMemory';
 
 // Location list: comes from the shared location map (pages/shared/locationMap.js,
 // 2026-09-24). The hardcoded 19-code LOCATIONS constant that used to live here
 // (this device's "Select location" dropdown) was removed. A location already
 // saved on this device (localStorage 'managerLocation') is unaffected.
+// (2026-09-29) The confirmed location is now remembered per Shopify account
+// (forever, overwritten only by confirming a different one) instead of per
+// device. A remembered location that is no longer in the location map
+// (renamed/removed in Shopify) is ignored and the picker is shown again.
 
 const BADGE_STYLE = {
   display: 'inline-flex',
@@ -41,12 +50,24 @@ function ManagerHome() {
   const [badges, setBadges]           = useState({ inventoryCount: 0, labelPrint: 0, poReceiving: 0, transfer: 0 });
 
   useEffect(() => {
-    const saved = localStorage.getItem('managerLocation');
+    const saved = getManagerLocation();
     if (saved) {
       setLocation(saved);
       setConfirmed(true);
     }
   }, []);
+
+  // Remembered location no longer in the (successfully loaded) location
+  // map → treat as not chosen, so nobody works on a store that no longer
+  // exists under that name. Nothing is deleted; confirming a new one
+  // overwrites it.
+  useEffect(() => {
+    if (!confirmed || !location || locationNames.length === 0) return;
+    if (!locationNames.includes(location)) {
+      setConfirmed(false);
+      setLocation('');
+    }
+  }, [confirmed, location, locationNames]);
 
   useEffect(() => {
     if (!confirmed || !location) return;
@@ -65,7 +86,9 @@ function ManagerHome() {
 
   const handleConfirmLocation = () => {
     if (!location) { setShowWarning(true); return; }
-    localStorage.setItem('managerLocation', location);
+    // Saves for the Shopify account (server, overwrite) + this device.
+    // Not awaited: the UI moves on immediately, like before.
+    saveManagerLocation(location);
     setConfirmed(true);
     setShowWarning(false);
   };
@@ -73,7 +96,9 @@ function ManagerHome() {
   const handleChangeLocation = () => {
     setConfirmed(false);
     setLocation('');
-    localStorage.removeItem('managerLocation');
+    // Account memory is kept until a new location is confirmed (then
+    // overwritten); only the no-account fallback forgets it here, as before.
+    beginChangeManagerLocation();
     setBadges({ inventoryCount: 0, labelPrint: 0, poReceiving: 0, transfer: 0 });
   };
 

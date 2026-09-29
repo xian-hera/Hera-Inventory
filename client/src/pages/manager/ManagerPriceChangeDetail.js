@@ -5,11 +5,15 @@ import {
 } from '@shopify/polaris';
 import { useParams, useNavigate } from 'react-router-dom';
 import MobileModalSafeArea from '../../components/MobileModalSafeArea';
+// Store location: remembered per Shopify account, loaded before this page
+// renders by ManagerLocationGate (2026-09-29) — replaces reading
+// localStorage 'managerLocation' directly. See client/src/accountMemory.js.
+import { getManagerLocation } from '../../accountMemory';
 
 function ManagerPriceChangeDetail() {
   const { taskId } = useParams();
   const navigate = useNavigate();
-  const location = localStorage.getItem('managerLocation') || '';
+  const location = getManagerLocation() || '';
 
   const [task, setTask]     = useState(null);
   const [items, setItems]   = useState([]);

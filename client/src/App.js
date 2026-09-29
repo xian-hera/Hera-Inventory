@@ -83,6 +83,11 @@ import ManagerTransferReceivingDetail from './pages/manager/ManagerTransferRecei
 import ManagerTaskHistoryDetail from './pages/manager/ManagerTaskHistoryDetail';
 import ManagerPOReceivingHistoryDetail from './pages/manager/ManagerPOReceivingHistoryDetail';
 import ManagerTransferHistoryDetail from './pages/manager/ManagerTransferHistoryDetail';
+// Every /manager route is wrapped in ManagerLocationGate (2026-09-29): it
+// loads the Store location remembered for the current Shopify account once,
+// before the page renders, so manager pages can read it synchronously. See
+// components/ManagerLocationGate.js and accountMemory.js.
+import ManagerLocationGate from './components/ManagerLocationGate';
 
 function App() {
   return (
@@ -142,29 +147,29 @@ function App() {
           <Route path="/warehouse/box-po/:id" element={<WarehouseBoxPODetail />} />
 
           {/* Manager */}
-          <Route path="/manager" element={<ManagerHome />} />
-          <Route path="/manager/transfer" element={<ManagerTransferHome />} />
-          <Route path="/manager/transfer/sending/:transferId" element={<ManagerTransferSendingDetail />} />
-          <Route path="/manager/transfer/receiving/:transferId" element={<ManagerTransferReceivingDetail />} />
+          <Route path="/manager" element={<ManagerLocationGate><ManagerHome /></ManagerLocationGate>} />
+          <Route path="/manager/transfer" element={<ManagerLocationGate><ManagerTransferHome /></ManagerLocationGate>} />
+          <Route path="/manager/transfer/sending/:transferId" element={<ManagerLocationGate><ManagerTransferSendingDetail /></ManagerLocationGate>} />
+          <Route path="/manager/transfer/receiving/:transferId" element={<ManagerLocationGate><ManagerTransferReceivingDetail /></ManagerLocationGate>} />
           {/* Transfer History detail — fixed "history" segment can't collide
               with the :transferId routes above (different segment counts). */}
-          <Route path="/manager/transfer/history/:historyId" element={<ManagerTransferHistoryDetail />} />
-          <Route path="/manager/inventory-count" element={<ManagerInventoryCount />} />
-          <Route path="/manager/counting-tasks" element={<ManagerCountingTasksList />} />
-          <Route path="/manager/counting-tasks/:taskId" element={<ManagerTaskDetail />} />
-          <Route path="/manager/counting-tasks/history/:historyId" element={<ManagerTaskHistoryDetail />} />
-          <Route path="/manager/zero-qty-report" element={<ManagerZeroQtyReport />} />
-          <Route path="/manager/stock-losses" element={<ManagerStockLosses />} />
-          <Route path="/manager/wig-demo" element={<ManagerWigDemo />} />
-          <Route path="/manager/restock-plan" element={<ManagerRestockTasks />} />
-          <Route path="/manager/restock-plan/:taskId" element={<ManagerRestockPlan />} />
-          <Route path="/manager/label-print" element={<ManagerLabelPrintTasks />} />
-          <Route path="/manager/label-print/:taskId" element={<ManagerLabelPrintTaskDetail />} />
-          <Route path="/manager/price-change/:taskId" element={<ManagerPriceChangeDetail />} />
-          <Route path="/manager/employee-cap" element={<ManagerEmployeeCap />} />
-          <Route path="/manager/po-receiving" element={<ManagerPOReceiving />} />
-          <Route path="/manager/po-receiving/history/:historyId" element={<ManagerPOReceivingHistoryDetail />} />
-          <Route path="/manager/po-receiving/:invoiceId" element={<ManagerPOReceivingDetail />} />
+          <Route path="/manager/transfer/history/:historyId" element={<ManagerLocationGate><ManagerTransferHistoryDetail /></ManagerLocationGate>} />
+          <Route path="/manager/inventory-count" element={<ManagerLocationGate><ManagerInventoryCount /></ManagerLocationGate>} />
+          <Route path="/manager/counting-tasks" element={<ManagerLocationGate><ManagerCountingTasksList /></ManagerLocationGate>} />
+          <Route path="/manager/counting-tasks/:taskId" element={<ManagerLocationGate><ManagerTaskDetail /></ManagerLocationGate>} />
+          <Route path="/manager/counting-tasks/history/:historyId" element={<ManagerLocationGate><ManagerTaskHistoryDetail /></ManagerLocationGate>} />
+          <Route path="/manager/zero-qty-report" element={<ManagerLocationGate><ManagerZeroQtyReport /></ManagerLocationGate>} />
+          <Route path="/manager/stock-losses" element={<ManagerLocationGate><ManagerStockLosses /></ManagerLocationGate>} />
+          <Route path="/manager/wig-demo" element={<ManagerLocationGate><ManagerWigDemo /></ManagerLocationGate>} />
+          <Route path="/manager/restock-plan" element={<ManagerLocationGate><ManagerRestockTasks /></ManagerLocationGate>} />
+          <Route path="/manager/restock-plan/:taskId" element={<ManagerLocationGate><ManagerRestockPlan /></ManagerLocationGate>} />
+          <Route path="/manager/label-print" element={<ManagerLocationGate><ManagerLabelPrintTasks /></ManagerLocationGate>} />
+          <Route path="/manager/label-print/:taskId" element={<ManagerLocationGate><ManagerLabelPrintTaskDetail /></ManagerLocationGate>} />
+          <Route path="/manager/price-change/:taskId" element={<ManagerLocationGate><ManagerPriceChangeDetail /></ManagerLocationGate>} />
+          <Route path="/manager/employee-cap" element={<ManagerLocationGate><ManagerEmployeeCap /></ManagerLocationGate>} />
+          <Route path="/manager/po-receiving" element={<ManagerLocationGate><ManagerPOReceiving /></ManagerLocationGate>} />
+          <Route path="/manager/po-receiving/history/:historyId" element={<ManagerLocationGate><ManagerPOReceivingHistoryDetail /></ManagerLocationGate>} />
+          <Route path="/manager/po-receiving/:invoiceId" element={<ManagerLocationGate><ManagerPOReceivingDetail /></ManagerLocationGate>} />
 
           {/* CRM */}
           <Route path="/crm" element={<CRMHome />} />

@@ -104,6 +104,13 @@ function BuyerPOImportInvoice() {
 
   const [invoiceId, setInvoiceId] = useState(invoiceIdParam ? Number(invoiceIdParam) : null);
   const [loading, setLoading] = useState(!!invoiceIdParam);
+  // Back (top-left), 2026-09-29 Hera: an existing invoice opened from
+  // Purchase Order List (URL /pending/:invoiceId) goes back to that list (and so does Discard, 2026-09-29); the
+  // "Create New Purchase Order" wizard (/import) still goes back to Purchase
+  // Orders (Discard too), even after processing creates an invoice id in state — so this
+  // keys off the URL param, not the invoiceId state. Commit etc. keep
+  // their own destinations.
+  const backPath = invoiceIdParam ? '/buyer/po-receiving/commit-later' : '/buyer/po-receiving';
   const [error, setError] = useState('');
   const [processing, setProcessing] = useState(false);
   // `committing` covers only the brief gap between clicking Commit and the
@@ -993,7 +1000,7 @@ function BuyerPOImportInvoice() {
         });
         if (!res.ok) throw new Error('Failed to discard this invoice. Please try again.');
       }
-      navigate('/buyer/po-receiving');
+      navigate(backPath);
     } catch (e) {
       setError(e.message);
     }
@@ -1049,7 +1056,7 @@ function BuyerPOImportInvoice() {
 
   if (loading) {
     return (
-      <Page title="Create New Purchase Order" backAction={{ onAction: () => navigate('/buyer/po-receiving') }}>
+      <Page title="Create New Purchase Order" backAction={{ onAction: () => navigate(backPath) }}>
         <Layout><Layout.Section><InlineStack align="center"><Spinner /></InlineStack></Layout.Section></Layout>
       </Page>
     );
@@ -1117,7 +1124,7 @@ function BuyerPOImportInvoice() {
     <Page
       title={invoiceId ? (poNumber || invoiceNumber || 'Invoice') : 'Create New Purchase Order'}
       titleMetadata={invoiceId ? <Badge tone={pill.tone}>{pill.label}</Badge> : undefined}
-      backAction={{ onAction: () => navigate('/buyer/po-receiving') }}
+      backAction={{ onAction: () => navigate(backPath) }}
       secondaryActions={headerActions}
     >
       <Layout>

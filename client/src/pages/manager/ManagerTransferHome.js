@@ -4,6 +4,10 @@ import {
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import { StatusBadge, HoldBadge } from '../shared/transferStatus';
+// Store location: remembered per Shopify account, loaded before this page
+// renders by ManagerLocationGate (2026-09-29) — replaces reading
+// localStorage 'managerLocation' directly. See client/src/accountMemory.js.
+import { getManagerLocation } from '../../accountMemory';
 
 function formatDate(dateStr) {
   if (!dateStr) return '';
@@ -32,7 +36,7 @@ function ManagerTransferHome() {
   const [history, setHistory] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(true);
 
-  const location = localStorage.getItem('managerLocation');
+  const location = getManagerLocation();
 
   const fetchHome = useCallback(async () => {
     if (!location) { setLoading(false); return; }
