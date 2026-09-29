@@ -1892,7 +1892,19 @@ router.get('/:id/export-pdf', async (req, res) => {
     const invoice = invRes.rows[0];
     const supplierCarriesWig = (invoice.types_carrying || []).includes('WIG');
 
-    const itemsRes = await pool.query('SELECT * FROM po_invoice_items WHERE invoice_id = $1 ORDER BY id ASC', [id]);
+    // Same order as the manager receiving page (2026-09-29, Hera): by the
+    // stored `name` field, case-insensitive, blank/NULL last, id ASC as the
+    // tiebreaker — see GET /manager/receiving/:id above for the full
+    // rationale. This is the DB-stored name, not the live custom.name this
+    // route fetches per row below for display — using the live value here
+    // instead would mean sorting only after every Shopify lookup finishes,
+    // which is a bigger change; the stored name already normally matches the
+    // live metafield (per Hera), so this keeps the two pages' ordering in
+    // sync without slowing this export down.
+    const itemsRes = await pool.query(
+      `SELECT * FROM po_invoice_items WHERE invoice_id = $1 ORDER BY LOWER(name) ASC NULLS LAST, id ASC`,
+      [id]
+    );
     const items = itemsRes.rows;
 
     const { getShopify, getSession } = require('../shopify');
