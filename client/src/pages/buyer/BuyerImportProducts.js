@@ -20,6 +20,19 @@ import {
 const NARROW = { maxWidth: '62.375rem', margin: '0 auto', width: '100%' };
 const STORE_ADMIN = 'https://admin.shopify.com/store/beaute-hera/products/';
 
+// 2026-09-29 (Hera): buyers don't need to change these presets, so their
+// dropdowns are no longer shown in the Presets card (now titled "Inventory
+// Active Locations"). Hub fills EMPTY cells with these defaults; a value in
+// the CSV always wins. Set SHOW_PRESET_DROPDOWNS to true to bring the
+// dropdowns back.
+// Update existing keeps POS only / Discontinued on "Read from CSV", so
+// updating e.g. prices doesn't reset those two on every product.
+const SHOW_PRESET_DROPDOWNS = false;
+const HIDDEN_PRESET_DEFAULTS = {
+  add: { status: 'Active', channel: 'Point of Sale', posOnly: 'False', discontinued: 'False', chargeTax: 'Yes' },
+  update: { status: 'Active', channel: 'Point of Sale', posOnly: 'csv', discontinued: 'csv', chargeTax: 'Yes' },
+};
+
 const numericId = (gid) => { const m = String(gid || '').match(/(\d+)$/); return m ? m[1] : ''; };
 const pad = (n) => String(n).padStart(2, '0');
 
@@ -145,6 +158,7 @@ function BuyerImportProducts() {
       if (!r.length) throw new Error('No data rows found in the CSV.');
       setRows(r);
       setPools(opts);
+      if (!SHOW_PRESET_DROPDOWNS) setPresets(HIDDEN_PRESET_DEFAULTS[mode] || HIDDEN_PRESET_DEFAULTS.add);
       setStage('presets');
     } catch (e) {
       setStartError(e.message);
@@ -406,9 +420,10 @@ function BuyerImportProducts() {
             {stage !== 'start' && (
               <Card>
                 <BlockStack gap="300">
-                  <Text variant="headingMd" as="h2">Presets</Text>
+                  {/* Still called the Presets card internally (Hera 2026-09-29). */}
+                  <Text variant="headingMd" as="h2">Inventory Active Locations</Text>
                   <InlineStack gap="400" blockAlign="end" wrap>
-                    {PRESETS.map(p => (p.key === 'channel' ? (
+                    {SHOW_PRESET_DROPDOWNS && PRESETS.map(p => (p.key === 'channel' ? (
                       <div key={p.key} style={{ minWidth: 170 }}>
                         <Select label="Channel" options={[{ label: 'Point of Sale', value: 'Point of Sale' }]} value="Point of Sale" onChange={() => {}} disabled />
                       </div>
@@ -443,8 +458,21 @@ function BuyerImportProducts() {
                   </InlineStack>
                   <InlineStack align="space-between" blockAlign="end">
                     <BlockStack gap="050">
-                      <Text variant="bodySm" tone="subdued">Values populated by presets will show in green.</Text>
-                      <Text variant="bodySm" tone="subdued">If a preset differs from a value in the CSV, the CSV value is used.</Text>
+                      {SHOW_PRESET_DROPDOWNS ? (
+                        <>
+                          <Text variant="bodySm" tone="subdued">Values populated by presets will show in green.</Text>
+                          <Text variant="bodySm" tone="subdued">If a preset differs from a value in the CSV, the CSV value is used.</Text>
+                        </>
+                      ) : (
+                        <>
+                          <Text variant="bodySm" tone="subdued">
+                            {mode === 'add'
+                              ? 'Empty cells get default values, shown in green: Status Active, Channel Point of Sale, POS only False, Discontinued False, Charge tax Yes.'
+                              : 'Empty cells get default values, shown in green: Status Active, Channel Point of Sale, Charge tax Yes. POS only and Discontinued are only changed where the CSV has a value.'}
+                          </Text>
+                          <Text variant="bodySm" tone="subdued">If the CSV has a value, the CSV value is used.</Text>
+                        </>
+                      )}
                     </BlockStack>
                     <Button variant="primary" onClick={confirmPresets} disabled={presetsLocked}>Confirm</Button>
                   </InlineStack>
