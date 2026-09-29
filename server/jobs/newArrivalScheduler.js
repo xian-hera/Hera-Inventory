@@ -4,7 +4,10 @@
 //   1. remove the New Arrival tag from products whose removal date passed
 //      (rows in new_arrival_tag_removals, written by Finalized → Publish);
 //   2. delete finalized-but-unpublished new_arrival rows older than 100 days
-//      (counted from the finalized date — Hera 2026-09-24).
+//      (counted from the finalized date — Hera 2026-09-24);
+//   3. Store → New Arrival (2026-09-29): set the shelf date of TBD products
+//      now in stock at a shelf location, delete expired / long-TBD products
+//      (see routes/storeNewArrivals.js).
 // Only ever removes the one tag it added; never touches other tags and never
 // deletes Shopify products.
 const cron = require('node-cron');
@@ -53,6 +56,13 @@ async function runNewArrivalJob() {
     const removed = await removeDueTags();
     const purged = await purgeOldFinalized();
     console.log(`[new-arrival] daily job: ${removed} tag(s) removed, ${purged} old finalized row(s) deleted`);
+    try {
+      const { runStoreNewArrivalDaily } = require('../routes/storeNewArrivals');
+      const s = await runStoreNewArrivalDaily();
+      console.log(`[store-new-arrival] daily job: ${s.started} shelf date(s) set, ${s.expired} expired, ${s.staleTbd} long-TBD deleted`);
+    } catch (e) {
+      console.error('[store-new-arrival] daily job failed:', e.message);
+    }
   } catch (e) {
     console.error('[new-arrival] daily job failed:', e.message);
   } finally {

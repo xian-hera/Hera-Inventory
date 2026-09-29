@@ -87,9 +87,13 @@ router.post('/finalize', async (req, res) => {
   try {
     const list = ids(req.body);
     const r = await pool.query(
-      `UPDATE new_arrival SET status = 'finalized', finalized_at = NOW() WHERE id = ANY($1) AND status = 'new'`,
+      `UPDATE new_arrival SET status = 'finalized', finalized_at = NOW() WHERE id = ANY($1) AND status = 'new'
+       RETURNING shopify_product_id`,
       [list]
     );
+    // Finalized products also go to Store → New Arrival (2026-09-29, Hera).
+    const { addStoreNewArrivals } = require('./storeNewArrivals');
+    await addStoreNewArrivals(r.rows.map(x => x.shopify_product_id), 'finalized');
     res.json({ finalized: r.rowCount });
   } catch (e) {
     res.status(500).json({ error: e.message });

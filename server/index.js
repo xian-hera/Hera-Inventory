@@ -62,6 +62,7 @@ app.use('/api/manager-history', require('./routes/managerHistory').router);
 app.use('/api/wig-demo', require('./routes/wigDemo'));
 app.use('/api/import-products', require('./routes/importProducts'));
 app.use('/api/new-products', require('./routes/newProducts'));
+app.use('/api/store-new-arrivals', require('./routes/storeNewArrivals').router); // Store → New Arrival, 2026-09-29
 
 // Serve static files in production
 if (process.env.NODE_ENV === 'production') {

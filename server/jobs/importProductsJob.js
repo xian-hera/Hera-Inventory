@@ -441,6 +441,12 @@ async function addProduct(p, ctx) {
 
   // 4. new_arrival (Add new only, POS only != true).
   const posOnly = (p.metafields || []).find(m => m.namespace === 'custom' && m.key === 'pos_only');
+  // POS only = true → straight to Store → New Arrival (2026-09-29, Hera);
+  // the others get there when Online marks them Finalized.
+  if (posOnly && parseBool(posOnly.value) === true) {
+    const { addStoreNewArrivals } = require('../routes/storeNewArrivals');
+    await addStoreNewArrivals([product.id], 'pos_only');
+  }
   if (!(posOnly && parseBool(posOnly.value) === true)) {
     try {
       const ins = await pool.query(

@@ -1236,6 +1236,29 @@ const initDatabase = async () => {
         ON import_sub_collection_values (product_type, LOWER(value), sub_type)
         WHERE sub_type IS NOT NULL
     `);
+    // Store → New Arrival (2026-09-29, Hera). One row per product that
+    // entered the list (POS only import, or Online Finalized). shelf_started_at
+    // = first day a "shelf location" had Available > 0 (NULL = TBD).
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS store_new_arrivals (
+        id SERIAL PRIMARY KEY,
+        shopify_product_id TEXT UNIQUE NOT NULL,
+        source TEXT NOT NULL,
+        entered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        shelf_started_at DATE
+      )
+    `);
+    // Per store: first time the product had Available > 0 there. Once a row
+    // exists the product stays under "Available in store" for that store.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS store_new_arrival_seen (
+        arrival_id INTEGER NOT NULL REFERENCES store_new_arrivals(id) ON DELETE CASCADE,
+        location TEXT NOT NULL,
+        first_available_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (arrival_id, location)
+      )
+    `);
+
     // Display section and Sub collection are no longer assigned through
     // import_metafield_assignments (Hera 2026-09-25: Display section uses the
     // metafield's own choices; Sub collection moved to the table above).

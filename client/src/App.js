@@ -88,6 +88,8 @@ import ManagerTransferHistoryDetail from './pages/manager/ManagerTransferHistory
 // before the page renders, so manager pages can read it synchronously. See
 // components/ManagerLocationGate.js and accountMemory.js.
 import ManagerLocationGate from './components/ManagerLocationGate';
+import ManagerNewArrival from './pages/manager/ManagerNewArrival'; // Store → New Arrival, 2026-09-29
+import BuyerNewArrivalSettings from './pages/buyer/BuyerNewArrivalSettings'; // its rules, 2026-09-29
 
 function App() {
   return (
@@ -100,6 +102,7 @@ function App() {
           <Route path="/buyer" element={<BuyerHome />} />
           <Route path="/buyer/inventory-count" element={<BuyerInventoryCount />} />
           <Route path="/buyer/settings" element={<BuyerSettings />} />
+          <Route path="/buyer/settings/new-arrival" element={<BuyerNewArrivalSettings />} />
           <Route path="/buyer/counting-tasks" element={<CountingTasksList />} />
           <Route path="/buyer/counting-tasks/new" element={<CreatingTask />} />
           <Route path="/buyer/counting-tasks/new/preview" element={<PreviewTask />} />
@@ -167,6 +170,7 @@ function App() {
           <Route path="/manager/label-print/:taskId" element={<ManagerLocationGate><ManagerLabelPrintTaskDetail /></ManagerLocationGate>} />
           <Route path="/manager/price-change/:taskId" element={<ManagerLocationGate><ManagerPriceChangeDetail /></ManagerLocationGate>} />
           <Route path="/manager/employee-cap" element={<ManagerLocationGate><ManagerEmployeeCap /></ManagerLocationGate>} />
+          <Route path="/manager/new-arrival" element={<ManagerLocationGate><ManagerNewArrival /></ManagerLocationGate>} />
           <Route path="/manager/po-receiving" element={<ManagerLocationGate><ManagerPOReceiving /></ManagerLocationGate>} />
           <Route path="/manager/po-receiving/history/:historyId" element={<ManagerLocationGate><ManagerPOReceivingHistoryDetail /></ManagerLocationGate>} />
           <Route path="/manager/po-receiving/:invoiceId" element={<ManagerLocationGate><ManagerPOReceivingDetail /></ManagerLocationGate>} />

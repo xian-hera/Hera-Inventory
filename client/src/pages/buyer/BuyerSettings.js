@@ -152,6 +152,10 @@ function BuyerSettings() {
             <Button size="large" fullWidth onClick={() => navigate('/buyer/product-database')}>
               Product Database
             </Button>
+            {/* Rules for Store → New Arrival (2026-09-29, Hera). */}
+            <Button size="large" fullWidth onClick={() => navigate('/buyer/settings/new-arrival')}>
+              New Arrival
+            </Button>
             <Button size="large" fullWidth onClick={handleSyncLocations} loading={syncingLocations}>
               Sync Locations
             </Button>

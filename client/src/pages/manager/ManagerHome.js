@@ -113,7 +113,12 @@ function ManagerHome() {
   ];
 
   return (
-    <Page title="Task" backAction={{ onAction: () => navigate('/') }}>
+    <Page
+      title="Task"
+      backAction={{ onAction: () => navigate('/') }}
+      // New Arrival (2026-09-29, Hera): top-right, same row as the title.
+      primaryAction={{ content: 'New Arrival', onAction: () => handleNavigate('/manager/new-arrival') }}
+    >
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">

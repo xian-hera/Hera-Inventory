@@ -438,7 +438,7 @@ function CreatingTask() {
                 <BlockStack gap="300">
                   <InlineStack gap="300" align="start">
                     <Button onClick={addMetafieldRow}>Add metafield</Button>
-                    <Button onClick={() => setShowQuantityFilter(true)}>Filter quantity</Button>
+                    <Button onClick={() => setShowQuantityFilter(true)}>Filter qty</Button>
                     <InlineStack gap="200">
                       {['all', 'any'].map(opt => (
                         <button
