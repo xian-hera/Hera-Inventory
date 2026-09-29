@@ -119,7 +119,11 @@ function ManagerNewArrival() {
         </div>
       )}
 
-      <div style={{ height: 'var(--shopify-safe-area-inset-bottom, 80px)' }} aria-hidden="true" />
+      {/* Generous bottom space (Hera 2026-09-29): the last card must not sit
+          on the screen edge or under a bottom nav bar. 120px plus whatever
+          safe-area inset Shopify reports (the plain 80px fallback alone was
+          too tight, and a small reported inset made it even tighter). */}
+      <div style={{ height: 'calc(120px + var(--shopify-safe-area-inset-bottom, 0px))' }} aria-hidden="true" />
     </Page>
   );
 }

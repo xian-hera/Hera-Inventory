@@ -679,4 +679,4 @@ async function runJob(job, payload) {
   job.status = 'done';
 }
 
-module.exports = { precheck, startImport, getJob };
+module.exports = { precheck, startImport, getJob, findVariants }; // findVariants also used by Add New Arrival (2026-09-29)

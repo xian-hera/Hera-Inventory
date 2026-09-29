@@ -504,6 +504,12 @@ function BuyerStockLossesSettings() {
                 </BlockStack>
               </Card>
 
+              {/* 20% wider than the page column, centred on it, so the whole
+                  table fits without the small sideways scroll (Hera
+                  2026-09-29). Never wider than the window (minus a margin);
+                  the table can still scroll sideways if many reasons are
+                  added. */}
+              <div style={{ position: 'relative', left: '50%', transform: 'translateX(-50%)', width: 'min(120%, calc(100vw - 48px))' }}>
               <Card padding="0">
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '580px' }}>
@@ -567,6 +573,7 @@ function BuyerStockLossesSettings() {
                   </table>
                 </div>
               </Card>
+              </div>
 
             </BlockStack>
           </Layout.Section>
