@@ -94,10 +94,16 @@ function BuyerImportProducts() {
   const [localResults, setLocalResults] = useState([]);
 
   useEffect(() => {
-    fetch('/api/shopify/product-types').then(r => r.json()).then(d => setTypes(Array.isArray(d) ? d : [])).catch(() => setTypes([]));
-    fetch('/api/import-products/settings').then(r => r.json())
-      .then(d => setDefaultLocations(Array.isArray(d.defaultLocations) ? d.defaultLocations : []))
-      .catch(() => setDefaultLocations([]));
+    // Type dropdown = Shopify product types minus the ones hidden in Import
+    // Settings → Types (2026-09-30, Hera).
+    Promise.all([
+      fetch('/api/shopify/product-types').then(r => r.json()).catch(() => []),
+      fetch('/api/import-products/settings').then(r => r.json()).catch(() => ({})),
+    ]).then(([t, d]) => {
+      const hidden = new Set((Array.isArray(d.hiddenTypes) ? d.hiddenTypes : []).map(x => String(x).toLowerCase()));
+      setTypes((Array.isArray(t) ? t : []).filter(x => !hidden.has(String(x).toLowerCase())));
+      setDefaultLocations(Array.isArray(d.defaultLocations) ? d.defaultLocations : []);
+    });
   }, []);
 
   // Default Locations = Settings default, limited to locations still active.

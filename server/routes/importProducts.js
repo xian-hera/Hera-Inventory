@@ -12,6 +12,9 @@ const KEYS = {
   blankMode: 'import_update_blank_mode',
   categoryStatus: 'import_category_status',
   subCollectionSync: 'import_sub_collection_sync', // { [type]: status }
+  // Types NOT offered in the Start card's Type dropdown (2026-09-30, Hera).
+  // Stored as the hidden list, so a type that appears later is shown.
+  hiddenTypes: 'import_hidden_types',
 };
 
 // Sub type / Sub collection / Display section → which metafield definition.
@@ -33,6 +36,7 @@ router.get('/settings', async (req, res) => {
       blankMode: await getSetting(KEYS.blankMode, 'keep'),
       categoryStatus: await getSetting(KEYS.categoryStatus, {}),
       categoryCounts: Object.fromEntries(counts.rows.map(r => [r.product_type, r.n])),
+      hiddenTypes: await getSetting(KEYS.hiddenTypes, []),
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -44,6 +48,16 @@ router.put('/settings/locations', async (req, res) => {
     const list = Array.isArray(req.body.locations) ? req.body.locations.map(String) : [];
     await setSetting(KEYS.locations, list);
     res.json({ success: true, defaultLocations: list });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.put('/settings/types', async (req, res) => {
+  try {
+    const list = Array.isArray(req.body.hiddenTypes) ? req.body.hiddenTypes.map(String) : [];
+    await setSetting(KEYS.hiddenTypes, list);
+    res.json({ success: true, hiddenTypes: list });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

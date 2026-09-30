@@ -425,6 +425,11 @@ function BuyerImportProductsSettings() {
   const [blankMode, setBlankMode] = useState('keep');
   const [savedBlankMode, setSavedBlankMode] = useState('keep');
   const [blankMsg, setBlankMsg] = useState('');
+  // Types card (2026-09-30, Hera): which types the Start card offers.
+  const [hiddenTypes, setHiddenTypes] = useState(null); // saved hidden list
+  const [shownTypes, setShownTypes] = useState([]);
+  const [savingTypes, setSavingTypes] = useState(false);
+  const [typesMsg, setTypesMsg] = useState('');
   // Bumped when Sub types is saved, so Sub collections re-checks it.
   const [subTypeVersion, setSubTypeVersion] = useState(0);
   const onSubTypesSaved = useCallback(() => setSubTypeVersion(v => v + 1), []);
@@ -449,6 +454,7 @@ function BuyerImportProductsSettings() {
       setSavedBlankMode(data.blankMode || 'keep');
       setCatStatus(data.categoryStatus || {});
       setCatCounts(data.categoryCounts || {});
+      setHiddenTypes(Array.isArray(data.hiddenTypes) ? data.hiddenTypes : []);
       return data;
     } catch (e) {
       setError(e.message);
@@ -525,6 +531,31 @@ function BuyerImportProductsSettings() {
       setBlankMsg('Saved.');
     } catch (e) {
       setError(e.message);
+    }
+  };
+
+  // Shown = every type not in the saved hidden list.
+  useEffect(() => {
+    if (hiddenTypes === null) return;
+    const hidden = new Set(hiddenTypes.map(t => t.toLowerCase()));
+    setShownTypes(types.filter(t => !hidden.has(t.toLowerCase())));
+  }, [types, hiddenTypes]);
+
+  const saveTypes = async () => {
+    setSavingTypes(true); setTypesMsg('');
+    try {
+      const hidden = types.filter(t => !shownTypes.includes(t));
+      const res = await fetch('/api/import-products/settings/types', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hiddenTypes: hidden }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Save failed');
+      setHiddenTypes(data.hiddenTypes || hidden);
+      setTypesMsg('Saved.');
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSavingTypes(false);
     }
   };
 
@@ -620,6 +651,22 @@ function BuyerImportProductsSettings() {
                 <Divider />
                 <InlineStack align="end">
                   <Button variant="primary" onClick={saveBlankMode} disabled={blankMode === savedBlankMode}>Save</Button>
+                </InlineStack>
+              </BlockStack>
+            </Card>
+            {/* Types (2026-09-30, Hera): hides types from the Start card's
+                Type dropdown on Import Products. Types that appear later are
+                shown until unticked here. */}
+            <Card>
+              <BlockStack gap="300">
+                <Text variant="headingMd" as="h2">Types</Text>
+                <Text tone="subdued">Choose the types in the list when importing</Text>
+                {typesMsg && <Banner tone="success" onDismiss={() => setTypesMsg('')}>{typesMsg}</Banner>}
+                <InlineStack gap="300" blockAlign="end" align="space-between">
+                  <div style={{ minWidth: 280 }}>
+                    <MultiSelectDropdown label="" options={types} selected={shownTypes} onChange={setShownTypes} placeholder="None" showSelectAll />
+                  </div>
+                  <Button variant="primary" onClick={saveTypes} loading={savingTypes} disabled={hiddenTypes === null || !shownTypes.length}>Save</Button>
                 </InlineStack>
               </BlockStack>
             </Card>
