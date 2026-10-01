@@ -1,0 +1,6 @@
+{
+  "name": "hera-hub-shopify-app",
+  "private": true,
+  "description": "Shopify CLI project for Hera Hub extensions (Theme App Extension: Hera Swatch). Separate from the Express app so Render is not affected.",
+  "version": "1.0.0"
+}

@@ -1,0 +1,68 @@
+{%- comment -%}
+  Hera Swatch — App embed (Online › Swatch, see claude/SWATCH_FEATURE_SPEC.md)
+
+  PHASE 0 (2026-10-01): test embed only. It changes nothing on the page.
+  It only writes a small JSON "probe" into <head> on product pages, so we can
+  confirm that:
+    1. the embed can be switched on in a duplicated theme;
+    2. Liquid can read the app-data metafield hera_swatch.config
+       (written by POST /api/swatch/debug/metafield on the Hub server);
+    3. Liquid can read variant.metafields.custom.discontinued (spec 6.2.1).
+    4. the file_url filter turns a Shopify Files file name into its CDN URL
+       (fill "Test file name" with any file that exists in Content › Files).
+  With "Debug log" ticked, hera-swatch.js prints the probe in the browser
+  console and also reports how many <variant-selects> the page has.
+
+  The real picker is added in Phase 3.
+{%- endcomment -%}
+{%- if template.name == 'product' and product -%}
+  {%- assign hs_cfg = app.metafields.hera_swatch.config.value -%}
+  {%- assign hs_disc = 0 -%}
+  {%- for v in product.variants -%}
+    {%- if v.metafields.custom.discontinued.value == true -%}{%- assign hs_disc = hs_disc | plus: 1 -%}{%- endif -%}
+  {%- endfor -%}
+  <script id="hera-swatch-probe" type="application/json">
+    {
+      "embed": true,
+      "phase": 0,
+      "productId": {{ product.id | json }},
+      "vendor": {{ product.vendor | json }},
+      "type": {{ product.type | json }},
+      "options": {{ product.options | json }},
+      "variantCount": {{ product.variants.size | json }},
+      "discontinuedVariants": {{ hs_disc | json }},
+      "locale": {{ request.locale.iso_code | json }},
+      "metafieldFound": {% if hs_cfg %}true{% else %}false{% endif %},
+      "configVersion": {{ hs_cfg.version | json }},
+      "configNote": {{ hs_cfg.note | json }},
+      "configWrittenAt": {{ hs_cfg.writtenAt | json }},
+      "testFileName": {{ block.settings.test_file | json }},
+      "testFileUrl": {% if block.settings.test_file != blank %}{{ block.settings.test_file | file_url | json }}{% else %}null{% endif %}
+    }
+  </script>
+  {%- if block.settings.debug -%}
+    <script src="{{ 'hera-swatch.js' | asset_url }}" defer></script>
+  {%- endif -%}
+{%- endif -%}
+
+{% schema %}
+{
+  "name": "Hera Swatch",
+  "target": "head",
+  "enabled_on": { "templates": ["product"] },
+  "settings": [
+    {
+      "type": "checkbox",
+      "id": "debug",
+      "label": "Debug log (Phase 0 test)",
+      "default": true
+    },
+    {
+      "type": "text",
+      "id": "test_file",
+      "label": "Test file name (Phase 0)",
+      "info": "Any file name from Content > Files, e.g. logo.png"
+    }
+  ]
+}
+{% endschema %}

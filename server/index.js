@@ -63,6 +63,7 @@ app.use('/api/wig-demo', require('./routes/wigDemo'));
 app.use('/api/import-products', require('./routes/importProducts'));
 app.use('/api/new-products', require('./routes/newProducts'));
 app.use('/api/store-new-arrivals', require('./routes/storeNewArrivals').router); // Store → New Arrival, 2026-09-29
+app.use('/api/swatch', require('./routes/swatch')); // Online › Swatch, 2026-10-01 (Phase 0: debug metafield only)
 
 // Serve static files in production
 if (process.env.NODE_ENV === 'production') {
