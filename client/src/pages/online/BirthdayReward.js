@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Page, Layout, Card, BlockStack, InlineStack, Text, Button,
   Select, TextField, Banner, Spinner, Badge, Divider, Box, IndexTable,
+  Modal, ProgressBar,
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 
@@ -85,6 +86,87 @@ function BirthdayReward() {
   }, []);
 
   useEffect(() => { fetchConfig(); fetchActive(); }, [fetchConfig, fetchActive]);
+
+  // ── 清理过期 tag（2026-10-01） ──
+  // view: 'preview' | 'running' | 'done'
+  const [cleanupOpen, setCleanupOpen]       = useState(false);
+  const [cleanupView, setCleanupView]       = useState('preview');
+  const [cleanupPreview, setCleanupPreview] = useState(null);
+  const [cleanupState, setCleanupState]     = useState(null);
+  const [cleanupBusy, setCleanupBusy]       = useState(false);
+  const [cleanupError, setCleanupError]     = useState('');
+  const pollRef = useRef(null);
+
+  const stopPolling = () => {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+  };
+  useEffect(() => stopPolling, []);
+
+  const pollCleanupStatus = useCallback(() => {
+    stopPolling();
+    pollRef.current = setInterval(async () => {
+      try {
+        const r = await fetch('/api/birthday-config/cleanup-stale-tags/status');
+        const s = await r.json();
+        setCleanupState(s);
+        if (!s.running) {
+          stopPolling();
+          setCleanupView('done');
+          fetchActive();
+        }
+      } catch { /* 下次再试 */ }
+    }, 2000);
+  }, [fetchActive]);
+
+  const openCleanup = async () => {
+    setCleanupOpen(true);
+    setCleanupError('');
+    setCleanupPreview(null);
+    setCleanupBusy(true);
+    try {
+      // 若已有清理在运行（比如刷新过页面），直接显示进度
+      const sr = await fetch('/api/birthday-config/cleanup-stale-tags/status');
+      const s  = await sr.json();
+      if (s.running) {
+        setCleanupState(s);
+        setCleanupView('running');
+        pollCleanupStatus();
+        return;
+      }
+      setCleanupView('preview');
+      const res  = await fetch('/api/birthday-config/cleanup-stale-tags/preview');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+      setCleanupPreview(data);
+    } catch (err) {
+      setCleanupError(err.message);
+    } finally {
+      setCleanupBusy(false);
+    }
+  };
+
+  const startCleanup = async () => {
+    setCleanupBusy(true);
+    setCleanupError('');
+    try {
+      const res  = await fetch('/api/birthday-config/cleanup-stale-tags', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok && res.status !== 409) throw new Error(data?.error || `HTTP ${res.status}`);
+      setCleanupState(data.state || data);
+      setCleanupView('running');
+      pollCleanupStatus();
+    } catch (err) {
+      setCleanupError(err.message);
+    } finally {
+      setCleanupBusy(false);
+    }
+  };
+
+  const closeCleanup = () => {
+    // 运行中关闭弹窗不会中断后台任务，重新打开可继续看进度
+    stopPolling();
+    setCleanupOpen(false);
+  };
 
   // 把 failed 记录改回 pending，等下一次 Remove Job 重新处理
   const handleRetryFailed = async () => {
@@ -306,7 +388,10 @@ function BirthdayReward() {
             <BlockStack gap="400">
               <InlineStack align="space-between" blockAlign="center">
                 <Text variant="headingMd">Customers With Active Tag</Text>
-                <Button variant="plain" onClick={fetchActive}>Refresh</Button>
+                <InlineStack gap="300" blockAlign="center">
+                  <Button variant="plain" tone="critical" onClick={openCleanup}>Clean up expired tags</Button>
+                  <Button variant="plain" onClick={fetchActive}>Refresh</Button>
+                </InlineStack>
               </InlineStack>
               <Text variant="bodySm" tone="subdued">
                 {activeRows.length} customer{activeRows.length !== 1 ? 's' : ''} currently hold the tag.
@@ -345,8 +430,87 @@ function BirthdayReward() {
         </Layout.Section>
 
       </Layout>
+
+      {/* 2026-10-01：清理过期 tag 弹窗 */}
+      <Modal
+        open={cleanupOpen}
+        onClose={closeCleanup}
+        title="Clean up expired tags"
+        primaryAction={
+          cleanupView === 'preview'
+            ? {
+                content: cleanupPreview ? `Remove ${cleanupPreview.toRemove} tag${cleanupPreview.toRemove !== 1 ? 's' : ''}` : 'Remove',
+                destructive: true,
+                onAction: startCleanup,
+                loading: cleanupBusy,
+                disabled: !cleanupPreview || cleanupPreview.toRemove === 0,
+              }
+            : { content: 'Close', onAction: closeCleanup }
+        }
+        secondaryActions={cleanupView === 'preview' ? [{ content: 'Cancel', onAction: closeCleanup }] : []}
+      >
+        <Modal.Section>
+          <BlockStack gap="300">
+            {cleanupError && <Banner tone="critical">{cleanupError}</Banner>}
+
+            {cleanupView === 'preview' && (
+              cleanupBusy && !cleanupPreview ? (
+                <InlineStack align="center" gap="200"><Spinner size="small" /><Text>Scanning Shopify customers…</Text></InlineStack>
+              ) : cleanupPreview ? (
+                <BlockStack gap="200">
+                  <Text variant="bodyMd">
+                    <b>{cleanupPreview.tagged}</b> customer{cleanupPreview.tagged !== 1 ? 's' : ''} currently hold the tag
+                    “{cleanupPreview.tag}” in Shopify.
+                  </Text>
+                  <Text variant="bodyMd">
+                    <b>{cleanupPreview.keep}</b> {cleanupPreview.keep !== 1 ? 'are' : 'is'} still within the valid period and will be kept.
+                  </Text>
+                  <Text variant="bodyMd">
+                    <b>{cleanupPreview.toRemove}</b> will have the tag removed.
+                  </Text>
+                  <Text variant="bodySm" tone="subdued">
+                    This only removes the tag in Shopify. To record spending for failed records, also use “Retry failed”.
+                  </Text>
+                </BlockStack>
+              ) : null
+            )}
+
+            {cleanupView !== 'preview' && cleanupState && (
+              <BlockStack gap="200">
+                {cleanupState.phase === 'scanning' ? (
+                  <InlineStack gap="200"><Spinner size="small" /><Text>Scanning Shopify customers…</Text></InlineStack>
+                ) : (
+                  <>
+                    <ProgressBar
+                      progress={cleanupState.total ? Math.round(((cleanupState.removed + cleanupState.failed) / cleanupState.total) * 100) : 100}
+                      tone={cleanupState.failed ? 'critical' : 'success'}
+                    />
+                    <Text variant="bodyMd">
+                      {cleanupView === 'done' ? 'Finished. ' : 'Removing… '}
+                      {cleanupState.removed} / {cleanupState.total} removed
+                      {cleanupState.failed ? `, ${cleanupState.failed} failed` : ''}
+                    </Text>
+                  </>
+                )}
+                {cleanupView === 'running' && (
+                  <Text variant="bodySm" tone="subdued">
+                    You can close this window — the cleanup keeps running on the server.
+                  </Text>
+                )}
+                {cleanupState.errors?.length > 0 && (
+                  <Banner tone="warning" title="Errors">
+                    {cleanupState.errors.map((e, i) => (
+                      <div key={i}>{e.customerId ? `${e.customerId}: ` : ''}{e.message}</div>
+                    ))}
+                  </Banner>
+                )}
+              </BlockStack>
+            )}
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
     </Page>
   );
 }
 
-export default BirthdayReward;
+export default BirthdayReward;

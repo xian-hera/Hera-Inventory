@@ -9,6 +9,9 @@
 //   DELETE /api/birthday-config/orders/purge 删除 365 天前的记录
 //   GET    /api/birthday-config/failed-count 处理失败的记录数（2026-10-01）
 //   POST   /api/birthday-config/retry-failed 把 failed 改回 pending，下次 Remove Job 重试（2026-10-01）
+//   GET    /api/birthday-config/cleanup-stale-tags/preview  扫描过期 tag 数量（2026-10-01）
+//   POST   /api/birthday-config/cleanup-stale-tags          后台清理过期 tag（2026-10-01）
+//   GET    /api/birthday-config/cleanup-stale-tags/status   清理进度（2026-10-01）
 // ─────────────────────────────────────────────────────────────
 
 const express = require('express');
@@ -136,6 +139,153 @@ router.post('/retry-failed', async (req, res) => {
     console.error('[BirthdayConfig] POST /retry-failed 失败:', err.message);
     res.status(500).json({ error: err.message });
   }
+});
+
+// ── 清理过期 tag（2026-10-01） ────────────────────────────────
+// 直接从 Shopify 扫描所有带 campaign tag 的顾客，移除不在有效期内的 tag。
+// “有效期内” = birthday_campaign_log 中 status = 'pending' 且 tag_remove_at > NOW()。
+// 只移除 tag，不改 birthday_campaign_log：failed 记录仍需 Retry failed
+// 才会补记订单（届时 Remove Job 发现 tag 已不在会跳过移除步骤）。
+//
+//   GET  /api/birthday-config/cleanup-stale-tags/preview  扫描并返回数量（不修改）
+//   POST /api/birthday-config/cleanup-stale-tags          后台开始清理，立即返回
+//   GET  /api/birthday-config/cleanup-stale-tags/status   查询进度
+
+const { getSession, getShopify } = require('../shopify');
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function getShopifyClient() {
+  const session = await getSession();
+  if (!session) throw new Error('未找到 Shopify session，请先完成 OAuth 授权');
+  const shopify = getShopify();
+  return new shopify.clients.Graphql({ session });
+}
+
+// Shopify 限流时等待后重试
+async function requestWithRetry(client, query, variables, attempts = 5) {
+  for (let i = 1; ; i++) {
+    try {
+      return await client.request(query, { variables });
+    } catch (err) {
+      const msg = String(err?.message || '') + JSON.stringify(err?.body || err?.response || '');
+      if (i < attempts && /THROTTLED|Throttled|429/i.test(msg)) {
+        await sleep(2000 * i);
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
+// 扫描：返回 { tag, tagged, keepIds, toRemove: [customerId] }
+async function scanStaleTags(client) {
+  const config = (await pool.query('SELECT campaign_tag FROM birthday_config WHERE id = 1')).rows[0];
+  const tag = config?.campaign_tag;
+  if (!tag) throw new Error('campaign_tag 未配置');
+
+  // 有效期内的顾客：保留 tag
+  const keepRes = await pool.query(
+    `SELECT DISTINCT customer_id FROM birthday_campaign_log
+     WHERE status = 'pending' AND tag_remove_at > NOW()`
+  );
+  const keepIds = new Set(keepRes.rows.map((r) => r.customer_id));
+
+  // 先完整收集所有带 tag 的顾客，再统一处理（避免边改边翻页导致漏掉）
+  const tagged = [];
+  let cursor = null;
+  do {
+    const res = await requestWithRetry(
+      client,
+      `query staleTagScan($query: String!, $after: String) {
+         customers(first: 250, query: $query, after: $after) {
+           pageInfo { hasNextPage endCursor }
+           nodes { id tags }
+         }
+       }`,
+      { query: `tag:'${tag.replace(/'/g, "\\'")}'`, after: cursor }
+    );
+    const page = res?.data?.customers;
+    if (!page) break;
+    for (const c of page.nodes) {
+      // 搜索可能是模糊匹配，这里再精确确认一次
+      if ((c.tags || []).includes(tag)) tagged.push(c.id);
+    }
+    cursor = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+  } while (cursor);
+
+  const toRemove = tagged.filter((id) => !keepIds.has(id));
+  return { tag, tagged: tagged.length, keep: tagged.length - toRemove.length, toRemove };
+}
+
+// 进度（内存中，服务重启后清空）
+let cleanupState = { running: false };
+
+router.get('/cleanup-stale-tags/preview', async (req, res) => {
+  try {
+    const client = await getShopifyClient();
+    const { tag, tagged, keep, toRemove } = await scanStaleTags(client);
+    res.json({ tag, tagged, keep, toRemove: toRemove.length });
+  } catch (err) {
+    console.error('[BirthdayConfig] cleanup preview 失败:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/cleanup-stale-tags/status', (req, res) => {
+  res.json(cleanupState);
+});
+
+router.post('/cleanup-stale-tags', async (req, res) => {
+  if (cleanupState.running) {
+    return res.status(409).json({ error: 'Cleanup already running', state: cleanupState });
+  }
+  cleanupState = {
+    running: true, phase: 'scanning', startedAt: new Date().toISOString(),
+    total: 0, removed: 0, failed: 0, errors: [], finishedAt: null,
+  };
+  res.status(202).json(cleanupState);
+
+  // 后台执行
+  (async () => {
+    try {
+      const client = await getShopifyClient();
+      const { tag, toRemove } = await scanStaleTags(client);
+      cleanupState.total = toRemove.length;
+      cleanupState.phase = 'removing';
+      console.log(`[Birthday] [Cleanup] 开始移除 ${toRemove.length} 个过期 tag (${tag})`);
+
+      for (const id of toRemove) {
+        try {
+          const r = await requestWithRetry(
+            client,
+            `mutation removeTag($id: ID!, $tags: [String!]!) {
+               tagsRemove(id: $id, tags: $tags) { userErrors { field message } }
+             }`,
+            { id, tags: [tag] }
+          );
+          const errs = r?.data?.tagsRemove?.userErrors || [];
+          if (errs.length) throw new Error(errs.map((e) => e.message).join(', '));
+          cleanupState.removed++;
+        } catch (err) {
+          cleanupState.failed++;
+          if (cleanupState.errors.length < 20) {
+            cleanupState.errors.push({ customerId: id, message: err.message });
+          }
+          console.error(`[Birthday] [Cleanup] ✗ ${id}:`, err.message);
+        }
+        await sleep(250); // 控制速率，避免触发限流
+      }
+      console.log(`[Birthday] [Cleanup] 完成：移除 ${cleanupState.removed}，失败 ${cleanupState.failed}`);
+    } catch (err) {
+      console.error('[Birthday] [Cleanup] 中止:', err.message);
+      cleanupState.errors.push({ message: err.message });
+    } finally {
+      cleanupState.running = false;
+      cleanupState.phase = 'done';
+      cleanupState.finishedAt = new Date().toISOString();
+    }
+  })();
 });
 
 // ── GET /api/birthday-config/orders ───────────────────────────
