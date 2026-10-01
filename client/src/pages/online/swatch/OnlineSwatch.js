@@ -90,10 +90,21 @@ function OnlineSwatch() {
     return <Page title="Swatch" backAction={{ onAction: () => navigate('/online') }}><Spinner /></Page>;
   }
 
-  const shared = { config, setConfig, meta, libraries, loadLibraries, setBanner, afterSave };
+  const refreshMeta = async () => {
+    try {
+      setMeta(await api.post('/meta/refresh'));
+      setBanner({ tone: 'success', text: 'Vendor and product type lists refreshed from Shopify.' });
+    } catch (e) {
+      setBanner({ tone: 'critical', text: e.message });
+    }
+  };
+
+  const shared = { config, setConfig, meta, refreshMeta, libraries, loadLibraries, setBanner, afterSave };
 
   return (
-    <Page title="Swatch" titleMetadata={MODE_BADGE[config.mode]} backAction={{ onAction: () => navigate('/online') }} fullWidth>
+    // Normal page width like the rest of the Hub; only the Colour codes table
+    // is pulled to full width (FullBleed), same as Import Products / New products.
+    <Page title="Swatch" titleMetadata={MODE_BADGE[config.mode]} backAction={{ onAction: () => navigate('/online') }}>
       <BlockStack gap="400">
         {banner && <Banner tone={banner.tone} onDismiss={() => setBanner(null)}>{banner.text}</Banner>}
         <Card>

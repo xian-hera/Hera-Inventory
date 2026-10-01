@@ -69,10 +69,14 @@ function filenameFromUrl(url) {
   }
 }
 
-async function findFileByName(filename) {
+// Files named exactly `filename`. Images only by default; { any: true } also
+// finds generic files (e.g. an SVG icon). Each result: { id, url, image? }.
+async function findFileByName(filename, opts = {}) {
   const q = `filename:${JSON.stringify(filename)}`;
-  const data = await gql(`query($q: String!) { files(first: 5, query: $q) { nodes { id ... on MediaImage { image { url } } } } }`, { q });
-  return (data.files.nodes || []).filter(n => n.image && filenameFromUrl(n.image.url) === filename);
+  const data = await gql(`query($q: String!) { files(first: 5, query: $q) { nodes { id ... on MediaImage { image { url } } ... on GenericFile { url } } } }`, { q });
+  return (data.files.nodes || [])
+    .map(n => ({ ...n, url: (n.image && n.image.url) || (opts.any ? n.url : null) }))
+    .filter(n => n.url && filenameFromUrl(n.url) === filename);
 }
 
 // Create a new file. Returns { id, filename, url, width, height }.
@@ -169,7 +173,12 @@ async function buildPayload() {
     vendorLibrary,
     style: cfg.style,
     text: cfg.text,
-    icons: cfg.icons,
+    // magnifierFile: { filename } -> Liquid: {{ filename | file_url }};
+    // magnifier (inline SVG) is only a fallback when no file is linked.
+    icons: {
+      magnifierFile: cfg.icons.magnifierFile ? cfg.icons.magnifierFile.filename : null,
+      magnifier: cfg.icons.magnifierFile ? '' : cfg.icons.magnifier,
+    },
   };
   const metafields = { config };
   for (const l of libs) {
@@ -221,6 +230,6 @@ async function syncSwatchMetafield() {
 
 module.exports = {
   NAMESPACE, shopifyFileName, altText, guessMime,
-  createFile, replaceFileContent, updateAlt, deleteFile, refreshAlt, findFileByName,
+  createFile, replaceFileContent, updateAlt, deleteFile, refreshAlt, findFileByName, filenameFromUrl,
   buildPayload, syncSwatchMetafield,
 };

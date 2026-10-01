@@ -6,7 +6,7 @@ import { Card, BlockStack, InlineStack, Text, Button, Select, TextField, Banner 
 import MultiSelectDropdown from '../../../components/MultiSelectDropdown';
 import { api, TH, TD } from './swatchApi';
 
-function SwatchLibrariesTab({ meta, libraries, loadLibraries, setBanner, afterSave }) {
+function SwatchLibrariesTab({ meta, refreshMeta, libraries, loadLibraries, setBanner, afterSave }) {
   const [name, setName] = useState('');
   const [prefix, setPrefix] = useState('');
   const [linked, setLinked] = useState([]);
@@ -75,6 +75,7 @@ function SwatchLibrariesTab({ meta, libraries, loadLibraries, setBanner, afterSa
               <MultiSelectDropdown label="Also used by (optional)" options={freeVendors.filter(v => v !== name)} selected={linked} onChange={setLinked} placeholder="None" />
             </div>
             <Button variant="primary" onClick={create} loading={saving} disabled={!name || !prefix}>Create</Button>
+            <Button variant="plain" onClick={refreshMeta}>Refresh vendor list</Button>
           </InlineStack>
           {err && <Banner tone="critical" onDismiss={() => setErr('')}>{err}</Banner>}
         </BlockStack>

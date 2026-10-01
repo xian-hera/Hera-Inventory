@@ -33,7 +33,10 @@ const DEFAULT_CONFIG = {
     soldOut: { en: 'SOLD OUT', fr: '' },     // FR default to be filled in by Hera
     modalNote: { en: '', fr: '' },
   },
-  icons: { magnifier: '' },                  // Hera's SVG; placeholder used while empty
+  // magnifierFile: { filename, url } of an SVG in Shopify Files (Hera
+  // 2026-10-01, preferred); magnifier: inline SVG code, used only when no
+  // file is linked; placeholder icon when both are empty.
+  icons: { magnifierFile: null, magnifier: '' },
   abbreviations: DEFAULT_ABBR,               // §5.5, editable later
   // §5.6 "建议 Ignore": every SKU discontinued + no stock here + total < minTotal
   suggestIgnore: { locationName: 'MTL10', minTotal: 3 },

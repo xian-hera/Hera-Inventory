@@ -14,6 +14,9 @@ const { Matcher, codeKey, fileStem } = require('../services/swatchMatch');
 const store = require('../services/swatchStore');
 const shop = require('../services/swatchShopify');
 const { startScan, getScanStatus } = require('../jobs/swatchScan');
+// makeMatcher moved to services/swatchCandidates.js (2026-10-01) so the scan
+// job can reuse it; candidates are now stored instead of computed per request.
+const { makeMatcher, refreshCandidates, tryRefresh } = require('../services/swatchCandidates');
 
 const wrap = fn => async (req, res) => {
   try {
@@ -123,6 +126,27 @@ router.delete('/debug/file', wrap(async (req, res) => {
   res.json({ deleted: found.map(f => f.id) });
 }));
 
+// ─── Shopify Files: SVG icons (magnifier) ──────────────────────────────────
+// GET /files?q=zoom -> SVG files in Content › Files whose name matches.
+// Hera uploads the icon in Shopify Files and links it here (2026-10-01).
+router.get('/files', wrap(async (req, res) => {
+  const q = String(req.query.q || '').trim();
+  const d = await gql(`query($q: String!) {
+    files(first: 100, query: $q, sortKey: CREATED_AT, reverse: true) {
+      nodes {
+        id createdAt
+        ... on GenericFile { url mimeType }
+        ... on MediaImage { mimeType image { url } }
+      }
+    }
+  }`, { q: q || 'svg' });
+  const files = (d.files.nodes || [])
+    .map(n => ({ id: n.id, createdAt: n.createdAt, mimeType: n.mimeType, url: n.url || (n.image && n.image.url) || null }))
+    .filter(f => f.url && (/svg/i.test(f.mimeType || '') || /\.svg(\?|$)/i.test(f.url)))
+    .map(f => ({ ...f, filename: shop.filenameFromUrl(f.url) }));
+  res.json({ files });
+}));
+
 // ─── Meta: vendors, product types, locations ─────────────────────────────────
 async function allStrings(field) {
   const out = [];
@@ -136,13 +160,35 @@ async function allStrings(field) {
   return out.filter(Boolean).sort();
 }
 
+// Vendor / product type lists are cached in app_settings (2026-10-01, Hera:
+// opening the page must not query Shopify). Fetched from Shopify only the
+// first time, or with POST /meta/refresh.
+async function refreshMetaCache() {
+  const [vendors, productTypes] = await Promise.all([allStrings('productVendors'), allStrings('productTypes')]);
+  const value = { vendors, productTypes, refreshedAt: new Date().toISOString() };
+  await pool.query(
+    `INSERT INTO app_settings (key, value, updated_at) VALUES ('swatch_meta_cache', $1::jsonb, NOW())
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [JSON.stringify(value)]);
+  return value;
+}
+
+async function metaResponse(cache) {
+  const locs = await pool.query('SELECT location_name FROM location_map WHERE is_active = TRUE ORDER BY location_name');
+  return { ...cache, locations: locs.rows.map(r => r.location_name) };
+}
+
 router.get('/meta', wrap(async (req, res) => {
-  const [vendors, productTypes, locs] = await Promise.all([
-    allStrings('productVendors'),
-    allStrings('productTypes'),
-    pool.query('SELECT location_name FROM location_map WHERE is_active = TRUE ORDER BY location_name'),
-  ]);
-  res.json({ vendors, productTypes, locations: locs.rows.map(r => r.location_name) });
+  const row = (await pool.query("SELECT value FROM app_settings WHERE key = 'swatch_meta_cache'")).rows[0];
+  res.json(await metaResponse(row ? row.value : await refreshMetaCache()));
+}));
+
+router.post('/meta/refresh', wrap(async (req, res) => {
+  res.json(await metaResponse(await refreshMetaCache()));
+}));
+
+// Recompute the stored possible-match candidates (all libraries).
+router.post('/refresh-matches', wrap(async (req, res) => {
+  res.json(await refreshCandidates(null));
 }));
 
 // ─── Config (rules, style, text, icons, abbreviations, suggest-ignore) ──────
@@ -170,12 +216,24 @@ router.put('/config', wrap(async (req, res) => {
     if (body.rules.some(r => !r.optionName)) throw fail(400, 'Every rule needs an option name');
     if (body.rules.some(r => !r.productTypes.length)) throw fail(400, 'Every rule needs at least one product type');
   }
+  // Magnifier linked to a Shopify file: { filename, url } (or null to unlink).
+  if (body.icons && body.icons.magnifierFile !== undefined && body.icons.magnifierFile !== null) {
+    const f = body.icons.magnifierFile;
+    if (!f.filename || !/\.svg$/i.test(f.filename)) throw fail(400, 'Choose an .svg file');
+    const found = await shop.findFileByName(f.filename, { any: true });
+    if (!found.length) throw fail(400, `${f.filename} was not found in Shopify Files`);
+    body.icons.magnifierFile = { filename: f.filename, url: found[0].url };
+  }
   const config = await store.saveConfig(body);
   res.json({ config, ...(await trySync()) });
 }));
 
 router.post('/sync', wrap(async (req, res) => {
-  res.json(await shop.syncSwatchMetafield());
+  const out = await shop.syncSwatchMetafield();
+  // /sync ends a bulk upload (images sent with sync:false), so refresh the
+  // stored candidates here too.
+  await tryRefresh(null);
+  res.json(out);
 }));
 
 // ─── Libraries ───────────────────────────────────────────────────────────────
@@ -195,6 +253,7 @@ router.post('/libraries', wrap(async (req, res) => {
   if (dup.rows.length) throw fail(400, 'A library with this name or prefix already exists');
   const r = await pool.query(
     'INSERT INTO swatch_libraries (name, prefix, vendors) VALUES ($1, $2, $3) RETURNING *', [name, prefix, list]);
+  await tryRefresh(r.rows[0].id);
   res.json({ library: r.rows[0], ...(await trySync()) });
 }));
 
@@ -219,6 +278,7 @@ router.put('/libraries/:id', wrap(async (req, res) => {
   const r = await pool.query(
     'UPDATE swatch_libraries SET name = $2, prefix = $3, vendors = $4, updated_at = NOW() WHERE id = $1 RETURNING *',
     [lib.id, name, prefix, list]);
+  await tryRefresh(null); // vendors may have moved between libraries
   res.json({ library: r.rows[0], ...(await trySync()) });
 }));
 
@@ -230,6 +290,7 @@ router.delete('/libraries/:id', wrap(async (req, res) => {
   const n = await pool.query('SELECT COUNT(*)::int AS n FROM swatch_images WHERE library_id = $1', [lib.id]);
   if (n.rows[0].n > 0) throw fail(400, `Delete the ${n.rows[0].n} images of this library first`);
   await pool.query('DELETE FROM swatch_libraries WHERE id = $1', [lib.id]);
+  await tryRefresh(null);
   res.json({ deleted: true, ...(await trySync()) });
 }));
 
@@ -240,17 +301,6 @@ async function libraryCodes(lib) {
     'SELECT DISTINCT ON (code_key) code, code_key FROM swatch_scan_codes WHERE vendor = ANY($1) ORDER BY code_key, code',
     [lib.vendors]);
   return r.rows;
-}
-
-async function makeMatcher(extraNames = []) {
-  const cfg = await store.getConfig();
-  const codes = await pool.query('SELECT DISTINCT code FROM swatch_scan_codes');
-  const names = await pool.query('SELECT original_name FROM swatch_images');
-  const m = new Matcher({ abbr: cfg.abbreviations });
-  for (const r of codes.rows) m.addVocab(r.code);
-  for (const r of names.rows) m.addVocab(fileStem(r.original_name));
-  for (const n of extraNames) m.addVocab(fileStem(n));
-  return m;
 }
 
 // Upload preview (§5.1 step 3): for each local file name, which codes match.
@@ -330,7 +380,9 @@ router.post('/libraries/:id/images', wrap(async (req, res) => {
   // Images that lost a code to this one need their alt text rewritten.
   for (const id of new Set(conflicts.map(c => c.image_id))) await shop.refreshAlt(id).catch(e => console.error(e));
   const out = { image: await store.imageWithCodes(imageId) };
-  res.json(sync === false ? out : { ...out, ...(await trySync()) });
+  if (sync === false) return res.json(out); // the client calls POST /sync at the end of the batch
+  await tryRefresh(lib.id);
+  res.json({ ...out, ...(await trySync()) });
 }));
 
 // Change the codes and/or crop position of an image.
@@ -379,6 +431,7 @@ router.put('/images/:id/file', wrap(async (req, res) => {
       original_name = COALESCE($6, original_name), updated_at = NOW() WHERE id = $1`,
   [img.id, file.url, file.width, file.height, file.filename || img.filename, req.body.name || null]);
   const out = { image: await store.imageWithCodes(img.id) };
+  if (req.body.name && req.body.name !== img.original_name) await tryRefresh(img.library_id);
   res.json(file.filename && file.filename !== img.filename ? { ...out, ...(await trySync()) } : out);
 }));
 
@@ -388,6 +441,7 @@ router.delete('/images/:id', wrap(async (req, res) => {
   if (!img) throw fail(404, 'Image not found');
   if (img.shopify_file_id) await shop.deleteFile(img.shopify_file_id);
   await pool.query('DELETE FROM swatch_images WHERE id = $1', [img.id]);
+  await tryRefresh(img.library_id);
   res.json({ deleted: true, codesRemoved: img.codes, ...(await trySync()) });
 }));
 
@@ -466,53 +520,37 @@ router.get('/scan', wrap(async (req, res) => {
 //   suggest  = none/possible rows whose every SKU meets the 建议 Ignore rule
 // hidden rows (every variant sold out + discontinued, §6.2.1) show under "all" only.
 router.get('/list', wrap(async (req, res) => {
+  // Database only (2026-10-01, Hera): the scan rows, stored candidates,
+  // confirmed codes and ignore flags. Nothing is fetched or matched here.
   const vendor = req.query.vendor ? String(req.query.vendor) : null;
   const type = req.query.type ? String(req.query.type) : null;
   const filter = String(req.query.filter || 'all');
   const scanRows = (await pool.query(`
-    SELECT * FROM swatch_scan_codes
-    WHERE ($1::text IS NULL OR vendor = $1) AND ($2::text IS NULL OR $2 = ANY(product_types))
-    ORDER BY vendor, code_key`, [vendor, type])).rows;
-
-  // Per vendor: its library, confirmed codes, ignored codes and image files.
-  const ctx = new Map();
-  let m = null;
-  for (const v of [...new Set(scanRows.map(r => r.vendor))]) {
-    const lib = await store.libraryForVendor(v);
-    const c = { lib, assigned: new Map(), ignored: new Map(), files: [] };
-    if (lib) {
-      c.assigned = new Map((await pool.query(`
-        SELECT c.code_key, i.id, i.original_name, i.filename, i.alt, i.url FROM swatch_codes c
-        JOIN swatch_images i ON i.id = c.image_id WHERE c.library_id = $1`, [lib.id])).rows.map(r => [r.code_key, r]));
-      c.ignored = new Map((await pool.query('SELECT * FROM swatch_ignored_codes WHERE library_id = $1', [lib.id])).rows.map(r => [r.code_key, r]));
-      c.files = (await store.listImages(lib.id)).map(i => ({ id: i.id, name: i.original_name, stems: [fileStem(i.original_name)], image: i }));
-      if (c.files.length && !m) m = await makeMatcher();
-    }
-    ctx.set(v, c);
-  }
+    SELECT s.*, l.id AS lib_id, l.name AS lib_name, l.prefix AS lib_prefix,
+      a.id AS a_id, a.original_name AS a_name, a.filename AS a_filename, a.alt AS a_alt, a.url AS a_url,
+      ci.id AS c_id, ci.original_name AS c_name, ci.filename AS c_filename, ci.url AS c_url,
+      ig.reason AS ig_reason, ig.ignored_at AS ig_at
+    FROM swatch_scan_codes s
+    LEFT JOIN swatch_libraries l ON s.vendor = ANY(l.vendors)
+    LEFT JOIN swatch_codes c ON c.library_id = l.id AND c.code_key = s.code_key
+    LEFT JOIN swatch_images a ON a.id = c.image_id
+    LEFT JOIN swatch_images ci ON ci.id = s.candidate_image_id AND ci.library_id = l.id
+    LEFT JOIN swatch_ignored_codes ig ON ig.library_id = l.id AND ig.code_key = s.code_key
+    WHERE ($1::text IS NULL OR s.vendor = $1) AND ($2::text IS NULL OR $2 = ANY(s.product_types))
+    ORDER BY s.vendor, s.code_key`, [vendor, type])).rows;
 
   const rows = scanRows.map(s => {
-    const c = ctx.get(s.vendor);
-    const a = c.assigned.get(s.code_key);
-    let status = 'none', candidate = null;
-    if (a) status = 'matched';
-    else if (m && c.files.length) {
-      const r = m.matchCode(s.code, c.files);
-      if (r.best) {
-        status = 'possible';
-        const im = r.best.file.image;
-        candidate = { imageId: im.id, name: im.original_name, filename: im.filename, url: im.url, kind: r.status, cost: r.best.cost };
-      }
-    }
-    const ig = c.ignored.get(s.code_key);
+    const status = s.a_id ? 'matched' : s.c_id ? 'possible' : 'none';
     return {
-      vendor: s.vendor, library: c.lib ? { id: c.lib.id, name: c.lib.name, prefix: c.lib.prefix } : null,
+      vendor: s.vendor, library: s.lib_id ? { id: s.lib_id, name: s.lib_name, prefix: s.lib_prefix } : null,
       code: s.code, codeKey: s.code_key, productTypes: s.product_types,
       products: s.products, productCount: s.products.length, variantCount: s.variant_count,
       status, hidden: s.hidden, suggestIgnore: s.suggest_ignore && status !== 'matched',
-      ignored: !a && ig ? { reason: ig.reason, at: ig.ignored_at } : null,
-      file: a ? { imageId: a.id, name: a.original_name, filename: a.filename, alt: a.alt, url: a.url } : null,
-      candidate,
+      ignored: !s.a_id && s.ig_at ? { reason: s.ig_reason, at: s.ig_at } : null,
+      file: s.a_id ? { imageId: s.a_id, name: s.a_name, filename: s.a_filename, alt: s.a_alt, url: s.a_url } : null,
+      candidate: !s.a_id && s.c_id
+        ? { imageId: s.c_id, name: s.c_name, filename: s.c_filename, url: s.c_url, kind: s.candidate_kind, cost: s.candidate_cost }
+        : null,
     };
   });
 
@@ -528,7 +566,7 @@ router.get('/list', wrap(async (req, res) => {
   if (!pick[filter]) throw fail(400, 'Unknown filter');
   const counts = Object.fromEntries(Object.entries(pick).map(([k, f]) => [k, rows.filter(f).length]));
   res.json({
-    vendor, type, library: vendor && ctx.get(vendor) ? ctx.get(vendor).lib : (vendor ? await store.libraryForVendor(vendor) : null),
+    vendor, type, library: vendor ? await store.libraryForVendor(vendor) : null,
     scan: await getScanStatus(), counts,
     rows: rows.filter(pick[filter]),
   });

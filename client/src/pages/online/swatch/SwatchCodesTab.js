@@ -6,6 +6,7 @@ import {
   Card, BlockStack, InlineStack, Text, Button, Select, Badge, Modal, TextField, Spinner, Checkbox,
 } from '@shopify/polaris';
 import MultiSelectDropdown from '../../../components/MultiSelectDropdown';
+import FullBleed from '../../../components/FullBleed';
 import { api, ADMIN_PRODUCT, TH, TD, SwatchThumb, fmtTime } from './swatchApi';
 
 const FILTERS = [
@@ -91,7 +92,9 @@ function ScanTypesModal({ open, onClose, meta, onStart }) {
   );
 }
 
-function SwatchCodesTab({ meta, setBanner, config }) {
+const PAGE_SIZE = 100;
+
+function SwatchCodesTab({ meta, refreshMeta, setBanner, config }) {
   const [vendors, setVendors] = useState([]);
   const [vendor, setVendor] = useState('');      // '' = all vendors
   const [type, setType] = useState('');
@@ -104,6 +107,8 @@ function SwatchCodesTab({ meta, setBanner, config }) {
   const [viewAll, setViewAll] = useState(null);
   const [choose, setChoose] = useState(null);
   const [scanTypesOpen, setScanTypesOpen] = useState(false);
+  const [page, setPage] = useState(0);
+  const [recalc, setRecalc] = useState(false);
   const pollRef = useRef(null);
 
   const loadVendors = useCallback(() => api.get('/vendors').then(d => setVendors(d.vendors)), []);
@@ -115,6 +120,7 @@ function SwatchCodesTab({ meta, setBanner, config }) {
     setData(d);
     setScan(d.scan);
     setSelected([]);
+    setPage(0);
   }, [vendor, type, filter]);
 
   useEffect(() => { loadVendors().catch(e => setBanner({ tone: 'critical', text: e.message })); }, [loadVendors, setBanner]);
@@ -155,9 +161,27 @@ function SwatchCodesTab({ meta, setBanner, config }) {
     return list.filter(r => r.code.toUpperCase().includes(Q) || (r.file && r.file.name.toUpperCase().includes(Q)));
   }, [data, q]);
 
+  useEffect(() => { setPage(0); }, [q]);
+  const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const pageRows = rows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+
+  // Recompute the stored possible matches (normally automatic after scans,
+  // uploads and library changes).
+  const recalcMatches = async () => {
+    setRecalc(true);
+    try {
+      await api.post('/refresh-matches');
+      await load();
+    } catch (e) {
+      setBanner({ tone: 'critical', text: e.message });
+    } finally {
+      setRecalc(false);
+    }
+  };
+
   const typeOptions = [{ label: 'All types', value: '' }, ...meta.productTypes.map(t => ({ label: t, value: t }))];
   const keyOf = r => `${r.vendor}\u0000${r.codeKey}`;
-  const allSelected = rows.length > 0 && rows.every(r => selected.includes(keyOf(r)));
+  const allSelected = pageRows.length > 0 && pageRows.every(r => selected.includes(keyOf(r)));
 
   // Assign (confirm / choose) — asks before moving a code from another image.
   const assign = async (row, imageId) => {
@@ -233,11 +257,12 @@ function SwatchCodesTab({ meta, setBanner, config }) {
                   + (scan.scannedWith ? ` · ${scan.scannedWith.map(r => `${r.optionName} in ${r.productTypes.join('/')}`).join('; ')}` : '')
                   : scan && scan.status === 'failed' ? `Last scan failed: ${scan.error}` : 'Never scanned'}
             </Text>
-            <Text tone="subdued" variant="bodySm">Reads every Active product in Shopify (published online or not).</Text>
+            <Text tone="subdued" variant="bodySm">Reads every Active product in Shopify (published online or not). The list below shows the result of the last scan — opening this page does not query Shopify.</Text>
           </BlockStack>
           <InlineStack gap="200">
             <Button onClick={() => startScan()} loading={running} disabled={running || !config.rules.length}>Scan with the rules</Button>
             <Button onClick={() => setScanTypesOpen(true)} disabled={running}>Scan chosen types…</Button>
+            <Button variant="plain" onClick={refreshMeta}>Refresh type list</Button>
           </InlineStack>
         </InlineStack>
       </Card>
@@ -250,6 +275,7 @@ function SwatchCodesTab({ meta, setBanner, config }) {
         ))}
       </InlineStack>
 
+      <FullBleed>
       <Card padding="0">
         <div style={{ padding: 12 }}>
           <InlineStack gap="300" blockAlign="end" wrap>
@@ -259,6 +285,7 @@ function SwatchCodesTab({ meta, setBanner, config }) {
             <Button onClick={() => bulk('ignore')} disabled={!selected.length || noLibrarySelected || !!busy} loading={busy === 'ignore'}>Ignore selected</Button>
             <Button onClick={() => bulk('unignore')} disabled={!selected.length || noLibrarySelected || !!busy} loading={busy === 'unignore'}>Un-ignore selected</Button>
             <Button onClick={() => load()} disabled={!!busy}>Reload</Button>
+            <Button onClick={recalcMatches} loading={recalc} disabled={!!busy}>Recalculate matches</Button>
           </InlineStack>
           {vendor && data && !data.library && (
             <div style={{ marginTop: 8 }}><Text tone="caution">{vendor} has no library yet — create one in the Libraries tab. Until then its swatches show an empty image area.</Text></div>
@@ -270,7 +297,7 @@ function SwatchCodesTab({ meta, setBanner, config }) {
               <thead>
                 <tr>
                   <th style={{ ...TH, width: 32 }}>
-                    <Checkbox label="" labelHidden checked={allSelected} onChange={() => setSelected(allSelected ? [] : rows.map(keyOf))} />
+                    <Checkbox label="" labelHidden checked={allSelected} onChange={() => setSelected(allSelected ? [] : pageRows.map(keyOf))} />
                   </th>
                   {!vendor && <th style={TH}>Vendor</th>}
                   <th style={TH}>Variant name</th>
@@ -282,7 +309,7 @@ function SwatchCodesTab({ meta, setBanner, config }) {
                 </tr>
               </thead>
               <tbody>
-                {rows.map(r => {
+                {pageRows.map(r => {
                   const k = keyOf(r);
                   const f = r.file || r.candidate;
                   return (
@@ -329,9 +356,19 @@ function SwatchCodesTab({ meta, setBanner, config }) {
                 )}
               </tbody>
             </table>
+            {pages > 1 && (
+              <div style={{ padding: 12 }}>
+                <InlineStack gap="200" blockAlign="center">
+                  <Button size="slim" onClick={() => setPage(p => p - 1)} disabled={page === 0}>Previous</Button>
+                  <Text variant="bodySm">Page {page + 1} of {pages} · {rows.length} rows</Text>
+                  <Button size="slim" onClick={() => setPage(p => p + 1)} disabled={page >= pages - 1}>Next</Button>
+                </InlineStack>
+              </div>
+            )}
           </div>
         )}
       </Card>
+      </FullBleed>
 
       <Modal open={!!viewAll} onClose={() => setViewAll(null)} title={viewAll ? `${viewAll.code} — ${viewAll.products.length} products` : ''}>
         <Modal.Section>

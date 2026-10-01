@@ -1414,6 +1414,11 @@ const initDatabase = async () => {
     `);
     // Product types the code was seen in (filter of the management list).
     await client.query(`ALTER TABLE swatch_scan_codes ADD COLUMN IF NOT EXISTS product_types TEXT[] NOT NULL DEFAULT '{}'`);
+    // Stored best candidate file per code (services/swatchCandidates.js), so
+    // the management list is a plain database read.
+    await client.query(`ALTER TABLE swatch_scan_codes ADD COLUMN IF NOT EXISTS candidate_image_id INTEGER`);
+    await client.query(`ALTER TABLE swatch_scan_codes ADD COLUMN IF NOT EXISTS candidate_kind TEXT`);
+    await client.query(`ALTER TABLE swatch_scan_codes ADD COLUMN IF NOT EXISTS candidate_cost INTEGER`);
 
     await client.query('COMMIT');
     console.log('✓ Database initialized successfully');

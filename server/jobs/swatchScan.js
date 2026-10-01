@@ -129,6 +129,8 @@ async function scan(opts) {
   } finally {
     client.release();
   }
+  // Lazy require: swatchCandidates also loads swatchStore.
+  await require('../services/swatchCandidates').refreshCandidates(null);
   return { products: products.size, hitProducts, codes: groups.size, locationFound: !!locId, scannedWith: rules };
 }
 
