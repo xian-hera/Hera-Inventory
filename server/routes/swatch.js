@@ -111,6 +111,18 @@ router.get('/debug/payload', wrap(async (req, res) => {
   res.json({ sizes, payload: req.query.full ? p : undefined });
 }));
 
+// Remove a swatch file from Shopify Files by name (only Hera_swatch_* files,
+// and only if no image row uses it) — for cleaning up after a failed upload.
+router.delete('/debug/file', wrap(async (req, res) => {
+  const name = String(req.query.name || '');
+  if (!name.startsWith('Hera_swatch_')) throw fail(400, 'Only Hera_swatch_* files');
+  const used = await pool.query('SELECT id FROM swatch_images WHERE filename = $1', [name]);
+  if (used.rows.length) throw fail(400, 'This file belongs to an image in a library — delete the image instead');
+  const found = await shop.findFileByName(name);
+  for (const f of found) await shop.deleteFile(f.id);
+  res.json({ deleted: found.map(f => f.id) });
+}));
+
 // ─── Meta: vendors, product types, locations ─────────────────────────────────
 async function allStrings(field) {
   const out = [];

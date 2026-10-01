@@ -40,8 +40,7 @@ async function stagedUpload(filename, mimeType, buffer) {
 }
 
 const FILE_FIELDS = `
-  id fileStatus alt
-  fileErrors { code message details }
+  ... on File { id fileStatus alt fileErrors { code message details } }
   ... on MediaImage { image { url width height } }
 `;
 
@@ -87,7 +86,15 @@ async function createFile({ filename, alt, buffer, mimeType }) {
     }`, { files: [{ originalSource: source, contentType: 'IMAGE', alt, filename, duplicateResolutionMode: 'RAISE_ERROR' }] });
   const err = userErrorText(data.fileCreate);
   if (err) throw new Error(`fileCreate: ${err}`);
-  const f = await waitReady(data.fileCreate.files[0].id);
+  const newId = data.fileCreate.files[0].id;
+  let f;
+  try {
+    f = await waitReady(newId);
+  } catch (e) {
+    // Don't leave a half-processed file behind in Shopify Files.
+    await deleteFile(newId).catch(() => {});
+    throw e;
+  }
   return { id: f.id, filename: filenameFromUrl(f.image.url), url: f.image.url, width: f.image.width, height: f.image.height };
 }
 
