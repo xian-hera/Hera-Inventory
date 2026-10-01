@@ -9,9 +9,15 @@ const SCAN_META_KEY = 'swatch_scan_meta';
 // Defaults = the reference app's numbers (spec §1.1 / §7).
 const DEFAULT_CONFIG = {
   // §3: [{ optionName, caseSensitive, productTypes: [] }]
+  // Master switch (Hera 2026-10-01). 'off' = storefront untouched;
+  // 'preview' = only on *.shopifypreview.com and in the theme editor, for
+  // testing on a duplicated theme; 'live' = replace on the real store too.
+  mode: 'off',
   rules: [],
   // §6.1: only the main product section's picker is replaced
   selector: 'variant-selects[id$="__main"]',
+  // Other pickers to hide while Hera Swatch is active (third-party apps).
+  hideSelectors: ['variant-swatch-king'],
   style: {
     cardWidth: 72,           // px
     imageHeight: 81,         // px (image area 71 x 81 at the default width)
@@ -47,6 +53,8 @@ function mergeConfig(saved) {
     abbreviations: { ...(s.abbreviations || DEFAULT_CONFIG.abbreviations) },
     suggestIgnore: { ...DEFAULT_CONFIG.suggestIgnore, ...(s.suggestIgnore || {}) },
     rules: Array.isArray(s.rules) ? s.rules : [],
+    mode: ['off', 'preview', 'live'].includes(s.mode) ? s.mode : 'off',
+    hideSelectors: Array.isArray(s.hideSelectors) ? s.hideSelectors : DEFAULT_CONFIG.hideSelectors,
   };
 }
 

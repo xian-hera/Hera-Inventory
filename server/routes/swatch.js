@@ -153,6 +153,7 @@ router.get('/config', wrap(async (req, res) => {
 
 router.put('/config', wrap(async (req, res) => {
   const body = req.body || {};
+  if (body.mode !== undefined && !['off', 'preview', 'live'].includes(body.mode)) throw fail(400, "mode must be 'off', 'preview' or 'live'");
   if (body.rules) {
     if (!Array.isArray(body.rules)) throw fail(400, 'rules must be a list');
     body.rules = body.rules.map(r => ({
@@ -436,50 +437,71 @@ router.post('/unignore', wrap(async (req, res) => {
 }));
 
 // ─── Scan + management list (§5.4 / §5.6) ────────────────────────────────────
+// Body (optional): { productTypes: ['WIG'], optionName: 'Color', caseSensitive: true }
+// to scan chosen types; empty body = scan with the replacement rules.
+// Reads the Admin API (every Active product, published online or not).
 router.post('/scan', wrap(async (req, res) => {
-  res.json(await startScan());
+  const b = req.body || {};
+  const opts = Array.isArray(b.productTypes) && b.productTypes.length
+    ? { productTypes: b.productTypes.map(String), optionName: b.optionName ? String(b.optionName) : 'Color', caseSensitive: b.caseSensitive !== false }
+    : null;
+  if (!opts && !(await store.getConfig()).rules.length) throw fail(400, 'No replacement rule yet — choose product types to scan');
+  res.json(await startScan(opts));
 }));
 
 router.get('/scan', wrap(async (req, res) => {
   res.json(await getScanStatus());
 }));
 
-// GET /list?vendor=OUTRE&filter=all|none|possible|ignored|suggest
+// GET /list?vendor=OUTRE&filter=all|none|possible|ignored|suggest[&type=WIG]
+//   vendor omitted = every vendor in the last scan (each row has vendor + library)
 //   none     = no image and no candidate        (excludes ignored + hidden)
 //   possible = a candidate file, not confirmed  (excludes ignored + hidden)
 //   suggest  = none/possible rows whose every SKU meets the 建议 Ignore rule
 // hidden rows (every variant sold out + discontinued, §6.2.1) show under "all" only.
 router.get('/list', wrap(async (req, res) => {
-  const vendor = String(req.query.vendor || '');
+  const vendor = req.query.vendor ? String(req.query.vendor) : null;
+  const type = req.query.type ? String(req.query.type) : null;
   const filter = String(req.query.filter || 'all');
-  const lib = await store.libraryForVendor(vendor);
-  const scanRows = (await pool.query('SELECT * FROM swatch_scan_codes WHERE vendor = $1 ORDER BY code_key', [vendor])).rows;
+  const scanRows = (await pool.query(`
+    SELECT * FROM swatch_scan_codes
+    WHERE ($1::text IS NULL OR vendor = $1) AND ($2::text IS NULL OR $2 = ANY(product_types))
+    ORDER BY vendor, code_key`, [vendor, type])).rows;
 
-  let assigned = new Map(), ignored = new Map(), files = [], m = null;
-  if (lib) {
-    assigned = new Map((await pool.query(`
-      SELECT c.code_key, i.id, i.original_name, i.filename, i.alt, i.url FROM swatch_codes c
-      JOIN swatch_images i ON i.id = c.image_id WHERE c.library_id = $1`, [lib.id])).rows.map(r => [r.code_key, r]));
-    ignored = new Map((await pool.query('SELECT * FROM swatch_ignored_codes WHERE library_id = $1', [lib.id])).rows.map(r => [r.code_key, r]));
-    files = (await store.listImages(lib.id)).map(i => ({ id: i.id, name: i.original_name, stems: [fileStem(i.original_name)], image: i }));
-    m = await makeMatcher();
+  // Per vendor: its library, confirmed codes, ignored codes and image files.
+  const ctx = new Map();
+  let m = null;
+  for (const v of [...new Set(scanRows.map(r => r.vendor))]) {
+    const lib = await store.libraryForVendor(v);
+    const c = { lib, assigned: new Map(), ignored: new Map(), files: [] };
+    if (lib) {
+      c.assigned = new Map((await pool.query(`
+        SELECT c.code_key, i.id, i.original_name, i.filename, i.alt, i.url FROM swatch_codes c
+        JOIN swatch_images i ON i.id = c.image_id WHERE c.library_id = $1`, [lib.id])).rows.map(r => [r.code_key, r]));
+      c.ignored = new Map((await pool.query('SELECT * FROM swatch_ignored_codes WHERE library_id = $1', [lib.id])).rows.map(r => [r.code_key, r]));
+      c.files = (await store.listImages(lib.id)).map(i => ({ id: i.id, name: i.original_name, stems: [fileStem(i.original_name)], image: i }));
+      if (c.files.length && !m) m = await makeMatcher();
+    }
+    ctx.set(v, c);
   }
 
   const rows = scanRows.map(s => {
-    const a = assigned.get(s.code_key);
+    const c = ctx.get(s.vendor);
+    const a = c.assigned.get(s.code_key);
     let status = 'none', candidate = null;
     if (a) status = 'matched';
-    else if (m && files.length) {
-      const r = m.matchCode(s.code, files);
+    else if (m && c.files.length) {
+      const r = m.matchCode(s.code, c.files);
       if (r.best) {
         status = 'possible';
         const im = r.best.file.image;
         candidate = { imageId: im.id, name: im.original_name, filename: im.filename, url: im.url, kind: r.status, cost: r.best.cost };
       }
     }
-    const ig = ignored.get(s.code_key);
+    const ig = c.ignored.get(s.code_key);
     return {
-      code: s.code, codeKey: s.code_key,
+      vendor: s.vendor, library: c.lib ? { id: c.lib.id, name: c.lib.name, prefix: c.lib.prefix } : null,
+      code: s.code, codeKey: s.code_key, productTypes: s.product_types,
       products: s.products, productCount: s.products.length, variantCount: s.variant_count,
       status, hidden: s.hidden, suggestIgnore: s.suggest_ignore && status !== 'matched',
       ignored: !a && ig ? { reason: ig.reason, at: ig.ignored_at } : null,
@@ -491,6 +513,7 @@ router.get('/list', wrap(async (req, res) => {
   const open = r => !r.ignored && !r.hidden;
   const pick = {
     all: () => true,
+    matched: r => r.status === 'matched',
     none: r => r.status === 'none' && open(r),
     possible: r => r.status === 'possible' && open(r),
     ignored: r => !!r.ignored,
@@ -499,7 +522,8 @@ router.get('/list', wrap(async (req, res) => {
   if (!pick[filter]) throw fail(400, 'Unknown filter');
   const counts = Object.fromEntries(Object.entries(pick).map(([k, f]) => [k, rows.filter(f).length]));
   res.json({
-    vendor, library: lib, scan: await getScanStatus(), counts,
+    vendor, type, library: vendor && ctx.get(vendor) ? ctx.get(vendor).lib : (vendor ? await store.libraryForVendor(vendor) : null),
+    scan: await getScanStatus(), counts,
     rows: rows.filter(pick[filter]),
   });
 }));

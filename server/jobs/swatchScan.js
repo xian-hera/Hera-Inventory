@@ -53,8 +53,20 @@ async function runBulk(query) {
   }
 }
 
-async function scan() {
+// opts (optional): { productTypes: [...], optionName, caseSensitive } — scan
+// these types with this option instead of the replacement rules, e.g. to check
+// a type's colour codes before adding a rule for it. Default: the rules.
+function scanRules(cfg, opts) {
+  if (opts && Array.isArray(opts.productTypes) && opts.productTypes.length) {
+    return [{ optionName: opts.optionName || 'Color', caseSensitive: opts.caseSensitive !== false, productTypes: opts.productTypes }];
+  }
+  return cfg.rules;
+}
+
+async function scan(opts) {
   const cfg = await getConfig();
+  const rules = scanRules(cfg, opts);
+  if (!rules.length) throw new Error('No replacement rule yet, and no product type chosen to scan');
   const locName = cfg.suggestIgnore.locationName;
   const minTotal = Number(cfg.suggestIgnore.minTotal) || 0;
   const locId = await locationId(locName);
@@ -74,7 +86,7 @@ async function scan() {
   const groups = new Map(); // vendor|key -> row
   let hitProducts = 0;
   for (const p of products.values()) {
-    const opt = ruleOptionFor(cfg.rules, p.productType, (p.options || []).map(o => o.name));
+    const opt = ruleOptionFor(rules, p.productType, (p.options || []).map(o => o.name));
     if (!opt) continue;
     hitProducts++;
     const pid = p.id.split('/').pop();
@@ -84,9 +96,10 @@ async function scan() {
       const key = codeKey(so.value);
       if (!key) continue;
       const gk = `${p.vendor}\u0000${key}`;
-      if (!groups.has(gk)) groups.set(gk, { vendor: p.vendor, code: so.value, key, products: new Map(), variants: 0, hidden: 0, flagged: 0 });
+      if (!groups.has(gk)) groups.set(gk, { vendor: p.vendor, code: so.value, key, products: new Map(), types: new Set(), variants: 0, hidden: 0, flagged: 0 });
       const g = groups.get(gk);
       g.products.set(pid, p.title);
+      g.types.add(p.productType);
       g.variants++;
       const disc = !!(v.metafield && String(v.metafield.value) === 'true');
       if (!v.availableForSale && disc) g.hidden++;
@@ -103,11 +116,11 @@ async function scan() {
     await client.query('DELETE FROM swatch_scan_codes');
     for (const g of groups.values()) {
       await client.query(
-        `INSERT INTO swatch_scan_codes (vendor, code, code_key, products, variant_count, hidden, suggest_ignore)
-         VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7)`,
+        `INSERT INTO swatch_scan_codes (vendor, code, code_key, products, variant_count, hidden, suggest_ignore, product_types)
+         VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8)`,
         [g.vendor, g.code, g.key,
           JSON.stringify([...g.products].map(([id, title]) => ({ id, title })).sort((a, b) => a.title.localeCompare(b.title))),
-          g.variants, g.hidden === g.variants, g.flagged === g.variants]);
+          g.variants, g.hidden === g.variants, g.flagged === g.variants, [...g.types].sort()]);
     }
     await client.query('COMMIT');
   } catch (e) {
@@ -116,15 +129,15 @@ async function scan() {
   } finally {
     client.release();
   }
-  return { products: products.size, hitProducts, codes: groups.size, locationFound: !!locId };
+  return { products: products.size, hitProducts, codes: groups.size, locationFound: !!locId, scannedWith: rules };
 }
 
 // Starts a scan in the background unless one is already running.
-async function startScan() {
+async function startScan(opts) {
   if (running) return getScanStatus();
   running = { startedAt: new Date().toISOString(), objects: 0 };
   await setScanMeta({ ...(await getScanMeta()), status: 'running', startedAt: running.startedAt, error: null });
-  scan()
+  scan(opts)
     .then(async r => {
       await setScanMeta({ status: 'done', startedAt: running.startedAt, finishedAt: new Date().toISOString(), error: null, ...r });
     })

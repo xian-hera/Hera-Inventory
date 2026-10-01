@@ -1412,6 +1412,8 @@ const initDatabase = async () => {
         PRIMARY KEY (vendor, code_key)
       )
     `);
+    // Product types the code was seen in (filter of the management list).
+    await client.query(`ALTER TABLE swatch_scan_codes ADD COLUMN IF NOT EXISTS product_types TEXT[] NOT NULL DEFAULT '{}'`);
 
     await client.query('COMMIT');
     console.log('✓ Database initialized successfully');
