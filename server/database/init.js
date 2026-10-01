@@ -1341,6 +1341,78 @@ const initDatabase = async () => {
     `);
     await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS restock_plans_task_barcode_key ON restock_plans (task_id, barcode)`);
 
+    // ── Online › Swatch (2026-10-01, Hera) ────────────────────────────────
+    // Spec: claude/SWATCH_FEATURE_SPEC.md §8. Library name = a Shopify vendor
+    // name exactly (case included); other vendors may link to the same library.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS swatch_libraries (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        prefix TEXT NOT NULL UNIQUE,
+        vendors TEXT[] NOT NULL DEFAULT '{}',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    // One row per file uploaded to Shopify Files. filename = the name Shopify
+    // actually gave the file (used by Liquid's file_url); original_name = the
+    // local file name as uploaded (kept in full, never abbreviated).
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS swatch_images (
+        id SERIAL PRIMARY KEY,
+        library_id INTEGER NOT NULL REFERENCES swatch_libraries(id) ON DELETE CASCADE,
+        original_name TEXT NOT NULL,
+        shopify_file_id TEXT,
+        filename TEXT,
+        url TEXT,
+        alt TEXT,
+        width INTEGER,
+        height INTEGER,
+        position TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    // Colour code -> image (many codes may point to one image; one image per
+    // code inside a library). Only these rows reach the storefront.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS swatch_codes (
+        id SERIAL PRIMARY KEY,
+        library_id INTEGER NOT NULL REFERENCES swatch_libraries(id) ON DELETE CASCADE,
+        code TEXT NOT NULL,
+        code_key TEXT NOT NULL,
+        image_id INTEGER NOT NULL REFERENCES swatch_images(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (library_id, code_key)
+      )
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS swatch_ignored_codes (
+        library_id INTEGER NOT NULL REFERENCES swatch_libraries(id) ON DELETE CASCADE,
+        code_key TEXT NOT NULL,
+        code TEXT NOT NULL,
+        reason TEXT,
+        ignored_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (library_id, code_key)
+      )
+    `);
+    // Last product scan (§5.4): one row per vendor + colour code in use.
+    // products = [{id, title}]; hidden = every variant with this code is sold
+    // out AND custom.discontinued (§6.2.1); suggest_ignore = every SKU is
+    // discontinued, has no stock at the check location and total < minimum.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS swatch_scan_codes (
+        vendor TEXT NOT NULL,
+        code TEXT NOT NULL,
+        code_key TEXT NOT NULL,
+        products JSONB NOT NULL DEFAULT '[]',
+        variant_count INTEGER NOT NULL DEFAULT 0,
+        hidden BOOLEAN NOT NULL DEFAULT FALSE,
+        suggest_ignore BOOLEAN NOT NULL DEFAULT FALSE,
+        PRIMARY KEY (vendor, code_key)
+      )
+    `);
+
     await client.query('COMMIT');
     console.log('✓ Database initialized successfully');
   } catch (e) {
