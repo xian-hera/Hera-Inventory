@@ -3,7 +3,7 @@
 // product), not from the storefront.
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
-  Card, BlockStack, InlineStack, Text, Button, Select, Badge, Modal, TextField, Spinner, Checkbox,
+  Card, BlockStack, InlineStack, Text, Button, Select, Badge, Modal, TextField, Checkbox,
 } from '@shopify/polaris';
 import MultiSelectDropdown from '../../../components/MultiSelectDropdown';
 import FullBleed from '../../../components/FullBleed';
@@ -53,7 +53,7 @@ function ChooseFileModal({ open, row, onClose, onPicked, setBanner }) {
       <Modal.Section>
         <BlockStack gap="300">
           <TextField label="Search file name" value={q} onChange={setQ} autoComplete="off" clearButton onClearButtonClick={() => setQ('')} />
-          {!images ? <Spinner /> : (
+          {!images ? <Text tone="subdued">Loading...</Text> : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 12 }}>
               {list.map(i => (
                 <button key={i.id} type="button" onClick={() => onPicked(i)}
@@ -291,7 +291,7 @@ function SwatchCodesTab({ meta, refreshMeta, setBanner, config }) {
             <div style={{ marginTop: 8 }}><Text tone="caution">{vendor} has no library yet — create one in the Libraries tab. Until then its swatches show an empty image area.</Text></div>
           )}
         </div>
-        {!data ? <div style={{ padding: 16 }}><Spinner /></div> : (
+        {!data ? <div style={{ padding: 16 }}><Text tone="subdued">Loading...</Text></div> : (
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>

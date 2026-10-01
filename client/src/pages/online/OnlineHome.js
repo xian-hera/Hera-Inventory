@@ -67,6 +67,7 @@ function OnlineHome({ tab = 'dashboard', children }) {
   const location = useLocation();
   const [newProductsCount, setNewProductsCount] = useState(0);
 
+
   const [ready, setReady]         = useState(verifiedThisVisit);
   const [showModal, setShowModal] = useState(false);
   const [pinInput, setPinInput]   = useState('');

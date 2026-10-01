@@ -1,6 +1,6 @@
 // Online › Swatch › Style & Text (spec §7). Defaults = the reference app.
 import React, { useState, useEffect } from 'react';
-import { Card, BlockStack, InlineStack, Text, Button, TextField, Select, Banner, Modal, Spinner } from '@shopify/polaris';
+import { Card, BlockStack, InlineStack, Text, Button, TextField, Select, Banner, Modal } from '@shopify/polaris';
 import { api, fmtTime } from './swatchApi';
 
 const clone = (c) => JSON.parse(JSON.stringify({
@@ -60,7 +60,7 @@ function FilePicker({ open, onClose, onPick }) {
             <Button onClick={() => search(q)}>Search</Button>
           </InlineStack>
           {err && <Banner tone="critical">{err}</Banner>}
-          {!files ? <Spinner /> : (
+          {!files ? <Text tone="subdued">Loading...</Text> : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12 }}>
               {files.map(f => (
                 <button key={f.id} type="button" onClick={() => onPick(f)}

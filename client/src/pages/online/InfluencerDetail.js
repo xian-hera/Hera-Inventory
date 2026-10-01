@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Page, Card, BlockStack, InlineStack, Text, Badge, Button, Select,
-  TextField, Modal, Banner, Spinner, Box, Divider, DataTable,
+  TextField, Modal, Banner, Box, Divider, DataTable,
 } from '@shopify/polaris';
 import { useParams, useNavigate } from 'react-router-dom';
 
@@ -77,7 +77,7 @@ export default function InfluencerDetail() {
 
   useEffect(() => { load(); }, [load]);
 
-  if (loading) return <Page><Box padding="800"><InlineStack align="center"><Spinner /></InlineStack></Box></Page>;
+  if (loading) return <Page><Box padding="800"><InlineStack align="center"><Text tone="subdued">Loading...</Text></InlineStack></Box></Page>;
   if (!inf) return null;
 
   // ── Status change ──

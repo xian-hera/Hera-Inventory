@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import {
   Page, Layout, Card, IndexTable, Text, Badge, TextField,
-  InlineStack, Button, Spinner, Banner, Box, BlockStack, Select, Modal,
+  InlineStack, Button, Banner, Box, BlockStack, Select, Modal,
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 
@@ -225,7 +225,7 @@ function BirthdayOrders() {
                   </Text>
 
                   {loading ? (
-                    <InlineStack align="center"><Spinner /></InlineStack>
+                    <InlineStack align="center"><Text tone="subdued">Loading...</Text></InlineStack>
                   ) : (
                     <IndexTable
                       resourceName={resourceName}

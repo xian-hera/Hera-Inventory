@@ -7,7 +7,7 @@
 //   - Task history: what was not done each working day (recorded at 23:00).
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Page, BlockStack, InlineStack, Text, Banner, Spinner, Modal, Select, TextField, Checkbox,
+  Page, BlockStack, InlineStack, Text, Banner, Modal, Select, TextField, Checkbox,
 } from '@shopify/polaris';
 
 const DOT = { regular: '#36a849', normal: '#f5a623', urgent: '#e22b2b' };
@@ -141,7 +141,7 @@ function HistoryModal({ open, onClose }) {
     <Modal open={open} onClose={onClose} title="Task history — last 30 working days" size="large">
       <Modal.Section>
         {err && <Banner tone="critical">{err}</Banner>}
-        {!rows ? <Spinner /> : (
+        {!rows ? <Text tone="subdued">Loading...</Text> : (
           <div style={{ maxHeight: '60vh', overflowY: 'auto' }}>
             <table style={{ borderCollapse: 'collapse', width: '100%' }}>
               <tbody>
@@ -253,7 +253,7 @@ function OnlineDashboard() {
       <BlockStack gap="400">
         {banner && <Banner tone={banner.tone} onDismiss={() => setBanner(null)}>{banner.text}</Banner>}
         {editing && <Banner tone="info">Edit mode: select tasks, then Move to Top or Delete. Nothing changes until you press Save; Cancel discards everything.</Banner>}
-        {!data ? <InlineStack align="center"><Spinner /></InlineStack> : (
+        {!data ? <InlineStack align="center"><Text tone="subdued">Loading...</Text></InlineStack> : (
           <>
             <div style={GRID}>
               {openList.map(t => (

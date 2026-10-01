@@ -2,7 +2,7 @@
 // Cards: Publish channels · Inventory locations · New Arrival Tag · Groups.
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Page, Layout, Card, BlockStack, InlineStack, Text, Button, Banner, Select, TextField, Tag, Divider, Spinner,
+  Page, Layout, Card, BlockStack, InlineStack, Text, Button, Banner, Select, TextField, Tag, Divider,
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import MultiSelectDropdown from '../../components/MultiSelectDropdown';
@@ -169,7 +169,7 @@ function OnlineNewProductsSettings() {
           <BlockStack gap="400">
             {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
             {msg && <Banner tone="success" onDismiss={() => setMsg('')}>{msg}</Banner>}
-            {loading ? <InlineStack align="center"><Spinner /></InlineStack> : (
+            {loading ? <InlineStack align="center"><Text tone="subdued">Loading...</Text></InlineStack> : (
               <>
                 <Card>
                   <BlockStack gap="300">

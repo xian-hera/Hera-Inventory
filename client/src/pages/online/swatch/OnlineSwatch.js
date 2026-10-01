@@ -2,7 +2,7 @@
 // Top: master switch (Off / Preview only / Live). Tabs: Colour codes ·
 // Images · Libraries · Rules · Style & Text.
 import React, { useState, useEffect, useCallback } from 'react';
-import { Page, Card, BlockStack, InlineStack, Text, Tabs, Banner, Select, Button, Spinner, Badge } from '@shopify/polaris';
+import { Page, Card, BlockStack, InlineStack, Text, Tabs, Banner, Select, Button, Badge } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import { api, fmtTime } from './swatchApi';
 import SwatchCodesTab from './SwatchCodesTab';
@@ -88,7 +88,7 @@ function OnlineSwatch({ inTabs = false } = {}) {
   };
 
   if (!config) {
-    return <Page title={inTabs ? undefined : 'Swatch'} backAction={inTabs ? undefined : { onAction: () => navigate('/online') }}><Spinner /></Page>;
+    return <Page title={inTabs ? undefined : 'Swatch'} backAction={inTabs ? undefined : { onAction: () => navigate('/online') }}><Text tone="subdued">Loading...</Text></Page>;
   }
 
   const refreshMeta = async () => {

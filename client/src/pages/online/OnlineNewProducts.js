@@ -3,7 +3,7 @@
 // groups (+ a hidden built-in "Ungrouped" group). Spec §15.
 // Full width; the table wraps text instead of scrolling sideways.
 import React, { useState, useEffect, useCallback } from 'react';
-import { Page, Card, BlockStack, InlineStack, Text, Button, Banner, Spinner } from '@shopify/polaris';
+import { Page, Card, BlockStack, InlineStack, Text, Button, Banner } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import { HtmlTooltip, FrIcon, adminUrl, TH, TD, postJson } from './newProductsShared';
 import FullBleed from '../../components/FullBleed';
@@ -141,7 +141,7 @@ function OnlineNewProducts({ inTabs = false } = {}) {
       <BlockStack gap="500">
         {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
         {banner && <Banner tone={banner.tone} onDismiss={() => setBanner(null)}>{banner.text}</Banner>}
-        {!data && !error && <InlineStack align="center"><Spinner /></InlineStack>}
+        {!data && !error && <InlineStack align="center"><Text tone="subdued">Loading...</Text></InlineStack>}
         {data && data.groups.map(g => <GroupCard key={g.id} group={g} onChanged={load} setBanner={setBanner} />)}
         {data && data.ungrouped.length > 0 && (
           <GroupCard group={{ id: 'ungrouped', name: 'Ungrouped', metafields: [], items: data.ungrouped }} onChanged={load} setBanner={setBanner} />

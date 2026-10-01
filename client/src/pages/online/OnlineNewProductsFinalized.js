@@ -5,7 +5,7 @@
 // SKU, Date = publish date), and remove the published rows from the list.
 import React, { useState, useEffect, useCallback } from 'react';
 import Papa from 'papaparse';
-import { Page, Card, BlockStack, InlineStack, Text, Button, Banner, Spinner } from '@shopify/polaris';
+import { Page, Card, BlockStack, InlineStack, Text, Button, Banner } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import { adminUrl, TH, TD, postJson } from './newProductsShared';
 
@@ -136,7 +136,7 @@ function OnlineNewProductsFinalized() {
       <BlockStack gap="500">
         {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
         {banner && <Banner tone={banner.tone} onDismiss={() => setBanner(null)}>{banner.text}</Banner>}
-        {!data && !error && <InlineStack align="center"><Spinner /></InlineStack>}
+        {!data && !error && <InlineStack align="center"><Text tone="subdued">Loading...</Text></InlineStack>}
         {data && (
           <>
             <FinalizedCard title={`Last ${data.days} days`} items={data.recent} onChanged={load} setBanner={setBanner} />

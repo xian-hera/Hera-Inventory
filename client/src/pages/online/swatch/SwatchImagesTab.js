@@ -2,7 +2,7 @@
 // preview, then manage each image (codes, crop position, replace, delete).
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  Card, BlockStack, InlineStack, Text, Button, Select, TextField, Banner, DropZone, Checkbox, Modal, Spinner, ProgressBar, Badge,
+  Card, BlockStack, InlineStack, Text, Button, Select, TextField, Banner, DropZone, Checkbox, Modal, ProgressBar, Badge,
 } from '@shopify/polaris';
 import { api, fileToBase64, TH, TD, SwatchThumb } from './swatchApi';
 
@@ -90,7 +90,7 @@ function UploadCard({ library, onUploaded, setBanner, afterSave }) {
         <DropZone accept="image/jpeg,image/png,image/webp,image/gif" type="image" onDrop={onDrop} disabled={!!progress}>
           <DropZone.FileUpload actionTitle="Add images" actionHint="jpg, png, webp or gif — several at once" />
         </DropZone>
-        {loading && <Spinner size="small" />}
+        {loading && <Text tone="subdued">Loading...</Text>}
         {items.length > 0 && (
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -282,7 +282,7 @@ function SwatchImagesTab({ libraries, loadLibraries, setBanner, afterSave }) {
             <div style={{ width: 240 }}><TextField label="Search" value={q} onChange={setQ} autoComplete="off" placeholder="File name or colour code" clearButton onClearButtonClick={() => setQ('')} /></div>
             <Checkbox label="Only images without a colour code" checked={onlyNoCode} onChange={setOnlyNoCode} />
           </InlineStack>
-          {!images ? <Spinner /> : (
+          {!images ? <Text tone="subdued">Loading...</Text> : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 12 }}>
               {list.map(img => <ImageCard key={img.id} img={img} onChanged={changed} setBanner={setBanner} afterSave={afterSave} />)}
               {list.length === 0 && <Text tone="subdued">No images.</Text>}

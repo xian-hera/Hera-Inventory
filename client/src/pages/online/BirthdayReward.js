@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Page, Layout, Card, BlockStack, InlineStack, Text, Button,
-  Select, TextField, Banner, Spinner, Badge, Divider, Box, IndexTable,
+  Select, TextField, Banner, Badge, Divider, Box, IndexTable,
   Modal, ProgressBar,
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
@@ -215,7 +215,7 @@ function BirthdayReward({ inTabs = false } = {}) {
   if (loading) {
     return (
       <Page title={inTabs ? undefined : 'Birthday Reward'} backAction={inTabs ? undefined : { onAction: () => navigate('/online') }}>
-        <Layout><Layout.Section><InlineStack align="center"><Spinner /></InlineStack></Layout.Section></Layout>
+        <Layout><Layout.Section><InlineStack align="center"><Text tone="subdued">Loading...</Text></InlineStack></Layout.Section></Layout>
       </Page>
     );
   }
@@ -399,7 +399,7 @@ function BirthdayReward({ inTabs = false } = {}) {
               </Text>
 
               {activeLoading ? (
-                <InlineStack align="center"><Spinner /></InlineStack>
+                <InlineStack align="center"><Text tone="subdued">Loading...</Text></InlineStack>
               ) : (
                 <IndexTable
                   resourceName={resourceName}
@@ -456,7 +456,7 @@ function BirthdayReward({ inTabs = false } = {}) {
 
             {cleanupView === 'preview' && (
               cleanupBusy && !cleanupPreview ? (
-                <InlineStack align="center" gap="200"><Spinner size="small" /><Text>Scanning Shopify customers…</Text></InlineStack>
+                <InlineStack align="center" gap="200"><Text>Scanning Shopify customers…</Text></InlineStack>
               ) : cleanupPreview ? (
                 <BlockStack gap="200">
                   <Text variant="bodyMd">
@@ -479,7 +479,7 @@ function BirthdayReward({ inTabs = false } = {}) {
             {cleanupView !== 'preview' && cleanupState && (
               <BlockStack gap="200">
                 {cleanupState.phase === 'scanning' ? (
-                  <InlineStack gap="200"><Spinner size="small" /><Text>Scanning Shopify customers…</Text></InlineStack>
+                  <InlineStack gap="200"><Text>Scanning Shopify customers…</Text></InlineStack>
                 ) : (
                   <>
                     <ProgressBar

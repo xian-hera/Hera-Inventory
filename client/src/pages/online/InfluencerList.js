@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Page, Card, DataTable, Button, Modal, TextField, Select, Badge,
-  InlineStack, BlockStack, Text, Spinner, Banner, EmptyState, Box,
+  InlineStack, BlockStack, Text, Banner, EmptyState, Box,
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 
@@ -129,7 +129,7 @@ export default function InfluencerList({ inTabs = false } = {}) {
 
       <Card padding="0">
         {loading ? (
-          <Box padding="800"><InlineStack align="center"><Spinner /></InlineStack></Box>
+          <Box padding="800"><InlineStack align="center"><Text tone="subdued">Loading...</Text></InlineStack></Box>
         ) : filtered.length === 0 ? (
           <EmptyState heading="No influencers yet" image="">
             <p>Click "Add Influencer" to get started.</p>
