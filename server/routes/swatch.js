@@ -154,6 +154,12 @@ router.get('/config', wrap(async (req, res) => {
 router.put('/config', wrap(async (req, res) => {
   const body = req.body || {};
   if (body.mode !== undefined && !['off', 'preview', 'live'].includes(body.mode)) throw fail(400, "mode must be 'off', 'preview' or 'live'");
+  // The magnifier SVG is put into the storefront page as-is: allow plain SVG only.
+  const svg = body.icons && body.icons.magnifier;
+  if (svg) {
+    if (!/^\s*<svg[\s>]/i.test(svg)) throw fail(400, 'The magnifier icon must be SVG code starting with <svg');
+    if (/<script|<foreignObject|\son[a-z]+\s*=|javascript:/i.test(svg)) throw fail(400, 'The magnifier SVG may not contain scripts or event handlers');
+  }
   if (body.rules) {
     if (!Array.isArray(body.rules)) throw fail(400, 'rules must be a list');
     body.rules = body.rules.map(r => ({

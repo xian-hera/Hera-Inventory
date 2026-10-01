@@ -90,6 +90,10 @@ function OnlineHome() {
               <Button size="large" fullWidth onClick={() => navigate('/online/influencers')}>
                 Influencer Management
               </Button>
+              {/* Swatch (2026-10-01, Hera) — see claude/SWATCH_FEATURE_SPEC.md */}
+              <Button size="large" fullWidth onClick={() => navigate('/online/swatch')}>
+                Swatch
+              </Button>
             </BlockStack>
           </Layout.Section>
         </Layout>

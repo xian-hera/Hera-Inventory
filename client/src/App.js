@@ -53,6 +53,8 @@ import BuyerImportProductsSettings from './pages/buyer/BuyerImportProductsSettin
 import OnlineNewProducts from './pages/online/OnlineNewProducts';
 import OnlineNewProductsFinalized from './pages/online/OnlineNewProductsFinalized';
 import OnlineNewProductsSettings from './pages/online/OnlineNewProductsSettings';
+// Online › Swatch — 2026-10-01, see claude/SWATCH_FEATURE_SPEC.md
+import OnlineSwatch from './pages/online/swatch/OnlineSwatch';
 import ProductDatabaseSettings from './pages/buyer/ProductDatabaseSettings';
 import BuyerPOReceiving from './pages/buyer/BuyerPOReceiving';
 import BuyerPOImportInvoice from './pages/buyer/BuyerPOImportInvoice';
@@ -193,6 +195,7 @@ function App() {
           <Route path="/online/new-products" element={<OnlineNewProducts />} />
           <Route path="/online/new-products/finalized" element={<OnlineNewProductsFinalized />} />
           <Route path="/online/new-products/settings" element={<OnlineNewProductsSettings />} />
+          <Route path="/online/swatch" element={<OnlineSwatch />} />
         </Routes>
       </BrowserRouter>
     </AppProvider>
