@@ -7,6 +7,8 @@
 //   GET    /api/birthday-config/active       当前持有 tag 的顾客列表
 //   GET    /api/birthday-config/orders       tag 期间的消费记录（?range=30 | all）
 //   DELETE /api/birthday-config/orders/purge 删除 365 天前的记录
+//   GET    /api/birthday-config/failed-count 处理失败的记录数（2026-10-01）
+//   POST   /api/birthday-config/retry-failed 把 failed 改回 pending，下次 Remove Job 重试（2026-10-01）
 // ─────────────────────────────────────────────────────────────
 
 const express = require('express');
@@ -99,6 +101,39 @@ router.get('/active', async (req, res) => {
     res.json(result.rows);
   } catch (err) {
     console.error('[BirthdayConfig] GET /active 失败:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /api/birthday-config/failed-count ─────────────────────
+// 2026-10-01：处理失败（status = 'failed'）的记录数。
+// 这些顾客在 Shopify 上很可能仍持有 tag，前端据此提示并提供重试。
+
+router.get('/failed-count', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT COUNT(*)::int AS count FROM birthday_campaign_log WHERE status = 'failed'`
+    );
+    res.json({ count: result.rows[0]?.count || 0 });
+  } catch (err) {
+    console.error('[BirthdayConfig] GET /failed-count 失败:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /api/birthday-config/retry-failed ────────────────────
+// 2026-10-01：把 failed 记录改回 pending。它们的 tag_remove_at 已过，
+// 下一次 Remove Job 运行时会重新拉取订单并移除 tag（不在此处立即执行）。
+
+router.post('/retry-failed', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `UPDATE birthday_campaign_log SET status = 'pending' WHERE status = 'failed'`
+    );
+    console.log(`[BirthdayConfig] retry-failed: ${result.rowCount} 条 failed 记录已改回 pending`);
+    res.json({ reset: result.rowCount });
+  } catch (err) {
+    console.error('[BirthdayConfig] POST /retry-failed 失败:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

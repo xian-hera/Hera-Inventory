@@ -45,6 +45,8 @@ function BirthdayOrders() {
       setError('');
       const res  = await fetch(`/api/birthday-config/orders?range=${range}`);
       const data = await res.json();
+      // 2026-10-01：后端出错时显示错误，而不是静默显示空列表
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
       setRows(Array.isArray(data.records) ? data.records : []);
       setEarliest(data.earliest || null);
       setLoaded(true);
@@ -60,6 +62,7 @@ function BirthdayOrders() {
       setPurging(true);
       const res  = await fetch('/api/birthday-config/orders/purge', { method: 'DELETE' });
       const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`); // 2026-10-01
       setInfo(`Deleted ${data.deleted} record(s) older than 365 days.`);
       setPurgeOpen(false);
       // 清空后刷新当前视图（若已加载过）

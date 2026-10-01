@@ -43,6 +43,7 @@ function BirthdayReward() {
       setLoading(true);
       const res  = await fetch('/api/birthday-config');
       const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`); // 2026-10-01
       setConfig(data);
       setEnabled(data.enabled);
       setRemoveJobEnabled(data.remove_job_enabled);
@@ -57,20 +58,49 @@ function BirthdayReward() {
     }
   }, []);
 
+  // ── 处理失败的记录（2026-10-01） ──
+  const [failedCount, setFailedCount] = useState(0);
+  const [retrying, setRetrying]       = useState(false);
+  const [retryInfo, setRetryInfo]     = useState('');
+
   const fetchActive = useCallback(async () => {
     try {
       setActiveLoading(true);
       const res  = await fetch('/api/birthday-config/active');
       const data = await res.json();
+      // 2026-10-01：后端出错时显示错误，而不是静默显示空列表
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
       setActiveRows(Array.isArray(data) ? data : []);
     } catch (err) {
       setError('Failed to load active customers: ' + err.message);
     } finally {
       setActiveLoading(false);
     }
+    // 同时刷新 failed 数量（失败不影响主列表）
+    try {
+      const r = await fetch('/api/birthday-config/failed-count');
+      const d = await r.json();
+      if (r.ok) setFailedCount(Number(d.count) || 0);
+    } catch { /* ignore */ }
   }, []);
 
   useEffect(() => { fetchConfig(); fetchActive(); }, [fetchConfig, fetchActive]);
+
+  // 把 failed 记录改回 pending，等下一次 Remove Job 重新处理
+  const handleRetryFailed = async () => {
+    try {
+      setRetrying(true);
+      const res  = await fetch('/api/birthday-config/retry-failed', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+      setRetryInfo(`${data.reset} record(s) queued for retry. They will be processed at the next scheduled removal time.`);
+      await fetchActive();
+    } catch (err) {
+      setError('Failed to retry: ' + err.message);
+    } finally {
+      setRetrying(false);
+    }
+  };
 
   const handleSave = async () => {
     setSaving(true);
@@ -137,6 +167,27 @@ function BirthdayReward() {
         {error && (
           <Layout.Section>
             <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>
+          </Layout.Section>
+        )}
+
+        {retryInfo && (
+          <Layout.Section>
+            <Banner tone="success" onDismiss={() => setRetryInfo('')}>{retryInfo}</Banner>
+          </Layout.Section>
+        )}
+
+        {/* 2026-10-01：处理失败的记录提示 + 重试 */}
+        {failedCount > 0 && (
+          <Layout.Section>
+            <Banner
+              tone="warning"
+              title={`${failedCount} tag removal${failedCount !== 1 ? 's' : ''} failed`}
+              action={{ content: 'Retry failed', onAction: handleRetryFailed, loading: retrying }}
+              secondaryAction={{ content: 'View records', onAction: () => navigate('/online/birthday-reward/orders') }}
+            >
+              These customers may still hold the tag in Shopify, and their spending was not recorded.
+              Retrying moves them back to Active; they will be processed at the next scheduled removal time.
+            </Banner>
           </Layout.Section>
         )}
 

@@ -66,7 +66,8 @@ async function fetchOrdersDuringTagPeriod(client, customerId, tagAddedAt, tagRem
   const removedAtISO = new Date(tagRemovedAt).toISOString();
 
   // 用 created_at 过滤，拉取 tag 期间的订单
-  const queryFilter = `customer_id:${customerId.replace('gid://shopify/Customer/', '')} created_at:>=${addedAtISO} created_at:<=${removedAtISO}`;
+  // 2026-10-01：日期值加上单引号 —— ISO 时间里含冒号，Shopify 搜索语法推荐用引号包住，避免解析歧义
+  const queryFilter = `customer_id:${customerId.replace('gid://shopify/Customer/', '')} created_at:>='${addedAtISO}' created_at:<='${removedAtISO}'`;
 
   do {
     const afterClause = cursor ? `, after: "${cursor}"` : '';
@@ -81,7 +82,7 @@ async function fetchOrdersDuringTagPeriod(client, customerId, tagAddedAt, tagRem
              currentTotalPriceSet {
                shopMoney { amount currencyCode }
              }
-             financialStatus
+             displayFinancialStatus
            }
          }
        }`,
@@ -93,7 +94,9 @@ async function fetchOrdersDuringTagPeriod(client, customerId, tagAddedAt, tagRem
 
     for (const order of page.nodes) {
       // 只记录已支付的订单
-      if (['PAID', 'PARTIALLY_REFUNDED', 'REFUNDED'].includes(order.financialStatus)) {
+      // 2026-10-01 修复：Shopify Order 对象没有 financialStatus 字段（只有 displayFinancialStatus），
+      // 旧写法导致整个 GraphQL 请求被拒绝 → 每条记录都被标成 failed、tag 未移除、订单未记录。
+      if (['PAID', 'PARTIALLY_REFUNDED', 'REFUNDED'].includes(order.displayFinancialStatus)) {
         orders.push({
           orderId:    order.id,
           orderName:  order.name,
