@@ -26,7 +26,8 @@ const TABS = [
   { id: 'style', content: 'Style & Text' },
 ];
 
-function OnlineSwatch() {
+// inTabs (2026-10-01): shown as a tab of Online (OnlineHome) — no title or back arrow of its own.
+function OnlineSwatch({ inTabs = false } = {}) {
   const navigate = useNavigate();
   const [tab, setTab] = useState(0);
   const [config, setConfig] = useState(null);
@@ -87,7 +88,7 @@ function OnlineSwatch() {
   };
 
   if (!config) {
-    return <Page title="Swatch" backAction={{ onAction: () => navigate('/online') }}><Spinner /></Page>;
+    return <Page title={inTabs ? undefined : 'Swatch'} backAction={inTabs ? undefined : { onAction: () => navigate('/online') }}><Spinner /></Page>;
   }
 
   const refreshMeta = async () => {
@@ -104,7 +105,8 @@ function OnlineSwatch() {
   return (
     // Normal page width like the rest of the Hub; only the Colour codes table
     // is pulled to full width (FullBleed), same as Import Products / New products.
-    <Page title="Swatch" titleMetadata={MODE_BADGE[config.mode]} backAction={{ onAction: () => navigate('/online') }}>
+    <Page title={inTabs ? undefined : 'Swatch'} titleMetadata={inTabs ? undefined : MODE_BADGE[config.mode]}
+      backAction={inTabs ? undefined : { onAction: () => navigate('/online') }}>
       <BlockStack gap="400">
         {banner && <Banner tone={banner.tone} onDismiss={() => setBanner(null)}>{banner.text}</Banner>}
         <Card>

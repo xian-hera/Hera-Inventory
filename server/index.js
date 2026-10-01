@@ -10,6 +10,7 @@ const { router: birthdayConfigRouter, registerRestartFn } = require('./routes/bi
 const { startBirthdayScheduler } = require('./jobs/birthdayScheduler');
 const { startSyncScheduler } = require('./jobs/syncVariantIndex');
 const { startNewArrivalScheduler } = require('./jobs/newArrivalScheduler');
+const { startOnlineTaskHistoryScheduler } = require('./jobs/onlineTaskHistory'); // Online Dashboard, 2026-10-01
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -63,6 +64,7 @@ app.use('/api/wig-demo', require('./routes/wigDemo'));
 app.use('/api/import-products', require('./routes/importProducts'));
 app.use('/api/new-products', require('./routes/newProducts'));
 app.use('/api/store-new-arrivals', require('./routes/storeNewArrivals').router); // Store → New Arrival, 2026-09-29
+app.use('/api/online-tasks', require('./routes/onlineTasks')); // Online › Dashboard, 2026-10-01
 app.use('/api/swatch', require('./routes/swatch')); // Online › Swatch, 2026-10-01 (Phase 0: debug metafield only)
 
 // Serve static files in production
@@ -106,6 +108,7 @@ const startServer = async () => {
     registerRestartFn(startBirthdayScheduler);
     await startSyncScheduler();
     startNewArrivalScheduler();
+    startOnlineTaskHistoryScheduler();
     app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
       console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);

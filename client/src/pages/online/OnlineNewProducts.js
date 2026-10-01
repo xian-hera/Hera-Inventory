@@ -105,7 +105,9 @@ function GroupCard({ group, onChanged, setBanner }) {
   );
 }
 
-function OnlineNewProducts() {
+// inTabs (2026-10-01): shown as a tab of Online (OnlineHome) — no title or
+// back arrow of its own; the tab bar above already says where you are.
+function OnlineNewProducts({ inTabs = false } = {}) {
   const navigate = useNavigate();
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
@@ -117,6 +119,8 @@ function OnlineNewProducts() {
       const d = await res.json();
       if (!res.ok) throw new Error(d.error || 'Load failed');
       setData(d);
+      // Updates the red count badge on the New Products tab.
+      window.dispatchEvent(new Event('online-badges-refresh'));
     } catch (e) {
       setError(e.message);
     }
@@ -127,8 +131,8 @@ function OnlineNewProducts() {
     // Fixed-width page; only each group's table is full width (FullBleed) —
     // Hera 2026-09-24.
     <Page
-      title="New products"
-      backAction={{ onAction: () => navigate('/online') }}
+      title={inTabs ? undefined : 'New products'}
+      backAction={inTabs ? undefined : { onAction: () => navigate('/online') }}
       secondaryActions={[
         { content: 'Settings', onAction: () => navigate('/online/new-products/settings') },
         { content: 'Finalized', onAction: () => navigate('/online/new-products/finalized') },

@@ -894,8 +894,14 @@ const initDatabase = async () => {
     await client.query(`ALTER TABLE transfers DROP CONSTRAINT IF EXISTS transfers_status_check`).catch(() => {});
     await client.query(`
       ALTER TABLE transfers ADD CONSTRAINT transfers_status_check
-        CHECK (status IN ('loading','pending','good_to_go','in_transit','receiving','counted','committed'))
+        CHECK (status IN ('loading','pending','good_to_go','in_transit','receiving','counted','not_counted','committed','archived'))
     `).catch(() => {});
+    // 2026-10-01 fix: this constraint used to list only the first 7 statuses.
+    // Once a transfer reached 'archived' / 'not_counted' (added 2026-09-15,
+    // see 5a below) this ADD failed; the .catch() hid the error but left the
+    // whole init transaction aborted, so the server could not start
+    // ("current transaction is aborted"). It now allows the same 9 statuses
+    // as 5a, so it always succeeds.
 
     // 3. transfer_items: the Shopify inventory item id (needed for every
     // per-item Shopify call — inventory adjust, shipment line items), the
@@ -1419,6 +1425,33 @@ const initDatabase = async () => {
     await client.query(`ALTER TABLE swatch_scan_codes ADD COLUMN IF NOT EXISTS candidate_image_id INTEGER`);
     await client.query(`ALTER TABLE swatch_scan_codes ADD COLUMN IF NOT EXISTS candidate_kind TEXT`);
     await client.query(`ALTER TABLE swatch_scan_codes ADD COLUMN IF NOT EXISTS candidate_cost INTEGER`);
+
+    // ── Online › Dashboard (2026-10-01, Hera) — claude/ONLINE_DASHBOARD_SPEC.md
+    // type: regular | temp; priority (temp only): normal | urgent.
+    // done_cycle = the day (07:00 Montreal -> next 07:00) the task was ticked.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS online_tasks (
+        id SERIAL PRIMARY KEY,
+        type TEXT NOT NULL CHECK (type IN ('regular', 'temp')),
+        priority TEXT NOT NULL DEFAULT 'normal' CHECK (priority IN ('normal', 'urgent')),
+        name TEXT NOT NULL,
+        link TEXT,
+        description TEXT,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        done_cycle DATE,
+        done_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    // One row per working day, written at 23:00 Montreal: items = tasks not
+    // done that day [{ name, urgent }] (empty = all done).
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS online_task_history (
+        day DATE PRIMARY KEY,
+        items JSONB NOT NULL DEFAULT '[]',
+        recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
 
     await client.query('COMMIT');
     console.log('✓ Database initialized successfully');

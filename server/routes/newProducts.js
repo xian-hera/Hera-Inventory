@@ -44,6 +44,16 @@ async function tagSetting() {
 const ids = (body) => (Array.isArray(body && body.ids) ? body.ids.map(Number).filter(Boolean) : []);
 
 // ─── New products ────────────────────────────────────────────────────────────
+// Count for the red badge on the Online › New Products tab (2026-10-01).
+router.get('/count', async (req, res) => {
+  try {
+    const r = await pool.query(`SELECT COUNT(*)::int AS n FROM new_arrival WHERE status = 'new'`);
+    res.json({ count: r.rows[0].n });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 router.get('/', async (req, res) => {
   try {
     const groups = await getGroups();

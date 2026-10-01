@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { Page, Layout, Button, BlockStack, Text, TextField, Banner, Modal } from '@shopify/polaris';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Page, Button, BlockStack, InlineStack, Text, TextField, Banner, Modal } from '@shopify/polaris';
+import { useNavigate, useLocation } from 'react-router-dom';
 // PIN check/verify now go through the current Shopify account first, with
 // the old localStorage 30-day check as the fallback (2026-09-29) — see
 // client/src/accountMemory.js.
@@ -16,10 +16,58 @@ import { isPinVerified, verifyPin } from '../../accountMemory';
 // localStorage key ('online_pin_verified') moved to PIN_LOCAL_KEYS in client/src/accountMemory.js (2026-09-29).
 const PIN_EXPIRY_DAYS         = 30;
 
-function OnlineHome() {
-  const navigate = useNavigate();
+// Tabs (2026-10-01, Hera — claude/ONLINE_DASHBOARD_SPEC.md §1): the four
+// buttons that used to be on this page became tabs next to the new
+// Dashboard. OnlineHome is now the shell around every tab: PIN gate, the
+// "Online" header with Settings, and the tab bar. Each tab keeps its own URL
+// (App.js wraps the tab pages in <OnlineHome tab="…">).
+const TABS = [
+  { id: 'dashboard', label: 'Dashboard', path: '/online' },
+  { id: 'new-products', label: 'New Products', path: '/online/new-products' },
+  { id: 'birthday-reward', label: 'Birthday Reward', path: '/online/birthday-reward' },
+  { id: 'influencers', label: 'Influencer Management', path: '/online/influencers' },
+  { id: 'swatch', label: 'Swatch', path: '/online/swatch' },
+];
 
-  const [ready, setReady]         = useState(false);
+// The PIN is checked once per visit to the Online section, not again on
+// every tab change.
+let verifiedThisVisit = false;
+
+function TabBar({ tab, newProductsCount, onSelect }) {
+  return (
+    <div style={{ borderBottom: '1px solid #e1e3e5', marginBottom: 4 }}>
+      <InlineStack gap="100" wrap>
+        {TABS.map(t => {
+          const active = t.id === tab;
+          return (
+            <button key={t.id} type="button" onClick={() => onSelect(t)}
+              style={{
+                border: 'none', background: active ? '#e3e3e3' : 'transparent', cursor: 'pointer',
+                padding: '8px 14px', margin: '0 0 6px', borderRadius: 8, fontSize: 14,
+                fontWeight: active ? 600 : 450, color: '#303030', position: 'relative',
+              }}>
+              {t.label}
+              {t.id === 'new-products' && newProductsCount > 0 && (
+                <span style={{
+                  display: 'inline-block', minWidth: 18, height: 18, lineHeight: '18px', padding: '0 5px',
+                  marginLeft: 6, borderRadius: 9, background: '#d72c0d', color: '#fff', fontSize: 11,
+                  fontWeight: 700, textAlign: 'center', verticalAlign: 'top',
+                }}>{newProductsCount}</span>
+              )}
+            </button>
+          );
+        })}
+      </InlineStack>
+    </div>
+  );
+}
+
+function OnlineHome({ tab = 'dashboard', children }) {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [newProductsCount, setNewProductsCount] = useState(0);
+
+  const [ready, setReady]         = useState(verifiedThisVisit);
   const [showModal, setShowModal] = useState(false);
   const [pinInput, setPinInput]   = useState('');
   const [pinError, setPinError]   = useState('');
@@ -27,7 +75,19 @@ function OnlineHome() {
   const [hint, setHint]           = useState('');
   const [verifying, setVerifying] = useState(false);
 
+  // Red badge on New Products = number of items in its list. Refreshed on
+  // every tab change and when the New Products page reloads its list.
+  const loadCount = useCallback(() => {
+    fetch('/api/new-products/count').then(r => r.json()).then(d => setNewProductsCount(d.count || 0)).catch(() => {});
+  }, []);
+  useEffect(() => { if (ready) loadCount(); }, [ready, location.pathname, loadCount]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
+    window.addEventListener('online-badges-refresh', loadCount);
+    return () => window.removeEventListener('online-badges-refresh', loadCount);
+  }, [loadCount]);
+
+  useEffect(() => {
+    if (verifiedThisVisit) { setReady(true); return undefined; }
     fetch('/api/settings/pin/hint?key=online_pin')
       .then(r => r.json())
       .then(data => setHint(data.hint || ''))
@@ -36,7 +96,7 @@ function OnlineHome() {
     let cancelled = false;
     isPinVerified('online_pin').then((ok) => {
       if (cancelled) return;
-      if (ok) setReady(true);
+      if (ok) { verifiedThisVisit = true; setReady(true); }
       else setShowModal(true);
     });
     return () => { cancelled = true; };
@@ -53,6 +113,7 @@ function OnlineHome() {
       // still writes the old localStorage entry as the fallback.
       const result = await verifyPin('online_pin', pinInput);
       if (result.ok) {
+        verifiedThisVisit = true;
         setShowModal(false);
         setReady(true);
       } else if (result.wrong) {
@@ -69,36 +130,16 @@ function OnlineHome() {
   };
 
   const handleClose = () => { navigate('/'); };
+  const leave = () => { verifiedThisVisit = false; navigate('/'); };
 
   return (
+    <>
     <Page
       title="Online"
-      backAction={{ onAction: () => navigate('/') }}
+      backAction={{ onAction: leave }}
       secondaryActions={ready ? [{ content: 'Settings', onAction: () => navigate('/online/settings') }] : []}
     >
-      {ready && (
-        <Layout>
-          <Layout.Section>
-            <BlockStack gap="400">
-              {/* New Products (2026-09-24, Hera): at the top of the list */}
-              <Button size="large" fullWidth onClick={() => navigate('/online/new-products')}>
-                New Products
-              </Button>
-              <Button size="large" fullWidth onClick={() => navigate('/online/birthday-reward')}>
-                Birthday Reward
-              </Button>
-              <Button size="large" fullWidth onClick={() => navigate('/online/influencers')}>
-                Influencer Management
-              </Button>
-              {/* Swatch (2026-10-01, Hera) — see claude/SWATCH_FEATURE_SPEC.md */}
-              <Button size="large" fullWidth onClick={() => navigate('/online/swatch')}>
-                Swatch
-              </Button>
-            </BlockStack>
-          </Layout.Section>
-        </Layout>
-      )}
-
+      {ready && <TabBar tab={tab} newProductsCount={newProductsCount} onSelect={(t) => navigate(t.path)} />}
       <Modal
         open={showModal}
         onClose={handleClose}
@@ -146,6 +187,9 @@ function OnlineHome() {
         </Modal.Section>
       </Modal>
     </Page>
+    {/* The tab's own page (rendered with inTabs: no title / back arrow of its own). */}
+    {ready && children}
+    </>
   );
 }
 

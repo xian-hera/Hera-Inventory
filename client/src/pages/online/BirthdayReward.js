@@ -18,7 +18,8 @@ function formatDateTime(value) {
   });
 }
 
-function BirthdayReward() {
+// inTabs (2026-10-01): shown as a tab of Online (OnlineHome) — no title or back arrow of its own.
+function BirthdayReward({ inTabs = false } = {}) {
   const navigate = useNavigate();
 
   const [config, setConfig]   = useState(null);
@@ -213,7 +214,7 @@ function BirthdayReward() {
 
   if (loading) {
     return (
-      <Page title="Birthday Reward" backAction={{ onAction: () => navigate('/online') }}>
+      <Page title={inTabs ? undefined : 'Birthday Reward'} backAction={inTabs ? undefined : { onAction: () => navigate('/online') }}>
         <Layout><Layout.Section><InlineStack align="center"><Spinner /></InlineStack></Layout.Section></Layout>
       </Page>
     );
@@ -223,8 +224,8 @@ function BirthdayReward() {
 
   return (
     <Page
-      title="Birthday Reward"
-      backAction={{ onAction: () => navigate('/online') }}
+      title={inTabs ? undefined : 'Birthday Reward'}
+      backAction={inTabs ? undefined : { onAction: () => navigate('/online') }}
       primaryAction={{ content: saving ? 'Saving...' : 'Save', onAction: handleSave, loading: saving }}
     >
       <Layout>

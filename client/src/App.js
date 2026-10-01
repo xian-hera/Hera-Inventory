@@ -55,6 +55,8 @@ import OnlineNewProductsFinalized from './pages/online/OnlineNewProductsFinalize
 import OnlineNewProductsSettings from './pages/online/OnlineNewProductsSettings';
 // Online › Swatch — 2026-10-01, see claude/SWATCH_FEATURE_SPEC.md
 import OnlineSwatch from './pages/online/swatch/OnlineSwatch';
+// Online › Dashboard + tabs — 2026-10-01, see claude/ONLINE_DASHBOARD_SPEC.md
+import OnlineDashboard from './pages/online/OnlineDashboard';
 import ProductDatabaseSettings from './pages/buyer/ProductDatabaseSettings';
 import BuyerPOReceiving from './pages/buyer/BuyerPOReceiving';
 import BuyerPOImportInvoice from './pages/buyer/BuyerPOImportInvoice';
@@ -186,16 +188,17 @@ function App() {
           <Route path="/crm/employee-cap" element={<EmployeeCap />} />
 
           {/* Online — new section split out of CRM/Growth (2026-09-21, Hera) */}
-          <Route path="/online" element={<OnlineHome />} />
+          {/* Online tabs (2026-10-01): OnlineHome = PIN gate + header + tab bar around each tab page */}
+          <Route path="/online" element={<OnlineHome tab="dashboard"><OnlineDashboard /></OnlineHome>} />
           <Route path="/online/settings" element={<OnlineSettings />} />
-          <Route path="/online/birthday-reward" element={<BirthdayReward />} />
+          <Route path="/online/birthday-reward" element={<OnlineHome tab="birthday-reward"><BirthdayReward inTabs /></OnlineHome>} />
           <Route path="/online/birthday-reward/orders" element={<BirthdayOrders />} />
-          <Route path="/online/influencers" element={<InfluencerList />} />
+          <Route path="/online/influencers" element={<OnlineHome tab="influencers"><InfluencerList inTabs /></OnlineHome>} />
           <Route path="/online/influencers/:id" element={<InfluencerDetail />} />
-          <Route path="/online/new-products" element={<OnlineNewProducts />} />
+          <Route path="/online/new-products" element={<OnlineHome tab="new-products"><OnlineNewProducts inTabs /></OnlineHome>} />
           <Route path="/online/new-products/finalized" element={<OnlineNewProductsFinalized />} />
           <Route path="/online/new-products/settings" element={<OnlineNewProductsSettings />} />
-          <Route path="/online/swatch" element={<OnlineSwatch />} />
+          <Route path="/online/swatch" element={<OnlineHome tab="swatch"><OnlineSwatch inTabs /></OnlineHome>} />
         </Routes>
       </BrowserRouter>
     </AppProvider>

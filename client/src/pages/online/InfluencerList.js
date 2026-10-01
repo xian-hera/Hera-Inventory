@@ -22,7 +22,8 @@ function statusBadge(status) {
   return <Badge tone={map[status] || 'enabled'}>{status}</Badge>;
 }
 
-export default function InfluencerList() {
+// inTabs (2026-10-01): shown as a tab of Online (OnlineHome) — no title or back arrow of its own.
+export default function InfluencerList({ inTabs = false } = {}) {
   const navigate = useNavigate();
   const [influencers, setInfluencers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -109,8 +110,8 @@ export default function InfluencerList() {
 
   return (
     <Page
-      title="Influencers"
-      backAction={{ onAction: () => navigate('/online') }}
+      title={inTabs ? undefined : 'Influencers'}
+      backAction={inTabs ? undefined : { onAction: () => navigate('/online') }}
       primaryAction={{ content: 'Add Influencer', onAction: () => { setForm(EMPTY_FORM); setModalOpen(true); } }}
     >
       {/* Filter bar */}
