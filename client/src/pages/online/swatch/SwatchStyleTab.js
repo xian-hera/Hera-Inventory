@@ -4,7 +4,7 @@ import { Card, BlockStack, InlineStack, Text, Button, TextField, Select, Banner,
 import { api, fmtTime } from './swatchApi';
 
 const clone = (c) => JSON.parse(JSON.stringify({
-  style: c.style, text: c.text, icons: c.icons, suggestIgnore: c.suggestIgnore, selector: c.selector, hideSelectors: c.hideSelectors,
+  style: c.style, text: c.text, icons: c.icons, suggestIgnore: c.suggestIgnore, selector: c.selector, hideSelectors: c.hideSelectors, scope: c.scope,
 }));
 
 function Color({ label, value, onChange }) {
@@ -218,10 +218,13 @@ function SwatchStyleTab({ config, setConfig, meta, afterSave }) {
                 onChange={(x) => setV(o => ({ ...o, suggestIgnore: { ...o.suggestIgnore, minTotal: x } }))} />
             </div>
             <div style={{ width: 280 }}>
+              <TextField label="Main product section (CSS selector)" value={v.scope || ''} onChange={(x) => setV(o => ({ ...o, scope: x }))} autoComplete="off" />
+            </div>
+            <div style={{ width: 280 }}>
               <TextField label="Theme picker to replace (CSS selector)" value={v.selector} onChange={(x) => setV(o => ({ ...o, selector: x }))} autoComplete="off" />
             </div>
             <div style={{ width: 280 }}>
-              <TextField label="Other pickers to hide (comma separated)" value={Array.isArray(v.hideSelectors) ? v.hideSelectors.join(', ') : v.hideSelectors}
+              <TextField label="Swatch King picker(s) — their colour group is hidden (comma separated)" value={Array.isArray(v.hideSelectors) ? v.hideSelectors.join(', ') : v.hideSelectors}
                 onChange={(x) => setV(o => ({ ...o, hideSelectors: x }))} autoComplete="off" />
             </div>
           </InlineStack>

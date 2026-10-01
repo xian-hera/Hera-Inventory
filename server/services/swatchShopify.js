@@ -169,6 +169,7 @@ async function buildPayload() {
     rules: cfg.rules.map(r => ({ optionName: r.optionName, caseSensitive: !!r.caseSensitive, productTypes: r.productTypes || [] })),
     mode: cfg.mode,
     selector: cfg.selector,
+    scope: cfg.scope,
     hideSelectors: cfg.hideSelectors,
     vendorLibrary,
     style: cfg.style,

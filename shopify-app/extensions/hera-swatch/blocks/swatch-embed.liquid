@@ -1,48 +1,167 @@
 {%- comment -%}
-  Hera Swatch — App embed (Online › Swatch, see claude/SWATCH_FEATURE_SPEC.md)
+  Hera Swatch — App embed (Online › Swatch, spec: claude/SWATCH_FEATURE_SPEC.md)
 
-  PHASE 0 (2026-10-01): test embed only. It changes nothing on the page.
-  It only writes a small JSON "probe" into <head> on product pages, so we can
-  confirm that:
-    1. the embed can be switched on in a duplicated theme;
-    2. Liquid can read the app-data metafield hera_swatch.config
-       (written by POST /api/swatch/debug/metafield on the Hub server);
-    3. Liquid can read variant.metafields.custom.discontinued (spec 6.2.1).
-    4. the file_url filter turns a Shopify Files file name into its CDN URL
-       (fill "Test file name" with any file that exists in Content › Files).
-  With "Debug log" ticked, hera-swatch.js prints the probe in the browser
-  console and also reports how many <variant-selects> the page has.
+  Phase 3 + 4 (2026-10-01): replaces ONLY the colour option (the option named
+  by a Hub rule, e.g. "Color") with image swatch cards. Every other option
+  (Length …) stays with the theme picker or Swatch King (Hera 2026-10-01).
 
-  The real picker is added in Phase 3.
+  Server-side (here):
+    - runs only on product pages, when the Hub switch allows it:
+        mode 'live'    -> always
+        mode 'preview' -> only in the theme editor or on *.shopifypreview.com
+        mode 'off'     -> never (nothing is output)
+    - the product must match a rule: type in rule.productTypes AND an option
+      with the rule's name (case sensitive or not, per rule). First rule wins.
+    - outputs the CSS that hides the theme's / Swatch King's colour group,
+      the data the script needs (colour values + image file names resolved
+      with file_url, variants with available / hidden), and loads the script.
+  A variant is hidden when it is sold out AND custom.discontinued = true (§6.2.1).
+
+  Phase 0 test settings ("Debug log", "Test file name") were removed here;
+  "Debug log" now prints the picker's data in the console.
 {%- endcomment -%}
-{%- if template.name == 'product' and product -%}
-  {%- assign hs_cfg = app.metafields.hera_swatch.config.value -%}
-  {%- assign hs_disc = 0 -%}
-  {%- for v in product.variants -%}
-    {%- if v.metafields.custom.discontinued.value == true -%}{%- assign hs_disc = hs_disc | plus: 1 -%}{%- endif -%}
+{%- liquid
+  assign hs_on = false
+  assign hs_cfg = app.metafields.hera_swatch.config.value
+  if template.name == 'product' and product and hs_cfg and hs_cfg.version
+    if hs_cfg.mode == 'live'
+      assign hs_on = true
+    elsif hs_cfg.mode == 'preview'
+      if request.design_mode or request.host contains 'shopifypreview.com'
+        assign hs_on = true
+      endif
+    endif
+  endif
+
+  assign hs_pos = 0
+  assign hs_opt = nil
+  if hs_on
+    for rule in hs_cfg.rules
+      if hs_pos > 0
+        break
+      endif
+      unless rule.productTypes contains product.type
+        continue
+      endunless
+      assign want = rule.optionName | strip
+      assign want_dc = want | downcase
+      for opt in product.options_with_values
+        assign have = opt.name | strip
+        if rule.caseSensitive
+          if have == want
+            assign hs_pos = forloop.index
+            assign hs_opt = opt
+            break
+          endif
+        else
+          assign have_dc = have | downcase
+          if have_dc == want_dc
+            assign hs_pos = forloop.index
+            assign hs_opt = opt
+            break
+          endif
+        endif
+      endfor
+    endfor
+  endif
+
+  if hs_pos > 0
+    assign hs_prefix = hs_cfg.vendorLibrary[product.vendor]
+    assign hs_lib = nil
+    if hs_prefix
+      assign hs_libkey = 'lib_' | append: hs_prefix
+      assign hs_lib = app.metafields.hera_swatch[hs_libkey].value
+    endif
+    assign hs_fr = false
+    if request.locale.iso_code == 'fr'
+      assign hs_fr = true
+    endif
+    assign hs_scope = hs_cfg.scope | default: '[id^="ProductInfo-"][id$="__main"]'
+    assign hs_sel = hs_cfg.selector | default: 'variant-selects[id$="__main"]'
+    assign hs_s = hs_cfg.style
+  endif
+-%}
+{%- if hs_pos > 0 -%}
+<style id="hera-swatch-css">
+  {{ hs_sel }} fieldset:nth-of-type({{ hs_pos }}),
+  {%- for hsk in hs_cfg.hideSelectors -%}
+  {{ hs_scope }} {{ hsk }} #swatch-option{{ hs_pos }},
   {%- endfor -%}
-  <script id="hera-swatch-probe" type="application/json">
-    {
-      "embed": true,
-      "phase": 0,
-      "productId": {{ product.id | json }},
-      "vendor": {{ product.vendor | json }},
-      "type": {{ product.type | json }},
-      "options": {{ product.options | json }},
-      "variantCount": {{ product.variants.size | json }},
-      "discontinuedVariants": {{ hs_disc | json }},
-      "locale": {{ request.locale.iso_code | json }},
-      "metafieldFound": {% if hs_cfg %}true{% else %}false{% endif %},
-      "configVersion": {{ hs_cfg.version | json }},
-      "configNote": {{ hs_cfg.note | json }},
-      "configWrittenAt": {{ hs_cfg.writtenAt | json }},
-      "testFileName": {{ block.settings.test_file | json }},
-      "testFileUrl": {% if block.settings.test_file != blank %}{{ block.settings.test_file | file_url | json }}{% else %}null{% endif %}
-    }
-  </script>
-  {%- if block.settings.debug -%}
-    <script src="{{ 'hera-swatch.js' | asset_url }}" defer></script>
-  {%- endif -%}
+  .hs-never { display: none !important; }
+  .hs-wrap { --hs-w: {{ hs_s.cardWidth | default: 72 }}px; --hs-h: {{ hs_s.imageHeight | default: 81 }}px; --hs-accent: {{ hs_s.accentColor | default: '#E32A69' }}; margin: 10px 0 12px; }
+  .hs-label { font-size: 14px; font-weight: 400; margin-bottom: 10px; }
+  .hs-list { display: flex !important; flex-direction: row !important; flex-wrap: wrap !important; gap: 0.5rem 4px; margin: 0; padding: 0; }
+  /* Card = image on top, name below (Swatch King layout). Strong resets so the
+     theme's button / generic styles can't turn it into a horizontal row. */
+  .hs-wrap .hs-card { box-sizing: border-box !important; position: relative !important; display: flex !important; flex-direction: column !important; align-items: stretch !important; justify-content: flex-start !important; flex: 0 0 var(--hs-w) !important; width: var(--hs-w) !important; min-width: 0 !important; max-width: var(--hs-w) !important; height: auto !important; min-height: 0 !important; padding: 0 0 5px !important; margin: 0 !important; border: 0.5px solid #EFEFEF !important; border-radius: 5px !important; background: #fff !important; box-shadow: none !important; cursor: pointer; text-align: center !important; text-transform: none !important; letter-spacing: normal !important; line-height: normal !important; font-family: inherit; color: inherit; overflow: hidden !important; outline: none; }
+  .hs-wrap .hs-card:hover, .hs-wrap .hs-card.is-sel { border-color: var(--hs-accent) !important; }
+  .hs-wrap .hs-card:focus-visible { box-shadow: 0 0 0 2px var(--hs-accent) !important; }
+  .hs-wrap .hs-img { position: relative !important; display: block !important; flex: 0 0 auto !important; width: 100% !important; height: var(--hs-h) !important; margin: 0 !important; padding: 0 !important; background-color: #fff; background-size: cover; background-repeat: no-repeat; background-position: {{ hs_s.imagePosition | default: 'center top' }}; }
+  .hs-wrap .hs-name { display: block !important; flex: 0 0 auto !important; width: auto !important; max-width: calc(var(--hs-w) - 8px) !important; margin: 3px auto 0 !important; padding: 0 !important; font-size: 10px !important; font-weight: 600 !important; line-height: 1.3 !important; color: #6A6A6A; white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; text-align: center !important; }
+  .hs-wrap .hs-card.is-sel .hs-name { color: #292929; }
+  .hs-so { position: absolute; left: 0; right: 0; bottom: 0; height: 16px; line-height: 16px; font-size: 10px; font-weight: 600; color: {{ hs_s.soldOutColor | default: '#FFFFFF' }}; background: {{ hs_s.soldOutBg | default: 'rgba(187,187,187,0.82)' }}; display: none; }
+  .hs-card.is-so .hs-so { display: block; }
+  .hs-card.is-so::after { content: ''; position: absolute; inset: 0; background: {{ hs_s.overlayColor | default: '#F8F8F8' }}; opacity: {{ hs_s.overlayOpacity | default: 0.75 }}; pointer-events: none; }
+  .hs-zoom { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,0.38); }
+  .hs-zoom img, .hs-zoom svg { width: 24px; height: 24px; display: block; }
+  .hs-card.is-armed .hs-zoom { display: flex; }
+  .hs-modal { position: fixed; inset: 0; z-index: 2147483000; display: none; align-items: center; justify-content: center; background: rgba(20,20,20,0.6); padding: 16px; }
+  .hs-modal.is-open { display: flex; }
+  .hs-box { position: relative; width: min(730px, 100%); max-height: calc(100vh - 32px); background: #fff; border-radius: 35px; padding: 28px 64px 26px; box-sizing: border-box; display: flex; flex-direction: column; }
+  .hs-title { text-align: center; font-size: clamp(22px, 4.5vw, 40px); line-height: 1.2; margin: 0 0 18px; }
+  .hs-big { position: relative; width: 100%; aspect-ratio: 536 / 625; max-height: calc(100vh - 220px); margin: 0 auto; background: #fff center / contain no-repeat; touch-action: pan-y; }
+  .hs-arrow { position: absolute; top: 50%; transform: translateY(-50%); width: 44px; height: 64px; border: 0; background: none; cursor: pointer; padding: 0; color: #111; }
+  .hs-arrow svg { width: 22px; height: 44px; }
+  .hs-prev { left: 10px; } .hs-next { right: 10px; }
+  .hs-note { margin: 16px 0 0; font-size: 13px; line-height: 1.4; color: #333; }
+  @media (max-width: 600px) { .hs-box { padding: 20px 40px 18px; border-radius: 22px; } .hs-prev { left: 0; } .hs-next { right: 0; } }
+</style>
+{%- capture hs_mag -%}
+  {%- if hs_cfg.icons.magnifierFile != blank -%}{{ hs_cfg.icons.magnifierFile | file_url }}{%- endif -%}
+{%- endcapture -%}
+<script type="application/json" id="hera-swatch-data">
+{
+  "optionIndex": {{ hs_pos | minus: 1 }},
+  "optionName": {{ hs_opt.name | json }},
+  "scope": {{ hs_scope | json }},
+  "selector": {{ hs_sel | json }},
+  "skSelectors": {{ hs_cfg.hideSelectors | json }},
+  "debug": {{ block.settings.debug | json }},
+  "values": [
+    {%- for v in hs_opt.values -%}
+      {%- liquid
+        assign k = v | strip | upcase
+        assign c0 = k | slice: 0
+        if c0 == '#' or c0 == '@'
+          assign k = k | slice: 1, 500 | strip
+        endif
+        assign hs_e = nil
+        if hs_lib
+          assign hs_e = hs_lib.codes[k]
+        endif
+      -%}
+      {"v": {{ v | json }}, "img": {% if hs_e and hs_e.f != blank %}{{ hs_e.f | file_url | json }}{% else %}null{% endif %}, "pos": {{ hs_e.p | json }}}{% unless forloop.last %},{% endunless %}
+    {%- endfor -%}
+  ],
+  "variants": [
+    {%- for vr in product.variants -%}
+      {%- liquid
+        assign hidden = false
+        if vr.available == false and vr.metafields.custom.discontinued.value == true
+          assign hidden = true
+        endif
+      -%}
+      {"id": {{ vr.id }}, "o": {{ vr.options | json }}, "a": {{ vr.available | json }}, "h": {{ hidden | json }}}{% unless forloop.last %},{% endunless %}
+    {%- endfor -%}
+  ],
+  "current": {{ product.selected_or_first_available_variant.id | json }},
+  "soldOut": {% if hs_fr and hs_cfg.text.soldOut.fr != blank %}{{ hs_cfg.text.soldOut.fr | json }}{% else %}{{ hs_cfg.text.soldOut.en | default: 'SOLD OUT' | json }}{% endif %},
+  "note": {% if hs_fr and hs_cfg.text.modalNote.fr != blank %}{{ hs_cfg.text.modalNote.fr | json }}{% else %}{{ hs_cfg.text.modalNote.en | default: '' | json }}{% endif %},
+  "magnifierUrl": {{ hs_mag | strip | json }},
+  "magnifierSvg": {{ hs_cfg.icons.magnifier | default: '' | json }}
+}
+</script>
+<script src="{{ 'hera-swatch.js' | asset_url }}" defer></script>
 {%- endif -%}
 
 {% schema %}
@@ -54,14 +173,9 @@
     {
       "type": "checkbox",
       "id": "debug",
-      "label": "Debug log (Phase 0 test)",
-      "default": true
-    },
-    {
-      "type": "text",
-      "id": "test_file",
-      "label": "Test file name (Phase 0)",
-      "info": "Any file name from Content > Files, e.g. logo.png"
+      "label": "Debug log",
+      "info": "Prints the swatch data in the browser console.",
+      "default": false
     }
   ]
 }

@@ -16,6 +16,9 @@ const DEFAULT_CONFIG = {
   rules: [],
   // §6.1: only the main product section's picker is replaced
   selector: 'variant-selects[id$="__main"]',
+  // The main product section (only pickers inside it are touched — product
+  // cards elsewhere on the page also contain Swatch King elements).
+  scope: '[id^="ProductInfo-"][id$="__main"]',
   // Other pickers to hide while Hera Swatch is active (third-party apps).
   hideSelectors: ['variant-swatch-king'],
   style: {
