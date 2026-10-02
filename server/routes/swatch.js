@@ -212,6 +212,9 @@ router.put('/config', wrap(async (req, res) => {
       optionName: String(r.optionName || '').trim(),
       caseSensitive: !!r.caseSensitive,
       productTypes: [...new Set((r.productTypes || []).map(String))],
+      // Type names as other languages show them (e.g. French "CHEVEUX" for WIG) —
+      // the storefront sees the translated type (Hera 2026-10-02). Not used by the scan.
+      translatedTypes: [...new Set((r.translatedTypes || []).map(t => String(t).trim()).filter(Boolean))],
     }));
     if (body.rules.some(r => !r.optionName)) throw fail(400, 'Every rule needs an option name');
     if (body.rules.some(r => !r.productTypes.length)) throw fail(400, 'Every rule needs at least one product type');

@@ -166,7 +166,13 @@ async function buildPayload() {
   const config = {
     version: 1,
     updatedAt: new Date().toISOString(),
-    rules: cfg.rules.map(r => ({ optionName: r.optionName, caseSensitive: !!r.caseSensitive, productTypes: r.productTypes || [] })),
+    // productTypes on the storefront = the types + their translated names
+    // (a French page sees e.g. "CHEVEUX" instead of "WIG").
+    rules: cfg.rules.map(r => ({
+      optionName: r.optionName,
+      caseSensitive: !!r.caseSensitive,
+      productTypes: [...new Set([...(r.productTypes || []), ...(r.translatedTypes || [])])],
+    })),
     mode: cfg.mode,
     selector: cfg.selector,
     scope: cfg.scope,

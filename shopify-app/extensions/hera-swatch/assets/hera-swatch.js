@@ -208,14 +208,18 @@
     nat = null;
     bigEl.style.backgroundImage = 'none';
     if (url) {
-      var im = new Image();
-      im.onload = function () {
-        if (token !== sizeToken || !im.naturalWidth || !im.naturalHeight) return;
-        nat = { w: im.naturalWidth, h: im.naturalHeight };
+      // Usually already downloaded in the background (preloadAll) -> shown at once.
+      loadBig(url, function (e) {
+        if (token !== sizeToken || !e.w || !e.h) return;
+        nat = { w: e.w, h: e.h };
         fitBig();
         bigEl.style.backgroundImage = 'url("' + url + '")';
-      };
-      im.src = url;
+      });
+      // Get the neighbours ready for the arrows / swipe.
+      [modalIdx + 1, modalIdx - 1].forEach(function (i) {
+        var n = modalList[(i + modalList.length) % modalList.length];
+        if (n && n.img) loadBig(sized(n.img, 1200));
+      });
     }
     fitBig();
     var note = modal.querySelector('.hs-note');
@@ -225,6 +229,44 @@
     modal.querySelector('.hs-prev').style.visibility = many ? '' : 'hidden';
     modal.querySelector('.hs-next').style.visibility = many ? '' : 'hidden';
   }
+  // ── Large images: download once, remember their size (Hera 2026-10-02) ──
+  var bigCache = {};   // url -> { w, h, done, cbs }
+  function loadBig(url, cb) {
+    var e = bigCache[url];
+    if (e && e.done) { if (cb) cb(e); return; }
+    if (e) { if (cb) e.cbs.push(cb); return; }
+    e = bigCache[url] = { w: 0, h: 0, done: false, cbs: cb ? [cb] : [] };
+    var im = new Image();
+    im.onload = im.onerror = function () {
+      e.w = im.naturalWidth || 0;
+      e.h = im.naturalHeight || 0;
+      e.done = true;
+      var list = e.cbs; e.cbs = [];
+      list.forEach(function (f) { f(e); });
+    };
+    im.src = url;
+  }
+  // After the page has loaded and the browser is idle: download the large
+  // images one after another, the selected colour first. Skipped when the
+  // visitor has asked to save data.
+  function preloadAll() {
+    var conn = navigator.connection;
+    if (conn && conn.saveData) return;
+    var cur = selected()[N];
+    var urls = VALUES.filter(function (x) { return x.img; })
+      .sort(function (a, b) { return (b.v === cur) - (a.v === cur); })
+      .map(function (x) { return sized(x.img, 1200); });
+    var i = 0;
+    (function next() {
+      if (i >= urls.length) return;
+      loadBig(urls[i++], function () { setTimeout(next, 50); });
+    })();
+  }
+  function schedulePreload() {
+    var go = function () { (window.requestIdleCallback || function (f) { setTimeout(f, 300); })(preloadAll); };
+    if (document.readyState === 'complete') go(); else window.addEventListener('load', go);
+  }
+
   function step(d) { modalIdx = (modalIdx + d + modalList.length) % modalList.length; showModalItem(); }
   var prevOverflow = '';
   function openModal(v) {
@@ -279,6 +321,7 @@
     list.addEventListener('keydown', onKey);
     try { place(); render(); } catch (e) { console.warn('[Hera Swatch]', e); }
     markOn();
+    schedulePreload();
     // The theme / Swatch King change the radios: follow them.
     document.addEventListener('change', function () { refresh(); setTimeout(refresh, 300); }, true);
     window.addEventListener('popstate', refresh);

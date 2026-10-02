@@ -9,7 +9,9 @@ function SwatchRulesTab({ config, setConfig, meta, afterSave }) {
   const [rules, setRules] = useState(config.rules.map(r => ({ ...r })));
   const [err, setErr] = useState('');
   const [saving, setSaving] = useState(false);
-  const dirty = JSON.stringify(rules) !== JSON.stringify(config.rules);
+  // translatedTypesText is only the text box's raw value — not saved, not compared.
+  const clean = list => list.map(({ translatedTypesText, ...r }) => ({ ...r, translatedTypes: r.translatedTypes || [] }));
+  const dirty = JSON.stringify(clean(rules)) !== JSON.stringify(clean(config.rules));
 
   const set = (i, patch) => setRules(list => list.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   const move = (i, d) => setRules(list => {
@@ -23,7 +25,7 @@ function SwatchRulesTab({ config, setConfig, meta, afterSave }) {
     setErr('');
     setSaving(true);
     try {
-      const d = await api.put('/config', { rules });
+      const d = await api.put('/config', { rules: clean(rules) });
       setConfig(d.config);
       setRules(d.config.rules.map(r => ({ ...r })));
       afterSave(d, 'Rules saved. Run a scan in the Colour codes tab to refresh the list.');
@@ -50,6 +52,13 @@ function SwatchRulesTab({ config, setConfig, meta, afterSave }) {
             <Checkbox label="Case sensitive" checked={!!r.caseSensitive} onChange={(v) => set(i, { caseSensitive: v })} />
             <div style={{ minWidth: 240 }}>
               <MultiSelectDropdown label="Product types" options={meta.productTypes} selected={r.productTypes} onChange={(v) => set(i, { productTypes: v })} placeholder="Choose…" />
+            </div>
+            <div style={{ width: 260 }}>
+              {/* Free text: translated types are not in Shopify's type list (Hera 2026-10-02) */}
+              <TextField label="Translated type names (comma separated)" placeholder="e.g. CHEVEUX, PERRUQUE" autoComplete="off"
+                value={r.translatedTypesText !== undefined ? r.translatedTypesText : (r.translatedTypes || []).join(', ')}
+                onChange={(v) => set(i, { translatedTypesText: v, translatedTypes: v.split(',').map(s => s.trim()).filter(Boolean) })}
+                helpText="Exactly as the other language shows the type (case sensitive)" />
             </div>
             <Button size="slim" onClick={() => move(i, -1)} disabled={i === 0}>↑</Button>
             <Button size="slim" onClick={() => move(i, 1)} disabled={i === rules.length - 1}>↓</Button>
