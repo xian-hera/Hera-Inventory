@@ -132,6 +132,11 @@ function UploadCard({ library, onUploaded, setBanner, afterSave }) {
             <Button variant="primary" onClick={uploadAll} loading={!!progress} disabled={!items.some(it => !it.already)}>
               Upload {items.filter(it => !it.already).length} image(s)
             </Button>
+            {items.some(it => it.exact.length + it.possible.length === 0) && (
+              <Button onClick={() => setItems(list => list.filter(it => it.exact.length + it.possible.length > 0))} disabled={!!progress}>
+                {`Remove files with no match (${items.filter(it => it.exact.length + it.possible.length === 0).length})`}
+              </Button>
+            )}
             <Button onClick={() => setItems([])} disabled={!!progress}>Clear</Button>
           </InlineStack>
         )}
