@@ -31,6 +31,9 @@ const DEFAULT_CONFIG = {
     soldOutColor: '#FFFFFF',
     overlayColor: '#F8F8F8',
     overlayOpacity: 0.75,
+    // Large image window (Hera 2026-10-02), px. Phones scale the title down (9vw cap).
+    modalTitleSize: 40,
+    modalNoteSize: 13,
   },
   text: {
     soldOut: { en: 'SOLD OUT', fr: '' },     // FR default to be filled in by Hera

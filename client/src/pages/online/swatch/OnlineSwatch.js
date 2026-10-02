@@ -1,6 +1,6 @@
 // Online › Swatch (2026-10-01, Hera). Spec: claude/SWATCH_FEATURE_SPEC.md §2.2, §9.
 // Top: master switch (Off / Preview only / Live). Tabs: Colour codes ·
-// Images · Libraries · Rules · Style & Text.
+// Images · Libraries · Rules · Style & Text · Variant images (temporary tool).
 import React, { useState, useEffect, useCallback } from 'react';
 import { Page, Card, BlockStack, InlineStack, Text, Tabs, Banner, Select, Button, Badge } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
@@ -10,6 +10,7 @@ import SwatchImagesTab from './SwatchImagesTab';
 import SwatchLibrariesTab from './SwatchLibrariesTab';
 import SwatchRulesTab from './SwatchRulesTab';
 import SwatchStyleTab from './SwatchStyleTab';
+import SwatchVariantImagesTab from './SwatchVariantImagesTab';
 
 const MODES = [
   { label: 'Off — storefront unchanged', value: 'off' },
@@ -24,6 +25,8 @@ const TABS = [
   { id: 'libraries', content: 'Libraries' },
   { id: 'rules', content: 'Rules' },
   { id: 'style', content: 'Style & Text' },
+  // Temporary clean-up tool (Hera 2026-10-02).
+  { id: 'variantImages', content: 'Variant images' },
 ];
 
 // inTabs (2026-10-01): shown as a tab of Online (OnlineHome) — no title or back arrow of its own.
@@ -134,6 +137,7 @@ function OnlineSwatch({ inTabs = false } = {}) {
           {TABS[tab].id === 'libraries' && <SwatchLibrariesTab {...shared} />}
           {TABS[tab].id === 'rules' && <SwatchRulesTab {...shared} />}
           {TABS[tab].id === 'style' && <SwatchStyleTab {...shared} />}
+          {TABS[tab].id === 'variantImages' && <SwatchVariantImagesTab {...shared} />}
         </div>
       </BlockStack>
     </Page>

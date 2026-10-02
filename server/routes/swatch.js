@@ -582,4 +582,7 @@ router.get('/vendors', wrap(async (req, res) => {
   res.json({ vendors: r.rows });
 }));
 
+// Variant images clean-up tool (temporary, Hera 2026-10-02).
+router.use('/variant-images', require('./swatchVariantImages'));
+
 module.exports = router;

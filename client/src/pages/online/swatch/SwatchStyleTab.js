@@ -116,7 +116,7 @@ function SwatchStyleTab({ config, setConfig, meta, afterSave }) {
       const body = {
         ...v,
         icons: { magnifier: v.icons.magnifier }, // the linked file is saved by saveIcon()
-        style: { ...v.style, cardWidth: Number(v.style.cardWidth), imageHeight: Number(v.style.imageHeight), overlayOpacity: Number(v.style.overlayOpacity) },
+        style: { ...v.style, cardWidth: Number(v.style.cardWidth), imageHeight: Number(v.style.imageHeight), overlayOpacity: Number(v.style.overlayOpacity), modalTitleSize: Number(v.style.modalTitleSize) || 40, modalNoteSize: Number(v.style.modalNoteSize) || 13 },
         suggestIgnore: { ...v.suggestIgnore, minTotal: Number(v.suggestIgnore.minTotal) },
         hideSelectors: (Array.isArray(v.hideSelectors) ? v.hideSelectors : String(v.hideSelectors).split(',')).map(s => s.trim()).filter(Boolean),
       };
@@ -186,8 +186,12 @@ function SwatchStyleTab({ config, setConfig, meta, afterSave }) {
         <BlockStack gap="300">
           <Text variant="headingSm" as="h3">Large image window (modal)</Text>
           <InlineStack gap="400" wrap>
-            <div style={{ minWidth: 320, flex: 1 }}><TextField label="Small text under the image (English)" value={v.text.modalNote.en} onChange={(x) => tx('modalNote', 'en', x)} multiline={2} autoComplete="off" /></div>
-            <div style={{ minWidth: 320, flex: 1 }}><TextField label="Small text under the image (French)" value={v.text.modalNote.fr} onChange={(x) => tx('modalNote', 'fr', x)} multiline={2} autoComplete="off" /></div>
+            <div style={{ minWidth: 320, flex: 1 }}><TextField label="Disclaimer under the image (English)" value={v.text.modalNote.en} onChange={(x) => tx('modalNote', 'en', x)} multiline={2} autoComplete="off" /></div>
+            <div style={{ minWidth: 320, flex: 1 }}><TextField label="Disclaimer under the image (French)" value={v.text.modalNote.fr} onChange={(x) => tx('modalNote', 'fr', x)} multiline={2} autoComplete="off" /></div>
+          </InlineStack>
+          <InlineStack gap="400" wrap>
+            <div style={{ width: 200 }}><TextField label="Colour name font size (px)" type="number" min={10} max={80} value={String(v.style.modalTitleSize)} onChange={(x) => st('modalTitleSize', x)} autoComplete="off" helpText="Phones show it smaller if needed" /></div>
+            <div style={{ width: 200 }}><TextField label="Disclaimer font size (px)" type="number" min={8} max={30} value={String(v.style.modalNoteSize)} onChange={(x) => st('modalNoteSize', x)} autoComplete="off" /></div>
           </InlineStack>
           <Text variant="headingSm" as="h3">Magnifier icon</Text>
           <InlineStack gap="300" blockAlign="center" wrap>
