@@ -130,7 +130,7 @@ function SwatchVariantImagesTab({ meta }) {
             <div style={{ minWidth: 160 }}><Select label="Product status" options={STATUS_OPTIONS} value={status} onChange={setStatus} /></div>
             <Button onClick={() => find({ vendor, productType, status })} disabled={isRunning || (!vendor && !productType)}>Find products</Button>
           </InlineStack>
-          <Text tone="subdued" variant="bodySm">Choose a vendor or a product type (or both). Vendor and type lists come from Swatch's cached list — refresh it in the Libraries or Colour codes tab if one is missing.</Text>
+          <Text tone="subdued" variant="bodySm">Choose a vendor or a product type (or both). Vendor and type lists come from Swatch's cached list — refresh it in the Libraries or Color codes tab if one is missing.</Text>
         </BlockStack>
       </Card>
 

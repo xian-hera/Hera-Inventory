@@ -28,7 +28,7 @@ function SwatchRulesTab({ config, setConfig, meta, afterSave }) {
       const d = await api.put('/config', { rules: clean(rules) });
       setConfig(d.config);
       setRules(d.config.rules.map(r => ({ ...r })));
-      afterSave(d, 'Rules saved. Run a scan in the Colour codes tab to refresh the list.');
+      afterSave(d, 'Rules saved. Run a scan in the Color codes tab to refresh the list.');
     } catch (e) {
       setErr(e.message);
     } finally {
@@ -43,27 +43,42 @@ function SwatchRulesTab({ config, setConfig, meta, afterSave }) {
           The whole picker of a matching product is replaced: the option named here is shown as image swatches, the other options as buttons.
           If a product matches several rules, the first one decides which option gets images.
         </Text>
+        {/* One row per rule, all on one line (Hera 2026-10-02): labels and boxes line up at the top;
+            "Case sensitive" sits under the option name, the translation hint under Product types.
+            No horizontal scrolling: boxes are narrow and the translated-types box shrinks to fit. */}
         {rules.map((r, i) => (
-          <InlineStack key={i} gap="300" blockAlign="end" wrap>
-            <Text variant="bodySm" tone="subdued">{i + 1}.</Text>
-            <div style={{ width: 180 }}>
-              <TextField label="Option name" value={r.optionName} onChange={(v) => set(i, { optionName: v })} autoComplete="off" />
+          <div key={i} style={{ display: 'flex', flexWrap: 'nowrap', alignItems: 'flex-start', gap: 12 }}>
+            <div style={{ paddingTop: 30, flex: 'none' }}><Text variant="bodySm" tone="subdued">{i + 1}.</Text></div>
+            <div style={{ flex: 'none' }}>
+              <BlockStack gap="100">
+                {/* 72px = 40% of the old 180px; the label may run past the box */}
+                <div style={{ width: 72, whiteSpace: 'nowrap' }}>
+                  <TextField label="Option name" value={r.optionName} onChange={(v) => set(i, { optionName: v })} autoComplete="off" />
+                </div>
+                <Checkbox label="Case sensitive" checked={!!r.caseSensitive} onChange={(v) => set(i, { caseSensitive: v })} />
+              </BlockStack>
             </div>
-            <Checkbox label="Case sensitive" checked={!!r.caseSensitive} onChange={(v) => set(i, { caseSensitive: v })} />
-            <div style={{ minWidth: 240 }}>
-              <MultiSelectDropdown label="Product types" options={meta.productTypes} selected={r.productTypes} onChange={(v) => set(i, { productTypes: v })} placeholder="Choose…" />
+            {/* 144px = 60% of the old 240px; the selected types are cut off with "…" */}
+            <div style={{ width: 144, flex: 'none' }}>
+              <BlockStack gap="100">
+                <MultiSelectDropdown label="Product types" options={meta.productTypes} selected={r.productTypes} onChange={(v) => set(i, { productTypes: v })} placeholder="Choose…" />
+                <Text variant="bodySm" tone="subdued">Exactly as the other language shows the type (case sensitive)</Text>
+              </BlockStack>
             </div>
-            <div style={{ width: 260 }}>
+            <div style={{ flex: '1 1 160px', minWidth: 0, maxWidth: 260 }}>
               {/* Free text: translated types are not in Shopify's type list (Hera 2026-10-02) */}
               <TextField label="Translated type names (comma separated)" placeholder="e.g. CHEVEUX, PERRUQUE" autoComplete="off"
                 value={r.translatedTypesText !== undefined ? r.translatedTypesText : (r.translatedTypes || []).join(', ')}
-                onChange={(v) => set(i, { translatedTypesText: v, translatedTypes: v.split(',').map(s => s.trim()).filter(Boolean) })}
-                helpText="Exactly as the other language shows the type (case sensitive)" />
+                onChange={(v) => set(i, { translatedTypesText: v, translatedTypes: v.split(',').map(s => s.trim()).filter(Boolean) })} />
             </div>
-            <Button size="slim" onClick={() => move(i, -1)} disabled={i === 0}>↑</Button>
-            <Button size="slim" onClick={() => move(i, 1)} disabled={i === rules.length - 1}>↓</Button>
-            <Button size="slim" tone="critical" variant="plain" onClick={() => setRules(list => list.filter((_, j) => j !== i))}>Delete</Button>
-          </InlineStack>
+            <div style={{ paddingTop: 24, flex: 'none' }}>
+              <InlineStack gap="200" blockAlign="center" wrap={false}>
+                <Button size="slim" onClick={() => move(i, -1)} disabled={i === 0}>↑</Button>
+                <Button size="slim" onClick={() => move(i, 1)} disabled={i === rules.length - 1}>↓</Button>
+                <Button size="slim" tone="critical" variant="plain" onClick={() => setRules(list => list.filter((_, j) => j !== i))}>Delete</Button>
+              </InlineStack>
+            </div>
+          </div>
         ))}
         {rules.length === 0 && <Text tone="subdued">No rule — no product is replaced.</Text>}
         {err && <Banner tone="critical" onDismiss={() => setErr('')}>{err}</Banner>}

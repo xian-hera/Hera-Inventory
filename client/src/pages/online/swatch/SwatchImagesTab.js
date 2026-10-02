@@ -27,7 +27,7 @@ function UploadCard({ library, onUploaded, setBanner, afterSave }) {
     setResults([]);
     try {
       const d = await api.post(`/libraries/${library.id}/preview`, { names: accepted.map(f => f.name) });
-      if (!d.codesInUse) setBanner({ tone: 'warning', text: 'No colour codes known for this library yet — run a scan in the Colour codes tab first, or type the codes by hand.' });
+      if (!d.codesInUse) setBanner({ tone: 'warning', text: 'No colour codes known for this library yet — run a scan in the Color codes tab first, or type the codes by hand.' });
       setItems(prev => [
         ...prev.filter(p => !accepted.some(f => f.name === p.name)),
         ...d.files.map((f, i) => ({

@@ -20,7 +20,7 @@ const MODES = [
 const MODE_BADGE = { off: <Badge>Off</Badge>, preview: <Badge tone="attention">Preview only</Badge>, live: <Badge tone="success">Live</Badge> };
 
 const TABS = [
-  { id: 'codes', content: 'Colour codes' },
+  { id: 'codes', content: 'Color codes' }, // renamed from 'Colour codes' (Hera 2026-10-02)
   { id: 'images', content: 'Images' },
   { id: 'libraries', content: 'Libraries' },
   { id: 'rules', content: 'Rules' },
