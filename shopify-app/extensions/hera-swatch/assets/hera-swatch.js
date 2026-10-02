@@ -164,38 +164,56 @@
       if (e.key === 'ArrowRight') step(1);
     });
   }
-  // Size the picture area to the image's own proportions so the window hugs it
-  // (Hera 2026-10-02): as tall as fits (max 625px), narrower when the image is narrow.
-  var ratio = 536 / 625, sizeToken = 0;
+  // Window size (Hera 2026-10-02, second version):
+  //  - picture area has a FIXED height: 625px on computers; on phones whatever
+  //    fits with a clear margin left around the window (so tapping outside works);
+  //  - its width follows the picture, between the window's minimum width
+  //    (CSS min-width on .hs-box) and the screen width;
+  //  - the picture is never enlarged: smaller than the area -> original size
+  //    with white around it; larger -> scaled down to fit whole (no crop, no distortion).
+  var nat = null, sizeToken = 0;      // nat = { w, h } of the current picture
   function fitBig() {
     if (!modal) return;
     var small = window.innerWidth <= 600;
     var padX = small ? 80 : 128;                    // left + right padding (room for the arrows)
     var maxW = Math.min(window.innerWidth - 32 - padX, 1000);
-    var maxH = Math.min(625, window.innerHeight - 32 - (small ? 150 : 190)); // title + disclaimer + padding
-    var h = Math.max(maxH, 120), w = h * ratio;
-    if (w > maxW) { w = maxW; h = w / ratio; }
+    var H = small
+      ? Math.min(625, window.innerHeight - 32 - 150 - Math.round(window.innerHeight * 0.12)) // title + disclaimer + padding + tap margin
+      : Math.min(625, window.innerHeight - 32 - 190);
+    H = Math.max(H, 160);
+    var w, bs;
+    if (nat) {
+      var s = Math.min(1, H / nat.h, maxW / nat.w);
+      w = Math.round(nat.w * s);
+      bs = w + 'px ' + Math.round(nat.h * s) + 'px';
+    } else {
+      w = Math.min(Math.round(H * 536 / 625), maxW);
+      bs = 'contain';
+    }
     var big = modal.querySelector('.hs-big');
-    big.style.setProperty('--hs-bw', Math.round(w) + 'px');
-    big.style.setProperty('--hs-bh', Math.round(h) + 'px');
+    big.style.setProperty('--hs-bw', w + 'px');
+    big.style.setProperty('--hs-bh', H + 'px');
+    big.style.setProperty('--hs-bs', bs);
   }
   function showModalItem() {
     var x = modalList[modalIdx];
     if (!x) return;
     modal.querySelector('.hs-title').textContent = x.v;
     var url = x.img ? sized(x.img, 1200) : '';
-    modal.querySelector('.hs-big').style.backgroundImage = url ? 'url("' + url + '")' : 'none';
+    var bigEl = modal.querySelector('.hs-big');
     var token = ++sizeToken;
+    // Show the picture only once its real size is known, so it never flashes enlarged.
+    nat = null;
+    bigEl.style.backgroundImage = 'none';
     if (url) {
       var im = new Image();
       im.onload = function () {
         if (token !== sizeToken || !im.naturalWidth || !im.naturalHeight) return;
-        ratio = im.naturalWidth / im.naturalHeight;
+        nat = { w: im.naturalWidth, h: im.naturalHeight };
         fitBig();
+        bigEl.style.backgroundImage = 'url("' + url + '")';
       };
       im.src = url;
-    } else {
-      ratio = 536 / 625;
     }
     fitBig();
     var note = modal.querySelector('.hs-note');
