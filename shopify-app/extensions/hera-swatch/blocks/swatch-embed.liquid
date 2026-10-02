@@ -83,9 +83,12 @@
 -%}
 {%- if hs_pos > 0 -%}
 <style id="hera-swatch-css">
-  {{ hs_sel }} fieldset:nth-of-type({{ hs_pos }}),
+  /* Fail-safe (2026-10-02): the theme's / Swatch King's colour group is hidden
+     only once hera-swatch.js has drawn our cards and put class "hs-on" on <html>.
+     If the script does not load or fails, the original pickers stay visible. */
+  html.hs-on {{ hs_sel }} fieldset:nth-of-type({{ hs_pos }}),
   {%- for hsk in hs_cfg.hideSelectors -%}
-  {{ hs_scope }} {{ hsk }} #swatch-option{{ hs_pos }},
+  html.hs-on {{ hs_scope }} {{ hsk }} #swatch-option{{ hs_pos }},
   {%- endfor -%}
   .hs-never { display: none !important; }
   .hs-wrap { --hs-w: {{ hs_s.cardWidth | default: 72 }}px; --hs-h: {{ hs_s.imageHeight | default: 81 }}px; --hs-accent: {{ hs_s.accentColor | default: '#E32A69' }}; margin: 10px 0 12px; }

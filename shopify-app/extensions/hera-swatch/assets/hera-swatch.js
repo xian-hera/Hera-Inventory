@@ -8,7 +8,9 @@
    - The selected colour always shows the dark overlay with the magnifier (also
      on page load — Hera 2026-10-02); clicking it opens the large image window
      (browse only, does not change the selection). Clicking another colour selects it.
-   - The window has a × close button (top right) for phones (Hera 2026-10-02). */
+   - The window has a × close button (top right) for phones (Hera 2026-10-02).
+   - Fail-safe (2026-10-02): the original colour group is hidden only while our
+     cards are on the page (class "hs-on" on <html>, see markOn()). */
 (function () {
   var dataEl = document.getElementById('hera-swatch-data');
   if (!dataEl) return;
@@ -253,7 +255,18 @@
   function refresh() {
     if (queued) return;
     queued = true;
-    requestAnimationFrame(function () { queued = false; place(); render(); });
+    requestAnimationFrame(function () {
+      queued = false;
+      try { place(); render(); } catch (e) { console.warn('[Hera Swatch]', e); }
+      markOn();
+    });
+  }
+
+  // Fail-safe: the original colour group is hidden (CSS on html.hs-on) only
+  // while our cards are actually on the page.
+  function markOn() {
+    var ok = !!(wrap && wrap.isConnected && list && list.children.length);
+    document.documentElement.classList.toggle('hs-on', ok);
   }
 
   function init() {
@@ -264,8 +277,8 @@
     list = wrap.querySelector('.hs-list');
     list.addEventListener('click', onClick);
     list.addEventListener('keydown', onKey);
-    place();
-    render();
+    try { place(); render(); } catch (e) { console.warn('[Hera Swatch]', e); }
+    markOn();
     // The theme / Swatch King change the radios: follow them.
     document.addEventListener('change', function () { refresh(); setTimeout(refresh, 300); }, true);
     window.addEventListener('popstate', refresh);
