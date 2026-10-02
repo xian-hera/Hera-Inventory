@@ -115,11 +115,14 @@
      and .hs-big has no children — its picture is a background image. */
   .hs-modal .hs-big { display: block !important; }
   .hs-big { position: relative; width: var(--hs-bw, 536px); height: var(--hs-bh, 625px); max-width: 100%; margin: 0 auto; background: #fff center / contain no-repeat; touch-action: pan-y; }
+  .hs-close { position: absolute; top: 14px; right: 14px; z-index: 2; width: 40px; height: 40px; min-width: 0; min-height: 0; padding: 8px; margin: 0; border: 0; border-radius: 50%; background: rgba(0,0,0,0.06); color: #111; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: none; }
+  .hs-close svg { width: 22px; height: 22px; display: block; }
+  .hs-close:hover { background: rgba(0,0,0,0.12); }
   .hs-arrow { position: absolute; top: 50%; transform: translateY(-50%); width: 44px; height: 64px; border: 0; background: none; cursor: pointer; padding: 0; color: #111; }
   .hs-arrow svg { width: 22px; height: 44px; }
   .hs-prev { left: 10px; } .hs-next { right: 10px; }
   .hs-note { width: 0; min-width: 100%; text-align: center; margin: 16px 0 0; font-size: {{ hs_s.modalNoteSize | default: 13 }}px; line-height: 1.4; color: #333; }
-  @media (max-width: 600px) { .hs-box { padding: 20px 40px 18px; border-radius: 22px; } .hs-prev { left: 0; } .hs-next { right: 0; } }
+  @media (max-width: 600px) { .hs-box { padding: 20px 40px 18px; border-radius: 22px; } .hs-close { top: 8px; right: 8px; width: 36px; height: 36px; } .hs-prev { left: 0; } .hs-next { right: 0; } }
 </style>
 {%- capture hs_mag -%}
   {%- if hs_cfg.icons.magnifierFile != blank -%}{{ hs_cfg.icons.magnifierFile | file_url }}{%- endif -%}
