@@ -100,6 +100,8 @@ function SwatchCodesTab({ meta, refreshMeta, setBanner, config }) {
   const [type, setType] = useState('');
   const [filter, setFilter] = useState('all');
   const [q, setQ] = useState('');
+  // Only rows whose linked image is narrower than this many px (Hera 2026-10-02) — to find images to replace.
+  const [maxW, setMaxW] = useState('');
   const [data, setData] = useState(null);
   const [scan, setScan] = useState(null);
   const [selected, setSelected] = useState([]);
@@ -155,13 +157,15 @@ function SwatchCodesTab({ meta, refreshMeta, setBanner, config }) {
   };
 
   const rows = useMemo(() => {
-    const list = (data && data.rows) || [];
+    let list = (data && data.rows) || [];
+    const W = Number(maxW);
+    if (W > 0) list = list.filter(r => r.file && r.file.width && r.file.width < W);
     if (!q) return list;
     const Q = q.toUpperCase();
     return list.filter(r => r.code.toUpperCase().includes(Q) || (r.file && r.file.name.toUpperCase().includes(Q)));
-  }, [data, q]);
+  }, [data, q, maxW]);
 
-  useEffect(() => { setPage(0); }, [q]);
+  useEffect(() => { setPage(0); }, [q, maxW]);
   const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   const pageRows = rows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
@@ -282,6 +286,7 @@ function SwatchCodesTab({ meta, refreshMeta, setBanner, config }) {
             <div style={{ width: 180 }}><Select label="Status" options={FILTERS.map(f => ({ ...f, label: data && data.counts ? `${f.label} (${data.counts[f.value]})` : f.label }))} value={filter} onChange={setFilter} /></div>
             <div style={{ width: 160 }}><Select label="Type" options={typeOptions} value={type} onChange={setType} /></div>
             <div style={{ width: 220 }}><TextField label="Search" value={q} onChange={setQ} autoComplete="off" placeholder="Colour code or file name" clearButton onClearButtonClick={() => setQ('')} /></div>
+            <div style={{ width: 170 }}><TextField label="Image narrower than (px)" type="number" min={1} value={maxW} onChange={setMaxW} autoComplete="off" placeholder="e.g. 500" clearButton onClearButtonClick={() => setMaxW('')} /></div>
             <Button onClick={() => bulk('ignore')} disabled={!selected.length || noLibrarySelected || !!busy} loading={busy === 'ignore'}>Ignore selected</Button>
             <Button onClick={() => bulk('unignore')} disabled={!selected.length || noLibrarySelected || !!busy} loading={busy === 'unignore'}>Un-ignore selected</Button>
             <Button onClick={() => load()} disabled={!!busy}>Reload</Button>
@@ -329,6 +334,7 @@ function SwatchCodesTab({ meta, refreshMeta, setBanner, config }) {
                             <SwatchThumb url={f.url} />
                             <div style={{ maxWidth: 220 }}>
                               <div>{f.filename || f.name}</div>
+                              {r.file && r.file.width ? <div style={{ fontSize: 11, color: Number(maxW) > 0 ? '#b98900' : '#6d7175' }}>{r.file.width} × {r.file.height} px</div> : null}
                               {!r.file && <div style={{ fontSize: 11, color: '#6d7175' }}>Candidate: {f.name}</div>}
                             </div>
                           </InlineStack>

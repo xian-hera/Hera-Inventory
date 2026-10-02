@@ -527,7 +527,7 @@ router.get('/list', wrap(async (req, res) => {
   const filter = String(req.query.filter || 'all');
   const scanRows = (await pool.query(`
     SELECT s.*, l.id AS lib_id, l.name AS lib_name, l.prefix AS lib_prefix,
-      a.id AS a_id, a.original_name AS a_name, a.filename AS a_filename, a.alt AS a_alt, a.url AS a_url,
+      a.id AS a_id, a.original_name AS a_name, a.filename AS a_filename, a.alt AS a_alt, a.url AS a_url, a.width AS a_width, a.height AS a_height,
       ci.id AS c_id, ci.original_name AS c_name, ci.filename AS c_filename, ci.url AS c_url,
       ig.reason AS ig_reason, ig.ignored_at AS ig_at
     FROM swatch_scan_codes s
@@ -547,7 +547,7 @@ router.get('/list', wrap(async (req, res) => {
       products: s.products, productCount: s.products.length, variantCount: s.variant_count,
       status, hidden: s.hidden, suggestIgnore: s.suggest_ignore && status !== 'matched',
       ignored: !s.a_id && s.ig_at ? { reason: s.ig_reason, at: s.ig_at } : null,
-      file: s.a_id ? { imageId: s.a_id, name: s.a_name, filename: s.a_filename, alt: s.a_alt, url: s.a_url } : null,
+      file: s.a_id ? { imageId: s.a_id, name: s.a_name, filename: s.a_filename, alt: s.a_alt, url: s.a_url, width: s.a_width, height: s.a_height } : null,
       candidate: !s.a_id && s.c_id
         ? { imageId: s.c_id, name: s.c_name, filename: s.c_filename, url: s.c_url, kind: s.candidate_kind, cost: s.candidate_cost }
         : null,
