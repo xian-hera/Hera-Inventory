@@ -147,6 +147,7 @@
       x0 = null;
       if (Math.abs(dx) > 40) step(dx < 0 ? 1 : -1);
     });
+    window.addEventListener('resize', function () { if (modal.classList.contains('is-open')) fitBig(); });
     document.addEventListener('keydown', function (e) {
       if (!modal.classList.contains('is-open')) return;
       if (e.key === 'Escape') closeModal();
@@ -154,11 +155,40 @@
       if (e.key === 'ArrowRight') step(1);
     });
   }
+  // Size the picture area to the image's own proportions so the window hugs it
+  // (Hera 2026-10-02): as tall as fits (max 625px), narrower when the image is narrow.
+  var ratio = 536 / 625, sizeToken = 0;
+  function fitBig() {
+    if (!modal) return;
+    var small = window.innerWidth <= 600;
+    var padX = small ? 80 : 128;                    // left + right padding (room for the arrows)
+    var maxW = Math.min(window.innerWidth - 32 - padX, 1000);
+    var maxH = Math.min(625, window.innerHeight - 32 - (small ? 150 : 190)); // title + disclaimer + padding
+    var h = Math.max(maxH, 120), w = h * ratio;
+    if (w > maxW) { w = maxW; h = w / ratio; }
+    var big = modal.querySelector('.hs-big');
+    big.style.setProperty('--hs-bw', Math.round(w) + 'px');
+    big.style.setProperty('--hs-bh', Math.round(h) + 'px');
+  }
   function showModalItem() {
     var x = modalList[modalIdx];
     if (!x) return;
     modal.querySelector('.hs-title').textContent = x.v;
-    modal.querySelector('.hs-big').style.backgroundImage = x.img ? 'url("' + sized(x.img, 1200) + '")' : 'none';
+    var url = x.img ? sized(x.img, 1200) : '';
+    modal.querySelector('.hs-big').style.backgroundImage = url ? 'url("' + url + '")' : 'none';
+    var token = ++sizeToken;
+    if (url) {
+      var im = new Image();
+      im.onload = function () {
+        if (token !== sizeToken || !im.naturalWidth || !im.naturalHeight) return;
+        ratio = im.naturalWidth / im.naturalHeight;
+        fitBig();
+      };
+      im.src = url;
+    } else {
+      ratio = 536 / 625;
+    }
+    fitBig();
     var note = modal.querySelector('.hs-note');
     note.textContent = D.note || '';
     note.style.display = D.note ? '' : 'none';
