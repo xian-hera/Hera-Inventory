@@ -25,12 +25,14 @@ const STORE_ADMIN = 'https://admin.shopify.com/store/beaute-hera/products/';
 // Active Locations"). Hub fills EMPTY cells with these defaults; a value in
 // the CSV always wins. Set SHOW_PRESET_DROPDOWNS to true to bring the
 // dropdowns back.
-// Update existing keeps POS only / Discontinued on "Read from CSV", so
-// updating e.g. prices doesn't reset those two on every product.
+// Update existing used to keep POS only / Discontinued on "Read from CSV";
+// since 2026-10-05 (Hera) it uses the same False defaults as Add new.
+// Note: an Update therefore sets POS only / Discontinued to False on every
+// product whose CSV cell is empty.
 const SHOW_PRESET_DROPDOWNS = false;
 const HIDDEN_PRESET_DEFAULTS = {
   add: { status: 'Active', channel: 'Point of Sale', posOnly: 'False', discontinued: 'False', chargeTax: 'Yes' },
-  update: { status: 'Active', channel: 'Point of Sale', posOnly: 'csv', discontinued: 'csv', chargeTax: 'Yes' },
+  update: { status: 'Active', channel: 'Point of Sale', posOnly: 'False', discontinued: 'False', chargeTax: 'Yes' },
 };
 
 const numericId = (gid) => { const m = String(gid || '').match(/(\d+)$/); return m ? m[1] : ''; };
@@ -474,7 +476,7 @@ function BuyerImportProducts() {
                           <Text variant="bodySm" tone="subdued">
                             {mode === 'add'
                               ? 'Empty cells get default values, shown in green: Status Active, Channel Point of Sale, POS only False, Discontinued False, Charge tax Yes.'
-                              : 'Empty cells get default values, shown in green: Status Active, Channel Point of Sale, Charge tax Yes. POS only and Discontinued are only changed where the CSV has a value.'}
+                              : 'Empty cells get default values, shown in green: Status Active, Channel Point of Sale, POS only False, Discontinued False, Charge tax Yes.'}
                           </Text>
                           <Text variant="bodySm" tone="subdued">If the CSV has a value, the CSV value is used.</Text>
                         </>

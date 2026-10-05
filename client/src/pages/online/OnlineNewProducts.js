@@ -2,13 +2,59 @@
 // Import Products → Add new (POS only excluded), grouped by the Settings
 // groups (+ a hidden built-in "Ungrouped" group). Spec §15.
 // Full width; the table wraps text instead of scrolling sideways.
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import ReactDOM from 'react-dom';
 import { Page, Card, BlockStack, InlineStack, Text, Button, Banner } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import { HtmlTooltip, FrIcon, adminUrl, TH, TD, postJson } from './newProductsShared';
-import FullBleed from '../../components/FullBleed';
 
-const DESC_CHARS = 60;
+const DESC_CHARS = 100; // was 60; Description column is now 100 characters wide (2026-10-05)
+
+// ─── Fixed column widths (2026-10-05, Hera) ─────────────────────────────────
+// Every card uses the same widths so the columns line up from card to card.
+// ~7px per character at 13px. Inventory / Media / Weight = header + 3
+// characters of padding on each side. A group's own metafield columns share
+// one "special" block at the end (empty block for groups without any).
+const PAD3 = 21; // 3 characters
+const COL = {
+  check: 36,
+  title: 350,       // 50 characters
+  inventory: 105,   // "Inventory" + 2 × 3 characters
+  media: 80,        // "Media" + 2 × 3 characters
+  description: 700, // 100 characters
+  weight: 87,       // "Weight" + 2 × 3 characters
+  tags: 140,        // 20 characters
+  special: 350,     // 50 characters, split between the group's own columns
+};
+const TABLE_W = Object.values(COL).reduce((a, b) => a + b, 0);
+const ONE_LINE = { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };
+
+// One-line text cut off with "…"; hovering shows the full text, but only
+// when it was actually cut off.
+function Trunc({ text, children }) {
+  const ref = useRef(null);
+  const [rect, setRect] = useState(null);
+  const open = () => {
+    const el = ref.current;
+    if (el && el.scrollWidth > el.clientWidth + 1) setRect(el.getBoundingClientRect());
+  };
+  const W = 420;
+  const left = rect ? Math.max(8, Math.min(rect.left, window.innerWidth - W - 8)) : 0;
+  return (
+    <div ref={ref} style={ONE_LINE} onMouseEnter={open} onMouseLeave={() => setRect(null)}>
+      {children || text}
+      {rect && text && ReactDOM.createPortal(
+        <div style={{
+          position: 'fixed', left, top: rect.bottom + 6, maxWidth: W, zIndex: 100000,
+          background: '#fff', border: '1px solid #c9cccf', borderRadius: 8, padding: '8px 10px',
+          boxShadow: '0 4px 16px rgba(0,0,0,0.18)', fontSize: 13, lineHeight: 1.45, pointerEvents: 'none',
+          whiteSpace: 'normal', wordBreak: 'break-word',
+        }}>{text}</div>,
+        document.body
+      )}
+    </div>
+  );
+}
 
 // Inventory column (2026-10-05, Hera): same figure as Finalized — Available
 // at the Settings → Inventory locations, filled by "Check Inventory".
@@ -63,58 +109,85 @@ function GroupCard({ group, onChanged, setBanner }) {
           <Button variant="primary" onClick={() => act('finalize')} loading={busy === 'finalize'} disabled={!selected.length || !!busy}>Mark selected as finalized</Button>
         </InlineStack>
       </InlineStack>
-      <FullBleed>
+      {/* Fixed-width list (2026-10-05, Hera): wider than the page column and
+          centred on it; the same width for every card so columns line up.
+          On a screen narrower than the table it scrolls sideways inside the
+          card (the page itself hides sideways overflow). */}
+      <div style={{ position: 'relative', left: '50%', transform: 'translateX(-50%)', width: `min(${TABLE_W + 2}px, calc(100vw - 32px))` }}>
       <Card padding="0">
-        <div style={{ padding: '4px 12px 8px' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'auto' }}>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: TABLE_W, borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+            <colgroup>
+              <col style={{ width: COL.check }} />
+              <col style={{ width: COL.title }} />
+              <col style={{ width: COL.inventory }} />
+              <col style={{ width: COL.media }} />
+              <col style={{ width: COL.description }} />
+              <col style={{ width: COL.weight }} />
+              <col style={{ width: COL.tags }} />
+              {mfs.length
+                ? mfs.map(m => <col key={`${m.level}.${m.namespace}.${m.key}`} style={{ width: COL.special / mfs.length }} />)
+                : <col style={{ width: COL.special }} />}
+            </colgroup>
             <thead>
               <tr>
-                <th style={{ ...TH, width: 32 }}>
+                <th style={{ ...TH, paddingLeft: 12 }}>
                   <input type="checkbox" checked={allSelected} onChange={() => setSelected(allSelected ? [] : items.map(i => i.id))} />
                 </th>
                 <th style={TH}>Title</th>
-                <th style={{ ...TH, width: 80 }}>Inventory</th>
-                <th style={{ ...TH, width: 60 }}>Media</th>
+                <th style={{ ...TH, padding: `10px ${PAD3}px` }}>Inventory</th>
+                <th style={{ ...TH, padding: `10px ${PAD3}px` }}>Media</th>
                 <th style={TH}>Description</th>
-                <th style={TH}>Weight</th>
-                {mfs.map(m => <th key={`${m.level}.${m.namespace}.${m.key}`} style={TH}>{m.name}</th>)}
+                <th style={{ ...TH, padding: `10px ${PAD3}px` }}>Weight</th>
                 <th style={TH}>Tags</th>
+                {mfs.length
+                  ? mfs.map(m => <th key={`${m.level}.${m.namespace}.${m.key}`} style={TH}><Trunc text={m.name} /></th>)
+                  : <th style={TH} />}
               </tr>
             </thead>
             <tbody>
-              {items.map(i => (
-                <tr key={i.id}>
-                  <td style={TD}>
-                    <input type="checkbox" checked={selected.includes(i.id)} onChange={() => setSelected(s => (s.includes(i.id) ? s.filter(x => x !== i.id) : [...s, i.id]))} />
-                  </td>
-                  <td style={{ ...TD, minWidth: 180 }}>
-                    {i.titleFr && <HtmlTooltip text={i.titleFr}><FrIcon /></HtmlTooltip>}
-                    <a href={adminUrl(i.shopifyProductId)} target="_blank" rel="noopener noreferrer">{i.title}</a>
-                    {i.refreshError && <div style={{ color: '#d72c0d', fontSize: 12, marginTop: 2 }}>{i.refreshError}</div>}
-                  </td>
-                  <td style={TD}>{i.available == null ? '—' : i.available}</td>
-                  <td style={TD}>{i.mediaCount == null ? '' : i.mediaCount}</td>
-                  <td style={{ ...TD, minWidth: 220 }}>
-                    {i.descriptionFrText && <HtmlTooltip html={i.descriptionFrHtml} text={i.descriptionFrText}><FrIcon /></HtmlTooltip>}
-                    {i.descriptionText
-                      ? <HtmlTooltip html={i.descriptionHtml} text={i.descriptionText}>
-                          <span>{i.descriptionText.slice(0, DESC_CHARS)}{i.descriptionText.length > DESC_CHARS ? '…' : ''}</span>
-                        </HtmlTooltip>
-                      : ''}
-                  </td>
-                  <td style={TD}>{i.weight}</td>
-                  {mfs.map(m => <td key={`${m.level}.${m.namespace}.${m.key}`} style={TD}>{(i.metafields || {})[`${m.level}.${m.namespace}.${m.key}`] || ''}</td>)}
-                  <td style={TD}>{(i.tags || []).join(', ')}</td>
-                </tr>
-              ))}
+              {items.map(i => {
+                const tags = (i.tags || []).join(', ');
+                return (
+                  <tr key={i.id}>
+                    <td style={{ ...TD, paddingLeft: 12 }}>
+                      <input type="checkbox" checked={selected.includes(i.id)} onChange={() => setSelected(s => (s.includes(i.id) ? s.filter(x => x !== i.id) : [...s, i.id]))} />
+                    </td>
+                    <td style={TD}>
+                      <Trunc text={i.title}>
+                        {i.titleFr && <HtmlTooltip text={i.titleFr}><FrIcon /></HtmlTooltip>}
+                        <a href={adminUrl(i.shopifyProductId)} target="_blank" rel="noopener noreferrer">{i.title}</a>
+                      </Trunc>
+                      {i.refreshError && <div style={{ color: '#d72c0d', fontSize: 12, marginTop: 2 }}>{i.refreshError}</div>}
+                    </td>
+                    <td style={{ ...TD, padding: `10px ${PAD3}px` }}>{i.available == null ? '—' : i.available}</td>
+                    <td style={{ ...TD, padding: `10px ${PAD3}px` }}>{i.mediaCount == null ? '' : i.mediaCount}</td>
+                    <td style={TD}>
+                      <div style={ONE_LINE}>
+                        {i.descriptionFrText && <HtmlTooltip html={i.descriptionFrHtml} text={i.descriptionFrText}><FrIcon /></HtmlTooltip>}
+                        {i.descriptionText
+                          ? <HtmlTooltip html={i.descriptionHtml} text={i.descriptionText}>
+                              <span>{i.descriptionText.slice(0, DESC_CHARS)}{i.descriptionText.length > DESC_CHARS ? '…' : ''}</span>
+                            </HtmlTooltip>
+                          : ''}
+                      </div>
+                    </td>
+                    <td style={{ ...TD, padding: `10px ${PAD3}px`, whiteSpace: 'nowrap' }}>{i.weight}</td>
+                    <td style={TD}><Trunc text={tags} /></td>
+                    {mfs.length
+                      ? mfs.map(m => <td key={`${m.level}.${m.namespace}.${m.key}`} style={TD}><Trunc text={(i.metafields || {})[`${m.level}.${m.namespace}.${m.key}`] || ''} /></td>)
+                      : <td style={TD} />}
+                  </tr>
+                );
+              })}
               {items.length === 0 && (
-                <tr><td colSpan={7 + mfs.length} style={{ ...TD, textAlign: 'center', color: '#6d7175', padding: 20 }}>No products.</td></tr>
+                <tr><td colSpan={7 + Math.max(1, mfs.length)} style={{ ...TD, textAlign: 'center', color: '#6d7175', padding: 20 }}>No products.</td></tr>
               )}
             </tbody>
           </table>
         </div>
       </Card>
-      </FullBleed>
+      </div>
     </BlockStack>
   );
 }
@@ -164,8 +237,9 @@ function OnlineNewProducts({ inTabs = false } = {}) {
   };
 
   return (
-    // Fixed-width page; only each group's table is full width (FullBleed) —
-    // Hera 2026-09-24.
+    // Fixed-width page; each group's table was full width (FullBleed) —
+    // Hera 2026-09-24. Since 2026-10-05 the tables share one fixed width
+    // (wider than the page, centred) instead — see TABLE_W.
     <Page
       title={inTabs ? undefined : 'New products'}
       backAction={inTabs ? undefined : { onAction: () => navigate('/online') }}
