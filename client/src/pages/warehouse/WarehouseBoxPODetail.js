@@ -42,6 +42,7 @@ function WarehouseBoxPODetail() {
   const [noteEditing, setNoteEditing] = useState(false);
   const [noteDraft, setNoteDraft] = useState('');
   const [noteSaving, setNoteSaving] = useState(false);
+  const [exportingPdf, setExportingPdf] = useState(false);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -128,6 +129,30 @@ function WarehouseBoxPODetail() {
 
   // 2026-10-05 (Hera): per-line-item notes (shared editor with the Buyer page)
   const lineNote = useLineNoteEditor(id, load, setActionError);
+
+  // 2026-10-05 (Hera): Export PDF — printable copy of this task (same
+  // fetch-blob-download approach as TransferPrepDetail's Export PDF).
+  const exportPdf = async () => {
+    setExportingPdf(true);
+    setActionError('');
+    try {
+      const res = await fetch(`/api/box-po/${id}/export-pdf`);
+      if (!res.ok) throw new Error('Export failed');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${boxPo?.box_po_number || 'box-po'}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setActionError(e.message);
+    } finally {
+      setExportingPdf(false);
+    }
+  };
 
   const openAddNote = () => { setNoteDraft(boxPo?.warehouse_note || ''); setNoteEditing(true); };
   const saveNote = async () => {
@@ -224,6 +249,7 @@ function WarehouseBoxPODetail() {
                 {!boxPo.warehouse_note && !noteEditing && (
                   <Button onClick={openAddNote}>Add note</Button>
                 )}
+                <Button onClick={exportPdf} loading={exportingPdf} disabled={exportingPdf}>Export PDF</Button>
                 <Button variant="primary" disabled={!allConfirmed} loading={submitting} onClick={handleSubmit}>
                   Submit
                 </Button>

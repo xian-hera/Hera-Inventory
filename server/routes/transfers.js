@@ -1802,14 +1802,21 @@ router.get('/:id/export-pdf', async (req, res) => {
     ]);
 
     const PDFDocument = require('pdfkit');
-    const filename = `${transfer.transfer_no || 'transfer'}-export.pdf`;
+    // 2026-10-05 (Hera): the PDF title and filename now use the Shopify
+    // transfer name (e.g. "#T5163") instead of the Hub's own transfer_no
+    // (T-A0046), which the app no longer uses anywhere user-facing. No
+    // fallback to transfer_no on purpose — if shopify_transfer_name is somehow
+    // empty the number is simply left off rather than showing the old Hub one.
+    const shopifyName = transfer.shopify_transfer_name || '';
+    const safeName = shopifyName.replace(/[^A-Za-z0-9_-]/g, '');
+    const filename = `${safeName || 'transfer'}-export.pdf`;
     res.set('Content-Type', 'application/pdf');
     res.set('Content-Disposition', `attachment; filename="${filename}"`);
 
     const doc = new PDFDocument({ size: 'LETTER', margin: 40 });
     doc.pipe(res);
 
-    doc.fontSize(16).text(`${transfer.transfer_no || ''}  ${transfer.from_location} to ${transfer.to_location}`, { continued: false });
+    doc.fontSize(16).text(`${shopifyName ? shopifyName + '  ' : ''}${transfer.from_location} to ${transfer.to_location}`, { continued: false });
     doc.moveDown(0.5);
 
     const cols = [

@@ -10,10 +10,22 @@ import FullBleed from '../../components/FullBleed';
 
 const DESC_CHARS = 60;
 
+// Inventory column (2026-10-05, Hera): same figure as Finalized — Available
+// at the Settings → Inventory locations, filled by "Check Inventory".
+// Rows with stock come first, rows never checked next, 0 at the bottom;
+// the original order (newest first) is kept inside each of those groups.
+const invRank = (i) => (i.available == null ? 1 : i.available > 0 ? 0 : 2);
+function sortByInventory(items) {
+  return items
+    .map((it, idx) => ({ it, idx }))
+    .sort((a, b) => invRank(a.it) - invRank(b.it) || a.idx - b.idx)
+    .map(x => x.it);
+}
+
 function GroupCard({ group, onChanged, setBanner }) {
   const [selected, setSelected] = useState([]);
   const [busy, setBusy] = useState('');
-  const items = group.items;
+  const items = sortByInventory(group.items);
   const mfs = group.metafields || [];
   const allSelected = items.length > 0 && items.every(i => selected.includes(i.id));
 
@@ -61,6 +73,7 @@ function GroupCard({ group, onChanged, setBanner }) {
                   <input type="checkbox" checked={allSelected} onChange={() => setSelected(allSelected ? [] : items.map(i => i.id))} />
                 </th>
                 <th style={TH}>Title</th>
+                <th style={{ ...TH, width: 80 }}>Inventory</th>
                 <th style={{ ...TH, width: 60 }}>Media</th>
                 <th style={TH}>Description</th>
                 <th style={TH}>Weight</th>
@@ -79,6 +92,7 @@ function GroupCard({ group, onChanged, setBanner }) {
                     <a href={adminUrl(i.shopifyProductId)} target="_blank" rel="noopener noreferrer">{i.title}</a>
                     {i.refreshError && <div style={{ color: '#d72c0d', fontSize: 12, marginTop: 2 }}>{i.refreshError}</div>}
                   </td>
+                  <td style={TD}>{i.available == null ? '—' : i.available}</td>
                   <td style={TD}>{i.mediaCount == null ? '' : i.mediaCount}</td>
                   <td style={{ ...TD, minWidth: 220 }}>
                     {i.descriptionFrText && <HtmlTooltip html={i.descriptionFrHtml} text={i.descriptionFrText}><FrIcon /></HtmlTooltip>}
@@ -94,7 +108,7 @@ function GroupCard({ group, onChanged, setBanner }) {
                 </tr>
               ))}
               {items.length === 0 && (
-                <tr><td colSpan={6 + mfs.length} style={{ ...TD, textAlign: 'center', color: '#6d7175', padding: 20 }}>No products.</td></tr>
+                <tr><td colSpan={7 + mfs.length} style={{ ...TD, textAlign: 'center', color: '#6d7175', padding: 20 }}>No products.</td></tr>
               )}
             </tbody>
           </table>
@@ -112,6 +126,7 @@ function OnlineNewProducts({ inTabs = false } = {}) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [banner, setBanner] = useState(null);
+  const [checkingInv, setCheckingInv] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -127,6 +142,27 @@ function OnlineNewProducts({ inTabs = false } = {}) {
   }, []);
   useEffect(() => { load(); }, [load]);
 
+  // Check Inventory (2026-10-05, Hera): the same as Refresh on the Finalized
+  // page (refresh with inventory), for every product on this page.
+  const checkInventory = async () => {
+    if (!data || checkingInv) return;
+    const ids = [...data.groups.flatMap(g => g.items), ...data.ungrouped].map(i => i.id);
+    if (!ids.length) return;
+    setCheckingInv(true);
+    setBanner(null);
+    try {
+      const r = await postJson('/api/new-products/refresh', { ids, withInventory: true });
+      setBanner(r.errors && r.errors.length
+        ? { tone: 'warning', text: `Checked ${r.refreshed}. Failed: ${r.errors.map(e => `${e.title} (${e.error})`).join('; ')}` }
+        : { tone: 'success', text: `Inventory checked for ${r.refreshed} item(s).` });
+      await load();
+    } catch (e) {
+      setBanner({ tone: 'critical', text: e.message });
+    } finally {
+      setCheckingInv(false);
+    }
+  };
+
   return (
     // Fixed-width page; only each group's table is full width (FullBleed) —
     // Hera 2026-09-24.
@@ -136,6 +172,7 @@ function OnlineNewProducts({ inTabs = false } = {}) {
       secondaryActions={[
         { content: 'Settings', onAction: () => navigate('/online/new-products/settings') },
         { content: 'Finalized', onAction: () => navigate('/online/new-products/finalized') },
+        { content: 'Check Inventory', onAction: checkInventory, loading: checkingInv, disabled: !data || checkingInv },
       ]}
     >
       <BlockStack gap="500">

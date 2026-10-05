@@ -238,6 +238,145 @@ router.get('/:id', async (req, res) => {
   }
 });
 
+// GET /api/box-po/:id/export-pdf — Warehouse's "Export PDF" button
+// (2026-10-05, Hera): a printable copy of the task. Title (BOX_A0006) top-left,
+// a small second line with Supplier / Total Boxes / Date, then the line items
+// laid out in TWO side-by-side blocks (this table is so narrow that a single
+// column would waste most of the paper's width). Each block has three
+// columns: Destination / Box qty (the plain original number) / Note — the
+// Note column prints any per-line note already on the row and is otherwise
+// blank, ruled space for handwriting. Rows fill the left block first, then
+// the right; if everything fits on one page it is split evenly between the
+// two blocks, otherwise pages are filled completely before a new one starts.
+// Same pdfkit approach as transfers.js's export-pdf (own local copy, per this
+// codebase's convention of not sharing a pdf helper module).
+router.get('/:id/export-pdf', async (req, res) => {
+  try {
+    const found = await fetchBoxPoWithItems(req.params.id);
+    if (!found) return res.status(404).json({ error: 'BOX PO not found' });
+    const { boxPo, items } = found;
+
+    const PDFDocument = require('pdfkit');
+    const safeNo = String(boxPo.box_po_number || 'box-po').replace(/[^A-Za-z0-9_-]/g, '');
+    res.set('Content-Type', 'application/pdf');
+    res.set('Content-Disposition', `attachment; filename="${safeNo}.pdf"`);
+
+    const doc = new PDFDocument({ size: 'LETTER', margin: 40 });
+    doc.pipe(res);
+
+    // Date shown the same way the Warehouse page shows it (YYYY.MON.DD).
+    const months = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+    let dateText = '';
+    if (boxPo.box_date) {
+      const raw = boxPo.box_date instanceof Date ? boxPo.box_date.toISOString() : String(boxPo.box_date);
+      const [y, m, d] = raw.slice(0, 10).split('-');
+      if (y && m && d) dateText = `${y}.${months[Number(m) - 1]}.${d}`;
+    }
+
+    doc.font('Helvetica-Bold').fontSize(18).fillColor('#000').text(boxPo.box_po_number || '', { continued: false });
+    doc.moveDown(0.2);
+    const metaParts = [
+      `Supplier: ${boxPo.supplier_name || ''}`,
+      `Total Boxes: ${boxPo.total_boxes}`,
+    ];
+    if (dateText) metaParts.push(`Date: ${dateText}`);
+    doc.font('Helvetica').fontSize(9).fillColor('#6d7175').text(metaParts.join('     '), { continued: false });
+    doc.moveDown(0.8);
+
+    const left = doc.page.margins.left;
+    const usableWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+    const gap = 20;
+    const blockWidth = (usableWidth - gap) / 2;
+    const cols = [
+      { label: 'Destination', width: 70 },
+      { label: 'Box qty', width: 48 },
+      { label: 'Note', width: blockWidth - 70 - 48 },
+    ];
+    const headerHeight = 18;
+    const minRowHeight = 26;
+    const rowPad = 8;
+    const noteFontSize = 8;
+
+    const tableTop = doc.y;
+    const pageBottom = doc.page.height - doc.page.margins.bottom;
+    // Height available for data rows in one block on a page (first page has
+    // the title block above the table; later pages start at the top margin —
+    // using the first page's smaller figure for every page keeps this simple
+    // and only ever errs on the side of a little unused space).
+    const availableH = pageBottom - tableTop - headerHeight;
+
+    const noteWidth = cols[2].width - 6;
+    const rowHeights = items.map(it => {
+      const note = it.note ? String(it.note) : '';
+      if (!note) return minRowHeight;
+      doc.font('Helvetica').fontSize(noteFontSize);
+      return Math.max(minRowHeight, doc.heightOfString(note, { width: noteWidth }) + rowPad);
+    });
+
+    // Distribute rows into pages of [leftIdxs, rightIdxs].
+    const pages = [];
+    let idx = 0;
+    const n = items.length;
+    while (idx < n) {
+      let remaining = 0;
+      for (let i = idx; i < n; i++) remaining += rowHeights[i];
+      const balanced = remaining <= 2 * availableH;
+      const leftIdx = [];
+      let usedL = 0;
+      while (idx < n && (leftIdx.length === 0 ||
+        (usedL + rowHeights[idx] <= availableH && (!balanced || usedL < remaining / 2)))) {
+        leftIdx.push(idx); usedL += rowHeights[idx]; idx++;
+      }
+      const rightIdx = [];
+      let usedR = 0;
+      while (idx < n && (rightIdx.length === 0 || usedR + rowHeights[idx] <= availableH)) {
+        rightIdx.push(idx); usedR += rowHeights[idx]; idx++;
+      }
+      pages.push([leftIdx, rightIdx]);
+    }
+    if (pages.length === 0) pages.push([[], []]);
+
+    const drawBlock = (x0, rowIdxs, startY) => {
+      // header
+      let x = x0;
+      doc.font('Helvetica').fontSize(9).fillColor('#6d7175');
+      cols.forEach(c => { doc.text(c.label, x + 2, startY + 3, { width: c.width - 4, lineBreak: false }); x += c.width; });
+      doc.moveTo(x0, startY + headerHeight - 2).lineTo(x0 + blockWidth, startY + headerHeight - 2)
+        .strokeColor('#8c9196').lineWidth(1).stroke();
+      let y = startY + headerHeight;
+      rowIdxs.forEach(i => {
+        const it = items[i];
+        const h = rowHeights[i];
+        doc.font('Helvetica').fontSize(11).fillColor('#000');
+        doc.text(String(it.location || ''), x0 + 2, y + (h - 11) / 2 - 1, { width: cols[0].width - 4, lineBreak: false });
+        doc.text(String(it.box_qty), x0 + cols[0].width + 2, y + (h - 11) / 2 - 1, { width: cols[1].width - 4, lineBreak: false });
+        if (it.note) {
+          doc.font('Helvetica').fontSize(noteFontSize).fillColor('#202223');
+          doc.text(String(it.note), x0 + cols[0].width + cols[1].width + 3, y + rowPad / 2, { width: noteWidth });
+        }
+        y += h;
+        doc.moveTo(x0, y).lineTo(x0 + blockWidth, y).strokeColor('#c9cccf').lineWidth(0.5).stroke();
+      });
+    };
+
+    pages.forEach(([leftIdx, rightIdx], pageNo) => {
+      let startY = tableTop;
+      if (pageNo > 0) {
+        doc.addPage();
+        startY = doc.page.margins.top;
+      }
+      drawBlock(left, leftIdx, startY);
+      if (rightIdx.length > 0) drawBlock(left + blockWidth + gap, rightIdx, startY);
+    });
+
+    doc.end();
+  } catch (e) {
+    console.error('GET /api/box-po/:id/export-pdf error:', e);
+    if (!res.headersSent) res.status(500).json({ error: e.message });
+    else res.end();
+  }
+});
+
 // POST /api/box-po/:id/note — { role: 'buyer'|'warehouse', text }
 // Buyer note and Warehouse note are two independent fields (unlike
 // Transfer's single shared note) — each role can have at most 1 of their
