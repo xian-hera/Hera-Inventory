@@ -1076,6 +1076,13 @@ const initDatabase = async () => {
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_box_po_items_box_po_id ON box_po_items (box_po_id)
     `);
+    // 2026-10-05 (Hera): per-line-item note on a BOX PO row (Warehouse and
+    // Buyer can both add/edit/delete it on an incoming task; read-only after).
+    // Independent of counted_confirmed — a row can be noted whether or not it
+    // has been checked.
+    await client.query(`
+      ALTER TABLE box_po_items ADD COLUMN IF NOT EXISTS note TEXT
+    `);
 
     // ─── Wig Demo ────────────────────────────────────────────────────────────────
     // One row per SKU currently set up as an in-store demo for a WIG product at a

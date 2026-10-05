@@ -5,6 +5,7 @@ import {
 } from '@shopify/polaris';
 import { useNavigate, useParams } from 'react-router-dom';
 import { StatusBadge } from '../shared/boxPoStatus';
+import { BoxPoTableStyle, LocationHeader, LineNoteTd, LineNoteExtraRow, useLineNoteEditor } from '../shared/boxPoLineNote';
 
 function formatDateOnly(dateStr) {
   if (!dateStr) return '';
@@ -52,7 +53,14 @@ function WarehouseBoxPODetail() {
         setItems(its);
         setDraftCounts(prev => {
           const next = { ...prev };
-          its.forEach(it => { if (next[it.id] === undefined) next[it.id] = String(it.box_qty); });
+          // 2026-10-05: a row that was already checked starts with the value
+          // that was counted (not the original Box qty), so un-checking it
+          // after a reload still shows the number that was entered.
+          its.forEach(it => {
+            if (next[it.id] === undefined) {
+              next[it.id] = String(it.counted_confirmed && it.box_received != null ? it.box_received : it.box_qty);
+            }
+          });
           return next;
         });
       })
@@ -94,6 +102,32 @@ function WarehouseBoxPODetail() {
       setCountingId(null);
     }
   };
+
+  // 2026-10-05 (Hera): click an already-checked Box qty cell to undo its
+  // check (mis-click / wrong number). The input keeps the previously counted
+  // value so only the wrong digits need fixing.
+  const uncount = async (item) => {
+    setCountingId(item.id);
+    setActionError('');
+    try {
+      const res = await fetch(`/api/box-po/${id}/uncount`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itemId: item.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to undo count');
+      setDraftCounts(prev => ({ ...prev, [item.id]: String(item.box_received ?? item.box_qty) }));
+      load();
+    } catch (e) {
+      setActionError(e.message);
+    } finally {
+      setCountingId(null);
+    }
+  };
+
+  // 2026-10-05 (Hera): per-line-item notes (shared editor with the Buyer page)
+  const lineNote = useLineNoteEditor(id, load, setActionError);
 
   const openAddNote = () => { setNoteDraft(boxPo?.warehouse_note || ''); setNoteEditing(true); };
   const saveNote = async () => {
@@ -221,58 +255,68 @@ function WarehouseBoxPODetail() {
             )}
 
             <Card>
+              <BoxPoTableStyle />
               <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                <table className="bpo-table">
                   <thead>
                     <tr style={{ borderBottom: '2px solid #e1e3e5' }}>
-                      <th style={TH_STYLE}>Destination Location</th>
-                      <th style={TH_STYLE}>Box qty</th>
+                      <th className="bpo-th bpo-col-loc"><LocationHeader /></th>
+                      <th className="bpo-th bpo-col-qty">Box qty</th>
+                      <th className="bpo-th bpo-col-note">Note</th>
                     </tr>
                   </thead>
                   <tbody>
                     {items.map(it => {
                       const mismatched = it.counted_confirmed && Number(it.box_received) !== Number(it.box_qty);
                       return (
-                        <tr key={it.id} style={{ borderBottom: '1px solid #f1f1f1' }}>
-                          <td style={TD_STYLE}>{it.location}</td>
-                          <td style={TD_STYLE}>
-                            {it.counted_confirmed ? (
-                              <InlineStack gap="150" blockAlign="center">
-                                <Text
-                                  as="span"
-                                  variant="bodySm"
-                                  fontWeight={mismatched ? 'bold' : undefined}
-                                  tone={mismatched ? 'critical' : undefined}
+                        <React.Fragment key={it.id}>
+                          <tr style={{ borderBottom: '1px solid #f1f1f1' }}>
+                            <td className="bpo-td bpo-col-loc">{it.location}</td>
+                            <td className="bpo-td bpo-col-qty">
+                              {it.counted_confirmed ? (
+                                // Click anywhere on the checked value + circle to undo the check
+                                <span
+                                  className="bpo-uncount"
+                                  title="Click to undo this count"
+                                  onClick={() => { if (countingId !== it.id) uncount(it); }}
                                 >
-                                  {it.box_received}
-                                </Text>
-                                <span style={mismatched ? CIRCLE_ORANGE_STYLE : CIRCLE_GREEN_STYLE}>✓</span>
-                              </InlineStack>
-                            ) : (
-                              <InlineStack gap="150" blockAlign="center">
-                                <input
-                                  type="number"
-                                  min="0"
-                                  value={draftCounts[it.id] ?? ''}
-                                  onChange={e => updateDraft(it.id, e.target.value)}
-                                  style={{
-                                    width: '72px', padding: '4px 6px', borderRadius: '6px',
-                                    border: '1px solid #c9cccf', fontSize: '13px',
-                                  }}
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => confirmCount(it.id)}
-                                  disabled={countingId === it.id}
-                                  style={CIRCLE_BUTTON_STYLE}
-                                  title="Confirm count"
-                                >
-                                  ✓
-                                </button>
-                              </InlineStack>
-                            )}
-                          </td>
-                        </tr>
+                                  <InlineStack gap="150" blockAlign="center" wrap={false}>
+                                    <Text
+                                      as="span"
+                                      variant="bodySm"
+                                      fontWeight={mismatched ? 'bold' : undefined}
+                                      tone={mismatched ? 'critical' : undefined}
+                                    >
+                                      {it.box_received}
+                                    </Text>
+                                    <span style={mismatched ? CIRCLE_ORANGE_STYLE : CIRCLE_GREEN_STYLE}>✓</span>
+                                  </InlineStack>
+                                </span>
+                              ) : (
+                                <InlineStack gap="150" blockAlign="center" wrap={false}>
+                                  <input
+                                    className="bpo-qty-input"
+                                    type="number"
+                                    min="0"
+                                    value={draftCounts[it.id] ?? ''}
+                                    onChange={e => updateDraft(it.id, e.target.value)}
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => confirmCount(it.id)}
+                                    disabled={countingId === it.id}
+                                    style={CIRCLE_BUTTON_STYLE}
+                                    title="Confirm count"
+                                  >
+                                    ✓
+                                  </button>
+                                </InlineStack>
+                              )}
+                            </td>
+                            <LineNoteTd item={it} editable={true} editor={lineNote} />
+                          </tr>
+                          <LineNoteExtraRow item={it} editable={true} editor={lineNote} colSpan={3} />
+                        </React.Fragment>
                       );
                     })}
                   </tbody>
@@ -286,8 +330,9 @@ function WarehouseBoxPODetail() {
   );
 }
 
-const TH_STYLE = { padding: '8px 10px', textAlign: 'left', fontWeight: '600', color: '#6d7175', whiteSpace: 'nowrap' };
-const TD_STYLE = { padding: '10px' };
+// (TH_STYLE / TD_STYLE were replaced on 2026-10-05 by the .bpo-th / .bpo-td
+// classes in ../shared/boxPoLineNote.js so the table can have mobile-only
+// widths via @media; nothing else in this file used them.)
 
 const CIRCLE_BASE_STYLE = {
   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',

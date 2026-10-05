@@ -1412,6 +1412,27 @@ router.post('/manager/receiving/:id/items/mark-correct', async (req, res) => {
   }
 });
 
+// POST /api/po-invoices/manager/receiving/:id/items/:itemId/reset
+// Count modal's red Reset button (2026-10-05, Hera): wipes this line item's
+// whole count history and store_count, putting it back to the never-counted
+// state — same two columns the invoice-level reset (store_count = NULL,
+// count_history = '[]') clears for every item at once.
+router.post('/manager/receiving/:id/items/:itemId/reset', async (req, res) => {
+  try {
+    const { id, itemId } = req.params;
+    const result = await pool.query(
+      `UPDATE po_invoice_items SET store_count = NULL, count_history = '[]'::jsonb
+       WHERE id = $1 AND invoice_id = $2 RETURNING *`,
+      [itemId, id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Item not found' });
+    res.json(result.rows[0]);
+  } catch (e) {
+    console.error('POST /api/po-invoices/manager/receiving/:id/items/:itemId/reset error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // POST /api/po-invoices/manager/receiving/:id/submit
 // 'sent_to_store' → 'store_counted' (green pill on the buyer side). Requires
 // every line item to have a store_count already (each already persisted by

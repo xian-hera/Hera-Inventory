@@ -222,6 +222,27 @@ function ManagerPOReceivingDetail() {
     saveCount(popupItem, { type: 'correct' });
   };
 
+  // Reset (2026-10-05, Hera) — clears this line item's count history and
+  // store_count so it goes back to "not counted". Only reachable from the
+  // modal's Count history block, i.e. only for an item counted at least once.
+  const handleReset = async () => {
+    if (!popupItem) return;
+    setSavingCount(true);
+    setCountError('');
+    try {
+      const res = await fetch(`/api/po-invoices/manager/receiving/${invoiceId}/items/${popupItem.id}/reset`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      // Same merge-not-replace reasoning as saveCount (keeps wig_number).
+      setItems(prev => prev.map(i => (i.id === popupItem.id ? { ...i, ...data } : i)));
+      closePopup();
+    } catch (e) {
+      setCountError(e.message);
+    } finally {
+      setSavingCount(false);
+    }
+  };
+
   const handleSubmitCount = () => {
     if (!popupItem) return;
     if (countInput === '') { setCountError('input your count'); return; }
@@ -661,9 +682,22 @@ function ManagerPOReceivingDetail() {
                         <Text>{h.type === 'correct' ? 'Correct' : String(h.value)}</Text>
                       </InlineStack>
                     ))}
-                    <Text variant="bodySm" tone="subdued">
-                      Total {popupItem.store_count === null || popupItem.store_count === undefined ? 0 : popupItem.store_count}
-                    </Text>
+                    <InlineStack align="space-between" blockAlign="center">
+                      <Text variant="bodySm" tone="subdued">
+                        Total {popupItem.store_count === null || popupItem.store_count === undefined ? 0 : popupItem.store_count}
+                      </Text>
+                      <button
+                        onClick={handleReset}
+                        disabled={savingCount}
+                        style={{
+                          background: '#c5192d', color: 'white', border: 'none',
+                          borderRadius: '8px', padding: '6px 16px', fontSize: '14px',
+                          cursor: savingCount ? 'default' : 'pointer',
+                        }}
+                      >
+                        Reset
+                      </button>
+                    </InlineStack>
                   </BlockStack>
                 )}
 

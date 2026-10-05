@@ -6,6 +6,38 @@ import { useNavigate } from 'react-router-dom';
 import { StatusBadge, warehouseStatusLabel, HoldBadge } from '../shared/transferStatus';
 import { StatusBadge as BoxPoStatusBadge } from '../shared/boxPoStatus';
 
+// Date column (2026-10-05, Hera): creation date of the transfer, shown right
+// after the Transfer column on all three transfer cards. YYYY-MM-DD on
+// desktop, MM-DD on phones — both are rendered and a single @media rule
+// (breakpoint 767/768px, same approach as Home.js) picks which is visible.
+// Computed in America/Toronto so a transfer created in the evening doesn't
+// show up as the next (UTC) day.
+const DATE_FMT = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit',
+});
+function formatCreatedDate(value) {
+  if (!value) return '';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return DATE_FMT.format(d); // en-CA => YYYY-MM-DD
+}
+function DateCell({ value }) {
+  const full = formatCreatedDate(value);
+  return (
+    <>
+      <span className="wh-date-desktop">{full}</span>
+      <span className="wh-date-mobile">{full.slice(5)}</span>
+    </>
+  );
+}
+const DATE_CSS = `
+.wh-date-mobile { display: none; }
+@media (max-width: 767px) {
+  .wh-date-desktop { display: none; }
+  .wh-date-mobile { display: inline; }
+}
+`;
+
 // Warehouse Home — a new "BOX PO" section at the very top (see
 // claude/BOX_PO_FEATURE_SPEC.md section 9), showing only status='incoming'
 // tasks — once a task becomes Received it disappears from here entirely.
@@ -14,8 +46,10 @@ import { StatusBadge as BoxPoStatusBadge } from '../shared/boxPoStatus';
 // Then Card 1: HQ-origin transfers (Loading/Pending/Good to go/
 // In transit), clickable, checkbox only on Good to go rows (for batch
 // dispatch), header select-all + "Dispatch selected" / "Dispatch all Good
-// to go" buttons. Card 2: "Pick up from store" transfers (non-HQ origin) —
-// no checkboxes, not clickable, Good to go reads as "Ready for Pick up".
+// to go" buttons. Card 2: "Pick up from store" transfers (neither from nor to
+// is HQ) — no checkboxes, Good to go reads as "Ready for Pick up". As of
+// 2026-10-05 the transfer number is clickable (underlined) into a read-only
+// detail page with no actions (WarehouseTransferViewDetail.js).
 // Spec doc section 5.
 function WarehouseHome() {
   const navigate = useNavigate();
@@ -120,6 +154,7 @@ function WarehouseHome() {
 
   return (
     <Page title="Warehouse" backAction={{ onAction: () => navigate('/') }}>
+      <style>{DATE_CSS}</style>
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">
@@ -202,6 +237,7 @@ function WarehouseHome() {
                                 )}
                               </th>
                               <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Transfer</th>
+                              <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Date</th>
                               <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>From</th>
                               <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>To</th>
                               <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Status</th>
@@ -225,6 +261,7 @@ function WarehouseHome() {
                                 >
                                   {tr.shopify_transfer_name || tr.transfer_no}
                                 </td>
+                                <td style={{ padding: '10px', whiteSpace: 'nowrap' }}><DateCell value={tr.created_at} /></td>
                                 <td style={{ padding: '10px' }}>{tr.from_location}</td>
                                 <td style={{ padding: '10px' }}>{tr.to_location}</td>
                                 <td style={{ padding: '10px' }}>
@@ -252,6 +289,7 @@ function WarehouseHome() {
                           <thead>
                             <tr style={{ borderBottom: '2px solid #e1e3e5' }}>
                               <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Transfer</th>
+                              <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Date</th>
                               <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>From</th>
                               <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>To</th>
                               <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Status</th>
@@ -266,6 +304,7 @@ function WarehouseHome() {
                                 >
                                   {tr.shopify_transfer_name || tr.transfer_no}
                                 </td>
+                                <td style={{ padding: '10px', whiteSpace: 'nowrap' }}><DateCell value={tr.created_at} /></td>
                                 <td style={{ padding: '10px' }}>{tr.from_location}</td>
                                 <td style={{ padding: '10px' }}>{tr.to_location}</td>
                                 <td style={{ padding: '10px' }}>
@@ -291,6 +330,7 @@ function WarehouseHome() {
                           <thead>
                             <tr style={{ borderBottom: '2px solid #e1e3e5' }}>
                               <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Transfer</th>
+                              <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Date</th>
                               <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>From</th>
                               <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>To</th>
                               <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Status</th>
@@ -299,7 +339,14 @@ function WarehouseHome() {
                           <tbody>
                             {pickupFromStore.map(tr => (
                               <tr key={tr.id} style={{ borderBottom: '1px solid #f1f1f1' }}>
-                                <td style={{ padding: '10px' }}>{tr.shopify_transfer_name || tr.transfer_no}</td>
+                                {/* 2026-10-05: now clickable into a read-only detail page */}
+                                <td
+                                  style={{ padding: '10px', cursor: 'pointer', textDecoration: 'underline' }}
+                                  onClick={() => navigate(`/warehouse/transfer/view/${tr.id}`)}
+                                >
+                                  {tr.shopify_transfer_name || tr.transfer_no}
+                                </td>
+                                <td style={{ padding: '10px', whiteSpace: 'nowrap' }}><DateCell value={tr.created_at} /></td>
                                 <td style={{ padding: '10px' }}>{tr.from_location}</td>
                                 <td style={{ padding: '10px' }}>{tr.to_location}</td>
                                 <td style={{ padding: '10px' }}>

@@ -603,21 +603,32 @@ router.get('/ongoing', async (req, res) => {
 // ─── Warehouse home ──────────────────────────────────────────────────────────
 
 // GET /api/transfers/warehouse/home — two lists: HQ-origin (clickable, needs
-// full item detail) and non-HQ-origin ("Pick up from store", not clickable —
-// Warehouse only needs from/to/status). Warehouse sees Loading/Pending/
-// Good to go/In transit (spec doc section 5).
+// full item detail) and "Pick up from store" (neither end is HQ). As of
+// 2026-10-05 Pick up from store is also clickable, into a read-only detail
+// page (WarehouseTransferViewDetail.js) — no actions there. Warehouse sees
+// Loading/Pending/Good to go/In transit (spec doc section 5).
 router.get('/warehouse/home', async (req, res) => {
   try {
     const statuses = ['loading', 'pending', 'good_to_go', 'in_transit'];
     const result = await pool.query(
-      `SELECT id, transfer_no, shopify_transfer_name, from_location, to_location, status, on_hold
+      // created_at (2026-10-05, Hera): feeds the new Date column on all three
+      // Warehouse home cards.
+      `SELECT id, transfer_no, shopify_transfer_name, from_location, to_location, status, on_hold, created_at
        FROM transfers
        WHERE status = ANY($1)
        ORDER BY created_at ASC`,
       [statuses]
     );
+    // 2026-10-05 (Hera): card membership is now strictly by HQ involvement —
+    //   HQ transfers      = from HQ (to is irrelevant)
+    //   Receiving to HQ   = to HQ (from is irrelevant) — separate endpoint below
+    //   Pick up from store = neither from NOR to is HQ
+    // Previously Pick up from store was just "from is not HQ", so a store -> HQ
+    // transfer showed up there AND in Receiving to HQ.
     const hq = result.rows.filter(r => r.from_location === HQ_LOCATION_NAME);
-    const pickupFromStore = result.rows.filter(r => r.from_location !== HQ_LOCATION_NAME);
+    const pickupFromStore = result.rows.filter(
+      r => r.from_location !== HQ_LOCATION_NAME && r.to_location !== HQ_LOCATION_NAME
+    );
     res.json({ hq, pickupFromStore });
   } catch (e) {
     console.error('GET /api/transfers/warehouse/home error:', e);
@@ -634,7 +645,7 @@ router.get('/warehouse/home', async (req, res) => {
 router.get('/warehouse/receiving-to-hq', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id, transfer_no, shopify_transfer_name, from_location, to_location, status, on_hold
+      `SELECT id, transfer_no, shopify_transfer_name, from_location, to_location, status, on_hold, created_at
        FROM transfers
        WHERE to_location = $1 AND status IN ('in_transit', 'receiving')
        ORDER BY created_at ASC`,

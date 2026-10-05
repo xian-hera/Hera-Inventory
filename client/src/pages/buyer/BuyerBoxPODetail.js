@@ -5,6 +5,7 @@ import {
 } from '@shopify/polaris';
 import { useNavigate, useParams } from 'react-router-dom';
 import { StatusBadge } from '../shared/boxPoStatus';
+import { BoxPoTableStyle, LocationHeader, LineNoteTd, LineNoteExtraRow, useLineNoteEditor } from '../shared/boxPoLineNote';
 
 function formatDateOnly(dateStr) {
   if (!dateStr) return '';
@@ -57,7 +58,13 @@ function BuyerBoxPODetail() {
         setItems(its);
         setDraftCounts(prev => {
           const next = { ...prev };
-          its.forEach(it => { if (next[it.id] === undefined) next[it.id] = String(it.box_qty); });
+          // 2026-10-05: already-checked rows start with the counted value so
+          // un-checking after a reload still shows the number that was entered.
+          its.forEach(it => {
+            if (next[it.id] === undefined) {
+              next[it.id] = String(it.counted_confirmed && it.box_received != null ? it.box_received : it.box_qty);
+            }
+          });
           return next;
         });
       })
@@ -114,6 +121,31 @@ function BuyerBoxPODetail() {
       setCountingId(null);
     }
   };
+
+  // 2026-10-05 (Hera): same un-check as the Warehouse page — click an
+  // already-checked Box qty cell to undo it; the input keeps the counted value.
+  const uncount = async (item) => {
+    setCountingId(item.id);
+    setActionError('');
+    try {
+      const res = await fetch(`/api/box-po/${id}/uncount`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itemId: item.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to undo count');
+      setDraftCounts(prev => ({ ...prev, [item.id]: String(item.box_received ?? item.box_qty) }));
+      load();
+    } catch (e) {
+      setActionError(e.message);
+    } finally {
+      setCountingId(null);
+    }
+  };
+
+  // 2026-10-05 (Hera): per-line-item notes (shared editor with the Warehouse page)
+  const lineNote = useLineNoteEditor(id, load, setActionError);
 
   const allConfirmed = items.length > 0 && items.every(it => it.counted_confirmed);
 
@@ -186,15 +218,17 @@ function BuyerBoxPODetail() {
             )}
 
             <Card>
+              <BoxPoTableStyle />
               <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                <table className="bpo-table">
                   <thead>
                     <tr style={{ borderBottom: '2px solid #e1e3e5' }}>
-                      <th style={TH_STYLE}>Destination Location</th>
-                      {status === 'incoming' && <th style={TH_STYLE}>Box qty</th>}
-                      {status === 'received' && <th style={TH_STYLE}>Box qty</th>}
-                      {status === 'received' && <th style={TH_STYLE}>Box received</th>}
-                      {status === 'confirmed' && <th style={TH_STYLE}>Box received</th>}
+                      <th className="bpo-th bpo-col-loc"><LocationHeader /></th>
+                      {status === 'incoming' && <th className="bpo-th bpo-col-qty">Box qty</th>}
+                      {status === 'received' && <th className="bpo-th bpo-col-num">Box qty</th>}
+                      {status === 'received' && <th className="bpo-th bpo-col-qty">Box received</th>}
+                      {status === 'confirmed' && <th className="bpo-th bpo-col-num">Box received</th>}
+                      <th className="bpo-th bpo-col-note">Note</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -202,13 +236,61 @@ function BuyerBoxPODetail() {
                       const mismatched = status === 'incoming'
                         ? it.counted_confirmed && Number(it.box_received) !== Number(it.box_qty)
                         : it.box_received != null && Number(it.box_received) !== Number(it.box_qty);
+                      // Note is editable only while incoming (same as Warehouse);
+                      // received / confirmed show it read-only.
+                      const noteEditable = status === 'incoming';
+                      const colCount = status === 'received' ? 4 : 3;
                       return (
-                        <tr key={it.id} style={{ borderBottom: '1px solid #f1f1f1' }}>
-                          <td style={TD_STYLE}>{it.location}</td>
-                          {status === 'incoming' && (
-                            <td style={TD_STYLE}>
-                              {it.counted_confirmed ? (
-                                <InlineStack gap="150" blockAlign="center">
+                        <React.Fragment key={it.id}>
+                          <tr style={{ borderBottom: '1px solid #f1f1f1' }}>
+                            <td className="bpo-td bpo-col-loc">{it.location}</td>
+                            {status === 'incoming' && (
+                              <td className="bpo-td bpo-col-qty">
+                                {it.counted_confirmed ? (
+                                  // Click anywhere on the checked value + circle to undo the check
+                                  <span
+                                    className="bpo-uncount"
+                                    title="Click to undo this count"
+                                    onClick={() => { if (countingId !== it.id) uncount(it); }}
+                                  >
+                                    <InlineStack gap="150" blockAlign="center" wrap={false}>
+                                      <Text
+                                        as="span"
+                                        variant="bodySm"
+                                        fontWeight={mismatched ? 'bold' : undefined}
+                                        tone={mismatched ? 'critical' : undefined}
+                                      >
+                                        {it.box_received}
+                                      </Text>
+                                      <span style={mismatched ? CIRCLE_ORANGE_STYLE : CIRCLE_GREEN_STYLE}>✓</span>
+                                    </InlineStack>
+                                  </span>
+                                ) : (
+                                  <InlineStack gap="150" blockAlign="center" wrap={false}>
+                                    <input
+                                      className="bpo-qty-input"
+                                      type="number"
+                                      min="0"
+                                      value={draftCounts[it.id] ?? ''}
+                                      onChange={e => updateDraft(it.id, e.target.value)}
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => confirmCount(it.id)}
+                                      disabled={countingId === it.id}
+                                      style={CIRCLE_BUTTON_STYLE}
+                                      title="Confirm count"
+                                    >
+                                      ✓
+                                    </button>
+                                  </InlineStack>
+                                )}
+                              </td>
+                            )}
+                            {status === 'received' && <td className="bpo-td bpo-col-num">{it.box_qty}</td>}
+                            {status === 'received' && (
+                              <td className="bpo-td bpo-col-qty">
+                                <InlineStack gap="150" blockAlign="center" wrap={false}>
                                   <Text
                                     as="span"
                                     variant="bodySm"
@@ -219,49 +301,13 @@ function BuyerBoxPODetail() {
                                   </Text>
                                   <span style={mismatched ? CIRCLE_ORANGE_STYLE : CIRCLE_GREEN_STYLE}>✓</span>
                                 </InlineStack>
-                              ) : (
-                                <InlineStack gap="150" blockAlign="center">
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    value={draftCounts[it.id] ?? ''}
-                                    onChange={e => updateDraft(it.id, e.target.value)}
-                                    style={{
-                                      width: '72px', padding: '4px 6px', borderRadius: '6px',
-                                      border: '1px solid #c9cccf', fontSize: '13px',
-                                    }}
-                                  />
-                                  <button
-                                    type="button"
-                                    onClick={() => confirmCount(it.id)}
-                                    disabled={countingId === it.id}
-                                    style={CIRCLE_BUTTON_STYLE}
-                                    title="Confirm count"
-                                  >
-                                    ✓
-                                  </button>
-                                </InlineStack>
-                              )}
-                            </td>
-                          )}
-                          {status === 'received' && <td style={TD_STYLE}>{it.box_qty}</td>}
-                          {status === 'received' && (
-                            <td style={TD_STYLE}>
-                              <InlineStack gap="150" blockAlign="center">
-                                <Text
-                                  as="span"
-                                  variant="bodySm"
-                                  fontWeight={mismatched ? 'bold' : undefined}
-                                  tone={mismatched ? 'critical' : undefined}
-                                >
-                                  {it.box_received}
-                                </Text>
-                                <span style={mismatched ? CIRCLE_ORANGE_STYLE : CIRCLE_GREEN_STYLE}>✓</span>
-                              </InlineStack>
-                            </td>
-                          )}
-                          {status === 'confirmed' && <td style={TD_STYLE}>{it.box_received}</td>}
-                        </tr>
+                              </td>
+                            )}
+                            {status === 'confirmed' && <td className="bpo-td bpo-col-num">{it.box_received}</td>}
+                            <LineNoteTd item={it} editable={noteEditable} editor={lineNote} />
+                          </tr>
+                          <LineNoteExtraRow item={it} editable={noteEditable} editor={lineNote} colSpan={colCount} />
+                        </React.Fragment>
                       );
                     })}
                   </tbody>
@@ -275,8 +321,9 @@ function BuyerBoxPODetail() {
   );
 }
 
-const TH_STYLE = { padding: '8px 10px', textAlign: 'left', fontWeight: '600', color: '#6d7175', whiteSpace: 'nowrap' };
-const TD_STYLE = { padding: '10px' };
+// (TH_STYLE / TD_STYLE were replaced on 2026-10-05 by the .bpo-th / .bpo-td
+// classes in ../shared/boxPoLineNote.js so the table can have mobile-only
+// widths via @media; nothing else in this file used them.)
 
 const CIRCLE_BASE_STYLE = {
   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',

@@ -80,6 +80,7 @@ import BuyerBoxPODetail from './pages/buyer/BuyerBoxPODetail';
 import WarehouseHome from './pages/warehouse/WarehouseHome';
 import WarehouseTransferDetail from './pages/warehouse/WarehouseTransferDetail';
 import WarehouseTransferReceivingDetail from './pages/warehouse/WarehouseTransferReceivingDetail';
+import WarehouseTransferViewDetail from './pages/warehouse/WarehouseTransferViewDetail';
 import WarehouseBoxPODetail from './pages/warehouse/WarehouseBoxPODetail';
 import ManagerTransferHome from './pages/manager/ManagerTransferHome';
 import ManagerTransferSendingDetail from './pages/manager/ManagerTransferSendingDetail';
@@ -150,6 +151,8 @@ function App() {
           {/* Receiving to HQ (改动二) — fixed "receiving" segment registered
               before the :transferId route so it can't be shadowed. */}
           <Route path="/warehouse/transfer/receiving/:transferId" element={<WarehouseTransferReceivingDetail />} />
+          {/* Read-only view for "Pick up from store" transfers (2026-10-05) */}
+          <Route path="/warehouse/transfer/view/:transferId" element={<WarehouseTransferViewDetail />} />
           <Route path="/warehouse/transfer/:transferId" element={<WarehouseTransferDetail />} />
           <Route path="/warehouse/box-po/:id" element={<WarehouseBoxPODetail />} />
 

@@ -299,6 +299,62 @@ router.post('/:id/count', async (req, res) => {
   }
 });
 
+// POST /api/box-po/:id/uncount — undo a row's check (2026-10-05, Hera).
+// body: { itemId }
+// Lets Warehouse/Buyer fix a mis-click or a wrong number: flips the row back
+// to counted_confirmed = FALSE so it can be edited and re-checked. box_received
+// is left as-is on purpose — the frontend keeps showing the previously entered
+// value in the input so only the wrong digits need fixing. Only allowed while
+// the task is still 'incoming' (once submitted, the counts are locked).
+router.post('/:id/uncount', async (req, res) => {
+  try {
+    const { itemId } = req.body;
+    if (!itemId) return res.status(400).json({ error: 'itemId is required' });
+    const boxPoRes = await pool.query('SELECT status FROM box_pos WHERE id = $1', [req.params.id]);
+    if (boxPoRes.rows.length === 0) return res.status(404).json({ error: 'BOX PO not found' });
+    if (boxPoRes.rows[0].status !== 'incoming') {
+      return res.status(400).json({ error: `Cannot undo a count on a task that is already ${boxPoRes.rows[0].status}` });
+    }
+    const result = await pool.query(
+      `UPDATE box_po_items SET counted_confirmed = FALSE
+       WHERE id = $1 AND box_po_id = $2 RETURNING *`,
+      [itemId, req.params.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Line item not found' });
+    res.json({ item: result.rows[0] });
+  } catch (e) {
+    console.error('POST /api/box-po/:id/uncount error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/box-po/:id/item-note — per-line-item note (2026-10-05, Hera).
+// body: { itemId, text } — empty/blank text clears the note (same endpoint
+// handles add, edit, and the red × delete). Used by both Warehouse and Buyer
+// on an incoming task; once the task is submitted the notes are read-only.
+router.post('/:id/item-note', async (req, res) => {
+  try {
+    const { itemId, text } = req.body;
+    if (!itemId) return res.status(400).json({ error: 'itemId is required' });
+    const boxPoRes = await pool.query('SELECT status FROM box_pos WHERE id = $1', [req.params.id]);
+    if (boxPoRes.rows.length === 0) return res.status(404).json({ error: 'BOX PO not found' });
+    if (boxPoRes.rows[0].status !== 'incoming') {
+      return res.status(400).json({ error: `Cannot edit line notes on a task that is already ${boxPoRes.rows[0].status}` });
+    }
+    const trimmed = (text || '').trim();
+    const result = await pool.query(
+      `UPDATE box_po_items SET note = $1
+       WHERE id = $2 AND box_po_id = $3 RETURNING *`,
+      [trimmed || null, itemId, req.params.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Line item not found' });
+    res.json({ item: result.rows[0] });
+  } catch (e) {
+    console.error('POST /api/box-po/:id/item-note error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // POST /api/box-po/:id/submit — Warehouse's Submit button.
 // Requires every line item to already be counted_confirmed. Flips status
 // incoming -> received; the task disappears from the Warehouse home list.
