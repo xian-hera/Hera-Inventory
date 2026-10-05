@@ -231,11 +231,18 @@ function WarehouseHome() {
                         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                           <thead>
                             <tr style={{ borderBottom: '2px solid #e1e3e5' }}>
-                              <th style={{ padding: '8px 10px', width: '32px' }}>
-                                {goodToGoIds.length > 0 && (
+                              {/* 2026-10-05 indentation fix: this checkbox column used
+                                  to be ALWAYS rendered at a fixed 32px (+20px padding)
+                                  even when no row is Good to go and every cell in it was
+                                  empty — an empty ~50px gutter in front of "Transfer",
+                                  very visible on a phone. Now only rendered when at least
+                                  one row actually has a checkbox, and shrunk to just
+                                  hug the checkbox (width 1%, tighter padding). */}
+                              {goodToGoIds.length > 0 && (
+                                <th style={{ padding: '8px 4px 8px 10px', width: '1%' }}>
                                   <input type="checkbox" checked={allGoodToGoSelected} onChange={toggleSelectAll} />
-                                )}
-                              </th>
+                                </th>
+                              )}
                               <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Transfer</th>
                               <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Date</th>
                               <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>From</th>
@@ -246,15 +253,17 @@ function WarehouseHome() {
                           <tbody>
                             {hq.map(tr => (
                               <tr key={tr.id} style={{ borderBottom: '1px solid #f1f1f1' }}>
-                                <td style={{ padding: '8px 10px' }}>
-                                  {tr.status === 'good_to_go' && (
-                                    <input
-                                      type="checkbox"
-                                      checked={selectedIds.includes(tr.id)}
-                                      onChange={(e) => { e.stopPropagation(); toggleSelect(tr.id); }}
-                                    />
-                                  )}
-                                </td>
+                                {goodToGoIds.length > 0 && (
+                                  <td style={{ padding: '8px 4px 8px 10px', width: '1%' }}>
+                                    {tr.status === 'good_to_go' && (
+                                      <input
+                                        type="checkbox"
+                                        checked={selectedIds.includes(tr.id)}
+                                        onChange={(e) => { e.stopPropagation(); toggleSelect(tr.id); }}
+                                      />
+                                    )}
+                                  </td>
+                                )}
                                 <td
                                   style={{ padding: '10px', cursor: 'pointer', textDecoration: 'underline' }}
                                   onClick={() => navigate(`/warehouse/transfer/${tr.id}`)}
