@@ -1,105 +1,129 @@
-import React from 'react';
+import React, { Suspense } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
-import { AppProvider } from '@shopify/polaris';
+import { AppProvider, Text } from '@shopify/polaris';
 import enTranslations from '@shopify/polaris/locales/en.json';
 import Home from './pages/Home';
-import BuyerHome from './pages/buyer/BuyerHome';
-import BuyerInventoryCount from './pages/buyer/BuyerInventoryCount';
-import BuyerSettings from './pages/buyer/BuyerSettings';
-import CountingTasksList from './pages/buyer/CountingTasksList';
-import CreatingTask from './pages/buyer/CreatingTask';
-import PreviewTask from './pages/buyer/PreviewTask';
-import TaskDetail from './pages/buyer/TaskDetail';
-import ZeroQtyReport from './pages/buyer/ZeroQtyReport';
-import BuyerStockLosses from './pages/buyer/BuyerStockLosses';
-import BuyerWigDemo from './pages/buyer/BuyerWigDemo';
-import BuyerStockLossesSettings from './pages/buyer/BuyerStockLossesSettings';
-import ManagerRestockPlan from './pages/manager/ManagerRestockPlan';
-import ManagerRestockTasks from './pages/manager/ManagerRestockTasks'; // Restock tasks layer, 2026-09-24
-import BuyerLabelTemplates from './pages/buyer/BuyerLabelTemplates';
-import BuyerLabelEditor from './pages/buyer/BuyerLabelEditor';
-import ManagerHome from './pages/manager/ManagerHome';
-import ManagerInventoryCount from './pages/manager/ManagerInventoryCount';
-import ManagerCountingTasksList from './pages/manager/ManagerCountingTasksList';
-import ManagerTaskDetail from './pages/manager/ManagerTaskDetail';
-import ManagerZeroQtyReport from './pages/manager/ManagerZeroQtyReport';
-import ManagerStockLosses from './pages/manager/ManagerStockLosses';
-import ManagerWigDemo from './pages/manager/ManagerWigDemo';
-import ManagerLabelPrintTasks from './pages/manager/ManagerLabelPrintTasks';
-import ManagerLabelPrintTaskDetail from './pages/manager/ManagerLabelPrintTaskDetail';
-import BuyerPriceChange from './pages/buyer/BuyerPriceChange';
-import ManagerPriceChangeDetail from './pages/manager/ManagerPriceChangeDetail';
-import ManagerEmployeeCap from './pages/manager/ManagerEmployeeCap';
-import ManagerPOReceiving from './pages/manager/ManagerPOReceiving';
-import ManagerPOReceivingDetail from './pages/manager/ManagerPOReceivingDetail';
-import CRMHome from './pages/crm/CRMHome';
-import CRMSettings from './pages/crm/CRMSettings';
-import HairdresserList from './pages/crm/HairdresserList';
-import HairdresserDetail from './pages/crm/HairdresserDetail';
-import SettleCommissions from './pages/crm/SettleCommissions';
-import EmployeeCap from './pages/crm/EmployeeCap';
-// Online — new section split out of CRM/Growth (2026-09-21, Hera): Birthday
-// Reward + Influencer Management, moved here from ./pages/crm, gated by
-// their own online_pin instead of crm_pin. See pages/online/OnlineHome.js.
-import OnlineHome from './pages/online/OnlineHome';
-import OnlineSettings from './pages/online/OnlineSettings';
-import BirthdayReward from './pages/online/BirthdayReward';
-import BirthdayOrders from './pages/online/BirthdayOrders';
-import InfluencerList from './pages/online/InfluencerList';
-import InfluencerDetail from './pages/online/InfluencerDetail';
-// Import Products (buyer) + New products (online) — 2026-09-24, see claude/IMPORT_PRODUCTS_FEATURE_SPEC.md
-import BuyerImportProducts from './pages/buyer/BuyerImportProducts';
-import BuyerImportProductsSettings from './pages/buyer/BuyerImportProductsSettings';
-import OnlineNewProducts from './pages/online/OnlineNewProducts';
-import OnlineNewProductsFinalized from './pages/online/OnlineNewProductsFinalized';
-import OnlineNewProductsSettings from './pages/online/OnlineNewProductsSettings';
-// Online › Swatch — 2026-10-01, see claude/SWATCH_FEATURE_SPEC.md
-import OnlineSwatch from './pages/online/swatch/OnlineSwatch';
-// Online › Dashboard + tabs — 2026-10-01, see claude/ONLINE_DASHBOARD_SPEC.md
-import OnlineDashboard from './pages/online/OnlineDashboard';
-import ProductDatabaseSettings from './pages/buyer/ProductDatabaseSettings';
-import BuyerPOReceiving from './pages/buyer/BuyerPOReceiving';
-import BuyerPOImportInvoice from './pages/buyer/BuyerPOImportInvoice';
-import BuyerPOInvoiceDetail from './pages/buyer/BuyerPOInvoiceDetail';
-import BuyerPOCommitLater from './pages/buyer/BuyerPOCommitLater';
-import BuyerPOSuppliers from './pages/buyer/BuyerPOSuppliers';
-import BuyerPOSupplierAdd from './pages/buyer/BuyerPOSupplierAdd';
-import BuyerPOSupplierDetail from './pages/buyer/BuyerPOSupplierDetail';
-import BuyerPOSettings from './pages/buyer/BuyerPOSettings';
-import BuyerTransfer from './pages/buyer/BuyerTransfer';
-import BuyerTransferHistory from './pages/buyer/BuyerTransferHistory';
-import BuyerTransferCreate from './pages/buyer/BuyerTransferCreate';
-import BuyerTransferOngoing from './pages/buyer/BuyerTransferOngoing';
-import BuyerTransferSettings from './pages/buyer/BuyerTransferSettings';
-import BuyerTransferDetail from './pages/buyer/BuyerTransferDetail';
-import BuyerBoxPO from './pages/buyer/BuyerBoxPO';
-import BuyerBoxPOCreate from './pages/buyer/BuyerBoxPOCreate';
-import BuyerBoxPOOngoing from './pages/buyer/BuyerBoxPOOngoing';
-import BuyerBoxPOPast from './pages/buyer/BuyerBoxPOPast';
-import BuyerBoxPODetail from './pages/buyer/BuyerBoxPODetail';
-import WarehouseHome from './pages/warehouse/WarehouseHome';
-import WarehouseTransferDetail from './pages/warehouse/WarehouseTransferDetail';
-import WarehouseTransferReceivingDetail from './pages/warehouse/WarehouseTransferReceivingDetail';
-import WarehouseTransferViewDetail from './pages/warehouse/WarehouseTransferViewDetail';
-import WarehouseBoxPODetail from './pages/warehouse/WarehouseBoxPODetail';
-import ManagerTransferHome from './pages/manager/ManagerTransferHome';
-import ManagerTransferSendingDetail from './pages/manager/ManagerTransferSendingDetail';
-import ManagerTransferReceivingDetail from './pages/manager/ManagerTransferReceivingDetail';
-import ManagerTaskHistoryDetail from './pages/manager/ManagerTaskHistoryDetail';
-import ManagerPOReceivingHistoryDetail from './pages/manager/ManagerPOReceivingHistoryDetail';
-import ManagerTransferHistoryDetail from './pages/manager/ManagerTransferHistoryDetail';
 // Every /manager route is wrapped in ManagerLocationGate (2026-09-29): it
 // loads the Store location remembered for the current Shopify account once,
 // before the page renders, so manager pages can read it synchronously. See
 // components/ManagerLocationGate.js and accountMemory.js.
 import ManagerLocationGate from './components/ManagerLocationGate';
-import ManagerNewArrival from './pages/manager/ManagerNewArrival'; // Store → New Arrival, 2026-09-29
-import BuyerNewArrivalSettings from './pages/buyer/BuyerNewArrivalSettings'; // its rules, 2026-09-29
+// Route-level lazy loading (2026-10-06): every page below is downloaded only
+// when the user first enters its section. The /* webpackChunkName */ comment
+// groups all pages of one section into ONE file, so e.g. Store users never
+// download Purchasing / Online / Operation / Warehouse pages. Home and
+// ManagerLocationGate stay in the main file (loaded first, always).
+// lazyWithReload = React.lazy + one automatic reload when a deploy has
+// replaced the section files under an already-open tab (see lazyWithReload.js).
+// PageErrorBoundary = an error in one page no longer blanks the whole Hub.
+import lazyWithReload from './lazyWithReload';
+import PageErrorBoundary from './components/PageErrorBoundary';
+const BuyerHome = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerHome'));
+const BuyerInventoryCount = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerInventoryCount'));
+const BuyerSettings = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerSettings'));
+const CountingTasksList = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/CountingTasksList'));
+const CreatingTask = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/CreatingTask'));
+const PreviewTask = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/PreviewTask'));
+const TaskDetail = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/TaskDetail'));
+const ZeroQtyReport = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/ZeroQtyReport'));
+const BuyerStockLosses = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerStockLosses'));
+const BuyerWigDemo = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerWigDemo'));
+const BuyerStockLossesSettings = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerStockLossesSettings'));
+const ManagerRestockPlan = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerRestockPlan'));
+const ManagerRestockTasks = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerRestockTasks')); // Restock tasks layer, 2026-09-24
+const BuyerLabelTemplates = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerLabelTemplates'));
+// Own file: the label editor carries the large fabric drawing library (~100 KB
+// compressed), so the rest of Purchasing loads without it.
+const BuyerLabelEditor = lazyWithReload(() => import(/* webpackChunkName: "buyer-label-editor" */ './pages/buyer/BuyerLabelEditor'));
+const ManagerHome = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerHome'));
+const ManagerInventoryCount = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerInventoryCount'));
+const ManagerCountingTasksList = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerCountingTasksList'));
+const ManagerTaskDetail = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerTaskDetail'));
+const ManagerZeroQtyReport = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerZeroQtyReport'));
+const ManagerStockLosses = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerStockLosses'));
+const ManagerWigDemo = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerWigDemo'));
+const ManagerLabelPrintTasks = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerLabelPrintTasks'));
+const ManagerLabelPrintTaskDetail = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerLabelPrintTaskDetail'));
+const BuyerPriceChange = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerPriceChange'));
+const ManagerPriceChangeDetail = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerPriceChangeDetail'));
+const ManagerEmployeeCap = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerEmployeeCap'));
+const ManagerPOReceiving = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerPOReceiving'));
+const ManagerPOReceivingDetail = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerPOReceivingDetail'));
+const CRMHome = lazyWithReload(() => import(/* webpackChunkName: "crm" */ './pages/crm/CRMHome'));
+const CRMSettings = lazyWithReload(() => import(/* webpackChunkName: "crm" */ './pages/crm/CRMSettings'));
+const HairdresserList = lazyWithReload(() => import(/* webpackChunkName: "crm" */ './pages/crm/HairdresserList'));
+const HairdresserDetail = lazyWithReload(() => import(/* webpackChunkName: "crm" */ './pages/crm/HairdresserDetail'));
+const SettleCommissions = lazyWithReload(() => import(/* webpackChunkName: "crm" */ './pages/crm/SettleCommissions'));
+const EmployeeCap = lazyWithReload(() => import(/* webpackChunkName: "crm" */ './pages/crm/EmployeeCap'));
+// Online — new section split out of CRM/Growth (2026-09-21, Hera): Birthday
+// Reward + Influencer Management, moved here from ./pages/crm, gated by
+// their own online_pin instead of crm_pin. See pages/online/OnlineHome.js.
+const OnlineHome = lazyWithReload(() => import(/* webpackChunkName: "online" */ './pages/online/OnlineHome'));
+const OnlineSettings = lazyWithReload(() => import(/* webpackChunkName: "online" */ './pages/online/OnlineSettings'));
+const BirthdayReward = lazyWithReload(() => import(/* webpackChunkName: "online" */ './pages/online/BirthdayReward'));
+const BirthdayOrders = lazyWithReload(() => import(/* webpackChunkName: "online" */ './pages/online/BirthdayOrders'));
+const InfluencerList = lazyWithReload(() => import(/* webpackChunkName: "online" */ './pages/online/InfluencerList'));
+const InfluencerDetail = lazyWithReload(() => import(/* webpackChunkName: "online" */ './pages/online/InfluencerDetail'));
+// Import Products (buyer) + New products (online) — 2026-09-24, see claude/IMPORT_PRODUCTS_FEATURE_SPEC.md
+const BuyerImportProducts = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerImportProducts'));
+const BuyerImportProductsSettings = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerImportProductsSettings'));
+const OnlineNewProducts = lazyWithReload(() => import(/* webpackChunkName: "online" */ './pages/online/OnlineNewProducts'));
+const OnlineNewProductsFinalized = lazyWithReload(() => import(/* webpackChunkName: "online" */ './pages/online/OnlineNewProductsFinalized'));
+const OnlineNewProductsSettings = lazyWithReload(() => import(/* webpackChunkName: "online" */ './pages/online/OnlineNewProductsSettings'));
+// Online › Swatch — 2026-10-01, see claude/SWATCH_FEATURE_SPEC.md
+const OnlineSwatch = lazyWithReload(() => import(/* webpackChunkName: "online" */ './pages/online/swatch/OnlineSwatch'));
+// Online › Dashboard + tabs — 2026-10-01, see claude/ONLINE_DASHBOARD_SPEC.md
+const OnlineDashboard = lazyWithReload(() => import(/* webpackChunkName: "online" */ './pages/online/OnlineDashboard'));
+const ProductDatabaseSettings = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/ProductDatabaseSettings'));
+const BuyerPOReceiving = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerPOReceiving'));
+const BuyerPOImportInvoice = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerPOImportInvoice'));
+const BuyerPOInvoiceDetail = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerPOInvoiceDetail'));
+const BuyerPOCommitLater = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerPOCommitLater'));
+const BuyerPOSuppliers = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerPOSuppliers'));
+const BuyerPOSupplierAdd = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerPOSupplierAdd'));
+const BuyerPOSupplierDetail = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerPOSupplierDetail'));
+const BuyerPOSettings = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerPOSettings'));
+const BuyerTransfer = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerTransfer'));
+const BuyerTransferHistory = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerTransferHistory'));
+const BuyerTransferCreate = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerTransferCreate'));
+const BuyerTransferOngoing = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerTransferOngoing'));
+const BuyerTransferSettings = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerTransferSettings'));
+const BuyerTransferDetail = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerTransferDetail'));
+const BuyerBoxPO = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerBoxPO'));
+const BuyerBoxPOCreate = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerBoxPOCreate'));
+const BuyerBoxPOOngoing = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerBoxPOOngoing'));
+const BuyerBoxPOPast = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerBoxPOPast'));
+const BuyerBoxPODetail = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerBoxPODetail'));
+const WarehouseHome = lazyWithReload(() => import(/* webpackChunkName: "warehouse" */ './pages/warehouse/WarehouseHome'));
+const WarehouseTransferDetail = lazyWithReload(() => import(/* webpackChunkName: "warehouse" */ './pages/warehouse/WarehouseTransferDetail'));
+const WarehouseTransferReceivingDetail = lazyWithReload(() => import(/* webpackChunkName: "warehouse" */ './pages/warehouse/WarehouseTransferReceivingDetail'));
+const WarehouseTransferViewDetail = lazyWithReload(() => import(/* webpackChunkName: "warehouse" */ './pages/warehouse/WarehouseTransferViewDetail'));
+const WarehouseBoxPODetail = lazyWithReload(() => import(/* webpackChunkName: "warehouse" */ './pages/warehouse/WarehouseBoxPODetail'));
+const ManagerTransferHome = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerTransferHome'));
+const ManagerTransferSendingDetail = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerTransferSendingDetail'));
+const ManagerTransferReceivingDetail = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerTransferReceivingDetail'));
+const ManagerTaskHistoryDetail = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerTaskHistoryDetail'));
+const ManagerPOReceivingHistoryDetail = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerPOReceivingHistoryDetail'));
+const ManagerTransferHistoryDetail = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerTransferHistoryDetail'));
+const ManagerNewArrival = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerNewArrival')); // Store → New Arrival, 2026-09-29
+const BuyerNewArrivalSettings = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerNewArrivalSettings')); // its rules, 2026-09-29
+
+// Shown while a section file is downloading. Plain "Loading..." text, not a
+// Polaris Spinner — see claude/UI_RULES_READ_FIRST.md rule 1.
+function PageLoading() {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'center', padding: '60px 0' }}>
+      <Text as="p" tone="subdued">Loading...</Text>
+    </div>
+  );
+}
 
 function App() {
   return (
     <AppProvider i18n={enTranslations}>
       <BrowserRouter>
+        <PageErrorBoundary>
+          <Suspense fallback={<PageLoading />}>
         <Routes>
           <Route path="/" element={<Home />} />
 
@@ -203,6 +227,8 @@ function App() {
           <Route path="/online/new-products/settings" element={<OnlineNewProductsSettings />} />
           <Route path="/online/swatch" element={<OnlineHome tab="swatch"><OnlineSwatch inTabs /></OnlineHome>} />
         </Routes>
+          </Suspense>
+        </PageErrorBoundary>
       </BrowserRouter>
     </AppProvider>
   );
