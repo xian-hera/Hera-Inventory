@@ -5,6 +5,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import Papa from 'papaparse';
 import {
   Page, Card, BlockStack, InlineStack, Text, Button, ButtonGroup, Select, Banner, Tooltip, ProgressBar, Spinner,
+  Modal, List,
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import MultiSelectDropdown from '../../components/MultiSelectDropdown';
@@ -15,7 +16,34 @@ import {
   MAX_ROWS, MAX_COLUMNS, PRESETS, buildColumns, buildRows, groupRows, validate,
   productLevelConflicts, buildPayload, cellValue, colFor,
   applyTypeRules, normalizeSubCollections, isSubTypeCol, isSubCollectionCol, subCollectionOptions, subCollectionKey, subCollectionItems,
+  assignTargets, columnTargetValue,
 } from './importProducts/importModel';
+
+// Header Rule (2026-10-06, Hera): how column headers are recognised.
+function HeaderRuleModal({ open, onClose }) {
+  return (
+    <Modal open={open} onClose={onClose} title="How Hub reads your column headers">
+      <Modal.Section>
+        <List type="number">
+          <List.Item>
+            <b>Shopify fields</b> — use Shopify's product CSV names: Title, Handle, SKU, Barcode, Vendor, Type, Tags, Status,
+            Price, Compare-at price, Cost per item, Charge tax, Option1 name, Option1 value…
+          </List.Item>
+          <List.Item>
+            <b>Metafields</b> — use the metafield's name as shown in Shopify (Settings › Custom data), e.g. <i>Package_Qty</i>,{' '}
+            <i>Supplier_A_Cost</i>. Case doesn't matter, and spaces, "_" and "-" count as the same: "Package Qty" = "package_qty".
+          </List.Item>
+          <List.Item>
+            <b>Never imported</b> — images, Published, market prices, inventory quantity, Google Shopping.
+          </List.Item>
+          <List.Item>
+            <b>Anything else</b> is listed as <i>not matched</i> and skipped. Use <b>Manually Assign</b> to point it to a field.
+          </List.Item>
+        </List>
+      </Modal.Section>
+    </Modal>
+  );
+}
 
 const NARROW = { maxWidth: '62.375rem', margin: '0 auto', width: '100%' };
 const STORE_ADMIN = 'https://admin.shopify.com/store/beaute-hera/products/';
@@ -69,6 +97,13 @@ function BuyerImportProducts() {
   const [stage, setStage] = useState('start'); // start → presets → table → importing → results
   const [startError, setStartError] = useState('');
   const [loadingStart, setLoadingStart] = useState(false);
+  const [showHeaderRule, setShowHeaderRule] = useState(false);
+  // Manually Assign (2026-10-06): definitions kept for re-processing;
+  // manualMap = { [csvIndex]: target } applied on Confirm.
+  const [definitions, setDefinitions] = useState([]);
+  const [manualMap, setManualMap] = useState({});
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [assignDraft, setAssignDraft] = useState({}); // csvIndex → target value string
 
   // ── Loaded on Start confirm ──
   const [columns, setColumns] = useState([]);
@@ -156,6 +191,8 @@ function BuyerImportProducts() {
       const opts = await optRes.json();
       if (!defsRes.ok) throw new Error(defs.error || 'Could not load metafield definitions');
       if (!optRes.ok) throw new Error(opts.error || 'Could not load options');
+      setDefinitions(defs);
+      setManualMap({});
       const built = buildColumns(csv.headers, defs);
       // Display section only counts for HAIR & SKIN CARE (2026-09-25).
       const typedColumns = applyTypeRules(built.columns, productType);
@@ -183,6 +220,15 @@ function BuyerImportProducts() {
   );
   const conflicts = useMemo(() => (mode === 'add' ? productLevelConflicts(groups, columns) : {}), [groups, columns, mode]);
   const blockingCount = Object.keys(validation.cellErrors).length + Object.keys(validation.rowErrors).length;
+  // One line per blocking problem, e.g. 'Row 17: Price "-0.01" can't be negative'.
+  const blockingIssues = useMemo(() => {
+    const out = [];
+    for (const r of rows) {
+      for (const m of validation.rowErrors[r.id] || []) out.push(`Row ${r.rowNumber}: ${m}`);
+      for (const m of Object.values(validation.cellErrors[r.id] || {})) out.push(`Row ${r.rowNumber}: ${m}`);
+    }
+    return out;
+  }, [rows, validation]);
 
   // ── Precheck (Shopify duplicates / matches) ───────────────────────────────
   const runPrecheck = useCallback(async (curRows, curColumns) => {
@@ -265,6 +311,43 @@ function BuyerImportProducts() {
     if (col && col.kind === 'field' && ['handle', 'sku', 'barcode', 'title'].includes(col.field)) {
       scheduleRecheck(next);
     }
+  };
+
+  // Manually Assign → Confirm: re-process the CSV with the hand-picked
+  // targets. Rows the buyer deleted stay deleted, added lines stay, and
+  // edits are kept (columns keep the same id — it comes from the CSV
+  // position). Identifiers may have changed, so Shopify is checked again.
+  const openManualAssign = () => {
+    const draft = {};
+    for (const [idx, t] of Object.entries(manualMap)) {
+      draft[idx] = t.kind === 'field' ? `field:${t.field}` : `mf:${t.level}.${t.namespace}.${t.key}`;
+    }
+    setAssignDraft(draft);
+    setAssignOpen(true);
+  };
+
+  const applyManualAssign = () => {
+    const targets = assignTargets(definitions);
+    const byValue = new Map(targets.map(t => [t.value, t.target]));
+    const nextMap = { ...manualMap };
+    for (const [idx, v] of Object.entries(assignDraft)) {
+      if (v && byValue.has(v)) nextMap[idx] = byValue.get(v); else delete nextMap[idx];
+    }
+    const built = buildColumns(csv.headers, definitions, nextMap);
+    const typed = applyTypeRules(built.columns, productType);
+    const fresh = normalizeSubCollections(buildRows(csv.data, typed), typed);
+    const current = new Map(rows.map(r => [r.id, r]));
+    const next = fresh
+      .filter(r => current.has(r.id))
+      .map(r => ({ ...r, edits: current.get(r.id).edits }));
+    for (const r of rows) if (r.isNew) next.push(r);
+    setManualMap(nextMap);
+    setColumns(typed);
+    setIgnoredHeaders(built.ignoredHeaders);
+    setRows(next);
+    setAssignOpen(false);
+    setAssignDraft({});
+    runPrecheck(next, typed);
   };
 
   const addLine = () => {
@@ -390,6 +473,7 @@ function BuyerImportProducts() {
       backAction={stage === 'importing' ? undefined : { onAction: () => navigate('/buyer') }}
       secondaryActions={stage === 'importing' ? [] : [{ content: 'Settings', onAction: () => navigate('/buyer/import-products/settings') }]}
     >
+      <HeaderRuleModal open={showHeaderRule} onClose={() => setShowHeaderRule(false)} />
       <BlockStack gap="400">
         <div style={NARROW}>
           <BlockStack gap="400">
@@ -410,6 +494,8 @@ function BuyerImportProducts() {
                   </div>
                   <InlineStack gap="200" blockAlign="center">
                     <Button onClick={() => fileRef.current && fileRef.current.click()} disabled={locked}>Upload CSV</Button>
+                    {/* Header Rule (2026-10-06, Hera) */}
+                    <Button variant="plain" onClick={() => setShowHeaderRule(true)}>Header Rule</Button>
                     <input ref={fileRef} type="file" accept=".csv,text/csv" style={{ display: 'none' }} onChange={onFile} />
                     {fileName && <Text tone="subdued">{fileName} added</Text>}
                   </InlineStack>
@@ -495,8 +581,62 @@ function BuyerImportProducts() {
                   <Banner tone="info">Not imported (images, online-store publishing, market prices, etc.): {ignoredHeaders.join(', ')}</Banner>
                 )}
                 {unmatchedCols.length > 0 && (
-                  <Banner tone="warning">Column {unmatchedCols.map(c => `"${c.header}"`).join(', ')} not matched — will be ignored.</Banner>
+                  <Banner tone="warning">
+                    <BlockStack gap="200">
+                      <span>Column {unmatchedCols.map(c => `"${c.header}"`).join(', ')} not matched — will be ignored.</span>
+                      {!assignOpen && (
+                        <InlineStack>
+                          <Button onClick={openManualAssign}>Manually Assign</Button>
+                        </InlineStack>
+                      )}
+                    </BlockStack>
+                  </Banner>
                 )}
+                {unmatchedCols.length === 0 && Object.keys(manualMap).length > 0 && !assignOpen && (
+                  <InlineStack><Button variant="plain" onClick={openManualAssign}>Edit manual assignments</Button></InlineStack>
+                )}
+                {/* Manually Assign (2026-10-06, Hera): one row per header Hub
+                    didn't recognise; leave a row empty to keep ignoring it. */}
+                {assignOpen && (() => {
+                  const targets = assignTargets(definitions);
+                  // Hand-assigned columns stay in the list so a choice can be
+                  // changed or undone; their own targets don't count as taken.
+                  const taken = new Set(columns.filter(c => c.kind !== 'unmatched' && !c.manual).map(columnTargetValue).filter(Boolean));
+                  const list = columns.filter(c => c.csvIndex != null && ((c.kind === 'unmatched' && !c.typeSkipped) || c.manual))
+                    .sort((a, b) => a.csvIndex - b.csvIndex);
+                  return (
+                    <Card>
+                      <BlockStack gap="300">
+                        <InlineStack align="space-between" blockAlign="center">
+                          <Text variant="headingMd" as="h2">Manually Assign</Text>
+                          <Button variant="plain" onClick={() => setAssignOpen(false)}>Cancel</Button>
+                        </InlineStack>
+                        <Text tone="subdued">Leave a column empty to keep ignoring it.</Text>
+                        {list.map(c => {
+                          const mine = assignDraft[c.csvIndex] || '';
+                          const usedElsewhere = new Set(Object.entries(assignDraft).filter(([k, v]) => v && Number(k) !== c.csvIndex).map(([, v]) => v));
+                          const options = [{ label: "Don't import", value: '' },
+                            ...targets.filter(t => t.value === mine || (!taken.has(t.value) && !usedElsewhere.has(t.value)))
+                              .sort((a, b) => a.label.localeCompare(b.label))
+                              .map(t => ({ label: t.label, value: t.value }))];
+                          return (
+                            <InlineStack key={c.id} gap="300" blockAlign="center" wrap={false}>
+                              <div style={{ width: 220, fontWeight: 600, wordBreak: 'break-word' }}>{c.header}</div>
+                              <Text tone="subdued">assign to</Text>
+                              <div style={{ minWidth: 320 }}>
+                                <Select label={`Assign ${c.header}`} labelHidden options={options} value={mine}
+                                  onChange={(v) => setAssignDraft(d => ({ ...d, [c.csvIndex]: v }))} />
+                              </div>
+                            </InlineStack>
+                          );
+                        })}
+                        <InlineStack align="end">
+                          <Button variant="primary" onClick={applyManualAssign}>Confirm</Button>
+                        </InlineStack>
+                      </BlockStack>
+                    </Card>
+                  );
+                })()}
                 {typeSkippedCols.map(c => (
                   <Banner key={c.id} tone="warning">Column "{c.header}" will be ignored — {c.reason}.</Banner>
                 ))}
@@ -505,7 +645,18 @@ function BuyerImportProducts() {
                 )}
                 {checking && <Banner tone="info"><InlineStack gap="200" blockAlign="center"><Spinner size="small" /><span>Checking against Shopify…</span></InlineStack></Banner>}
                 {checkError && <Banner tone="critical">Check against Shopify failed: {checkError}</Banner>}
-                {blockingCount > 0 && <Banner tone="critical">{blockingCount} row(s) have values that must be fixed before importing (red cells).</Banner>}
+                {blockingCount > 0 && (
+                  <Banner tone="critical">
+                    {blockingCount} row(s) have values that must be fixed before importing (red cells).
+                    {/* What exactly is wrong, row by row (2026-10-06, Hera). */}
+                    {blockingIssues.length > 0 && (
+                      <div style={{ marginTop: 6 }}>
+                        {blockingIssues.slice(0, 15).map((m, i) => <div key={i}>{m}</div>)}
+                        {blockingIssues.length > 15 && <div>…and {blockingIssues.length - 15} more (see the Check column).</div>}
+                      </div>
+                    )}
+                  </Banner>
+                )}
                 {importError && <Banner tone="critical" onDismiss={() => setImportError('')}>{importError}</Banner>}
                 <InlineStack gap="200" align="end">
                   <Button onClick={addLine}>Add line</Button>

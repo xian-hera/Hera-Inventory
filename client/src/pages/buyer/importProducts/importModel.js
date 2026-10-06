@@ -80,6 +80,34 @@ const IGNORED = [
 ];
 
 const MF_IN_PARENS = /\((product|variant)\.metafields\.([^.()\s]+)\.([^()\s]+)\)\s*$/i;
+
+// Header ↔ metafield display name (2026-10-06, Hera): "Package Qty",
+// "package_qty" and "Package-Qty" all match the metafield named
+// "Package_Qty". Case is ignored; spaces, "_" and "-" count as the same.
+// Only the store's own "custom" metafields are matched this way (Shopify's
+// standard category metafields also use names like "Material"/"Texture").
+export const headerKey = (s) => String(s == null ? '' : s).trim().toLowerCase().replace(/[\s_\-]+/g, '');
+const isImportableDef = (d) => d && !/reference/.test(d.type || '') && d.namespace !== 'shopify';
+
+// Every field / metafield a column can be assigned to by hand
+// (Manually Assign). value is a stable string id.
+export function assignTargets(definitions) {
+  const out = [];
+  for (const [field, f] of Object.entries(FIELDS)) {
+    out.push({ value: `field:${field}`, label: `${f.label} (${f.level})`, target: { kind: 'field', field } });
+  }
+  for (const d of definitions || []) {
+    if (!isImportableDef(d)) continue;
+    out.push({
+      value: `mf:${d.level}.${d.namespace}.${d.key}`,
+      label: `${d.name || d.key} (${d.level})`,
+      target: { kind: 'metafield', level: d.level, namespace: d.namespace, key: d.key },
+    });
+  }
+  return out;
+}
+export const columnTargetValue = (c) => (c.kind === 'field' ? `field:${c.field}`
+  : c.kind === 'metafield' ? `mf:${c.level}.${c.namespace}.${c.key}` : '');
 const MF_SHORT = /^(product|variant)\.(?:metafields\.)?([^.\s]+)\.([^.\s]+)$/i;
 
 // ─── Presets ─────────────────────────────────────────────────────────────────
@@ -181,16 +209,39 @@ export function parseBool(v) {
 // Returns { columns, ignoredHeaders }.
 // column: { id, header, csvIndex, kind: 'field'|'metafield'|'shopifyMf'|'unmatched'|'preset',
 //           field?, level, namespace?, key?, def?, preset?, synthetic? }
-export function buildColumns(headers, definitions) {
+// manual (2026-10-06): { [csvIndex]: target } from Manually Assign, where
+// target = { kind: 'field', field } | { kind: 'metafield', level, namespace, key }.
+// A manual choice wins over automatic matching for that column.
+export function buildColumns(headers, definitions, manual = {}) {
   const columns = [];
   const ignoredHeaders = [];
   const usedFields = new Set();
+  // Custom metafields by display name (see headerKey). A name used at both
+  // product and variant level is ambiguous → left for Manually Assign.
+  const byName = new Map();
+  for (const d of definitions || []) {
+    if (!isImportableDef(d) || d.namespace !== 'custom') continue;
+    const k = headerKey(d.name);
+    if (!k) continue;
+    byName.set(k, byName.has(k) ? 'ambiguous' : d);
+  }
+  // Fields claimed by hand are not given to another column automatically.
+  for (const t of Object.values(manual || {})) if (t && t.kind === 'field') usedFields.add(t.field);
 
   headers.forEach((raw, csvIndex) => {
     const header = String(raw == null ? '' : raw).trim();
     const l = lc(header);
     const id = `c${csvIndex}`;
     if (!header) { ignoredHeaders.push(`(blank column ${csvIndex + 1})`); return; }
+    const m0 = manual && manual[csvIndex];
+    if (m0 && m0.kind === 'field' && FIELDS[m0.field]) {
+      columns.push({ id, header, csvIndex, kind: 'field', field: m0.field, level: FIELDS[m0.field].level, manual: true });
+      return;
+    }
+    if (m0 && m0.kind === 'metafield') {
+      const def = (definitions || []).find(d => d.level === m0.level && d.namespace === m0.namespace && d.key === m0.key);
+      if (def) { columns.push({ id, header, csvIndex, kind: 'metafield', level: def.level, namespace: def.namespace, key: def.key, def, manual: true }); return; }
+    }
     if (IGNORED.some(re => re.test(l))) { ignoredHeaders.push(header); return; }
 
     const field = ALIASES[l];
@@ -217,7 +268,14 @@ export function buildColumns(headers, definitions) {
       }
       return;
     }
-    columns.push({ id, header, csvIndex, kind: 'unmatched', level: 'variant', reason: 'Not a Shopify field or metafield' });
+    // Metafield display name (2026-10-06).
+    const named = byName.get(headerKey(header));
+    if (named && named !== 'ambiguous') {
+      columns.push({ id, header, csvIndex, kind: 'metafield', level: named.level, namespace: named.namespace, key: named.key, def: named });
+      return;
+    }
+    columns.push({ id, header, csvIndex, kind: 'unmatched', level: 'variant',
+      reason: named === 'ambiguous' ? 'Matches both a product and a variant metafield — use Manually Assign' : 'Not a Shopify field or metafield' });
   });
 
   // Always have a Handle column, so auto-generated handles can be shown and
@@ -418,6 +476,9 @@ export function validate({ rows, columns, groups, mode, presets, pools, precheck
         }
       }
       if (priceCols.includes(c) && !/^-?\d+(\.\d+)?$/.test(v.replace(/,/g, ''))) addCell(r, c, `"${v}" is not a number`);
+      // Shopify rejects negative prices / costs / weights (2026-10-06, Hera:
+      // block them here so the buyer fixes them before importing).
+      else if (priceCols.includes(c) && Number(v.replace(/,/g, '')) < 0) addCell(r, c, `${FIELDS[c.field].label} "${v}" can't be negative`);
       if (c === bcCol && /[;,|]/.test(v)) addCell(r, c, 'Only one barcode per variant can be imported for now');
     }
 
