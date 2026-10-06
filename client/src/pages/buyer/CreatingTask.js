@@ -48,6 +48,11 @@ const QUANTITY_CONDITIONS = [
   { label: 'less or equal',  value: 'less or equal' },
 ];
 
+// Shown (yellow banner) when Shopify could not be read completely even after
+// patient retries — the list then contains only items whose inventory was
+// actually read (2026-10-06, Hera).
+const INCOMPLETE_RESULTS_MESSAGE = 'Search results are incomplete due to a network issue. Please try again.';
+
 function newMetafieldRow() {
   return { id: Date.now() + Math.random(), level: 'product', condition: 'value matches exactly', key: '', value: '' };
 }
@@ -77,6 +82,7 @@ function CreatingTask() {
   const [excludeSuccess, setExcludeSuccess]     = useState(false);
   const [csvImported, setCsvImported]           = useState(false);
   const [error, setError]                       = useState('');
+  const [incompleteWarning, setIncompleteWarning] = useState(false);
   const [resultFilter, setResultFilter]         = useState('');
 
   const csvInputRef = useRef(null);
@@ -98,6 +104,7 @@ function CreatingTask() {
     abortControllerRef.current = controller;
     setLoadingProducts(true);
     setError('');
+    setIncompleteWarning(false);
     try {
       const res = await fetch('/api/shopify/products', {
         method: 'POST',
@@ -115,7 +122,12 @@ function CreatingTask() {
           relaxMetafieldFilter,
         }),
       });
-      const data = await res.json();
+      const json = await res.json();
+      if (!res.ok) throw new Error((json && json.error) || `HTTP ${res.status}`);
+      // /products returns { items, incomplete } since 2026-10-06 (a bare array before).
+      const data = Array.isArray(json) ? json : (json.items || []);
+      // incomplete = some product pages could not be fetched even after retries.
+      let incomplete = !Array.isArray(json) && !!json.incomplete;
       setSelectedProductBarcodes([]);
       setResultFilter('');
       setExcludeSuccess(false);
@@ -128,14 +140,20 @@ function CreatingTask() {
       // store's task if that store's own System quantity satisfies the condition.
       // Here, a product is dropped from the visible list only if it fails the condition
       // at EVERY selected location (otherwise it still matters for at least one store).
-      if (quantityFilterActive && Array.isArray(data) && data.length > 0) {
-        const barcodes = data.map(p => p.barcode).filter(Boolean);
+      //
+      // 2026-10-06: the check now reads inventory by variant ID and reports
+      // `gone` (deleted / no longer Active) and `unverified` (could not be read
+      // even after all retries) items. Both are dropped from the list: an item is
+      // only shown — and only placed in a store's task — when its quantity at the
+      // selected stores is actually known. Unverified items also show the
+      // "incomplete" warning.
+      if (quantityFilterActive && data.length > 0) {
         const qtyRes = await fetch('/api/shopify/quantity-check', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           signal: controller.signal,
           body: JSON.stringify({
-            barcodes,
+            variantIds: data.map(p => p.variantId).filter(Boolean),
             locations: selectedLocations,
             condition: quantityCondition,
             value: Number(quantityValue),
@@ -143,33 +161,50 @@ function CreatingTask() {
         });
         const qtyData = await qtyRes.json();
         if (qtyRes.ok) {
-          setQuantityExcludedBarcodes(qtyData);
+          const unverified = qtyData.unverified || [];
+          if (unverified.length > 0) incomplete = true;
+          const dropped = new Set([...(qtyData.gone || []), ...unverified]);
+          const checked = data.filter(p => !dropped.has(p.variantId));
+
+          // The check answers per variant ID; tasks are built per barcode.
+          const barcodeById = {};
+          checked.forEach(p => { barcodeById[p.variantId] = p.barcode; });
+          const excludedByLocation = {};
+          for (const loc of selectedLocations) {
+            excludedByLocation[loc] = ((qtyData.excluded || {})[loc] || [])
+              .map(id => barcodeById[id])
+              .filter(Boolean);
+          }
+          setQuantityExcludedBarcodes(excludedByLocation);
           const passesQuantity = (barcode) =>
-            selectedLocations.some(loc => !(qtyData[loc] || []).includes(barcode));
+            selectedLocations.some(loc => !excludedByLocation[loc].includes(barcode));
 
           visibleProducts = relaxMetafieldFilter
             // "any": item qualifies if it matched the metafield conditions OR passes quantity
-            ? data.filter(p => p.matchesMetafield || passesQuantity(p.barcode))
+            ? checked.filter(p => p.matchesMetafield || passesQuantity(p.barcode))
             // "all" (or no metafield rows to combine with): item must also pass quantity,
             // on top of the metafield filtering /products already applied
-            : data.filter(p => passesQuantity(p.barcode));
-        } else if (relaxMetafieldFilter) {
-          // Quantity check failed — /products didn't hard-filter by metafield in this
-          // mode, so fall back to filtering by matchesMetafield alone rather than
-          // showing every type-matching item.
-          visibleProducts = data.filter(p => p.matchesMetafield);
+            : checked.filter(p => passesQuantity(p.barcode));
+        } else {
+          // The quantity check failed as a whole, so no item's quantity is known.
+          // Show nothing rather than items whose store assignment would be a guess.
+          // (Before 2026-10-06 this fell back to showing items unfiltered.)
+          visibleProducts = [];
+          if (qtyData && qtyData.error) setError(qtyData.error);
+          else incomplete = true;
         }
       } else if (relaxMetafieldFilter) {
         visibleProducts = data.filter(p => p.matchesMetafield);
       }
 
       setProducts(visibleProducts);
+      setIncompleteWarning(incomplete);
     } catch (e) {
       if (e.name === 'AbortError') {
         // User cancelled on purpose — don't show this as a failure, and don't
         // apply whatever partial data might still resolve after this point.
       } else {
-        setError('Failed to fetch products');
+        setError(`Failed to fetch products${e.message ? `: ${e.message}` : ''}`);
       }
     } finally {
       setLoadingProducts(false);
@@ -196,16 +231,23 @@ function CreatingTask() {
     setExcludeSuccess(false);
     setError('');
     try {
-      const barcodes = products.map(p => p.barcode).filter(Boolean);
+      // 2026-10-06: send variant IDs (CSV-imported items have none — the server
+      // resolves those by barcode). Items that could not be read even after all
+      // retries are left in the list, NOT excluded, and the incomplete warning
+      // is shown (Hera's decision).
+      const items = products
+        .filter(p => p.barcode)
+        .map(p => ({ variantId: p.variantId || null, barcode: p.barcode }));
       const res = await fetch('/api/shopify/soh-check', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ barcodes, locations: selectedLocations }),
+        body: JSON.stringify({ items, locations: selectedLocations }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      setExcludedBarcodes(data);
+      setExcludedBarcodes(data.excluded || {});
       setExcludeSuccess(true);
+      if (data.incomplete) setIncompleteWarning(true);
     } catch (e) {
       setError(e.message || 'Failed to check SOH');
     } finally {
@@ -377,6 +419,11 @@ function CreatingTask() {
         <Layout.Section>
           <BlockStack gap="400">
             {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
+            {incompleteWarning && (
+              <Banner tone="warning" onDismiss={() => setIncompleteWarning(false)}>
+                {INCOMPLETE_RESULTS_MESSAGE}
+              </Banner>
+            )}
 
             {/* Types + Location */}
             <Card>

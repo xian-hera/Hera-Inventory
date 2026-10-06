@@ -1,6 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const { getShopify, getSession, activeFilter } = require('../shopify');
+// Reliable, ID-based inventory reads for Create New Count (2026-10-06).
+const { requestReliable, readVariantInventory, resolveBarcodes, isRetriable, RequestAbortedError } = require('../services/shopifyInventoryReader');
 
 // 保留 getDepartment 供其他地方兼容调用，但新逻辑不再依赖它
 const DEPARTMENT_MAP = {
@@ -75,7 +77,11 @@ router.get('/product-types', async (req, res) => {
 // POST /api/shopify/products
 router.post('/products', async (req, res) => {
   let aborted = false;
-  req.on('close', () => {
+  // res (not req) 'close' (2026-10-06): req 'close' fires as soon as the request
+  // body has been read, which wrongly looked like "the user pressed Abort" and
+  // only went unnoticed because of how the middleware timed it. res 'close'
+  // fires when the connection goes away before the response was sent.
+  res.on('close', () => {
     if (!res.writableEnded) aborted = true;
   });
   try {
@@ -137,6 +143,7 @@ router.post('/products', async (req, res) => {
               productType
               ${productMetaFields}
               variants(first: 100) {
+                pageInfo { hasNextPage endCursor }
                 edges {
                   node {
                     id
@@ -153,17 +160,75 @@ router.post('/products', async (req, res) => {
       }
     `;
 
+    // Products with more than 100 variants: fetch the rest (2026-10-06 — they
+    // used to be cut off silently at 100). Same variant fields as above.
+    const moreVariantsQuery = `
+      query getMoreVariants($id: ID!, $cursor: String) {
+        product(id: $id) {
+          variants(first: 100, after: $cursor) {
+            pageInfo { hasNextPage endCursor }
+            edges {
+              node {
+                id
+                sku
+                barcode
+                metafield(namespace: "custom", key: "name") { value }
+                ${variantMetaFields}
+              }
+            }
+          }
+        }
+      }
+    `;
+
     let allProducts = [];
     let cursor = null;
     let hasNextPage = true;
+    // 2026-10-06: each page is retried patiently (requestReliable). If a page
+    // still can't be fetched for a network reason, keep what was fetched so far
+    // and tell the page (`incomplete`) — it shows "Search results are
+    // incomplete due to a network issue. Please try again." Any other error
+    // (e.g. a bad metafield key) still fails the whole search as before.
+    let incomplete = false;
+    const isAborted = () => aborted;
 
     while (hasNextPage) {
       if (aborted) return;
-      const response = await shopifyRequest(client, gqlQuery, { queryString, cursor });
+      let response;
+      try {
+        response = await requestReliable(client, gqlQuery, { queryString, cursor }, { label: 'products', isAborted });
+      } catch (e) {
+        if (e instanceof RequestAbortedError || aborted) return;
+        if (!isRetriable(e)) throw e;
+        console.error('POST /api/shopify/products: product page could not be fetched after all retries:', e.message);
+        incomplete = true;
+        break;
+      }
       const page = response.data.products;
       allProducts = [...allProducts, ...page.edges];
       hasNextPage = page.pageInfo.hasNextPage;
       cursor = page.pageInfo.endCursor;
+    }
+
+    for (const { node: product } of allProducts) {
+      let variantPage = product.variants.pageInfo;
+      while (variantPage && variantPage.hasNextPage) {
+        if (aborted) return;
+        let response;
+        try {
+          response = await requestReliable(client, moreVariantsQuery, { id: product.id, cursor: variantPage.endCursor }, { label: 'products more-variants', isAborted });
+        } catch (e) {
+          if (e instanceof RequestAbortedError || aborted) return;
+          if (!isRetriable(e)) throw e;
+          console.error(`POST /api/shopify/products: more variants of ${product.id} could not be fetched after all retries:`, e.message);
+          incomplete = true;
+          break;
+        }
+        const more = response.data.product?.variants;
+        if (!more) break; // product deleted meanwhile — keep the variants already fetched
+        product.variants.edges.push(...more.edges);
+        variantPage = more.pageInfo;
+      }
     }
 
     if (aborted) return;
@@ -227,7 +292,8 @@ router.post('/products', async (req, res) => {
       }
     }
 
-    res.json(variants);
+    // Shape changed 2026-10-06 from a bare array to { items, incomplete }.
+    res.json({ items: variants, incomplete });
   } catch (e) {
     if (aborted) return;
     console.error('POST /api/shopify/products error:', e);
@@ -642,94 +708,152 @@ router.get('/search', async (req, res) => {
   }
 });
 
-// POST /api/shopify/soh-check
+// ── Inventory checks for Purchasing › Inventory Count › Create New Count ──────
+// Rewritten 2026-10-06 (Hera). Both checks used to look every item up again by a
+// `barcode:` text search and silently skip anything that failed or wasn't found;
+// a skipped item ended up in EVERY store's task. They now read inventory by
+// variant ID through services/shopifyInventoryReader.js, retry patiently, and
+// report anything that still could not be read as `unverified` instead of
+// guessing. See that file for the rules.
+
+// Same wording for both checks — a selected store missing from location_map
+// would otherwise be skipped and every item would land in its task unchecked.
+async function loadLocationIds(locations) {
+  const { pool } = require('../database/init');
+  const locMap = await pool.query(
+    'SELECT location_name, shopify_location_id FROM location_map WHERE location_name = ANY($1)',
+    [locations]
+  );
+  const locationIdMap = {};
+  locMap.rows.forEach(r => { if (r.shopify_location_id) locationIdMap[r.location_name] = r.shopify_location_id; });
+  const missing = locations.filter(l => !locationIdMap[l]);
+  return { locationIdMap, missing };
+}
+
+const OUT_OF_DATE_PAGE_ERROR = 'This page is out of date. Please reload the page and search again.';
+
+// POST /api/shopify/soh-check  ("Exclude 0" button)
+// Body: { items: [{ variantId?, barcode }], locations }
+//   variantId is present for items from "Show result" and the search box;
+//   CSV-imported items only have a barcode and are resolved first.
+// Returns {
+//   excluded:   { location: [barcode, ...] }  — available quantity is exactly 0 there
+//               (no inventory level at that store counts as 0; a variant that no
+//               longer exists / is no longer Active is excluded everywhere)
+//   unverified: [barcode]  — could not be read even after all retries: NOT excluded
+//   notFound:   [barcode]  — CSV barcode with no single Active variant: NOT excluded
+//   incomplete: true if anything is unverified (page shows the network warning)
+// }
 router.post('/soh-check', async (req, res) => {
-  try {
-    const session = await getSession();
-    if (!session) return res.status(401).json({ error: 'No session' });
-
-    const { barcodes, locations } = req.body;
-    if (!barcodes || !locations || barcodes.length === 0 || locations.length === 0) return res.json({});
-
-    const { pool } = require('../database/init');
-    const shopify = getShopify();
-    const client = new shopify.clients.Graphql({ session });
-
-    const locMap = await pool.query(
-      'SELECT location_name, shopify_location_id FROM location_map WHERE location_name = ANY($1)',
-      [locations]
-    );
-    const locationIdMap = {};
-    locMap.rows.forEach(r => { locationIdMap[r.location_name] = r.shopify_location_id; });
-
-    const result = {};
-    for (const location of locations) result[location] = [];
-
-    for (const barcode of barcodes) {
-      const variantQuery = `
-        query getInventory($barcode: String!) {
-          productVariants(first: 5, query: $barcode) {
-            edges {
-              node {
-                barcode sku
-                inventoryItem {
-                  inventoryLevels(first: 30, includeInactive: true) {
-                    edges {
-                      node {
-                        location { id }
-                        quantities(names: ["available"]) { name quantity }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      `;
-      const response = await shopifyRequest(client, variantQuery, { barcode: activeFilter(`barcode:${barcode}`) });
-      const variants = response.data?.productVariants?.edges || [];
-      if (variants.length === 0) continue;
-
-      const variant = variants[0].node;
-      const levels = variant.inventoryItem?.inventoryLevels?.edges || [];
-
-      for (const location of locations) {
-        const shopifyLocationId = locationIdMap[location];
-        if (!shopifyLocationId) continue;
-        const level = levels.find(e => e.node.location.id === shopifyLocationId);
-        const soh = level?.node.quantities.find(q => q.name === 'available')?.quantity ?? 0;
-        if (soh === 0) result[location].push(barcode);
-      }
-    }
-
-    res.json(result);
-  } catch (e) {
-    console.error('POST /api/shopify/soh-check error:', e);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// POST /api/shopify/quantity-check
-// Body: { barcodes, locations, condition, value }
-// Evaluates the condition against each location's own "available" quantity.
-// Returns { location: [barcodes that do NOT satisfy the condition at that location] }
-// so the caller can exclude them from that specific store's task.
-router.post('/quantity-check', async (req, res) => {
   let aborted = false;
-  req.on('close', () => {
+  // res (not req) 'close' (2026-10-06): req 'close' fires as soon as the request
+  // body has been read, which wrongly looked like "the user pressed Abort" and
+  // only went unnoticed because of how the middleware timed it. res 'close'
+  // fires when the connection goes away before the response was sent.
+  res.on('close', () => {
     if (!res.writableEnded) aborted = true;
   });
   try {
     const session = await getSession();
     if (!session) return res.status(401).json({ error: 'No session' });
 
-    const { barcodes, locations, condition, value } = req.body;
-    if (!barcodes || !locations || barcodes.length === 0 || locations.length === 0) return res.json({});
+    const { items, locations } = req.body;
+    if (!Array.isArray(items)) return res.status(400).json({ error: OUT_OF_DATE_PAGE_ERROR });
+    const empty = { excluded: {}, unverified: [], notFound: [], incomplete: false };
+    if (!Array.isArray(locations) || locations.length === 0 || items.length === 0) return res.json(empty);
+
+    const { locationIdMap, missing } = await loadLocationIds(locations);
+    if (missing.length > 0) {
+      return res.status(400).json({ error: `Store not found in the location list: ${missing.join(', ')}. Please run Sync Locations in Purchasing Settings, then try again.` });
+    }
+
+    const shopify = getShopify();
+    const client = new shopify.clients.Graphql({ session });
+    const isAborted = () => aborted;
+
+    // barcode -> variantId (items without an ID are resolved by barcode first)
+    const idByBarcode = {};
+    const barcodesToResolve = [];
+    for (const item of items) {
+      if (!item || !item.barcode) continue;
+      if (item.variantId) idByBarcode[item.barcode] = item.variantId;
+      else barcodesToResolve.push(item.barcode);
+    }
+    const resolved = await resolveBarcodes(client, barcodesToResolve.filter(b => !idByBarcode[b]), { isAborted, label: 'soh-check resolve' });
+    Object.assign(idByBarcode, resolved.idByBarcode);
+
+    const barcodesById = {};
+    for (const [barcode, id] of Object.entries(idByBarcode)) {
+      (barcodesById[id] = barcodesById[id] || []).push(barcode);
+    }
+
+    const { quantities, gone, unverified } = await readVariantInventory(
+      client, Object.keys(barcodesById), locations.map(l => locationIdMap[l]),
+      { isAborted, label: 'soh-check' }
+    );
+    if (aborted) return;
+
+    const excluded = {};
+    for (const location of locations) excluded[location] = [];
+    for (const [id, qtys] of Object.entries(quantities)) {
+      locations.forEach((location, j) => {
+        if (qtys[j] === 0) excluded[location].push(...barcodesById[id]);
+      });
+    }
+    for (const id of gone) {
+      for (const location of locations) excluded[location].push(...barcodesById[id]);
+    }
+
+    const unverifiedBarcodes = [
+      ...resolved.unverified,
+      ...unverified.flatMap(id => barcodesById[id] || []),
+    ];
+    res.json({
+      excluded,
+      unverified: unverifiedBarcodes,
+      notFound: resolved.notFound,
+      incomplete: unverifiedBarcodes.length > 0,
+    });
+  } catch (e) {
+    if (aborted || e instanceof RequestAbortedError) return;
+    console.error('POST /api/shopify/soh-check error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/shopify/quantity-check  (quantity filter of "Show result")
+// Body: { variantIds, locations, condition, value }
+// Evaluates the condition against each location's own "available" quantity
+// (no inventory level at that store counts as 0).
+// Returns {
+//   excluded:   { location: [variantId that does NOT satisfy the condition there] }
+//   gone:       [variantId]  — no longer exists / no longer Active
+//   unverified: [variantId]  — could not be read even after all retries
+//   incomplete: true if anything is unverified
+// }
+// The page drops `gone` and `unverified` items from the result list, so an item is
+// only ever placed in a store's task when its quantity there is actually known.
+router.post('/quantity-check', async (req, res) => {
+  let aborted = false;
+  // res (not req) 'close' (2026-10-06): req 'close' fires as soon as the request
+  // body has been read, which wrongly looked like "the user pressed Abort" and
+  // only went unnoticed because of how the middleware timed it. res 'close'
+  // fires when the connection goes away before the response was sent.
+  res.on('close', () => {
+    if (!res.writableEnded) aborted = true;
+  });
+  try {
+    const session = await getSession();
+    if (!session) return res.status(401).json({ error: 'No session' });
+
+    const { variantIds, locations, condition, value } = req.body;
+    if (!Array.isArray(variantIds)) return res.status(400).json({ error: OUT_OF_DATE_PAGE_ERROR });
+    const empty = { excluded: {}, gone: [], unverified: [], incomplete: false };
+    if (variantIds.length === 0 || !Array.isArray(locations) || locations.length === 0) return res.json(empty);
 
     const targetValue = Number(value);
     if (!condition || value === undefined || value === null || value === '' || isNaN(targetValue)) {
-      return res.json({});
+      return res.json(empty);
     }
 
     const passesCondition = (qty) => {
@@ -744,106 +868,31 @@ router.post('/quantity-check', async (req, res) => {
       }
     };
 
-    const { pool } = require('../database/init');
+    const { locationIdMap, missing } = await loadLocationIds(locations);
+    if (missing.length > 0) {
+      return res.status(400).json({ error: `Store not found in the location list: ${missing.join(', ')}. Please run Sync Locations in Purchasing Settings, then try again.` });
+    }
+
     const shopify = getShopify();
     const client = new shopify.clients.Graphql({ session });
 
-    const locMap = await pool.query(
-      'SELECT location_name, shopify_location_id FROM location_map WHERE location_name = ANY($1)',
-      [locations]
+    const { quantities, gone, unverified } = await readVariantInventory(
+      client, variantIds, locations.map(l => locationIdMap[l]),
+      { isAborted: () => aborted, label: 'quantity-check' }
     );
-    const locationIdMap = {};
-    locMap.rows.forEach(r => { locationIdMap[r.location_name] = r.shopify_location_id; });
-    const validLocations = locations.filter(l => locationIdMap[l]);
-
-    const result = {};
-    for (const location of locations) result[location] = [];
-
-    if (validLocations.length === 0) return res.json(result);
-
-    // Batch size is derived from Shopify's documented GraphQL cost model for this
-    // query shape: requestedCost ≈ 2 * F * (1 + L), where F = batch size (first)
-    // and L = number of location aliases per variant. A single query can't exceed
-    // 1000 cost points, so we target ~500 (half) as a safety margin, and clamp to
-    // a practical range — Shopify support advised against very long OR chains
-    // (tens/~100, not hundreds) even though nothing hard-fails below that.
-    // Confirmed with Shopify support (Plus plan): productVariants max `first` is
-    // 250 regardless of plan; Plus only raises the per-second cost budget (1000
-    // pts/sec), not the per-query ceiling or per-connection page size.
-    const TARGET_COST = 500;
-    const MIN_BATCH_SIZE = 20;
-    const MAX_BATCH_SIZE = 100;
-    const numLocations = validLocations.length;
-    const BATCH_SIZE = Math.max(
-      MIN_BATCH_SIZE,
-      Math.min(MAX_BATCH_SIZE, Math.floor(TARGET_COST / (2 * (1 + numLocations))))
-    );
-
-    // Batches are sized to ~half the per-query cost ceiling (TARGET_COST = 500),
-    // so running 2 of them concurrently stays close to, but under, both the
-    // 1000-point per-query ceiling (each request is separate, so this doesn't
-    // apply here) and a sensible slice of the Plus 1000-points/sec throughput
-    // budget. This is a wave-based concurrency: fire CONCURRENCY batches at
-    // once, wait for that wave to finish, then fire the next wave.
-    const CONCURRENCY = 2;
-
-    const locationFields = validLocations.map((loc, idx) => {
-      const locId = locationIdMap[loc];
-      return `loc${idx}: inventoryLevel(locationId: "${locId}", includeInactive: true) {
-        quantities(names: ["available"]) { name quantity }
-      }`;
-    }).join('\n');
-
-    const runBatch = async (batch, batchIndex) => {
-      const barcodeQuery = activeFilter(batch.map(b => `barcode:${b}`).join(' OR '));
-      const batchQuery = `
-        query getBatchInventory($barcodeQuery: String!) {
-          productVariants(first: ${BATCH_SIZE}, query: $barcodeQuery) {
-            edges {
-              node {
-                barcode
-                inventoryItem {
-                  ${locationFields}
-                }
-              }
-            }
-          }
-        }
-      `;
-      try {
-        const response = await shopifyRequest(client, batchQuery, { barcodeQuery });
-        const edges = response.data?.productVariants?.edges || [];
-
-        for (const { node: variant } of edges) {
-          if (!variant.barcode) continue;
-
-          validLocations.forEach((loc, idx) => {
-            const levelData = variant.inventoryItem[`loc${idx}`];
-            const qty = levelData?.quantities?.find(q => q.name === 'available')?.quantity ?? 0;
-            if (!passesCondition(qty)) result[loc].push(variant.barcode);
-          });
-        }
-      } catch (e) {
-        // skip batch errors and continue with the next batch, same as negative-inventory did
-        console.error(`[quantity-check] batch error at index ${batchIndex}:`, e.message);
-      }
-    };
-
-    const batches = [];
-    for (let i = 0; i < barcodes.length; i += BATCH_SIZE) {
-      batches.push(barcodes.slice(i, i + BATCH_SIZE));
-    }
-
-    for (let i = 0; i < batches.length; i += CONCURRENCY) {
-      if (aborted) return;
-      const wave = batches.slice(i, i + CONCURRENCY);
-      await Promise.all(wave.map((batch, idx) => runBatch(batch, i + idx)));
-    }
-
     if (aborted) return;
-    res.json(result);
+
+    const excluded = {};
+    for (const location of locations) excluded[location] = [];
+    for (const [id, qtys] of Object.entries(quantities)) {
+      locations.forEach((location, j) => {
+        if (!passesCondition(qtys[j])) excluded[location].push(id);
+      });
+    }
+
+    res.json({ excluded, gone, unverified, incomplete: unverified.length > 0 });
   } catch (e) {
-    if (aborted) return;
+    if (aborted || e instanceof RequestAbortedError) return;
     console.error('POST /api/shopify/quantity-check error:', e);
     res.status(500).json({ error: e.message });
   }
