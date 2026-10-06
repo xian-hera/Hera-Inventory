@@ -1112,7 +1112,18 @@ function BuyerPOImportInvoice() {
     ? items.reduce((sum, it) => sum + (Number(it.quantity) || 0) * (Number(it.raw_cost) || 0), 0)
     : null;
 
-  const pill = STATUS_PILLS[status] || STATUS_PILLS.pending;
+  // "Partially committed" (2026-10-06, Hera) — display-only, not a database
+  // status: no commit is running right now, but some line items were already
+  // committed to Shopify (the background commit died partway, e.g. network
+  // error, or its lock was released manually). The real `status` is untouched
+  // so every status-based behavior (action button config, filters) is
+  // unchanged — only the pill and the banner below differ.
+  const partiallyCommitted = !invoiceCommitting
+    && status !== 'committed' && status !== 'archived'
+    && items.some(i => i.committed);
+  const pill = partiallyCommitted
+    ? { label: 'Partially committed', tone: 'critical' }
+    : (STATUS_PILLS[status] || STATUS_PILLS.pending);
 
   const headerActions = status === 'sent_to_store'
     ? [{ content: 'Cancel Store Task', destructive: true, onAction: handleCancelStoreTask, disabled }]
@@ -1141,6 +1152,12 @@ function BuyerPOImportInvoice() {
                 only ever a local, this-page-session message. Dismissing this
                 only hides it locally; it comes back on reload until a fresh
                 commit attempt actually clears it server-side. */}
+            {partiallyCommitted && (
+              <Banner tone="critical">
+                This invoice was not fully committed because of a network error. Please click Commit to continue committing. Line items that have already been committed will not be committed again.
+              </Banner>
+            )}
+
             {commitError && !invoiceCommitting && (
               <Banner tone="critical" onDismiss={() => setCommitError(null)}>
                 <div style={{ whiteSpace: 'pre-line' }}>Commit failed: {commitError}</div>

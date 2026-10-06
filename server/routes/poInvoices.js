@@ -11,10 +11,34 @@ const { activeFilter } = require('../shopify');
 // the list endpoint that would otherwise show expired archived rows.
 const ARCHIVED_RETENTION_DAYS = 90;
 
+// A Shopify request that neither succeeds nor fails (stalled connection) used
+// to hang forever — and with it the whole background commit, leaving the
+// invoice stuck at "Committing n / N" with no error (PO-A380 incident,
+// 2026-10-06). Every request now gives up after this long and is treated as
+// retryable like a 5xx. Retrying a timed-out inventoryAdjustQuantities is
+// safe: the retry re-sends the SAME variables, including the same
+// @idempotent key, so Shopify returns the original result instead of
+// applying the adjustment twice. (The underlying request isn't cancelled —
+// we just stop waiting for it.)
+const SHOPIFY_REQUEST_TIMEOUT_MS = 30 * 1000;
+
+function withTimeout(promise, ms) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error(`Shopify request timed out after ${ms / 1000}s`);
+      err.isTimeout = true;
+      reject(err);
+    }, ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 async function shopifyRequest(client, query, variables = null, retries = 3) {
   for (let i = 0; i < retries; i++) {
     try {
-      return variables ? await client.request(query, { variables }) : await client.request(query);
+      const call = variables ? client.request(query, { variables }) : client.request(query);
+      return await withTimeout(call, SHOPIFY_REQUEST_TIMEOUT_MS);
     } catch (e) {
       const is429 = e?.response?.status === 429 || e?.message?.includes('hrottled');
       // Shopify's own transient server-side errors (502/503/504 — "Service
@@ -30,7 +54,7 @@ async function shopifyRequest(client, query, variables = null, retries = 3) {
       const is5xx = (typeof status === 'number' && status >= 500 && status < 600)
         || /"networkStatusCode"\s*:\s*5\d\d/.test(e?.message || '')
         || /\b(Service Unavailable|Bad Gateway|Gateway Timeout)\b/i.test(e?.message || '');
-      if ((is429 || is5xx) && i < retries - 1) {
+      if ((is429 || is5xx || e?.isTimeout) && i < retries - 1) {
         await new Promise(r => setTimeout(r, (i + 1) * 1000));
         continue;
       }
@@ -663,7 +687,8 @@ router.get('/pending', async (req, res) => {
     const params = [];
     let query = `
       SELECT i.id, i.invoice_number, i.po_number, i.location, i.status,
-             i.committing, i.commit_error, i.created_at,
+             COALESCE(i.committing AND i.commit_started_at > NOW() - INTERVAL '${COMMIT_STALE_MS / 1000} seconds', FALSE) AS committing,
+             i.commit_error, i.created_at,
              s.name AS supplier_name, s.currency AS supplier_currency,
              COALESCE(SUM(it.quantity), 0) AS quantity,
              COALESCE(SUM(it.quantity * it.effective_cost), 0) AS subtotal_cad,
@@ -706,6 +731,13 @@ router.get('/pending/:id', async (req, res) => {
     );
     if (invRes.rows.length === 0) return res.status(404).json({ error: 'Invoice not found' });
     const invoice = invRes.rows[0];
+    // Report a commit lock with no heartbeat for COMMIT_STALE_MS as NOT
+    // committing — the background job is gone (server restart / hung
+    // request), and without this the Commit button stays disabled behind a
+    // spinner forever with no way to retry. The invoice then falls into the
+    // "Partially committed" state in the UI; clicking Commit reclaims the
+    // stale lock (see acquireInvoiceCommitLock).
+    invoice.committing = isCommitLockLive(invoice);
 
     const itemsRes = await pool.query('SELECT * FROM po_invoice_items WHERE invoice_id = $1 ORDER BY is_missing DESC, id ASC', [id]);
     let items = itemsRes.rows;
@@ -1621,6 +1653,10 @@ async function commitInvoice(invoiceId) {
     // it isn't double-applied (inventory added twice, average cost skewed).
     if (item.committed) continue;
 
+    // Heartbeat (see isCommitLockLive) — before AND after each item, so the
+    // longest gap between beats is one item's worth of Shopify calls.
+    await touchCommitHeartbeat(invoiceId);
+
     const snapshot = await getVariantSnapshot(client, item.sku);
     if (!snapshot) throw new Error(`SKU ${item.sku}: inventory item not found in Shopify`);
 
@@ -1713,6 +1749,7 @@ async function commitInvoice(invoiceId) {
     // Mark this item done immediately so a mid-loop failure on a later item
     // leaves an accurate record of what has already been applied to Shopify.
     await pool.query(`UPDATE po_invoice_items SET committed = TRUE WHERE id = $1`, [item.id]);
+    await touchCommitHeartbeat(invoiceId);
   }
 
   // Every invoice auto-archives on commit now (item 9) — no separate manual
@@ -1738,6 +1775,24 @@ async function commitInvoice(invoiceId) {
 // commitInvoice above), so reclaiming a stale lock never re-applies a
 // Shopify change that already went through.
 const COMMIT_STALE_MS = 5 * 60 * 1000;
+
+// commit_started_at is now a heartbeat, not just a start time:
+// commitInvoice() refreshes it around every line item, so "older than
+// COMMIT_STALE_MS" means "no progress for that long", not "running for that
+// long" — a legitimately long commit (hundreds of items) never looks stale.
+function isCommitLockLive(invoice) {
+  if (!invoice.committing) return false;
+  const t = invoice.commit_started_at ? new Date(invoice.commit_started_at).getTime() : 0;
+  return Date.now() - t < COMMIT_STALE_MS;
+}
+
+async function touchCommitHeartbeat(invoiceId) {
+  try {
+    await pool.query('UPDATE po_invoices SET commit_started_at = NOW() WHERE id = $1', [invoiceId]);
+  } catch (e) {
+    console.error(`Commit heartbeat failed for invoice ${invoiceId}:`, e.message);
+  }
+}
 
 // Attempts to acquire the commit lock on an invoice. Returns one of:
 //   { ok: true }               — lock acquired, caller may now run commitInvoice

@@ -1115,6 +1115,31 @@ router.post('/:id/qty-loaded', async (req, res) => {
   }
 });
 
+// POST /api/transfers/:id/qty-loaded/undo — 2026-10-06: undo a line item's
+// "checked" state so its loaded qty can be re-entered. Only allowed while
+// the transfer is still in Loading (once submitted — Pending, Good to go,
+// etc. — the loaded qty has already been handed to Buyer / Shopify). Keeps
+// the previously-entered qty_loaded value (the page pre-fills the stepper
+// from it) — only loaded_confirmed goes back to FALSE. Body: { itemId, asBuyer }.
+router.post('/:id/qty-loaded/undo', async (req, res) => {
+  try {
+    const { itemId, asBuyer } = req.body || {};
+    await assertNotHeld(req.params.id, asBuyer);
+    const t = await pool.query('SELECT status FROM transfers WHERE id = $1', [req.params.id]);
+    if (t.rows.length === 0) return res.status(404).json({ error: 'Transfer not found' });
+    if (t.rows[0].status !== 'loading') {
+      return res.status(400).json({ error: 'Loaded qty can only be changed while the transfer is in Loading' });
+    }
+    await pool.query(
+      'UPDATE transfer_items SET loaded_confirmed = FALSE WHERE id = $1 AND transfer_id = $2',
+      [itemId, req.params.id]
+    );
+    res.json({ success: true });
+  } catch (e) {
+    sendErr(res, e, 'POST /api/transfers/:id/qty-loaded/undo');
+  }
+});
+
 // POST /api/transfers/:id/submit-loading — the Loading page's "Submit to
 // Buyer" / "Good to go" button (disabled until every item is confirmed —
 // enforced here too, not just client-side). If any item's qty_loaded !=
@@ -1153,7 +1178,12 @@ router.post('/:id/submit-loading', async (req, res) => {
         }
       }
     }
-    const hasMismatch = !force && items.some(i => i.qty_loaded !== i.quantity);
+    // 2026-10-06: a line loaded with MORE than its transfer qty must always go
+    // through Buyer's Pending review (even on Buyer's forced Good to Go) —
+    // otherwise the shipment would carry more units than the Shopify transfer
+    // line and the origin's Available would never be corrected for the extra.
+    const hasOverLoaded = items.some(i => i.qty_loaded != null && i.qty_loaded > i.quantity);
+    const hasMismatch = hasOverLoaded || (!force && items.some(i => i.qty_loaded !== i.quantity));
 
     if (hasMismatch) {
       await pool.query("UPDATE transfers SET status = 'pending', updated_at = NOW() WHERE id = $1", [transfer.id]);
@@ -1308,6 +1338,17 @@ router.post('/:id/confirm', async (req, res) => {
 
       for (const ci of changedItems) {
         await pool.query('UPDATE transfer_items SET quantity = $1 WHERE id = $2', [Number(ci.quantity), ci.itemId]);
+      }
+    }
+
+    // 2026-10-06: if Buyer's final transfer qty for a line is BELOW what the
+    // from-location loaded (Buyer declined the extra units, or reduced an
+    // over-stock line below what was loaded), the shipment must not carry
+    // more than the transfer line — cap qty_loaded to the final qty.
+    for (const ci of confirmedItems) {
+      const dbItem = items.find(i => i.id === ci.itemId);
+      if (dbItem && dbItem.qty_loaded != null && dbItem.qty_loaded > Number(ci.quantity)) {
+        await pool.query('UPDATE transfer_items SET qty_loaded = $1 WHERE id = $2', [Number(ci.quantity), ci.itemId]);
       }
     }
 
@@ -1640,6 +1681,13 @@ async function commitOne(id, autoCommitted) {
   let shipmentId = transfer.shopify_shipment_id;
 
   if (!shipmentId) {
+    // 2026-10-06: refuse to create a shipment bigger than its transfer line —
+    // an over-loaded line has to be accepted (or declined) on Buyer's Pending
+    // page first, which also corrects the origin's Available for the extra.
+    const overLoaded = items.filter(i => i.qty_loaded != null && i.qty_loaded > i.quantity);
+    if (overLoaded.length > 0) {
+      throw new Error(`Loaded qty is higher than the transfer qty for ${overLoaded.map(i => i.sku).join(', ')} — review it on the Pending page (Confirm) before committing.`);
+    }
     if (transfer.status === 'loading' || transfer.status === 'pending') {
       // 2026-09-15 fix: plain `id: ID!` argument, not a wrapped input object —
       // see the comment on this same mutation in POST /:id/submit-loading above.

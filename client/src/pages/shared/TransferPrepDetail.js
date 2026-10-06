@@ -156,6 +156,29 @@ function TransferPrepDetail({ role, showWigNumber, backPath, dispatchLabel }) {
     }
   };
 
+  // 2026-10-06: click a checked row's marker to put that line back to
+  // "not processed" so its loaded qty can be re-entered. Loading only — the
+  // server rejects it in any other status too.
+  const undoQtyLoaded = async (item) => {
+    setSavingItemId(item.id);
+    setError('');
+    try {
+      const res = await fetch(`/api/transfers/${transferId}/qty-loaded/undo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itemId: item.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setDraftQty(prev => ({ ...prev, [item.id]: item.qty_loaded != null ? item.qty_loaded : item.quantity }));
+      setItems(prev => prev.map(i => (i.id === item.id ? { ...i, loaded_confirmed: false } : i)));
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSavingItemId(null);
+    }
+  };
+
   const saveNote = async () => {
     if (!noteDraft.trim()) return;
     setSavingNote(true);
@@ -422,7 +445,14 @@ function TransferPrepDetail({ role, showWigNumber, backPath, dispatchLabel }) {
                               ) : (isGoodToGo || isInTransit) ? (
                                 <span style={{ color: '#008060', fontWeight: 700 }}>{item.qty_loaded} ✓</span>
                               ) : confirmed ? (
-                                <span style={{ color: matches ? '#008060' : '#d72c0d', fontWeight: 700 }}>
+                                <span
+                                  onClick={isLoading && !held && savingItemId !== item.id ? () => undoQtyLoaded(item) : undefined}
+                                  title={isLoading ? 'Click to undo and re-enter the loaded qty' : undefined}
+                                  style={{
+                                    color: matches ? '#008060' : '#d72c0d', fontWeight: 700,
+                                    cursor: isLoading && !held ? 'pointer' : undefined,
+                                  }}
+                                >
                                   {item.qty_loaded} {matches ? '✓' : '●'}
                                 </span>
                               ) : (

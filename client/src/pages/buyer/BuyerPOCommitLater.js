@@ -28,6 +28,18 @@ const STATUS_FILTER_OPTIONS = [
 ];
 const DEFAULT_STATUS_FILTER = ['pending', 'sent_to_store', 'store_counted'];
 
+// "Partially committed" (2026-10-06, Hera) — display-only state, NOT a new
+// status value in the database. An invoice that's no longer committing (the
+// background commit died or was unlocked) but already has some line items
+// committed to Shopify. Its real status is unchanged (e.g. store_counted), so
+// it behaves exactly like that status everywhere — including appearing under
+// that status's filter — and only its pill is replaced.
+function isPartiallyCommitted(inv) {
+  return !inv.committing
+    && inv.status !== 'committed' && inv.status !== 'archived'
+    && Number(inv.committed_count || 0) > 0;
+}
+
 function normalizedStatus(inv) {
   const s = inv.status || 'pending';
   return s === 'committed' ? 'archived' : s;
@@ -258,6 +270,9 @@ function BuyerPOCommitLater() {
     (() => {
       if (inv.committing) {
         return <Text variant="bodySm">{`Committing ${inv.committed_count || 0} / ${inv.item_count || 0}`}</Text>;
+      }
+      if (isPartiallyCommitted(inv)) {
+        return <Badge tone="critical">Partially committed</Badge>;
       }
       if (inv.commit_error) {
         return <Text tone="critical" variant="bodySm" fontWeight="medium">Commit failed</Text>;

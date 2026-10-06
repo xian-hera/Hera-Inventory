@@ -198,15 +198,24 @@ function BuyerTransferDetail() {
     return fromQty != null && Number(item.quantity) > Number(fromQty);
   };
 
+  // 2026-10-06: the from-location loaded MORE than the transfer qty (e.g.
+  // system said 1, shelf really had 2). On Pending, Buyer decides: accept the
+  // extra (transfer qty goes up to the loaded qty — the server then corrects
+  // the origin's Available by the difference) or lower it back down.
+  const isOverLoaded = (item) => (
+    item.edit_state !== 'removed' && item.qty_loaded != null && Number(item.qty_loaded) > Number(item.quantity)
+  );
+
   const handleConfirm = async () => {
     setConfirming(true);
     setError('');
     try {
       const payload = {
         items: items.map(i => {
-          const overStock = isOverStock(i);
-          const defaultQty = overStock ? i.from_qty_snapshot : i.quantity;
-          const qty = overStock && draftQty[i.id] != null ? draftQty[i.id] : defaultQty;
+          const overLoaded = isOverLoaded(i);
+          const overStock = !overLoaded && isOverStock(i);
+          const defaultQty = overLoaded ? i.qty_loaded : (overStock ? i.from_qty_snapshot : i.quantity);
+          const qty = (overLoaded || overStock) && draftQty[i.id] != null ? draftQty[i.id] : defaultQty;
           return {
             itemId: i.id,
             inventoryItemId: i.inventory_item_id,
@@ -265,6 +274,28 @@ function BuyerTransferDetail() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       setItems(prev => prev.map(i => (i.id === item.id ? { ...i, qty_loaded: qty, loaded_confirmed: true } : i)));
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSavingLoadedId(null);
+    }
+  };
+
+  // 2026-10-06: click a checked loaded-qty marker to put that line back to
+  // "not processed" (Loading only; server enforces it too).
+  const undoLoadedQty = async (item) => {
+    setSavingLoadedId(item.id);
+    setError('');
+    try {
+      const res = await fetch(`/api/transfers/${transferId}/qty-loaded/undo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itemId: item.id, asBuyer: true }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setDraftLoadedQty(prev => ({ ...prev, [item.id]: item.qty_loaded != null ? item.qty_loaded : item.quantity }));
+      setItems(prev => prev.map(i => (i.id === item.id ? { ...i, loaded_confirmed: false } : i)));
     } catch (e) {
       setError(e.message);
     } finally {
@@ -469,7 +500,7 @@ function BuyerTransferDetail() {
       const aEdit = a.edit_state ? 1 : 0;
       const bEdit = b.edit_state ? 1 : 0;
       if (aEdit !== bEdit) return bEdit - aEdit;
-      const diff = (isOverStock(b) ? 1 : 0) - (isOverStock(a) ? 1 : 0);
+      const diff = ((isOverStock(b) || isOverLoaded(b)) ? 1 : 0) - ((isOverStock(a) || isOverLoaded(a)) ? 1 : 0);
       return diff !== 0 ? diff : byName(a, b);
     });
   } else if (isCountedLike) {
@@ -730,7 +761,7 @@ function BuyerTransferDetail() {
                         <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>
                           {isCommitted ? 'Transferred Qty' : 'Transfer Qty'}
                         </th>
-                        {isLoading && !editing && (
+                        {(isLoading || isPending) && !editing && (
                           <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Qty loaded</th>
                         )}
                         {isCountedLike && !editing && (
@@ -775,7 +806,8 @@ function BuyerTransferDetail() {
                           ))}
                         </>
                       ) : sortedItems.map(item => {
-                        const overStock = (isLoading || isPending) && isOverStock(item);
+                        const overLoaded = isPending && isOverLoaded(item);
+                        const overStock = (isLoading || isPending) && !overLoaded && isOverStock(item);
                         const receivedMismatch = isCountedLike && isReceivedMismatchSaved(item);
                         const receivedMismatchLive = isCountedLike && isReceivedMismatchDraft(item);
                         const removed = item.edit_state === 'removed';
@@ -804,7 +836,19 @@ function BuyerTransferDetail() {
                             </td>
                             <td style={{ padding: '10px' }}>{item.to_qty_snapshot ?? '—'}</td>
                             <td style={{ padding: '10px', ...qtyStyle(item) }}>
-                              {isPending && overStock ? (
+                              {isPending && overLoaded ? (
+                                <InlineStack gap="150" blockAlign="center">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    max={item.qty_loaded}
+                                    value={draftQty[item.id] ?? item.qty_loaded}
+                                    onChange={e => setDraftQty(prev => ({ ...prev, [item.id]: e.target.value }))}
+                                    style={{ width: '72px', padding: '4px 6px', borderRadius: '6px', border: '1px solid #b98900', fontSize: '13px', color: '#8a6116', fontWeight: 700 }}
+                                  />
+                                  <Text tone="subdued" variant="bodySm">was {item.quantity}</Text>
+                                </InlineStack>
+                              ) : isPending && overStock ? (
                                 <input
                                   type="number"
                                   min="0"
@@ -824,7 +868,11 @@ function BuyerTransferDetail() {
                                 {removed ? (
                                   <span style={{ color: '#8c6d4f' }}>—</span>
                                 ) : loadedConfirmed ? (
-                                  <span style={{ color: loadedMatches ? '#008060' : '#d72c0d', fontWeight: 700 }}>
+                                  <span
+                                    onClick={!held && savingLoadedId !== item.id ? () => undoLoadedQty(item) : undefined}
+                                    title="Click to undo and re-enter the loaded qty"
+                                    style={{ color: loadedMatches ? '#008060' : '#d72c0d', fontWeight: 700, cursor: held ? 'default' : 'pointer' }}
+                                  >
                                     {item.qty_loaded} {loadedMatches ? '✓' : '●'}
                                   </span>
                                 ) : (
@@ -844,6 +892,20 @@ function BuyerTransferDetail() {
                                       ✓
                                     </button>
                                   </InlineStack>
+                                )}
+                              </td>
+                            )}
+                            {isPending && (
+                              <td style={{ padding: '10px' }}>
+                                {removed || item.qty_loaded == null ? (
+                                  <span style={{ color: '#8c6d4f' }}>—</span>
+                                ) : (
+                                  <span style={{
+                                    fontWeight: 700,
+                                    color: overLoaded ? '#8a6116' : (Number(item.qty_loaded) === Number(item.quantity) ? '#008060' : '#d72c0d'),
+                                  }}>
+                                    {item.qty_loaded}
+                                  </span>
                                 )}
                               </td>
                             )}
