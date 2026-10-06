@@ -3,3 +3,5 @@ node_modules/
 client/node_modules/
 client/build/
 *.log
+# Claude working files (archived outside the repo, 2026-10-06)
+Claude outputs/
