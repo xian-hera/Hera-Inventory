@@ -318,6 +318,10 @@ function ImportTable({
                   {warnMsgs.map((m, i) => (
                     <div key={`w${i}`} style={{ color: '#b98900', marginTop: 2 }}>⚠ {m}</div>
                   ))}
+                  {/* e.g. "Adds 2 new variant(s) to …" (2026-10-07) */}
+                  {((validation.notes && validation.notes[r.id]) || []).map((m, i) => (
+                    <div key={`n${i}`} style={{ color: '#005bd3', marginTop: 2 }}>➕ {m}</div>
+                  ))}
                   {!msgs.length && precheck && <div style={{ color: '#008060' }}>✓ Ready</div>}
                 </td>
                 {ordered.map(c => {
@@ -332,6 +336,10 @@ function ImportTable({
                   if (eff.source === 'preset') style = { color: '#008060' };
                   if (eff.source === 'edit') style = { color: '#d72c0d', fontWeight: 700 };
                   if (productOnlyRow || c.kind === 'unmatched' || c.kind === 'shopifyMf') style = { ...style, color: '#8c9196' };
+                  // Existing product (Handle filled): its product fields are not
+                  // imported — shown grey like other ignored cells (2026-10-07).
+                  if (c.level === 'product' && validation.existingRows && validation.existingRows[r.id]
+                    && !(c.kind === 'field' && /^(handle|option\dName)$/.test(c.field))) style = { ...style, color: '#8c9196' };
                   if (c.kind === 'field' && c.field === 'handle' && mode === 'add' && isFirst && !String(eff.value).trim()) {
                     display = autoHandles[g && g.key] || (g && g.handle) || '';
                     style = { color: '#8c9196', fontStyle: 'italic' };

@@ -158,6 +158,13 @@ function GroupCard({ group, onChanged, setBanner }) {
                         {i.titleFr && <HtmlTooltip text={i.titleFr}><FrIcon /></HtmlTooltip>}
                         <a href={adminUrl(i.shopifyProductId)} target="_blank" rel="noopener noreferrer">{i.title}</a>
                       </Trunc>
+                      {/* New variants of an existing product (2026-10-07): only these
+                          SKUs are new; Inventory counts only them. */}
+                      {i.variantIds && i.variantIds.length > 0 && (
+                        <div style={{ color: '#6d7175', fontSize: 12, marginTop: 2, ...ONE_LINE }} title={(i.skus || []).join(', ')}>
+                          New SKU{i.variantIds.length > 1 ? 's' : ''}: {(i.skus || []).join(', ') || i.variantIds.length}
+                        </div>
+                      )}
                       {i.refreshError && <div style={{ color: '#d72c0d', fontSize: 12, marginTop: 2 }}>{i.refreshError}</div>}
                     </td>
                     <td style={{ ...TD, padding: `10px ${PAD3}px` }}>{i.available == null ? '—' : i.available}</td>

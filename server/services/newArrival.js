@@ -54,7 +54,10 @@ const UNIT_LABEL = { GRAMS: 'g', KILOGRAMS: 'kg', OUNCES: 'oz', POUNDS: 'lb' };
 // Fetch one product with every configured metafield (product + variant level)
 // and, optionally, Available at the given locations. Variants are paged so
 // the query cost stays well under Shopify's 1000-point single-query limit.
-async function fetchProductSnapshot(productId, metafields, locations) {
+// variantIds (2026-10-07, Hera): when the row only covers some SKUs (new
+// variants added to an existing product), Available and the SKU list count
+// only those variants. null = every variant.
+async function fetchProductSnapshot(productId, metafields, locations, variantIds = null) {
   const pm = metafields.filter(m => m.level === 'product');
   const vm = metafields.filter(m => m.level === 'variant');
   const pmAliases = pm.map((m, i) =>
@@ -120,10 +123,13 @@ async function fetchProductSnapshot(productId, metafields, locations) {
     mfValues[mfKey(m)] = distinct.join(', ');
   });
 
+  const scope = Array.isArray(variantIds) && variantIds.length ? new Set(variantIds) : null;
+  const scoped = scope ? variants.filter(v => scope.has(v.id)) : variants;
+
   let available = null;
   if (locations.length) {
     available = 0;
-    for (const v of variants) {
+    for (const v of scoped) {
       locations.forEach((l, i) => {
         const lvl = v.inventoryItem && v.inventoryItem[`l${i}`];
         const q = lvl && lvl.quantities && lvl.quantities[0];
@@ -145,7 +151,7 @@ async function fetchProductSnapshot(productId, metafields, locations) {
     weight,
     metafields: mfValues,
     available,
-    skus: variants.map(v => v.sku).filter(Boolean),
+    skus: scoped.map(v => v.sku).filter(Boolean),
   };
 }
 
@@ -179,7 +185,7 @@ async function fetchFrTranslations(productIds) {
 // Returns { refreshed, errors: [{ id, title, error }] }.
 async function refreshRows(rowIds, { withInventory = false } = {}) {
   if (!rowIds.length) return { refreshed: 0, errors: [] };
-  const r = await pool.query('SELECT id, shopify_product_id, title, product_type, cached FROM new_arrival WHERE id = ANY($1)', [rowIds]);
+  const r = await pool.query('SELECT id, shopify_product_id, title, product_type, cached, variant_ids FROM new_arrival WHERE id = ANY($1)', [rowIds]);
   const rows = r.rows;
   const groups = await getGroups();
   let locations = [];
@@ -207,7 +213,7 @@ async function refreshRows(rowIds, { withInventory = false } = {}) {
         const group = groupForType(groups, (row.cached && row.cached.productType) || row.product_type);
         // Only the metafields configured for this product's group are fetched.
         const metafields = group ? (group.metafields || []) : [];
-        const snap = await fetchProductSnapshot(row.shopify_product_id, metafields, locations);
+        const snap = await fetchProductSnapshot(row.shopify_product_id, metafields, locations, row.variant_ids);
         if (!snap) {
           await pool.query(
             `UPDATE new_arrival SET refresh_error = $2, refreshed_at = NOW() WHERE id = $1`,
@@ -245,4 +251,61 @@ async function refreshRows(rowIds, { withInventory = false } = {}) {
   return { refreshed, errors };
 }
 
-module.exports = { SETTINGS, DEFAULT_TAG, getGroups, groupForType, mfKey, refreshRows };
+// Put new SKUs of a product into Online → New products (2026-10-07, Hera).
+// variantIds = the new variants only; null = the whole product (a brand-new
+// product). One row per product (shopify_product_id is unique):
+//   no row                         → insert            (action 'inserted')
+//   row 'new', whole product       → nothing to add    ('already')
+//   row 'new', some SKUs           → add the new ones  ('appended' / 'already')
+//   row 'finalized', new SKUs      → back to 'new' with only the new SKUs
+//                                    ('reopened'); its earlier SKUs were
+//                                    already passed to the store at Finalize
+//   row 'finalized', whole product → nothing           ('already')
+// Returns { id, action }.
+async function addToOnlineNewArrival({ productId, title, productType, variantIds = null, skus = [] }) {
+  const ids = Array.isArray(variantIds) ? [...new Set(variantIds.filter(Boolean))] : null;
+  const db = await pool.connect();
+  try {
+    await db.query('BEGIN');
+    const cur = (await db.query(
+      'SELECT id, status, variant_ids FROM new_arrival WHERE shopify_product_id = $1 FOR UPDATE', [productId]
+    )).rows[0];
+    let out;
+    if (!cur) {
+      const ins = await db.query(
+        `INSERT INTO new_arrival (shopify_product_id, title, product_type, skus, variant_ids)
+         VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+        [productId, title || '', productType || '', skus || [], ids]
+      );
+      out = { id: ins.rows[0].id, action: 'inserted' };
+    } else if (cur.status === 'new') {
+      if (!cur.variant_ids || !ids) {
+        out = { id: cur.id, action: 'already' };
+      } else {
+        const merged = [...new Set([...cur.variant_ids, ...ids])];
+        if (merged.length === cur.variant_ids.length) out = { id: cur.id, action: 'already' };
+        else {
+          await db.query('UPDATE new_arrival SET variant_ids = $2 WHERE id = $1', [cur.id, merged]);
+          out = { id: cur.id, action: 'appended' };
+        }
+      }
+    } else if (ids) {
+      await db.query(
+        `UPDATE new_arrival SET status = 'new', finalized_at = NULL, variant_ids = $2, skus = $3 WHERE id = $1`,
+        [cur.id, ids, skus || []]
+      );
+      out = { id: cur.id, action: 'reopened' };
+    } else {
+      out = { id: cur.id, action: 'already' };
+    }
+    await db.query('COMMIT');
+    return out;
+  } catch (e) {
+    await db.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally {
+    db.release();
+  }
+}
+
+module.exports = { SETTINGS, DEFAULT_TAG, getGroups, groupForType, mfKey, refreshRows, addToOnlineNewArrival };

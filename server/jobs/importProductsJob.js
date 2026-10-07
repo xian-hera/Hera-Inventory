@@ -9,6 +9,9 @@
 //             2 metafieldsSet  3 publish to Point of Sale  4 new_arrival row
 //   Update  : 1 productUpdate  2 productVariantsBulkUpdate  3 metafields
 //             4 publish to Point of Sale  5 activate chosen locations
+//   Add new, Handle of an existing product (2026-10-07): 1 productVariantsBulkCreate
+//             (0 stock at chosen locations)  2 variant metafields  3 New Arrival
+//             for the new SKUs only — see addVariants()
 // Hub never deletes Shopify products.
 const crypto = require('crypto');
 const { pool } = require('../database/init');
@@ -66,13 +69,16 @@ async function findHandles(handles) {
 
 // Pick a free handle: base, base-1, base-2 … not used in Shopify and not
 // already taken by another product in this same import.
-async function resolveAutoHandles(bases, reserved) {
+// collisions (optional Map, 2026-10-07): filled with base → the Shopify
+// product that already uses the base handle, so the buyer can be warned.
+async function resolveAutoHandles(bases, reserved, collisions) {
   const out = new Map();
   const taken = new Set(reserved);
   for (const base of bases) {
     if (!base) continue;
     const candidates = [base, ...Array.from({ length: 9 }, (_, i) => `${base}-${i + 1}`)];
     const found = await findHandles(candidates);
+    if (collisions && found.get(base)) collisions.set(base, found.get(base));
     const pick = candidates.find(c => !found.get(c) && !taken.has(c)) || `${base}-${Date.now()}`;
     taken.add(pick);
     out.set(base, pick);
@@ -80,9 +86,65 @@ async function resolveAutoHandles(bases, reserved) {
   return out;
 }
 
+// Existing product a buyer adds variants to (Add new with a filled Handle,
+// 2026-10-07, Hera). Options, every variant's option combination (lower
+// case, "a|b|c" in option order) and POS only. Variants are paged.
+async function fetchExistingProduct(productId) {
+  let after = null;
+  let p = null;
+  const combos = [];
+  for (;;) {
+    const data = await gql(
+      `query($id: ID!, $after: String) {
+        product(id: $id) {
+          id title handle status productType hasOnlyDefaultVariant
+          options { name position }
+          metafield(namespace: "custom", key: "pos_only") { value }
+          variants(first: 100, after: $after) {
+            pageInfo { hasNextPage endCursor }
+            nodes { id selectedOptions { name value } }
+          }
+        }
+      }`,
+      { id: productId, after }
+    );
+    if (!data.product) return null;
+    if (!p) p = data.product;
+    const names = [...(p.options || [])].sort((a, b) => a.position - b.position).map(o => o.name);
+    for (const v of data.product.variants.nodes) {
+      combos.push(names.map(n => {
+        const o = (v.selectedOptions || []).find(x => x.name === n);
+        return String(o ? o.value : '').trim().toLowerCase();
+      }).join('|'));
+    }
+    if (!data.product.variants.pageInfo.hasNextPage) break;
+    after = data.product.variants.pageInfo.endCursor;
+  }
+  const optionNames = [...(p.options || [])].sort((a, b) => a.position - b.position).map(o => o.name);
+  return {
+    productId: p.id,
+    title: p.title,
+    handle: p.handle,
+    status: p.status,
+    productType: p.productType || '',
+    optionNames,
+    hasOptions: !p.hasOnlyDefaultVariant,
+    combos,
+    posOnly: !!(p.metafield && /^true$/i.test(String(p.metafield.value).trim())),
+  };
+}
+
 // ─── Precheck ────────────────────────────────────────────────────────────────
+// Add new (2026-10-07, Hera) — one CSV can mix both:
+//   Handle empty           → new product, handle made from the Title
+//                            (autoHandleCollisions: the plain handle is
+//                            already used in Shopify → orange warning)
+//   Handle filled + found  → the rows become new variants of that product
+//                            (existing[groupKey])
+//   Handle filled, missing → handleError (red, blocks the import)
 // rows: [{ rowNumber, groupKey, handle, handleIsAuto, sku, barcode }]
-// Add:    { rows: { [rowNumber]: { errors: [] } }, autoHandles: { [groupKey]: handle } }
+// Add:    { rows: { [rowNumber]: { errors: [], handleError? } }, autoHandles: { [groupKey]: handle },
+//           existing: { [groupKey]: fetchExistingProduct() }, autoHandleCollisions: { [groupKey]: { handle, title } } }
 // Update: { rows: { [rowNumber]: { errors: [], productId, productTitle, variantId, inventoryItemId } } }
 async function precheck(mode, rows) {
   const out = { rows: {}, autoHandles: {} };
@@ -94,12 +156,26 @@ async function precheck(mode, rows) {
   const handles = await findHandles(manualHandles);
 
   if (mode === 'add') {
+    out.existing = {};
+    out.autoHandleCollisions = {};
+    const detailsById = new Map();
     for (const r of rows) {
       const res = out.rows[r.rowNumber];
       const h = String(r.handle || '').trim();
-      if (h && !r.handleIsAuto && handles.get(h)) {
+      // Before 2026-10-07 a filled Handle that existed was an error ("Handle
+      // already exists"); now it means "add these rows as new variants".
+      if (h && !r.handleIsAuto) {
         const p = handles.get(h);
-        res.errors.push(`Handle "${h}" already exists${p.status === 'ARCHIVED' ? ' (archived product)' : ''}`);
+        if (!p) {
+          res.handleError = `Handle "${h}" not found — leave it empty to create a new product`;
+        } else if (p.status === 'ARCHIVED') {
+          res.handleError = `Handle "${h}" belongs to an archived product — variants can't be added to it`;
+        } else {
+          if (!detailsById.has(p.id)) detailsById.set(p.id, await fetchExistingProduct(p.id));
+          const ex = detailsById.get(p.id);
+          if (!ex) res.handleError = `Handle "${h}" not found — leave it empty to create a new product`;
+          else if (!out.existing[r.groupKey]) out.existing[r.groupKey] = ex;
+        }
       }
       const sku = String(r.sku || '').trim();
       if (sku && (skus.get(sku) || []).length) res.errors.push(`SKU ${sku} already exists`);
@@ -116,7 +192,8 @@ async function precheck(mode, rows) {
       }
     }
     const reserved = manualHandles;
-    const resolved = await resolveAutoHandles([...new Set(autoBases)], reserved);
+    const collisions = new Map();
+    const resolved = await resolveAutoHandles([...new Set(autoBases)], reserved, collisions);
     // Two groups can share the same base (same title) only if the client
     // grouped them apart; give each its own suffix.
     const used = new Set(reserved);
@@ -128,6 +205,7 @@ async function precheck(mode, rows) {
       }
       used.add(pick);
       out.autoHandles[groupKey] = pick;
+      if (collisions.has(base)) out.autoHandleCollisions[groupKey] = { handle: base, title: collisions.get(base).title };
     }
     return out;
   }
@@ -325,7 +403,10 @@ async function addProduct(p, ctx) {
     rowNumber: v.rowNumber, groupKey: 'g', handle: i === 0 ? p.handle : '', handleIsAuto: !!p.handleIsAuto,
     sku: v.fields.sku, barcode: v.fields.barcode,
   })));
-  const conflicts = [].concat(...Object.values(check.rows).map(r => r.errors));
+  const conflicts = [].concat(...Object.values(check.rows).map(r => [...(r.handleError ? [r.handleError] : []), ...r.errors]));
+  // A filled Handle that exists means "add variants" (addVariants) — never
+  // create a second product for it (2026-10-07).
+  if (check.existing && check.existing.g) conflicts.push(`Handle "${p.handle}" belongs to an existing product`);
   if (conflicts.length) return { result: 'failed', report: [`Skipped whole product — ${conflicts.join('; ')}`] };
   const handle = p.handleIsAuto ? (check.autoHandles.g || p.handle) : p.handle;
 
@@ -445,7 +526,8 @@ async function addProduct(p, ctx) {
   // the others get there when Online marks them Finalized.
   if (posOnly && parseBool(posOnly.value) === true) {
     const { addStoreNewArrivals } = require('../routes/storeNewArrivals');
-    await addStoreNewArrivals([product.id], 'pos_only');
+    // One Store New Arrival row per SKU (2026-10-07, Hera).
+    await addStoreNewArrivals([{ productId: product.id, variantIds: created.map(c => c.id) }], 'pos_only');
   }
   if (!(posOnly && parseBool(posOnly.value) === true)) {
     try {
@@ -462,6 +544,135 @@ async function addProduct(p, ctx) {
   }
 
   return { result: report.length ? 'partial' : 'success', report, productId: product.id, title: product.title };
+}
+
+// ─── Add new variants to an existing product (2026-10-07, Hera) ─────────────
+// Add new mode, Handle filled and found in Shopify. Only the new variants
+// are written: product-level fields of the existing product are never
+// changed. New variants get 0 stock at the chosen locations. New SKUs go to
+// Store New Arrival only (never Online) — see step 3.
+async function addVariants(p, ctx) {
+  const report = [];
+  const label = (v) => `SKU ${str(v.fields.sku) || `row ${v.rowNumber}`}`;
+
+  // 0. Re-check right before writing.
+  const check = await precheck('add', p.variants.map((v, i) => ({
+    rowNumber: v.rowNumber, groupKey: 'g', handle: i === 0 ? p.handle : '', handleIsAuto: false,
+    sku: v.fields.sku, barcode: v.fields.barcode,
+  })));
+  const conflicts = [].concat(...Object.values(check.rows).map(r => [...(r.handleError ? [r.handleError] : []), ...r.errors]));
+  const ex = check.existing && check.existing.g;
+  if (!conflicts.length && (!ex || ex.productId !== p.existing.productId)) conflicts.push(`Handle "${p.handle}" now points to a different product`);
+  const title = (ex && ex.title) || p.existing.title || '';
+  if (conflicts.length) return { result: 'failed', report: [`No variants added — ${[...new Set(conflicts)].join('; ')}`], productId: p.existing.productId, title };
+  if (!ex.hasOptions) {
+    return { result: 'failed', report: ['No variants added — this product has no options in Shopify. Add options to it in Shopify first.'], productId: ex.productId, title };
+  }
+
+  const names = ex.optionNames;
+  const seen = new Set(ex.combos);
+  const bad = [];
+  for (const v of p.variants) {
+    const vals = names.map((n, i) => str((v.optionValues || [])[i]));
+    if (vals.some(x => !x)) { bad.push(`Row ${v.rowNumber}: needs a value for every option (${names.join(', ')})`); continue; }
+    if ((v.optionValues || []).slice(names.length).some(x => str(x))) { bad.push(`Row ${v.rowNumber}: the product has only ${names.length} option(s)`); continue; }
+    const key = vals.map(x => x.toLowerCase()).join('|');
+    if (seen.has(key)) { bad.push(`Row ${v.rowNumber}: variant "${vals.join(' / ')}" already exists`); continue; }
+    seen.add(key);
+  }
+  if (bad.length) return { result: 'failed', report: [`No variants added — ${bad.join('; ')}`], productId: ex.productId, title };
+
+  const inputs = p.variants.map(v => {
+    const vf = v.fields;
+    const out = { optionValues: names.map((n, i) => ({ optionName: n, name: str((v.optionValues || [])[i]) })) };
+    if (has(vf.barcode)) out.barcode = str(vf.barcode);
+    if (has(vf.price)) out.price = str(vf.price);
+    if (has(vf.compareAtPrice)) out.compareAtPrice = str(vf.compareAtPrice);
+    if (has(vf.taxable)) { const b = parseBool(vf.taxable); if (b !== null) out.taxable = b; }
+    if (has(vf.taxCode)) out.taxCode = str(vf.taxCode);
+    const pol = toPolicy(vf.inventoryPolicy);
+    if (pol) out.inventoryPolicy = pol;
+    const item = {};
+    if (has(vf.sku)) item.sku = str(vf.sku); // bulk input keeps the SKU on the inventory item
+    if (has(vf.cost)) item.cost = str(vf.cost);
+    const tracked = vf.tracked === undefined ? true : str(vf.tracked).toLowerCase() === 'shopify' || parseBool(vf.tracked) === true;
+    item.tracked = tracked;
+    if (has(vf.requiresShipping)) { const b = parseBool(vf.requiresShipping); if (b !== null) item.requiresShipping = b; }
+    const w = toWeight(vf.weight, vf.weightUnit);
+    if (w) item.measurement = { weight: w };
+    out.inventoryItem = item;
+    if (tracked && ctx.locations.length) {
+      out.inventoryQuantities = ctx.locations.map(l => ({ locationId: l.id, availableQuantity: 0 }));
+    }
+    return out;
+  });
+
+  // 1. Create the variants (one call; all or nothing on Shopify's side).
+  let created;
+  try {
+    const data = await gql(
+      `mutation($pid: ID!, $v: [ProductVariantsBulkInput!]!) {
+        productVariantsBulkCreate(productId: $pid, variants: $v, strategy: DEFAULT) {
+          productVariants { id sku title selectedOptions { name value } }
+          userErrors { field message }
+        }
+      }`,
+      { pid: ex.productId, v: inputs }
+    );
+    const msg = userErrorText(data.productVariantsBulkCreate);
+    if (msg || !data.productVariantsBulkCreate.productVariants) {
+      return { result: 'failed', report: [`No variants added — ${msg || 'unknown error'}`], productId: ex.productId, title };
+    }
+    created = data.productVariantsBulkCreate.productVariants;
+  } catch (e) {
+    return { result: 'failed', report: [`No variants added — ${e.message}`], productId: ex.productId, title };
+  }
+
+  const variantFor = (v) => {
+    const sku = str(v.fields.sku);
+    if (sku) { const hit = created.find(c => str(c.sku) === sku); if (hit) return hit; }
+    const want = names.map((n, i) => str((v.optionValues || [])[i]).toLowerCase());
+    return created.find(c => names.every((n, i) => {
+      const o = (c.selectedOptions || []).find(x => x.name === n);
+      return o && str(o.value).toLowerCase() === want[i];
+    })) || null;
+  };
+
+  // 2. Variant metafields (product metafields are not touched).
+  const entries = [];
+  for (const v of p.variants) {
+    const target = variantFor(v);
+    for (const m of v.metafields || []) {
+      if (!has(m.value)) continue;
+      if (!target) { report.push(`Row ${v.rowNumber}: variant metafields skipped — variant not found after create`); break; }
+      entries.push({ ownerId: target.id, level: 'variant', namespace: m.namespace, key: m.key, value: m.value, label: label(v) });
+    }
+  }
+  report.push(...await writeMetafields(entries, ctx.defs));
+
+  // 3. New Arrival — only the new SKUs, Store only (Hera 2026-10-07, rev.):
+  // Online works per product, so new variants of an existing product never
+  // go to Online New products. They go straight to Store New Arrival —
+  // unless the product itself is still waiting in Online New products: then
+  // they wait too, and Finalize sends every variant of the product to the
+  // store. (addToOnlineNewArrival in services/newArrival.js is no longer
+  // called from here.)
+  const variantIds = created.map(c => c.id);
+  const notes = [`Added ${created.length} variant(s): ${created.map(c => c.sku || c.title).join(', ')}`];
+  try {
+    const waiting = await pool.query(`SELECT 1 FROM new_arrival WHERE shopify_product_id = $1 AND status = 'new'`, [ex.productId]);
+    if (waiting.rows.length) {
+      notes.push('The product is still waiting to be finalized in Online New products — the new variant(s) go to Store New Arrival when it is finalized');
+    } else {
+      const { addStoreNewArrivals } = require('../routes/storeNewArrivals');
+      await addStoreNewArrivals([{ productId: ex.productId, variantIds }], ex.posOnly ? 'pos_only' : 'new_variant');
+      notes.push('Added to Store New Arrival');
+    }
+  } catch (e) {
+    report.push(`Could not add to Store New Arrival — ${e.message}`);
+  }
+
+  return { result: report.length ? 'partial' : 'success', report, notes, productId: ex.productId, title };
 }
 
 // ─── Update existing ─────────────────────────────────────────────────────────
@@ -657,7 +868,9 @@ async function runJob(job, payload) {
   for (const p of payload.products) {
     let r;
     try {
-      r = payload.mode === 'update' ? await updateProduct(p, ctx) : await addProduct(p, ctx);
+      r = payload.mode === 'update' ? await updateProduct(p, ctx)
+        : (p.existing && p.existing.productId) ? await addVariants(p, ctx) // 2026-10-07
+          : await addProduct(p, ctx);
     } catch (e) {
       r = { result: 'failed', report: [`Unexpected error — ${e.message}`] };
     }
@@ -667,6 +880,7 @@ async function runJob(job, payload) {
       productId: r.productId || p.productId || null,
       result: r.result,
       report: r.report || [],
+      notes: r.notes || [], // informational lines, e.g. "Added 2 variant(s): …" (2026-10-07)
       rowNumbers: p.variants.map(v => v.rowNumber),
     });
     job.done++;

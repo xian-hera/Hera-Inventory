@@ -28,6 +28,9 @@ function rowToItem(r) {
     available: c.available == null ? null : c.available,
     status: c.status || null,
     skus: r.skus || [],
+    // Only these SKUs are new (variants added to an existing product,
+    // 2026-10-07); null = the whole product is new.
+    variantIds: r.variant_ids || null,
     createdAt: r.created_at,
     finalizedAt: r.finalized_at,
     refreshedAt: r.refreshed_at,
@@ -98,12 +101,13 @@ router.post('/finalize', async (req, res) => {
     const list = ids(req.body);
     const r = await pool.query(
       `UPDATE new_arrival SET status = 'finalized', finalized_at = NOW() WHERE id = ANY($1) AND status = 'new'
-       RETURNING shopify_product_id`,
+       RETURNING shopify_product_id, variant_ids`,
       [list]
     );
     // Finalized products also go to Store → New Arrival (2026-09-29, Hera).
+    // Per SKU since 2026-10-07: only the row's new SKUs (all when null).
     const { addStoreNewArrivals } = require('./storeNewArrivals');
-    await addStoreNewArrivals(r.rows.map(x => x.shopify_product_id), 'finalized');
+    await addStoreNewArrivals(r.rows.map(x => ({ productId: x.shopify_product_id, variantIds: x.variant_ids })), 'finalized');
     res.json({ finalized: r.rowCount });
   } catch (e) {
     res.status(500).json({ error: e.message });

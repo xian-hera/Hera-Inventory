@@ -423,7 +423,9 @@ export function effectiveCell(row, col, { isFirstOfGroup, presets }) {
 
 // ─── Validation ──────────────────────────────────────────────────────────────
 // Returns { cellErrors: {rowId: {colId: msg}}, rowErrors: {rowId: [msg]} (block),
-//           skip: {groupKey: [msg]} (group will be skipped, not blocking) }
+//           skip: {groupKey: [msg]} (group will be skipped, not blocking),
+//           notes: {rowId: [msg]} (grey info), existingRows: {rowId: true}
+//           (first rows of groups that add variants to an existing product) }
 export function validate({ rows, columns, groups, mode, presets, pools, precheck }) {
   const cellErrors = {};
   // Non-blocking notes (orange) — e.g. a Sub collection not listed under the
@@ -435,8 +437,18 @@ export function validate({ rows, columns, groups, mode, presets, pools, precheck
   const addCell = (r, c, m) => { (cellErrors[r.id] = cellErrors[r.id] || {})[c.id] = m; };
   const addRow = (r, m) => { (rowErrors[r.id] = rowErrors[r.id] || []).push(m); };
   const addSkip = (g, m) => { (skip[g.key] = skip[g.key] || []).push(m); };
+  // Add new with a filled Handle of an existing product (2026-10-07, Hera).
+  const notes = {};
+  const existingRows = {};
+  const addNote = (r, m) => { (notes[r.id] = notes[r.id] || []).push(m); };
+  const handleColV = colFor(columns, 'handle');
+  const optNameCols = [1, 2, 3].map(i => colFor(columns, `option${i}Name`));
 
   const firstIds = new Set(groups.map(g => g.rows[0] && g.rows[0].id));
+  // First rows of groups that add variants to an existing product: their
+  // product-level cells are not imported, so they are not checked either.
+  const existingFirstIds = new Set(mode === 'add' && precheck && precheck.existing
+    ? groups.filter(g => precheck.existing[g.key] && g.rows[0]).map(g => g.rows[0].id) : []);
   const skuCol = colFor(columns, 'sku');
   const bcCol = colFor(columns, 'barcode');
   const titleCol = colFor(columns, 'title');
@@ -454,6 +466,7 @@ export function validate({ rows, columns, groups, mode, presets, pools, precheck
       if (!v) continue;
       // Product-level values only count on a product's first row.
       if (c.level === 'product' && !isFirst && mode === 'add') continue;
+      if (c.level === 'product' && existingFirstIds.has(r.id) && !(c.kind === 'field' && /^(handle|option\dName)$/.test(c.field))) continue;
       if (c.preset) {
         const p = PRESET_BY_KEY[c.preset];
         if (!p.options.includes(v)) addCell(r, c, `"${v}" is not one of: ${p.options.join(', ')}`);
@@ -491,8 +504,67 @@ export function validate({ rows, columns, groups, mode, presets, pools, precheck
   if (mode === 'add') {
     for (const g of groups) {
       const first = g.rows[0];
+      const pcFirst = precheck && precheck.rows ? precheck.rows[first.rowNumber] : null;
+      const ex = precheck && precheck.existing ? precheck.existing[g.key] : null;
+      // Handle filled but not in Shopify → red, blocks (2026-10-07).
+      if (pcFirst && pcFirst.handleError && handleColV) addCell(first, handleColV, pcFirst.handleError);
+      // Auto handle already used by another product → orange note only.
+      const col = precheck && precheck.autoHandleCollisions ? precheck.autoHandleCollisions[g.key] : null;
+      if (col && handleColV) addWarn(first, handleColV, `A product with this handle already exists (${col.title}). To add variants to it, fill in its Handle.`);
+      if (ex) {
+        existingRows[first.id] = true;
+        addNote(first, `Adds ${g.rows.length} new variant(s) to "${ex.title}" — the product's own fields are not changed`);
+        if (!ex.hasOptions) {
+          addRow(first, `"${ex.title}" has no options in Shopify — add options to it in Shopify first`);
+        } else {
+          const n = ex.optionNames.length;
+          // Option names are required and case sensitive (Hera 2026-10-07).
+          optNameCols.forEach((c, i) => {
+            const v = c ? String(effectiveCell(first, c, { isFirstOfGroup: true, presets }).value).trim() : '';
+            if (i < n && !c) { addRow(first, `Add the column Option${i + 1} name ("${ex.optionNames[i]}")`); return; }
+            if (i < n && !v) { addCell(first, c, `Option${i + 1} name is required: "${ex.optionNames[i]}"`); return; }
+            if (!v) return;
+            if (i >= n) addCell(first, c, `"${ex.title}" has only ${n} option(s)`);
+            else if (v !== ex.optionNames[i]) {
+              addCell(first, c, lc(v) === lc(ex.optionNames[i])
+                ? `Option names are case sensitive — use "${ex.optionNames[i]}", not "${v}"`
+                : `Option${i + 1} name must be "${ex.optionNames[i]}" (the product's option)`);
+            }
+          });
+          const existingCombos = new Set(ex.combos || []);
+          const combos = new Set();
+          for (const r of g.rows) {
+            const vals = optCols.map(c => (c ? String(cellValue(r, c)).trim() : ''));
+            if (vals.slice(0, n).some(x => !x)) { addRow(r, `Needs a value for every option: ${ex.optionNames.join(', ')}`); continue; }
+            if (vals.slice(n).some(x => x)) { addRow(r, `"${ex.title}" has only ${n} option(s)`); continue; }
+            const k = vals.slice(0, n).map(lc).join('|');
+            if (existingCombos.has(k)) addRow(r, `Variant "${vals.slice(0, n).join(' / ')}" already exists in "${ex.title}"`);
+            else if (combos.has(k)) addRow(r, 'Multiple variants need unique option values');
+            combos.add(k);
+          }
+        }
+        if (precheck) {
+          const msgs = [];
+          for (const r of g.rows) {
+            const pc = precheck.rows[r.rowNumber];
+            if (pc && pc.errors.length) msgs.push(...pc.errors);
+          }
+          if (msgs.length) addSkip(g, `No variants will be added to this product — ${[...new Set(msgs)].join('; ')}`);
+        }
+        continue;
+      }
       const t = titleCol ? String(effectiveCell(first, titleCol, { isFirstOfGroup: true, presets }).value).trim() : '';
-      if (!t) addRow(first, 'First row of a product needs a Title');
+      // (No Title message when the Handle itself is wrong — fix that first.)
+      if (!t && !(pcFirst && pcFirst.handleError)) addRow(first, 'First row of a product needs a Title');
+      // An option value needs its option name on the product's first row
+      // (Hera 2026-10-07).
+      optCols.forEach((vc, i) => {
+        if (!vc || !g.rows.some(r => String(cellValue(r, vc)).trim())) return;
+        const nc = optNameCols[i];
+        const name = nc ? String(effectiveCell(first, nc, { isFirstOfGroup: true, presets }).value).trim() : '';
+        if (!nc) addRow(first, `Add the column Option${i + 1} name (Option${i + 1} value is used)`);
+        else if (!name) addCell(first, nc, `Option${i + 1} name is required when Option${i + 1} value is used`);
+      });
       if (g.rows.length > 1) {
         const combos = new Set();
         for (const r of g.rows) {
@@ -520,7 +592,7 @@ export function validate({ rows, columns, groups, mode, presets, pools, precheck
       }
     }
   }
-  return { cellErrors, cellWarnings, rowErrors, skip };
+  return { cellErrors, cellWarnings, rowErrors, skip, notes, existingRows };
 }
 
 // Product-level value conflicts inside a group (first row wins, highlighted).
@@ -607,6 +679,24 @@ export function buildPayload({ groups, columns, mode, presets, precheck, skip })
     const handleCol = colFor(columns, 'handle');
     const manualHandle = handleCol ? String(cellValue(first, handleCol)).trim() : '';
     const autoHandle = precheck && precheck.autoHandles ? precheck.autoHandles[g.key] : '';
+    // New variants for an existing product (2026-10-07): the server uses the
+    // product's own option names and never changes its product fields.
+    const ex = mode === 'add' && precheck && precheck.existing ? precheck.existing[g.key] : null;
+    if (ex) {
+      products.push({
+        key: g.key,
+        title: ex.title,
+        productId: null,
+        handle: manualHandle,
+        handleIsAuto: false,
+        existing: { productId: ex.productId, title: ex.title, optionNames: ex.optionNames },
+        fields: {},
+        optionNames: ex.optionNames,
+        metafields: [],
+        variants,
+      });
+      continue;
+    }
     products.push({
       key: g.key,
       title: String(fields.title || g.productTitle || '').trim(),

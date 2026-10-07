@@ -3,6 +3,11 @@
 // and products not stocked here yet ("Incoming"). One card per product type
 // (A→Z), newest first inside a card. Tap the picture to see it large; tap
 // anywhere to close.
+// Since 2026-10-07 New Arrival is per SKU, but SKUs are always shown under
+// their product (Hera, rev.): picture, vendor, title, then one line per new
+// SKU — "└ Color Blonde  Length 20"" with its own New until. A product whose
+// SKUs are split shows up in both tabs with only that tab's SKUs. Products
+// without options show New until on the product line, as before.
 import React, { useState, useEffect, useCallback } from 'react';
 import { Page, Card, BlockStack, InlineStack, Text, Tabs, Banner, Spinner, Divider, Box } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
@@ -13,9 +18,38 @@ const TABS = [
   { id: 'incoming', content: 'Incoming', note: 'Products below are not stocked in your store yet.' },
 ];
 
-function ProductRow({ item, onOpenImage, first }) {
+function NewUntil({ value }) {
   return (
-    <div style={{ display: 'flex', gap: 12, padding: '12px 0', borderTop: first ? 'none' : '1px solid #e1e3e5' }}>
+    <span style={{ whiteSpace: 'nowrap' }}>
+      <Text variant="bodySm" as="span" tone="subdued">New until </Text>
+      <Text variant="bodySm" as="span" fontWeight="semibold">{value || 'TBD'}</Text>
+    </span>
+  );
+}
+
+// One line per new SKU under the product (2026-10-07).
+function VariantLine({ v }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '4px 0' }}>
+      <span style={{ color: '#6d7175', flex: '0 0 auto' }}>└</span>
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexWrap: 'wrap', columnGap: 14, rowGap: 2 }}>
+        {v.options.map((o, i) => (
+          <span key={i} style={{ wordBreak: 'break-word' }}>
+            <Text variant="bodyMd" as="span" fontWeight="semibold">{o.name}</Text>
+            <Text variant="bodyMd" as="span">{' '}{o.value}</Text>
+          </span>
+        ))}
+      </div>
+      <NewUntil value={v.newUntil} />
+    </div>
+  );
+}
+
+function ProductRow({ item, onOpenImage, first }) {
+  const variants = item.hasOptions ? (item.variants || []) : [];
+  return (
+    <div style={{ padding: '12px 0', borderTop: first ? 'none' : '1px solid #e1e3e5' }}>
+    <div style={{ display: 'flex', gap: 12 }}>
       <button
         type="button"
         onClick={() => item.imageUrl && onOpenImage(item)}
@@ -32,11 +66,20 @@ function ProductRow({ item, onOpenImage, first }) {
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         {item.vendor && <Text variant="bodySm" tone="subdued">{item.vendor}</Text>}
         <div style={{ wordBreak: 'break-word' }}><Text variant="bodyMd" fontWeight="semibold">{item.title}</Text></div>
-        <div style={{ marginTop: 'auto', paddingTop: 4, textAlign: 'right' }}>
-          <Text variant="bodySm" as="span" tone="subdued">New until </Text>
-          <Text variant="bodySm" as="span" fontWeight="semibold">{item.newUntil || 'TBD'}</Text>
-        </div>
+        {!item.hasOptions && (
+          <div style={{ marginTop: 'auto', paddingTop: 4, textAlign: 'right' }}>
+            <Text variant="bodySm" as="span" tone="subdued">New until </Text>
+            <Text variant="bodySm" as="span" fontWeight="semibold">{item.newUntil || 'TBD'}</Text>
+          </div>
+        )}
       </div>
+    </div>
+    {variants.length > 0 && (
+      // Lines start under the title (64px picture + 12px gap).
+      <div style={{ paddingLeft: 76, marginTop: 6 }}>
+        {variants.map(v => <VariantLine key={v.id} v={v} />)}
+      </div>
+    )}
     </div>
   );
 }

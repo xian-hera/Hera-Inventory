@@ -1271,6 +1271,18 @@ const initDatabase = async () => {
         PRIMARY KEY (arrival_id, location)
       )
     `);
+    // SKU level (2026-10-07, Hera): one Store New Arrival row per variant, so
+    // each SKU has its own Available / Incoming status and shelf date.
+    // The old one-row-per-product rule (UNIQUE shopify_product_id) is dropped
+    // and replaced by one row per variant. Rows from before this change have
+    // no variant id; routes/storeNewArrivals.js splits each of them into one
+    // row per variant the next time the list is read.
+    await client.query('ALTER TABLE store_new_arrivals ADD COLUMN IF NOT EXISTS shopify_variant_id TEXT');
+    await client.query('ALTER TABLE store_new_arrivals DROP CONSTRAINT IF EXISTS store_new_arrivals_shopify_product_id_key');
+    await client.query('CREATE UNIQUE INDEX IF NOT EXISTS store_new_arrivals_variant_uq ON store_new_arrivals (shopify_variant_id)');
+    // Online → New products (2026-10-07): when new variants are added to an
+    // existing product, the row only covers those SKUs (NULL = all variants).
+    await client.query('ALTER TABLE new_arrival ADD COLUMN IF NOT EXISTS variant_ids TEXT[]');
 
     // Display section and Sub collection are no longer assigned through
     // import_metafield_assignments (Hera 2026-09-25: Display section uses the

@@ -535,6 +535,9 @@ router.post('/import', async (req, res) => {
 // The value is looked up as a SKU first, then as a barcode (in Hera's UI
 // "SKU" often means the barcode). ACTIVE products only — Draft and Archived
 // are not looked up (Hera 2026-09-29).
+// Since 2026-10-07: POS only = true → the matched SKU goes to the store;
+// POS only = false → see the rules inside (new product → Online, new
+// variant of a product already through New Arrival → that SKU to the store).
 router.post('/add-new-arrival', async (req, res) => {
   try {
     const code = String((req.body && req.body.sku) || '').trim();
@@ -548,11 +551,13 @@ router.post('/add-new-arrival', async (req, res) => {
     if (!productIds.length) return res.status(404).json({ error: `${code}: no active product found.` });
     if (productIds.length > 1) return res.status(409).json({ error: `${code}: matches ${productIds.length} different products — use a more specific SKU.` });
 
+    // SKU level (2026-10-07, Hera): only the matched variant(s) are added.
+    const variantIds = [...new Set(hits.map(h => h.id))];
     const data = await gql(
       `query($id: ID!) { product(id: $id) {
         id title productType status
         metafield(namespace: "custom", key: "pos_only") { value }
-        variants(first: 100) { nodes { sku } }
+        variants(first: 100) { nodes { id sku title } }
       } }`,
       { id: productIds[0] }
     );
@@ -560,35 +565,45 @@ router.post('/add-new-arrival', async (req, res) => {
     if (!p) return res.status(404).json({ error: `${code}: product not found.` });
     const posOnly = !!(p.metafield && /^true$/i.test(String(p.metafield.value).trim()));
     const { addStoreNewArrivals } = require('./storeNewArrivals');
+    const vNodes = (p.variants && p.variants.nodes) || [];
+    const vTitle = (vNodes.find(v => variantIds.includes(v.id)) || {}).title || '';
+    const title = vTitle && vTitle !== 'Default Title' && variantIds.length === 1 ? `${p.title} — ${vTitle}` : p.title;
 
+    const { addToOnlineNewArrival, refreshRows } = require('../services/newArrival');
+
+    // POS only = true → this SKU goes to Store New Arrival.
     if (posOnly) {
-      const added = await addStoreNewArrivals([p.id], 'pos_only');
-      return res.json({ target: 'store', added: added > 0, title: p.title,
+      const added = await addStoreNewArrivals([{ productId: p.id, variantIds }], 'pos_only');
+      return res.json({ target: 'store', added: added > 0, title,
         message: added > 0 ? 'added to Store New Arrival' : 'is already in Store New Arrival' });
     }
-    // Already in Online New products / Finalized, or already passed on to
-    // the store list (finalized earlier) → nothing to do.
-    const inOnline = await pool.query('SELECT status FROM new_arrival WHERE shopify_product_id = $1', [p.id]);
-    if (inOnline.rows.length) {
+    // POS only = false (Hera 2026-10-07, rev.):
+    //   product waiting in Online New products → nothing to do (Finalize
+    //     sends every variant to the store);
+    //   product already been through New Arrival (finalized in Online, or
+    //     already in Store New Arrival) → this SKU is a new variant → Store;
+    //   otherwise → treated as a new product → whole product to Online.
+    const online = (await pool.query('SELECT status FROM new_arrival WHERE shopify_product_id = $1', [p.id])).rows[0];
+    if (online && online.status === 'new') {
       return res.json({ target: 'online', added: false, title: p.title,
-        message: inOnline.rows[0].status === 'finalized' ? 'is already finalized in the new product list' : 'is already in the new product list' });
+        message: 'is already in the new product list — it goes to Store New Arrival when finalized' });
     }
-    const inStore = await pool.query('SELECT 1 FROM store_new_arrivals WHERE shopify_product_id = $1', [p.id]);
-    if (inStore.rows.length) {
-      return res.json({ target: 'store', added: false, title: p.title, message: 'is already in Store New Arrival' });
+    const inStore = await pool.query('SELECT 1 FROM store_new_arrivals WHERE shopify_product_id = $1 LIMIT 1', [p.id]);
+    if (online || inStore.rows.length) {
+      const added = await addStoreNewArrivals([{ productId: p.id, variantIds }], 'manual');
+      return res.json({ target: 'store', added: added > 0, title,
+        message: added > 0 ? 'added to Store New Arrival' : 'is already in Store New Arrival' });
     }
-    const ins = await pool.query(
-      `INSERT INTO new_arrival (shopify_product_id, title, product_type, skus)
-       VALUES ($1, $2, $3, $4) ON CONFLICT (shopify_product_id) DO NOTHING RETURNING id`,
-      [p.id, p.title, p.productType || '', ((p.variants && p.variants.nodes) || []).map(v => v.sku).filter(Boolean)]
-    );
-    if (ins.rows.length) {
+    const r = await addToOnlineNewArrival({
+      productId: p.id, title: p.title, productType: p.productType || '', variantIds: null,
+      skus: vNodes.map(v => v.sku).filter(Boolean),
+    });
+    if (r.action !== 'already') {
       // Same first pull as after an import, so the row shows data right away.
-      const { refreshRows } = require('../services/newArrival');
-      await refreshRows([ins.rows[0].id]).catch(e => console.error('[import-products] add-new-arrival first pull failed:', e.message));
+      await refreshRows([r.id]).catch(e => console.error('[import-products] add-new-arrival first pull failed:', e.message));
     }
-    res.json({ target: 'online', added: ins.rows.length > 0, title: p.title,
-      message: ins.rows.length ? 'added to new product list' : 'is already in the new product list' });
+    res.json({ target: 'online', added: r.action !== 'already', title: p.title,
+      message: r.action === 'already' ? 'is already in the new product list' : 'added to new product list' });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

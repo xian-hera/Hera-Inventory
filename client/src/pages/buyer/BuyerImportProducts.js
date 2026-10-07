@@ -33,6 +33,20 @@ function HeaderRuleModal({ open, onClose }) {
             <b>Metafields</b> — use the metafield's name as shown in Shopify (Settings › Custom data), e.g. <i>Package_Qty</i>,{' '}
             <i>Supplier_A_Cost</i>. Case doesn't matter, and spaces, "_" and "-" count as the same: "Package Qty" = "package_qty".
           </List.Item>
+          {/* Adding products / variants (Hera 2026-10-07) */}
+          <List.Item>
+            <b>Handle</b> — new product (a single product, or a new product with variants): leave Handle empty.
+            New variants for an existing product: copy that product's Handle from Shopify into the Handle column;
+            each row is one new variant. The existing product's own fields are not changed.
+          </List.Item>
+          <List.Item>
+            <b>Options</b> — when adding variants (to an existing product, or a new product with variants), include the
+            columns Option1 name and Option1 value. With more than one option, e.g. hair Color and Length, also add
+            Option2 name and Option2 value.
+          </List.Item>
+          <List.Item>
+            <b>Option names are case sensitive</b> — "Color" and "color" are different. Use exactly the name the product has in Shopify.
+          </List.Item>
           <List.Item>
             <b>Never imported</b> — images, Published, market prices, inventory quantity, Google Shopping.
           </List.Item>
@@ -374,7 +388,11 @@ function BuyerImportProducts() {
         if (validation.skip[g.key]) {
           const titleCol = colFor(columns, 'title');
           local.push({
-            key: g.key, title: titleCol ? String(cellValue(g.rows[0], titleCol)) : '', productId: null,
+            key: g.key,
+            // Existing product (Handle filled, 2026-10-07): show its own title.
+            title: (precheck && precheck.existing && precheck.existing[g.key] && precheck.existing[g.key].title)
+              || (titleCol ? String(cellValue(g.rows[0], titleCol)) : ''),
+            productId: null,
             result: 'failed', report: validation.skip[g.key], rowNumbers: g.rows.map(r => r.rowNumber),
           });
         }
@@ -461,7 +479,11 @@ function BuyerImportProducts() {
   // reported separately from "not matched" (2026-09-25).
   const unmatchedCols = columns.filter(c => c.kind === 'unmatched' && !c.typeSkipped);
   const typeSkippedCols = columns.filter(c => c.typeSkipped);
-  const warningCount = Object.values(validation.cellWarnings || {}).reduce((n, m) => n + Object.keys(m).length, 0);
+  // Handle notes (auto handle already used, 2026-10-07) are counted apart
+  // from the Sub collection notes.
+  const handleColId = (colFor(columns, 'handle') || {}).id;
+  const handleWarningCount = Object.values(validation.cellWarnings || {}).reduce((n, m) => n + (handleColId && m[handleColId] ? 1 : 0), 0);
+  const warningCount = Object.values(validation.cellWarnings || {}).reduce((n, m) => n + Object.keys(m).length, 0) - handleWarningCount;
   const counts = allResults.reduce((m, r) => { m[r.result] = (m[r.result] || 0) + 1; return m; }, {});
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -640,6 +662,9 @@ function BuyerImportProducts() {
                 {typeSkippedCols.map(c => (
                   <Banner key={c.id} tone="warning">Column "{c.header}" will be ignored — {c.reason}.</Banner>
                 ))}
+                {handleWarningCount > 0 && (
+                  <Banner tone="warning">{handleWarningCount} new product(s) have a Title whose handle is already used by another product (orange Handle cells). They will be created with a numbered handle. To add variants to the existing product instead, fill in its Handle.</Banner>
+                )}
                 {warningCount > 0 && (
                   <Banner tone="warning">{warningCount} sub collection value(s) are not listed under their row's sub type in Import Settings (orange cells). They will still be imported.</Banner>
                 )}
@@ -743,6 +768,7 @@ function BuyerImportProducts() {
                             : <span>{r.title || `Row ${(r.rowNumbers || []).join(', ')}`}</span>}
                         </td>
                         <td style={{ padding: '12px 16px', borderTop: '1px solid #f1f1f1', color: '#6d7175', fontSize: 13 }}>
+                          {(r.notes || []).map((line, j) => <div key={`n${j}`} style={{ color: '#202223' }}>{line}</div>)}
                           {(r.report || []).map((line, j) => <div key={j}>{line}</div>)}
                         </td>
                         <td style={{ padding: '12px 16px', borderTop: '1px solid #f1f1f1', textAlign: 'center' }}><ResultIcon result={r.result} /></td>

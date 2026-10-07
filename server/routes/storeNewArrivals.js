@@ -14,6 +14,13 @@
 // from Incoming to Available in store, and never goes back.
 // Title / Vendor / Type / first media / status are read live from Shopify
 // each time the page opens; only ACTIVE products are shown.
+//
+// SKU level (2026-10-07, Hera): each row is one VARIANT (shopify_variant_id).
+// Stock, Available/Incoming, shelf date and New until are all per SKU. The
+// page shows "Product — Variant" and the variant's picture (else the
+// product's first picture). Rows written before this change (one per
+// product, no variant id) are split into one row per variant the next time
+// the list is read (expandLegacyRows), keeping their dates and store status.
 const express = require('express');
 const router = express.Router();
 const { pool } = require('../database/init');
@@ -74,6 +81,9 @@ async function shelfLocationList(settings) {
 
 const chunk = (arr, n) => { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; };
 
+// Per-product helpers below (availableAt, onShelfAnywhere, productInfo) are
+// no longer called since the list became per SKU (2026-10-07); kept for
+// reference. The per-variant versions follow further down.
 // Available at ONE location, summed over the product's variants.
 // Uses productVariants filtered by product ids and pages through every
 // variant (no per-product variant limit). Query cost ≈ 150 × 4 < 1000.
@@ -170,23 +180,185 @@ async function productInfo(productIds) {
   return out;
 }
 
-// ─── Entry points used by other modules ─────────────────────────────────────
-// Add products to the list. source: 'pos_only' | 'finalized'. Never throws.
-async function addStoreNewArrivals(productIds, source) {
-  const ids = [...new Set((productIds || []).filter(Boolean))];
-  if (!ids.length) return 0;
-  try {
-    const r = await pool.query(
-      `INSERT INTO store_new_arrivals (shopify_product_id, source)
-       SELECT UNNEST($1::text[]), $2
-       ON CONFLICT (shopify_product_id) DO NOTHING`,
-      [ids, source]
+// ─── Per variant (2026-10-07) ────────────────────────────────────────────────
+// Every variant id of a product (paged).
+async function productVariantIds(productId) {
+  const out = [];
+  let after = null;
+  for (;;) {
+    const data = await gql(
+      `query($id: ID!, $after: String) { product(id: $id) { variants(first: 250, after: $after) { pageInfo { hasNextPage endCursor } nodes { id } } } }`,
+      { id: productId, after }
     );
-    return r.rowCount;
+    if (!data.product) return null; // deleted in Shopify
+    out.push(...data.product.variants.nodes.map(v => v.id));
+    if (!data.product.variants.pageInfo.hasNextPage) break;
+    after = data.product.variants.pageInfo.endCursor;
+  }
+  return out;
+}
+
+// Available at ONE location per variant. Returns Map variantId → number.
+async function availableAtVariants(variantIds, locationId) {
+  const out = new Map(variantIds.map(id => [id, 0]));
+  for (const ids of chunk(variantIds, 100)) {
+    const data = await gql(
+      `query($ids: [ID!]!, $loc: ID!) {
+        nodes(ids: $ids) { ... on ProductVariant { id inventoryItem { inventoryLevel(locationId: $loc) { quantities(names: ["available"]) { quantity } } } } }
+      }`,
+      { ids, loc: locationId }
+    );
+    for (const v of data.nodes || []) {
+      if (!v || !v.id) continue;
+      const lvl = v.inventoryItem && v.inventoryItem.inventoryLevel;
+      const qty = lvl && lvl.quantities && lvl.quantities[0] && lvl.quantities[0].quantity;
+      if (qty > 0) out.set(v.id, qty);
+    }
+  }
+  return out;
+}
+
+// Variants with Available > 0 at any shelf location. Returns a Set of ids.
+// 15 variants × 30 levels per query keeps the cost under 1000.
+async function variantsOnShelf(variantIds, shelfLocationIds) {
+  const out = new Set();
+  if (!shelfLocationIds.size) return out;
+  for (const ids of chunk(variantIds, 15)) {
+    const data = await gql(
+      `query($ids: [ID!]!) {
+        nodes(ids: $ids) { ... on ProductVariant { id inventoryItem { inventoryLevels(first: 30) { nodes { location { id } quantities(names: ["available"]) { quantity } } } } } }
+      }`,
+      { ids }
+    );
+    for (const v of data.nodes || []) {
+      if (!v || !v.id) continue;
+      for (const lvl of (v.inventoryItem && v.inventoryItem.inventoryLevels.nodes) || []) {
+        const q = lvl.quantities && lvl.quantities[0];
+        if (shelfLocationIds.has(lvl.location.id) && q && q.quantity > 0) { out.add(v.id); break; }
+      }
+    }
+  }
+  return out;
+}
+
+// Title / vendor / type / status / picture per variant.
+async function variantInfo(variantIds) {
+  const out = new Map();
+  const IMG = `preview { image {
+    thumb: url(transform: { maxWidth: 200, maxHeight: 200 })
+    full: url(transform: { maxWidth: 1200, maxHeight: 1200 })
+  } }`;
+  for (const ids of chunk(variantIds, 50)) {
+    const data = await gql(
+      `query($ids: [ID!]!) {
+        nodes(ids: $ids) {
+          ... on ProductVariant {
+            id title selectedOptions { name value }
+            media(first: 1) { nodes { ${IMG} } }
+            product { id title vendor productType status hasOnlyDefaultVariant media(first: 1) { nodes { ${IMG} } } }
+          }
+        }
+      }`,
+      { ids }
+    );
+    for (const n of data.nodes || []) {
+      if (!n || !n.id || !n.product) continue;
+      const vImg = n.media && n.media.nodes[0] && n.media.nodes[0].preview && n.media.nodes[0].preview.image;
+      const pImg = n.product.media && n.product.media.nodes[0] && n.product.media.nodes[0].preview && n.product.media.nodes[0].preview.image;
+      // One picture per product on the page (Hera 2026-10-07, rev.): the
+      // product's first picture, else the variant's.
+      const img = pImg || vImg;
+      const vt = String(n.title || '').trim();
+      out.set(n.id, {
+        productId: n.product.id,
+        productTitle: n.product.title,
+        hasOptions: !n.product.hasOnlyDefaultVariant,
+        options: (n.selectedOptions || []).map(o => ({ name: o.name, value: o.value })),
+        title: vt && vt !== 'Default Title' ? `${n.product.title} — ${vt}` : n.product.title,
+        vendor: n.product.vendor, productType: n.product.productType, status: n.product.status,
+        thumbUrl: img ? img.thumb : null, imageUrl: img ? img.full : null,
+      });
+    }
+  }
+  return out;
+}
+
+// Split rows written before 2026-10-07 (one per product, no variant id)
+// into one row per variant, keeping source / entered date / shelf date.
+// The per-store "seen" status is NOT copied: it was recorded for the
+// product as a whole, so each SKU is checked again on the next page visit
+// (a SKU in stock there goes straight to Available). A product deleted in
+// Shopify can never be shown, so its old row is removed. Never throws.
+async function expandLegacyRows() {
+  let legacy;
+  try {
+    legacy = (await pool.query('SELECT * FROM store_new_arrivals WHERE shopify_variant_id IS NULL')).rows;
   } catch (e) {
-    console.error('[store-new-arrival] add failed:', e.message);
+    console.error('[store-new-arrival] legacy read failed:', e.message);
     return 0;
   }
+  let split = 0;
+  for (const row of legacy) {
+    try {
+      const vids = await productVariantIds(row.shopify_product_id);
+      const db = await pool.connect();
+      try {
+        await db.query('BEGIN');
+        if (vids && vids.length) {
+          for (const vid of vids) {
+            await db.query(
+              `INSERT INTO store_new_arrivals (shopify_product_id, shopify_variant_id, source, entered_at, shelf_started_at)
+               VALUES ($1, $2, $3, $4, $5) ON CONFLICT (shopify_variant_id) DO NOTHING`,
+              [row.shopify_product_id, vid, row.source, row.entered_at, row.shelf_started_at]
+            );
+          }
+        }
+        // The old product row (and its seen rows, by cascade) is replaced by
+        // the per-variant rows above — or, when the product was deleted in
+        // Shopify (vids null), simply removed.
+        await db.query('DELETE FROM store_new_arrivals WHERE id = $1', [row.id]);
+        await db.query('COMMIT');
+        split++;
+      } catch (e) {
+        await db.query('ROLLBACK').catch(() => {});
+        throw e;
+      } finally {
+        db.release();
+      }
+    } catch (e) {
+      console.error(`[store-new-arrival] could not split ${row.shopify_product_id}: ${e.message}`);
+    }
+  }
+  return split;
+}
+
+// ─── Entry points used by other modules ─────────────────────────────────────
+// Add SKUs to the list. source: 'pos_only' | 'finalized' | 'new_variant'
+// (variant added to an existing product) | 'manual' (Add New Arrival). Never throws.
+// items: product id strings (= every variant of the product) or
+// { productId, variantIds } (variantIds null/empty = every variant).
+// Returns the number of variant rows added (2026-10-07: one row per SKU).
+async function addStoreNewArrivals(items, source) {
+  const list = (items || []).filter(Boolean).map(x => (typeof x === 'string' ? { productId: x, variantIds: null } : x))
+    .filter(x => x.productId);
+  if (!list.length) return 0;
+  let added = 0;
+  for (const it of list) {
+    try {
+      let vids = Array.isArray(it.variantIds) && it.variantIds.length ? [...new Set(it.variantIds)] : await productVariantIds(it.productId);
+      if (!vids || !vids.length) continue;
+      const r = await pool.query(
+        `INSERT INTO store_new_arrivals (shopify_product_id, shopify_variant_id, source)
+         SELECT $1, UNNEST($2::text[]), $3
+         ON CONFLICT (shopify_variant_id) DO NOTHING`,
+        [it.productId, vids, source]
+      );
+      added += r.rowCount;
+    } catch (e) {
+      console.error(`[store-new-arrival] add failed for ${it.productId}:`, e.message);
+    }
+  }
+  return added;
 }
 
 // Daily job (called from jobs/newArrivalScheduler.js):
@@ -198,16 +370,22 @@ async function runStoreNewArrivalDaily() {
   const today = todayLocal();
   const shelf = await shelfLocationList(settings);
   const shelfIds = new Set(shelf.map(l => l.id));
-  const tbd = await pool.query('SELECT id, shopify_product_id FROM store_new_arrivals WHERE shelf_started_at IS NULL');
+  await expandLegacyRows(); // 2026-10-07: per-SKU rows
+  const tbd = await pool.query('SELECT id, shopify_product_id, shopify_variant_id FROM store_new_arrivals WHERE shelf_started_at IS NULL');
   let started = 0;
-  for (const row of tbd.rows) {
+  // Per SKU since 2026-10-07 (onShelfAnywhere above is the per-product
+  // version, kept for reference).
+  const tbdVariants = tbd.rows.filter(r => r.shopify_variant_id);
+  for (const part of chunk(tbdVariants, 150)) {
     try {
-      if (await onShelfAnywhere(row.shopify_product_id, shelfIds)) {
+      const onShelf = await variantsOnShelf(part.map(r => r.shopify_variant_id), shelfIds);
+      for (const row of part) {
+        if (!onShelf.has(row.shopify_variant_id)) continue;
         const u = await pool.query('UPDATE store_new_arrivals SET shelf_started_at = $1 WHERE id = $2 AND shelf_started_at IS NULL', [today, row.id]);
         started += u.rowCount;
       }
     } catch (e) {
-      console.error(`[store-new-arrival] shelf check failed for ${row.shopify_product_id}: ${e.message}`);
+      console.error(`[store-new-arrival] shelf check failed: ${e.message}`);
     }
   }
   const expired = await pool.query(
@@ -264,7 +442,13 @@ router.put('/settings', async (req, res) => {
 
 // ─── Store page ──────────────────────────────────────────────────────────────
 // GET /?location=MTL01 → { days, available: [card], incoming: [card] }
-// card = { type, items: [{ id, title, vendor, thumbUrl, imageUrl, newUntil|null, enteredAt }] }
+// card = { type, items: [product] } (Hera 2026-10-07, rev.): rows are per SKU,
+// but SKUs are always shown under their product:
+// product = { id, productId, title, vendor, thumbUrl, imageUrl, enteredAt,
+//             hasOptions, newUntil|null (products without options),
+//             variants: [{ id, variantId, options: [{ name, value }], newUntil|null }] }
+// A product whose SKUs are split between the tabs appears in both, each
+// time with only that tab's SKUs.
 router.get('/', async (req, res) => {
   try {
     const locationName = String(req.query.location || '');
@@ -275,29 +459,32 @@ router.get('/', async (req, res) => {
 
     const settings = await getSettings();
     const today = todayLocal();
+    await expandLegacyRows(); // 2026-10-07: per-SKU rows
+    // Variants of the same product stay together (same entered_at).
     const rows = (await pool.query(
-      `SELECT a.id, a.shopify_product_id, a.entered_at, a.shelf_started_at, s.first_available_at
+      `SELECT a.id, a.shopify_product_id, a.shopify_variant_id, a.entered_at, a.shelf_started_at, s.first_available_at
        FROM store_new_arrivals a
        LEFT JOIN store_new_arrival_seen s ON s.arrival_id = a.id AND s.location = $1
-       ORDER BY a.entered_at DESC, a.id DESC`,
+       WHERE a.shopify_variant_id IS NOT NULL
+       ORDER BY a.entered_at DESC, a.shopify_product_id, a.id`,
       [locationName]
     )).rows.filter(r => !r.shelf_started_at || addDays(ymd(r.shelf_started_at), settings.days) >= today);
 
-    const info = await productInfo(rows.map(r => r.shopify_product_id));
+    const info = await variantInfo(rows.map(r => r.shopify_variant_id));
     const excluded = new Set(settings.excludedTypes.map(t => t.toLowerCase()));
     const visible = rows.filter(r => {
-      const p = info.get(r.shopify_product_id);
+      const p = info.get(r.shopify_variant_id);
       return p && p.status === 'ACTIVE' && !excluded.has(String(p.productType || '').toLowerCase());
     });
 
-    // Products not yet seen in stock at this store: check now (once).
+    // SKUs not yet seen in stock at this store: check now (once).
     const unseen = visible.filter(r => !r.first_available_at);
     if (unseen.length) {
-      const avail = await availableAt(unseen.map(r => r.shopify_product_id), loc.id);
+      const avail = await availableAtVariants(unseen.map(r => r.shopify_variant_id), loc.id);
       const shelf = await shelfLocationList(settings);
       const isShelfLocation = shelf.some(l => l.id === loc.id);
       for (const r of unseen) {
-        if (!(avail.get(r.shopify_product_id) > 0)) continue;
+        if (!(avail.get(r.shopify_variant_id) > 0)) continue;
         await pool.query(
           `INSERT INTO store_new_arrival_seen (arrival_id, location, first_available_at) VALUES ($1, $2, NOW())
            ON CONFLICT (arrival_id, location) DO NOTHING`,
@@ -315,24 +502,38 @@ router.get('/', async (req, res) => {
 
     const cards = (list) => {
       const byType = new Map();
-      for (const r of list) {
-        const p = info.get(r.shopify_product_id);
+      const byProduct = new Map();
+      for (const r of list) { // newest first
+        const p = info.get(r.shopify_variant_id);
         const type = p.productType || 'No type';
         if (!byType.has(type)) byType.set(type, []);
-        byType.get(type).push({
-          id: r.id,
-          productId: r.shopify_product_id,
-          title: p.title,
-          vendor: p.vendor,
-          thumbUrl: p.thumbUrl,
-          imageUrl: p.imageUrl,
-          newUntil: r.shelf_started_at ? addDays(ymd(r.shelf_started_at), settings.days) : null,
-          enteredAt: r.entered_at,
-        });
+        const newUntil = r.shelf_started_at ? addDays(ymd(r.shelf_started_at), settings.days) : null;
+        let item = byProduct.get(r.shopify_product_id);
+        if (!item) {
+          item = {
+            id: r.shopify_product_id,
+            productId: r.shopify_product_id,
+            title: p.productTitle,
+            vendor: p.vendor,
+            thumbUrl: p.thumbUrl,
+            imageUrl: p.imageUrl,
+            enteredAt: r.entered_at,
+            hasOptions: p.hasOptions,
+            newUntil: null,
+            variants: [],
+          };
+          byProduct.set(r.shopify_product_id, item);
+          byType.get(type).push(item);
+        }
+        item.variants.push({ id: r.id, variantId: r.shopify_variant_id, options: p.hasOptions ? p.options : [], newUntil });
+        // No options → the product line itself shows New until.
+        if (!p.hasOptions) item.newUntil = newUntil;
       }
+      // SKUs inside a product: in the order they were added.
+      for (const item of byProduct.values()) item.variants.sort((a, b) => a.id - b.id);
       return [...byType.entries()]
         .sort((a, b) => a[0].localeCompare(b[0], undefined, { sensitivity: 'base' }))
-        .map(([type, items]) => ({ type, items })); // items already newest first
+        .map(([type, items]) => ({ type, items })); // products already newest first
     };
 
     res.json({
@@ -346,4 +547,4 @@ router.get('/', async (req, res) => {
   }
 });
 
-module.exports = { router, addStoreNewArrivals, runStoreNewArrivalDaily, _test: { addDays, todayLocal, getSettings, shelfLocationList } };
+module.exports = { router, addStoreNewArrivals, runStoreNewArrivalDaily, _test: { addDays, todayLocal, getSettings, shelfLocationList, expandLegacyRows } };
