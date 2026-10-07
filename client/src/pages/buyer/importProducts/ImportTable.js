@@ -35,10 +35,12 @@ function defaultWidth(col, rows) {
 export function orderColumns(columns, presetsOn, metafieldsOn) {
   const lc = (s) => String(s || '').toLowerCase();
   // Added Sub type / Sub collection columns (2026-10-08) go after the CSV
-  // columns; the added Handle column stays first.
+  // columns; the added Handle column stays first. An added Product category
+  // column is placed right after Title (and after the preset group) below.
   const addedMf = (c) => c.synthetic && !c.preset && c.kind === 'metafield';
+  const addedCat = (c) => c.synthetic && c.kind === 'field' && c.field === 'category';
   let list = [
-    ...columns.filter(c => c.synthetic && !c.preset && !addedMf(c)),
+    ...columns.filter(c => c.synthetic && !c.preset && !addedMf(c) && !addedCat(c)),
     ...columns.filter(c => c.csvIndex != null).sort((a, b) => a.csvIndex - b.csvIndex),
     ...columns.filter(addedMf),
     ...columns.filter(c => c.synthetic && c.preset),
@@ -52,6 +54,15 @@ export function orderColumns(columns, presetsOn, metafieldsOn) {
     if (anchor === -1) anchor = list.findIndex(c => lc(c.header) === 'name');
     const at = anchor === -1 ? list.length : anchor + 1;
     list.splice(at, 0, ...presetCols);
+  }
+  const cat = columns.find(addedCat);
+  if (cat) {
+    let at = list.findIndex(c => c.kind === 'field' && c.field === 'title');
+    if (at === -1) at = list.findIndex(c => lc(c.header) === 'name');
+    if (at === -1) at = list.length - 1;
+    at += 1;
+    while (presetsOn && list[at] && list[at].preset) at += 1;
+    list.splice(at, 0, cat);
   }
   if (metafieldsOn) {
     const isMf = (c) => (c.kind === 'metafield' || c.kind === 'shopifyMf' || (c.kind === 'unmatched' && c.namespace)) && !(presetsOn && c.preset);
@@ -270,7 +281,7 @@ function ImportTable({
               const title = c.kind === 'unmatched' ? `Will be ignored — ${c.reason || 'not matched'}`
                 : c.kind === 'shopifyMf' ? 'Shopify category metafield — shown only, not imported'
                 : c.synthetic && c.preset ? 'Added by Presets'
-                : c.synthetic && c.kind === 'metafield' ? 'Not in the CSV — added by Hub so you can fill it in' : '';
+                : c.synthetic && (c.kind === 'metafield' || (c.kind === 'field' && c.field === 'category')) ? 'Not in the CSV — added by Hub so you can fill it in' : '';
               const inner = (
                 <span style={{ color: disabled ? '#8c9196' : undefined }}>
                   {disabled ? '⚠ ' : ''}{c.header}

@@ -284,6 +284,12 @@ export function buildColumns(headers, definitions, manual = {}) {
     columns.unshift({ id: 'x_handle', header: 'Handle', csvIndex: null, kind: 'field', field: 'handle', level: 'product', synthetic: true });
   }
 
+  // Product category is always in the table too (Hera 2026-10-08): added
+  // empty when the CSV has no category column; empty cells send nothing.
+  if (!usedFields.has('category')) {
+    columns.push({ id: 'x_category', header: 'Product category', csvIndex: null, kind: 'field', field: 'category', level: 'product', synthetic: true });
+  }
+
   // Sub type and Sub collection are always in the table (Hera 2026-10-08):
   // a CSV column (with or without values) is used as it is; when the CSV
   // has none, an empty column is added so the buyer can pick values from
