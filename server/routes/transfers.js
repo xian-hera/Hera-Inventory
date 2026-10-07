@@ -613,7 +613,7 @@ router.get('/warehouse/home', async (req, res) => {
     const result = await pool.query(
       // created_at (2026-10-05, Hera): feeds the new Date column on all three
       // Warehouse home cards.
-      `SELECT id, transfer_no, shopify_transfer_name, from_location, to_location, status, on_hold, created_at
+      `SELECT id, transfer_no, shopify_transfer_name, from_location, to_location, status, on_hold, created_at, tags
        FROM transfers
        WHERE status = ANY($1)
        ORDER BY created_at ASC`,
@@ -645,7 +645,7 @@ router.get('/warehouse/home', async (req, res) => {
 router.get('/warehouse/receiving-to-hq', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id, transfer_no, shopify_transfer_name, from_location, to_location, status, on_hold, created_at
+      `SELECT id, transfer_no, shopify_transfer_name, from_location, to_location, status, on_hold, created_at, tags
        FROM transfers
        WHERE to_location = $1 AND status IN ('in_transit', 'receiving')
        ORDER BY created_at ASC`,
@@ -1864,7 +1864,10 @@ router.get('/:id/export-pdf', async (req, res) => {
     const doc = new PDFDocument({ size: 'LETTER', margin: 40 });
     doc.pipe(res);
 
-    doc.fontSize(16).text(`${shopifyName ? shopifyName + '  ' : ''}${transfer.from_location} to ${transfer.to_location}`, { continued: false });
+    // 2026-10-07 (Hera): tags follow the transfer number, as plain text
+    // "[tag1] [tag2]" — nothing added when the transfer has no tags.
+    const tagText = (Array.isArray(transfer.tags) ? transfer.tags : []).map(t => `[${t}]`).join(' ');
+    doc.fontSize(16).text(`${shopifyName ? shopifyName + '  ' : ''}${tagText ? tagText + '  ' : ''}${transfer.from_location} to ${transfer.to_location}`, { continued: false });
     doc.moveDown(0.5);
 
     const cols = [

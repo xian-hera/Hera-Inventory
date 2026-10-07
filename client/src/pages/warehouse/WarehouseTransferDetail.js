@@ -12,6 +12,7 @@ function WarehouseTransferDetail() {
       showWigNumber={false}
       backPath="/warehouse"
       dispatchLabel="Dispatch"
+      showTags
     />
   );
 }

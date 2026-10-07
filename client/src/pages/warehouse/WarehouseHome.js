@@ -3,7 +3,7 @@ import {
   Page, Layout, Card, Button, BlockStack, InlineStack, Text, Spinner, Banner
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
-import { StatusBadge, warehouseStatusLabel, HoldBadge } from '../shared/transferStatus';
+import { StatusBadge, warehouseStatusLabel, HoldBadge, TagPills } from '../shared/transferStatus';
 import { StatusBadge as BoxPoStatusBadge } from '../shared/boxPoStatus';
 
 // Date column (2026-10-05, Hera): creation date of the transfer, shown right
@@ -265,10 +265,11 @@ function WarehouseHome() {
                                   </td>
                                 )}
                                 <td
-                                  style={{ padding: '10px', cursor: 'pointer', textDecoration: 'underline' }}
+                                  style={{ padding: '10px', cursor: 'pointer' }}
                                   onClick={() => navigate(`/warehouse/transfer/${tr.id}`)}
                                 >
-                                  {tr.shopify_transfer_name || tr.transfer_no}
+                                  <span style={{ textDecoration: 'underline' }}>{tr.shopify_transfer_name || tr.transfer_no}</span>
+                                  {(tr.tags || []).length > 0 && <div style={{ marginTop: '4px' }}><TagPills tags={tr.tags} /></div>}
                                 </td>
                                 <td style={{ padding: '10px', whiteSpace: 'nowrap' }}><DateCell value={tr.created_at} /></td>
                                 <td style={{ padding: '10px' }}>{tr.from_location}</td>
@@ -308,10 +309,11 @@ function WarehouseHome() {
                             {receivingToHq.map(tr => (
                               <tr key={tr.id} style={{ borderBottom: '1px solid #f1f1f1' }}>
                                 <td
-                                  style={{ padding: '10px', cursor: 'pointer', textDecoration: 'underline' }}
+                                  style={{ padding: '10px', cursor: 'pointer' }}
                                   onClick={() => navigate(`/warehouse/transfer/receiving/${tr.id}`)}
                                 >
-                                  {tr.shopify_transfer_name || tr.transfer_no}
+                                  <span style={{ textDecoration: 'underline' }}>{tr.shopify_transfer_name || tr.transfer_no}</span>
+                                  {(tr.tags || []).length > 0 && <div style={{ marginTop: '4px' }}><TagPills tags={tr.tags} /></div>}
                                 </td>
                                 <td style={{ padding: '10px', whiteSpace: 'nowrap' }}><DateCell value={tr.created_at} /></td>
                                 <td style={{ padding: '10px' }}>{tr.from_location}</td>
@@ -350,10 +352,11 @@ function WarehouseHome() {
                               <tr key={tr.id} style={{ borderBottom: '1px solid #f1f1f1' }}>
                                 {/* 2026-10-05: now clickable into a read-only detail page */}
                                 <td
-                                  style={{ padding: '10px', cursor: 'pointer', textDecoration: 'underline' }}
+                                  style={{ padding: '10px', cursor: 'pointer' }}
                                   onClick={() => navigate(`/warehouse/transfer/view/${tr.id}`)}
                                 >
-                                  {tr.shopify_transfer_name || tr.transfer_no}
+                                  <span style={{ textDecoration: 'underline' }}>{tr.shopify_transfer_name || tr.transfer_no}</span>
+                                  {(tr.tags || []).length > 0 && <div style={{ marginTop: '4px' }}><TagPills tags={tr.tags} /></div>}
                                 </td>
                                 <td style={{ padding: '10px', whiteSpace: 'nowrap' }}><DateCell value={tr.created_at} /></td>
                                 <td style={{ padding: '10px' }}>{tr.from_location}</td>

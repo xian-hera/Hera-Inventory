@@ -9,7 +9,7 @@ import TransferReceivingDetail from '../shared/TransferReceivingDetail';
 // still uncounted — Manager's Receiving page keeps the original all-or-
 // nothing Submit gate.
 function WarehouseTransferReceivingDetail() {
-  return <TransferReceivingDetail role="warehouse" backPath="/warehouse" />;
+  return <TransferReceivingDetail role="warehouse" backPath="/warehouse" showTags />;
 }
 
 export default WarehouseTransferReceivingDetail;

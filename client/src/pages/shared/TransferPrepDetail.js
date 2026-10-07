@@ -3,7 +3,7 @@ import {
   Page, Layout, Card, Button, BlockStack, InlineStack, Text, Banner, Spinner, TextField, Modal,
 } from '@shopify/polaris';
 import { useNavigate, useParams } from 'react-router-dom';
-import { StatusBadge } from './transferStatus';
+import { StatusBadge, TagPills } from './transferStatus';
 import MobileModalSafeArea from '../../components/MobileModalSafeArea';
 
 // Shared Loading / Pending / Good to go / In transit detail page — used by
@@ -28,7 +28,7 @@ import MobileModalSafeArea from '../../components/MobileModalSafeArea';
 //     transfer's last-loaded updated_at; a 409 back means someone else moved
 //     it first, so a "This transfer has been updated by someone else." modal
 //     offers Refresh instead of silently failing.
-function TransferPrepDetail({ role, showWigNumber, backPath, dispatchLabel }) {
+function TransferPrepDetail({ role, showWigNumber, backPath, dispatchLabel, showTags }) {
   const navigate = useNavigate();
   const { transferId } = useParams();
 
@@ -310,6 +310,8 @@ function TransferPrepDetail({ role, showWigNumber, backPath, dispatchLabel }) {
         backAction={{ onAction: () => navigate(backPath) }}
         titleMetadata={
           <InlineStack gap="150" blockAlign="center">
+            {/* 2026-10-07: Warehouse only (showTags) — tags go between the transfer id and the status pill */}
+            {showTags && <TagPills tags={transfer.tags} />}
             <StatusBadge status={status} />
             {held && (
               <span style={{

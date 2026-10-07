@@ -538,9 +538,29 @@ router.post('/import', async (req, res) => {
 // Since 2026-10-07: POS only = true → the matched SKU goes to the store;
 // POS only = false → see the rules inside (new product → Online, new
 // variant of a product already through New Arrival → that SKU to the store).
+// Revised 2026-10-08 (Hera): the box takes a SKU or a Name (variant
+// metafield custom.name), and the product as a whole is added — this
+// button is only for NEW products made by hand in Shopify (new variants of
+// an existing product need nothing here):
+//   POS only = true  → every variant of the product → Store New Arrival
+//   otherwise        → the product → Online New products, once (a product
+//                      already in Online — New or Finalized — or already in
+//                      Store New Arrival is not added again)
+// Lookup order: SKU, then barcode (Shopify, Active products).
+// The Name lookup (variant metafield custom.name via Hub's variant search
+// index) was removed the same day (Hera 2026-10-08): the index only syncs
+// every few hours, so new products were often not found by Name. SKU only.
+// Revised again 2026-10-08 (Hera): a NEW VARIANT added by hand to an
+// existing product is handled like one added through Import (see
+// addVariants in jobs/importProductsJob.js): never Online; that SKU goes
+// straight to Store New Arrival, unless the product is still waiting in
+// Online New products (then Finalize sends it). A variant counts as "new
+// variant of an existing product" when it was created more than
+// NEW_VARIANT_GAP_HOURS after its product.
+const NEW_VARIANT_GAP_HOURS = 24;
 router.post('/add-new-arrival', async (req, res) => {
   try {
-    const code = String((req.body && req.body.sku) || '').trim();
+    const code = String((req.body && (req.body.code || req.body.sku)) || '').trim();
     if (!code) return res.status(400).json({ error: 'Enter a SKU.' });
     const { findVariants } = require('../jobs/importProductsJob');
     // findVariants (shared with Import) returns Active + Draft; keep Active only.
@@ -548,51 +568,53 @@ router.post('/add-new-arrival', async (req, res) => {
     let hits = activeOnly((await findVariants('sku', [code])).get(code));
     if (!hits.length) hits = activeOnly((await findVariants('barcode', [code])).get(code));
     const productIds = [...new Set(hits.map(h => h.product.id))];
-    if (!productIds.length) return res.status(404).json({ error: `${code}: no active product found.` });
+    const matchedVariantIds = hits.map(h => h.id);
+    if (!productIds.length) return res.status(404).json({ error: `${code}: no active product found with this SKU.` });
     if (productIds.length > 1) return res.status(409).json({ error: `${code}: matches ${productIds.length} different products — use a more specific SKU.` });
 
-    // SKU level (2026-10-07, Hera): only the matched variant(s) are added.
-    const variantIds = [...new Set(hits.map(h => h.id))];
     const data = await gql(
       `query($id: ID!) { product(id: $id) {
-        id title productType status
+        id title productType status createdAt
         metafield(namespace: "custom", key: "pos_only") { value }
-        variants(first: 100) { nodes { id sku title } }
+        variants(first: 250) { nodes { id sku title createdAt } }
       } }`,
       { id: productIds[0] }
     );
     const p = data.product;
-    if (!p) return res.status(404).json({ error: `${code}: product not found.` });
+    if (!p || p.status !== 'ACTIVE') return res.status(404).json({ error: `${code}: no active product found.` });
     const posOnly = !!(p.metafield && /^true$/i.test(String(p.metafield.value).trim()));
     const { addStoreNewArrivals } = require('./storeNewArrivals');
-    const vNodes = (p.variants && p.variants.nodes) || [];
-    const vTitle = (vNodes.find(v => variantIds.includes(v.id)) || {}).title || '';
-    const title = vTitle && vTitle !== 'Default Title' && variantIds.length === 1 ? `${p.title} — ${vTitle}` : p.title;
-
     const { addToOnlineNewArrival, refreshRows } = require('../services/newArrival');
+    const vNodes = (p.variants && p.variants.nodes) || [];
 
-    // POS only = true → this SKU goes to Store New Arrival.
+    // New variant(s) of an existing product → Store only, like Import.
+    const matched = vNodes.filter(v => matchedVariantIds.includes(v.id));
+    const gapMs = NEW_VARIANT_GAP_HOURS * 3600 * 1000;
+    const isNewVariant = matched.length > 0 && p.createdAt
+      && matched.every(v => v.createdAt && new Date(v.createdAt) - new Date(p.createdAt) > gapMs);
+    if (isNewVariant) {
+      const vt = matched.length === 1 && matched[0].title && matched[0].title !== 'Default Title' ? ` — ${matched[0].title}` : '';
+      const title = `${p.title}${vt}`;
+      const waiting = await pool.query(`SELECT 1 FROM new_arrival WHERE shopify_product_id = $1 AND status = 'new'`, [p.id]);
+      if (waiting.rows.length) {
+        return res.json({ target: 'online', added: false, waiting: true, title,
+          message: 'The product is waiting to be finalized in Online New products — this variant goes to Store New Arrival when it is finalized.' });
+      }
+      const added = await addStoreNewArrivals([{ productId: p.id, variantIds: matched.map(v => v.id) }], 'manual');
+      return res.json({ target: 'store', added: added > 0, newVariant: true, title,
+        message: added > 0 ? 'Added successfully.' : 'Already added.' });
+    }
+
     if (posOnly) {
-      const added = await addStoreNewArrivals([{ productId: p.id, variantIds }], 'pos_only');
-      return res.json({ target: 'store', added: added > 0, title,
-        message: added > 0 ? 'added to Store New Arrival' : 'is already in Store New Arrival' });
+      // Every variant (null = all, fetched by addStoreNewArrivals).
+      const added = await addStoreNewArrivals([{ productId: p.id, variantIds: null }], 'manual');
+      return res.json({ target: 'store', added: added > 0, title: p.title,
+        message: added > 0 ? 'Added successfully.' : 'Already added.' });
     }
-    // POS only = false (Hera 2026-10-07, rev.):
-    //   product waiting in Online New products → nothing to do (Finalize
-    //     sends every variant to the store);
-    //   product already been through New Arrival (finalized in Online, or
-    //     already in Store New Arrival) → this SKU is a new variant → Store;
-    //   otherwise → treated as a new product → whole product to Online.
     const online = (await pool.query('SELECT status FROM new_arrival WHERE shopify_product_id = $1', [p.id])).rows[0];
-    if (online && online.status === 'new') {
-      return res.json({ target: 'online', added: false, title: p.title,
-        message: 'is already in the new product list — it goes to Store New Arrival when finalized' });
-    }
-    const inStore = await pool.query('SELECT 1 FROM store_new_arrivals WHERE shopify_product_id = $1 LIMIT 1', [p.id]);
-    if (online || inStore.rows.length) {
-      const added = await addStoreNewArrivals([{ productId: p.id, variantIds }], 'manual');
-      return res.json({ target: 'store', added: added > 0, title,
-        message: added > 0 ? 'added to Store New Arrival' : 'is already in Store New Arrival' });
+    const inStore = (await pool.query('SELECT 1 FROM store_new_arrivals WHERE shopify_product_id = $1 LIMIT 1', [p.id])).rows.length > 0;
+    if (online || inStore) {
+      return res.json({ target: 'online', added: false, title: p.title, message: 'Already added.' });
     }
     const r = await addToOnlineNewArrival({
       productId: p.id, title: p.title, productType: p.productType || '', variantIds: null,
@@ -603,7 +625,7 @@ router.post('/add-new-arrival', async (req, res) => {
       await refreshRows([r.id]).catch(e => console.error('[import-products] add-new-arrival first pull failed:', e.message));
     }
     res.json({ target: 'online', added: r.action !== 'already', title: p.title,
-      message: r.action === 'already' ? 'is already in the new product list' : 'added to new product list' });
+      message: r.action !== 'already' ? 'Added successfully.' : 'Already added.' });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

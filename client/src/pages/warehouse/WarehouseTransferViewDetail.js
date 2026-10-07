@@ -3,7 +3,7 @@ import {
   Page, Layout, Card, BlockStack, InlineStack, Text, Banner, Spinner,
 } from '@shopify/polaris';
 import { useNavigate, useParams } from 'react-router-dom';
-import { StatusBadge } from '../shared/transferStatus';
+import { StatusBadge, TagPills } from '../shared/transferStatus';
 
 // Read-only transfer detail for Warehouse's "Pick up from store" card
 // (2026-10-05, Hera). Those transfers (neither from nor to is HQ) used to be
@@ -66,7 +66,12 @@ function WarehouseTransferViewDetail() {
       <Page
         title={transfer.shopify_transfer_name || transfer.transfer_no}
         backAction={{ onAction: back }}
-        titleMetadata={<StatusBadge status={transfer.status} />}
+        titleMetadata={
+          <InlineStack gap="150" blockAlign="center">
+            <TagPills tags={transfer.tags} />
+            <StatusBadge status={transfer.status} />
+          </InlineStack>
+        }
       >
         <Layout>
           <Layout.Section>

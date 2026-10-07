@@ -3,7 +3,7 @@ import {
   Page, Layout, Card, Button, BlockStack, InlineStack, Text, TextField, Banner, Spinner, Modal,
 } from '@shopify/polaris';
 import { useNavigate, useParams } from 'react-router-dom';
-import { StatusBadge } from './transferStatus';
+import { StatusBadge, TagPills } from './transferStatus';
 import MobileModalSafeArea from '../../components/MobileModalSafeArea';
 
 // Same keydown-buffer barcode-scanner listening pattern as
@@ -46,7 +46,7 @@ function cleanBarcode(raw) {
 // role='buyer', so the hold check always applies here), diff highlighting
 // for Buyer-edited rows (改动五), and the "someone else updated this"
 // conflict modal (改动一第2点) on Delivered/Submit.
-function TransferReceivingDetail({ role, backPath }) {
+function TransferReceivingDetail({ role, backPath, showTags }) {
   const navigate = useNavigate();
   const { transferId } = useParams();
 
@@ -349,7 +349,13 @@ function TransferReceivingDetail({ role, backPath }) {
         <Page
           title={transfer.shopify_transfer_name || transfer.transfer_no}
           backAction={{ onAction: () => navigate(backPath) }}
-          titleMetadata={<StatusBadge status={transfer.status} />}
+          titleMetadata={
+            <InlineStack gap="150" blockAlign="center">
+              {/* 2026-10-07: Warehouse only (showTags) — tags between the transfer id and the status pill */}
+              {showTags && <TagPills tags={transfer.tags} />}
+              <StatusBadge status={transfer.status} />
+            </InlineStack>
+          }
         >
           <Layout>
             <Layout.Section>
@@ -465,7 +471,13 @@ function TransferReceivingDetail({ role, backPath }) {
       <Page
         title={transfer.shopify_transfer_name || transfer.transfer_no}
         backAction={{ onAction: () => navigate(backPath) }}
-        titleMetadata={<StatusBadge status={transfer.status} />}
+        titleMetadata={
+            <InlineStack gap="150" blockAlign="center">
+              {/* 2026-10-07: Warehouse only (showTags) — tags between the transfer id and the status pill */}
+              {showTags && <TagPills tags={transfer.tags} />}
+              <StatusBadge status={transfer.status} />
+            </InlineStack>
+          }
       >
         <Layout>
           <Layout.Section>

@@ -623,7 +623,9 @@ function BuyerImportProducts() {
                   const targets = assignTargets(definitions);
                   // Hand-assigned columns stay in the list so a choice can be
                   // changed or undone; their own targets don't count as taken.
-                  const taken = new Set(columns.filter(c => c.kind !== 'unmatched' && !c.manual).map(columnTargetValue).filter(Boolean));
+                  // Columns Hub added itself (Handle, Sub type, Sub collection)
+                  // don't count either: assigning a CSV column replaces them.
+                  const taken = new Set(columns.filter(c => c.kind !== 'unmatched' && !c.manual && !c.synthetic).map(columnTargetValue).filter(Boolean));
                   const list = columns.filter(c => c.csvIndex != null && ((c.kind === 'unmatched' && !c.typeSkipped) || c.manual))
                     .sort((a, b) => a.csvIndex - b.csvIndex);
                   return (

@@ -7,7 +7,7 @@ import ReactDOM from 'react-dom';
 import { Tooltip } from '@shopify/polaris';
 import {
   PRESETS, PRESET_BY_KEY, POOL_METAFIELDS, cellValue, effectiveCell,
-  isSubCollectionCol, isDisplaySectionCol, subCollectionOptions,
+  isSubCollectionCol, isDisplaySectionCol, subCollectionOptions, isSubTypeCol,
   subCollectionItems, subCollectionKey,
 } from './importModel';
 
@@ -34,9 +34,13 @@ function defaultWidth(col, rows) {
 // Presets / metafield grouping (spec §6.3).
 export function orderColumns(columns, presetsOn, metafieldsOn) {
   const lc = (s) => String(s || '').toLowerCase();
+  // Added Sub type / Sub collection columns (2026-10-08) go after the CSV
+  // columns; the added Handle column stays first.
+  const addedMf = (c) => c.synthetic && !c.preset && c.kind === 'metafield';
   let list = [
-    ...columns.filter(c => c.synthetic && !c.preset),
+    ...columns.filter(c => c.synthetic && !c.preset && !addedMf(c)),
     ...columns.filter(c => c.csvIndex != null).sort((a, b) => a.csvIndex - b.csvIndex),
+    ...columns.filter(addedMf),
     ...columns.filter(c => c.synthetic && c.preset),
   ];
   if (!presetsOn) {
@@ -51,7 +55,9 @@ export function orderColumns(columns, presetsOn, metafieldsOn) {
   }
   if (metafieldsOn) {
     const isMf = (c) => (c.kind === 'metafield' || c.kind === 'shopifyMf' || (c.kind === 'unmatched' && c.namespace)) && !(presetsOn && c.preset);
-    const mfCols = list.filter(isMf);
+    // Sub type, then Sub collection, lead the metafield group (2026-10-08).
+    const lead = (c) => (isSubTypeCol(c) ? 0 : isSubCollectionCol(c) ? 1 : 2);
+    const mfCols = list.filter(isMf).map((c, i) => [c, i]).sort((a, b) => lead(a[0]) - lead(b[0]) || a[1] - b[1]).map(x => x[0]);
     list = list.filter(c => !isMf(c));
     const anchor = list.findIndex(c => c.kind === 'field' && c.field === 'sku');
     list.splice(anchor === -1 ? list.length : anchor + 1, 0, ...mfCols);
@@ -263,7 +269,8 @@ function ImportTable({
               const disabled = colDisabled(c) && !c.preset;
               const title = c.kind === 'unmatched' ? `Will be ignored — ${c.reason || 'not matched'}`
                 : c.kind === 'shopifyMf' ? 'Shopify category metafield — shown only, not imported'
-                : c.synthetic && c.preset ? 'Added by Presets' : '';
+                : c.synthetic && c.preset ? 'Added by Presets'
+                : c.synthetic && c.kind === 'metafield' ? 'Not in the CSV — added by Hub so you can fill it in' : '';
               const inner = (
                 <span style={{ color: disabled ? '#8c9196' : undefined }}>
                   {disabled ? '⚠ ' : ''}{c.header}

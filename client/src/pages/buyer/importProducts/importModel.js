@@ -284,6 +284,18 @@ export function buildColumns(headers, definitions, manual = {}) {
     columns.unshift({ id: 'x_handle', header: 'Handle', csvIndex: null, kind: 'field', field: 'handle', level: 'product', synthetic: true });
   }
 
+  // Sub type and Sub collection are always in the table (Hera 2026-10-08):
+  // a CSV column (with or without values) is used as it is; when the CSV
+  // has none, an empty column is added so the buyer can pick values from
+  // the dropdowns. Empty added cells send nothing to Shopify.
+  for (const [key, label] of [['sub_type', 'Sub type'], ['sub_collection', 'Sub collection']]) {
+    const present = columns.some(c => c.kind === 'metafield' && c.level === 'product' && lc(c.namespace) === 'custom' && lc(c.key) === key);
+    if (present) continue;
+    const def = (definitions || []).find(d => d.level === 'product' && d.namespace === 'custom' && d.key === key);
+    if (!def) continue;
+    columns.push({ id: `x_${key}`, header: label, csvIndex: null, kind: 'metafield', level: 'product', namespace: 'custom', key, def, synthetic: true });
+  }
+
   // Attach presets to their matching CSV column, or add a synthetic column.
   for (const p of PRESETS) {
     let col = null;

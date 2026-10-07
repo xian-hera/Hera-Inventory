@@ -71,6 +71,31 @@ export function AutoCommittedBadge() {
   );
 }
 
+// Tag pills (2026-10-07, Hera) — Warehouse shows a transfer's tags after its
+// number in the home-card lists and in the detail-page title. Same small grey
+// pill look as Buyer's Tags column / detail page. Renders nothing when the
+// transfer has no tags.
+export function TagPills({ tags }) {
+  const list = Array.isArray(tags) ? tags : [];
+  if (list.length === 0) return null;
+  return (
+    <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center' }}>
+      {list.map(tag => (
+        <span
+          key={tag}
+          style={{
+            display: 'inline-flex', alignItems: 'center',
+            padding: '2px 8px', borderRadius: '12px',
+            background: '#e4e5e7', fontSize: '12px', whiteSpace: 'nowrap',
+          }}
+        >
+          {tag}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 // Warehouse-only display override (spec doc section 5, confirmed): a
 // "Pick up from store" task shown as Good to go reads as "Ready for Pick up"
 // to Warehouse. The underlying status value never changes — this is purely
