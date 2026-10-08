@@ -852,14 +852,17 @@ function BuyerPOImportInvoice() {
     setSavingStoreCount(true);
     setError('');
     try {
-      const res = await fetch(`/api/po-invoices/manager/receiving/${invoiceId}/items/${item.id}/count`, {
+      // Dedicated Buyer endpoint that REPLACES the count. This used to call
+      // the manager's count endpoint, which is additive since multi-count
+      // (2026-09-24) — editing 6 to 9 saved 15.
+      const res = await fetch(`/api/po-invoices/pending/${invoiceId}/items/${item.id}/store-count`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ count: absolute }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      setItems(prev => prev.map(it => (it.id === item.id ? data : it)));
+      setItems(prev => prev.map(it => (it.id === item.id ? { ...it, ...data } : it)));
       setEditingStoreCountId(null);
     } catch (e) {
       setError(e.message);

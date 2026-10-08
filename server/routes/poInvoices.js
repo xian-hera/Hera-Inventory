@@ -1336,6 +1336,10 @@ function computeStoreCount(history) {
   for (const h of history) {
     if (h.type === 'correct') total = Number(h.value) || 0;
     else if (h.type === 'counted') total = (total || 0) + (Number(h.value) || 0);
+    // 'set' (2026-10-08) — the Buyer typed a final Store count on the invoice
+    // detail page: an absolute OVERRIDE of everything before it, never added
+    // to it. See PATCH /pending/:id/items/:itemId/store-count below.
+    else if (h.type === 'set') total = Number(h.value) || 0;
   }
   return total;
 }
@@ -1384,6 +1388,50 @@ router.patch('/manager/receiving/:id/items/:itemId/count', async (req, res) => {
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
     console.error('PATCH /api/po-invoices/manager/receiving/:id/items/:itemId/count error:', e);
+    res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
+  }
+});
+
+// PATCH /api/po-invoices/pending/:id/items/:itemId/store-count
+// body: { count }
+// Buyer-side edit of the Store count column (2026-10-08, Hera): the typed
+// number REPLACES the current store_count — it is the new final total, not
+// something added on top. The Buyer's edit used to go through the manager's
+// additive count endpoint above (as a legacy { count } = 'counted' entry),
+// so changing 6 to 9 produced 6 + 9 = 15. The old history is kept; a 'set'
+// entry is appended and computeStoreCount() treats it as an absolute override.
+router.patch('/pending/:id/items/:itemId/store-count', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { id, itemId } = req.params;
+    const value = parseInt(req.body.count, 10);
+    if (isNaN(value) || value < 0) return res.status(400).json({ error: 'Invalid count' });
+    await client.query('BEGIN');
+    const cur = await client.query(
+      'SELECT * FROM po_invoice_items WHERE id = $1 AND invoice_id = $2 FOR UPDATE',
+      [itemId, id]
+    );
+    if (cur.rows.length === 0) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Item not found' }); }
+    const item = cur.rows[0];
+
+    let history = Array.isArray(item.count_history) ? item.count_history : [];
+    if (history.length === 0 && item.store_count !== null && item.store_count !== undefined) {
+      history = [{ type: 'counted', value: Number(item.store_count), at: null, legacy: true }];
+    }
+    history = [...history, { type: 'set', value, at: new Date().toISOString() }];
+    const storeCount = computeStoreCount(history);
+
+    const result = await client.query(
+      `UPDATE po_invoice_items SET store_count = $1, count_history = $2::jsonb WHERE id = $3 AND invoice_id = $4 RETURNING *`,
+      [storeCount, JSON.stringify(history), itemId, id]
+    );
+    await client.query('COMMIT');
+    res.json(result.rows[0]);
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('PATCH /api/po-invoices/pending/:id/items/:itemId/store-count error:', e);
     res.status(500).json({ error: e.message });
   } finally {
     client.release();
