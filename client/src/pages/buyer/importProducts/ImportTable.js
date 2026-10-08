@@ -43,6 +43,7 @@ export function orderColumns(columns, presetsOn, metafieldsOn) {
     ...columns.filter(c => c.synthetic && !c.preset && !addedMf(c) && !addedCat(c)),
     ...columns.filter(c => c.csvIndex != null).sort((a, b) => a.csvIndex - b.csvIndex),
     ...columns.filter(addedMf),
+    ...columns.filter(addedCat), // moved next to Title with the trio below
     ...columns.filter(c => c.synthetic && c.preset),
   ];
   if (!presetsOn) {
@@ -55,15 +56,8 @@ export function orderColumns(columns, presetsOn, metafieldsOn) {
     const at = anchor === -1 ? list.length : anchor + 1;
     list.splice(at, 0, ...presetCols);
   }
-  const cat = columns.find(addedCat);
-  if (cat) {
-    let at = list.findIndex(c => c.kind === 'field' && c.field === 'title');
-    if (at === -1) at = list.findIndex(c => lc(c.header) === 'name');
-    if (at === -1) at = list.length - 1;
-    at += 1;
-    while (presetsOn && list[at] && list[at].preset) at += 1;
-    list.splice(at, 0, cat);
-  }
+  // (2026-10-08, rev.) The added Product category column is now placed with
+  // Sub type / Sub collection in the block below.
   if (metafieldsOn) {
     const isMf = (c) => (c.kind === 'metafield' || c.kind === 'shopifyMf' || (c.kind === 'unmatched' && c.namespace)) && !(presetsOn && c.preset);
     // Sub type, then Sub collection, lead the metafield group (2026-10-08).
@@ -72,6 +66,20 @@ export function orderColumns(columns, presetsOn, metafieldsOn) {
     list = list.filter(c => !isMf(c));
     const anchor = list.findIndex(c => c.kind === 'field' && c.field === 'sku');
     list.splice(anchor === -1 ? list.length : anchor + 1, 0, ...mfCols);
+  }
+  // Product category, Sub type, Sub collection always sit together, in that
+  // order, right after Title (after the preset group when it is shown) —
+  // whether they come from the CSV or were added by Hub (Hera 2026-10-08).
+  const trioRank = (c) => ((c.kind === 'field' && c.field === 'category') ? 0 : isSubTypeCol(c) ? 1 : isSubCollectionCol(c) ? 2 : -1);
+  const trio = list.filter(c => trioRank(c) >= 0).sort((a, b) => trioRank(a) - trioRank(b));
+  if (trio.length) {
+    list = list.filter(c => trioRank(c) < 0);
+    let at = list.findIndex(c => c.kind === 'field' && c.field === 'title');
+    if (at === -1) at = list.findIndex(c => lc(c.header) === 'name');
+    if (at === -1) at = list.length - 1;
+    at += 1;
+    while (presetsOn && list[at] && list[at].preset) at += 1;
+    list.splice(at, 0, ...trio);
   }
   return list;
 }
@@ -248,6 +256,10 @@ function ImportTable({
     window.requestAnimationFrame(() => { scrollOwner.current = null; });
   };
   const stickyLeft = (left, z = 1) => ({ position: 'sticky', left, zIndex: z });
+  // Title stays visible while scrolling sideways (Hera 2026-10-08), right
+  // after the checkbox and Check columns.
+  const isTitleCol = (c) => c.kind === 'field' && c.field === 'title';
+  const TITLE_STICKY = { position: 'sticky', left: CHECK_COL + INFO_COL, borderRight: '1px solid #c9cccf' };
 
   return (
     <div style={{ border: '1px solid #e1e3e5', borderRadius: 12, background: '#fff', overflow: 'hidden' }}>
@@ -288,7 +300,7 @@ function ImportTable({
                 </span>
               );
               return (
-                <th key={c.id} style={{ ...th, background: colBg(c) || th.background, position: 'sticky', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                <th key={c.id} style={{ ...th, background: colBg(c) || th.background, position: 'sticky', overflow: 'hidden', textOverflow: 'ellipsis', ...(isTitleCol(c) ? { ...TITLE_STICKY, zIndex: 3 } : {}) }}>
                   {title ? <Tooltip content={title}>{inner}</Tooltip> : inner}
                   <span
                     onMouseDown={(e) => { e.preventDefault(); dragRef.current = { id: c.id, x: e.clientX, start: widthOf(c) }; document.body.style.cursor = 'col-resize'; }}
@@ -370,6 +382,7 @@ function ImportTable({
                     cursor: disabled ? 'default' : 'pointer',
                     outline: err ? '1px solid #d72c0d' : warn ? '1px solid #e8a33d' : undefined,
                     outlineOffset: -1,
+                    ...(isTitleCol(c) ? { ...TITLE_STICKY, zIndex: 1 } : {}),
                   };
                   // Sub collection is a list (2026-09-25, Hera): one line per
                   // item, click an item to change it, blue "Add collection"

@@ -11,6 +11,7 @@ const { startBirthdayScheduler } = require('./jobs/birthdayScheduler');
 const { startSyncScheduler } = require('./jobs/syncVariantIndex');
 const { startNewArrivalScheduler } = require('./jobs/newArrivalScheduler');
 const { startOnlineTaskHistoryScheduler } = require('./jobs/onlineTaskHistory'); // Online Dashboard, 2026-10-01
+const { startPriceChangeScheduler } = require('./jobs/priceChangeScheduler'); // Price Change schedule / reverse, 2026-10-08
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -109,6 +110,7 @@ const startServer = async () => {
     await startSyncScheduler();
     startNewArrivalScheduler();
     startOnlineTaskHistoryScheduler();
+    startPriceChangeScheduler();
     app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
       console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);

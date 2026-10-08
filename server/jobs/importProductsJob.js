@@ -149,6 +149,14 @@ async function fetchExistingProduct(productId) {
 async function precheck(mode, rows) {
   const out = { rows: {}, autoHandles: {} };
   for (const r of rows) out.rows[r.rowNumber] = { errors: [] };
+  // Server-side guard (2026-10-08): "\uFFFD" (�) means the CSV was read with
+  // the wrong encoding — never let it reach a SKU / barcode / handle in
+  // Shopify ("661157104234�" incident). The page blocks these too.
+  for (const r of rows) {
+    for (const [label, v] of [['SKU', r.sku], ['Barcode', r.barcode], ['Handle', r.handle]]) {
+      if (String(v || '').includes('\uFFFD')) out.rows[r.rowNumber].errors.push(`${label} contains an unreadable character (�)`);
+    }
+  }
 
   const skus = await findVariants('sku', rows.map(r => r.sku));
   const barcodes = await findVariants('barcode', rows.map(r => r.barcode));

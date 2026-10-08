@@ -6,6 +6,18 @@ import {
 import { useNavigate } from 'react-router-dom';
 import MultiSelectDropdown from '../../components/MultiSelectDropdown';
 import { useLocationMap } from '../shared/locationMap';
+// Same CSV decoding / hidden-character cleaning as Import Products
+// (2026-10-08, "661157104234�" incident).
+import { decodeCsvBuffer, cleanCell, UNREADABLE_CHAR } from './importProducts/importModel';
+// Scheduled price changes (2026-10-08, Hera) — spec:
+// claude/PRICE_CHANGE_SCHEDULE_REVERSE_SPEC.md
+import ScheduledTasksCard, { ScheduledTaskModal } from './priceChange/ScheduledTasksCard';
+import { TaskTypeLabel, excludedText, formatToronto, money } from '../shared/priceChangeShared';
+
+// The old "Upload CSV → Publish" flow on this page (labels only, no price
+// change in Shopify) is replaced by Create Task (2026-10-08, Hera). Kept,
+// hidden; set to true to bring it back.
+const SHOW_LEGACY_UPLOAD = false;
 
 // Location list: comes from the shared location map (pages/shared/locationMap.js,
 // 2026-09-24). The hardcoded 19-code LOCATIONS constant that used to live here
@@ -62,6 +74,13 @@ function BuyerPriceChange() {
   const [detailItems, setDetailItems]     = useState([]);
   const [detailLoading, setDetailLoading] = useState(false);
 
+  // Archived tasks: every store Done; kept 30 days (2026-10-08).
+  const [archived, setArchived]           = useState([]);
+  const [archivedLoading, setArchivedLoading] = useState(false);
+  // Scheduled task opened from a Published row ("Reverse" link).
+  const [openScheduledId, setOpenScheduledId] = useState(null);
+  const [scheduledVersion, setScheduledVersion] = useState(0);
+
   const fetchTasks = useCallback(async () => {
     setTasksLoading(true);
     setTasksError('');
@@ -77,7 +96,21 @@ function BuyerPriceChange() {
     }
   }, []);
 
-  useEffect(() => { fetchTasks(); }, [fetchTasks]);
+  const fetchArchived = useCallback(async () => {
+    setArchivedLoading(true);
+    try {
+      const res = await fetch('/api/price-change-tasks/archived');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setArchived(data);
+    } catch (e) {
+      setTasksError('Failed to load archived tasks');
+    } finally {
+      setArchivedLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { fetchTasks(); fetchArchived(); }, [fetchTasks, fetchArchived]);
 
   const handleCSVUpload = async (e) => {
     const file = e.target.files[0];
@@ -86,7 +119,9 @@ function BuyerPriceChange() {
 
     const reader = new FileReader();
     reader.onload = async (evt) => {
-      const lines = evt.target.result.split('\n').filter(l => l.trim());
+      // Bytes decoded as UTF-8, or as Windows-1252 when they aren't valid
+      // UTF-8 (Excel "CSV (Comma delimited)") — was readAsText (UTF-8 only).
+      const lines = decodeCsvBuffer(evt.target.result).split('\n').filter(l => l.trim());
 
       if (lines.length === 0) { setError('No data found in CSV.'); return; }
 
@@ -116,13 +151,16 @@ function BuyerPriceChange() {
 
       if (dataLines.length === 0) { setError('No data found in CSV.'); return; }
 
-      const skus = [...new Set(
+      const allSkus = [...new Set(
         dataLines
-          .map(l => l.split(',')[skuCol]?.trim().replace(/"/g, '') || '')
+          .map(l => cleanCell(l.split(',')[skuCol] || '').trim().replace(/"/g, ''))
           .filter(Boolean)
       )];
+      // A SKU that still holds "�" can't be matched — list it, don't look it up.
+      const unreadable = allSkus.filter(sku => sku.includes(UNREADABLE_CHAR));
+      const skus = allSkus.filter(sku => !sku.includes(UNREADABLE_CHAR));
 
-      if (skus.length === 0) { setError('No SKUs found in CSV.'); return; }
+      if (skus.length === 0 && unreadable.length === 0) { setError('No SKUs found in CSV.'); return; }
 
       setLoading(true);
       setError('');
@@ -153,12 +191,13 @@ function BuyerPriceChange() {
       }
 
       setItems(results);
-      if (failed.length > 0) {
-        setError(`${failed.length} SKU(s) not found in Shopify: ${failed.join(', ')}`);
-      }
+      const problems = [];
+      if (failed.length > 0) problems.push(`${failed.length} SKU(s) not found in Shopify: ${failed.join(', ')}`);
+      if (unreadable.length > 0) problems.push(`${unreadable.length} SKU(s) contain an unreadable character (�) — save the CSV as "CSV UTF-8" or retype them: ${unreadable.join(', ')}`);
+      if (problems.length > 0) setError(problems.join(' · '));
       setLoading(false);
     };
-    reader.readAsText(file);
+    reader.readAsArrayBuffer(file);
   };
 
   const toggleSelectOne = (sku) => {
@@ -265,9 +304,11 @@ function BuyerPriceChange() {
     setDetailTask(task);
     setDetailLoading(true);
     try {
-      const res = await fetch(`/api/price-change-tasks/${task.id}/items`);
+      // Tasks made by Create Task (task_type set) show old → new values and
+      // skipped items (2026-10-08); older tasks keep the simple item list.
+      const res = await fetch(task.task_type ? `/api/price-change-tasks/${task.id}/detail` : `/api/price-change-tasks/${task.id}/items`);
       const data = await res.json();
-      setDetailItems(data);
+      setDetailItems(task.task_type ? (data.items || []) : data);
     } catch (e) {
       setDetailItems([]);
     } finally {
@@ -284,9 +325,19 @@ function BuyerPriceChange() {
 
   const taskRows = tasks.map(task => {
     const unfinished = task.unfinished_locations?.filter(Boolean) || [];
+    const rev = task.reverse_task; // its reverse, waiting in Scheduled Tasks
     return [
       <Checkbox checked={selectedTaskIds.includes(task.id)} onChange={() => toggleTaskSelectOne(task.id)} />,
-      <Button variant="plain" onClick={() => openTaskDetail(task)}>{task.task_no}</Button>,
+      <BlockStack gap="050" inlineAlign="start">
+        <Button variant="plain" onClick={() => openTaskDetail(task)}>{task.task_no}</Button>
+        {rev && rev.status === 'scheduled' && (
+          <Button variant="plain" size="slim" onClick={() => setOpenScheduledId(task.reverse_task_id)}>
+            {`↻ Reverse ${formatToronto(rev.scheduled_at)}`}
+          </Button>
+        )}
+        {task.reverse_of_no && <Text variant="bodySm" tone="subdued">Reverse of {task.reverse_of_no}</Text>}
+      </BlockStack>,
+      <TaskTypeLabel type={task.task_type} fallback={task.label_type || ''} />,
       String(task.item_count || 0),
       unfinished.length > 0
         ? <div style={{ fontSize: '13px', color: '#d72c0d' }}>{unfinished.join(', ')}</div>
@@ -298,12 +349,21 @@ function BuyerPriceChange() {
     <Page
       title="Price Change"
       backAction={{ onAction: () => navigate('/buyer') }}
+      primaryAction={{ content: 'Create Task', onAction: () => navigate('/buyer/price-change/create') }}
     >
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">
             {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
 
+            {/* Scheduled Tasks (2026-10-08) */}
+            <ScheduledTasksCard
+              locationNames={locationNames}
+              version={scheduledVersion}
+              onChanged={() => { fetchTasks(); }}
+            />
+
+            {SHOW_LEGACY_UPLOAD && (<>
             <Card>
               <InlineStack gap="400" wrap align="start">
                 <MultiSelectDropdown
@@ -382,6 +442,8 @@ function BuyerPriceChange() {
               </Card>
             )}
 
+            </>)}
+
             {/* Published Tasks — merged in from the former standalone page */}
             <Card>
               <BlockStack gap="300">
@@ -409,20 +471,44 @@ function BuyerPriceChange() {
 
                 {tasksLoading ? <Spinner /> : (
                   <DataTable
-                    columnContentTypes={['text','text','text','text']}
+                    columnContentTypes={['text','text','text','text','text']}
                     headings={[
                       <Checkbox
                         checked={selectedTaskIds.length === tasks.length && tasks.length > 0}
                         indeterminate={selectedTaskIds.length > 0 && selectedTaskIds.length < tasks.length}
                         onChange={toggleTaskSelectAll}
                       />,
-                      'Task', 'Items', 'Unfinished Locations',
+                      'Task', 'Task type', 'Items', 'Unfinished Locations',
                     ]}
                     rows={taskRows}
                   />
                 )}
               </BlockStack>
             </Card>
+
+            {/* Archived Tasks — every store Done; last 30 days (2026-10-08) */}
+            <Card>
+              <BlockStack gap="300">
+                <Text variant="headingMd" fontWeight="bold">Archived Tasks</Text>
+                <Text variant="bodySm" tone="subdued">Tasks every store has marked Done. Kept for 30 days.</Text>
+                {archivedLoading ? <Text tone="subdued">Loading...</Text> : archived.length === 0 ? (
+                  <Text tone="subdued">No archived tasks.</Text>
+                ) : (
+                  <DataTable
+                    columnContentTypes={['text','text','text','text','text']}
+                    headings={['Task', 'Task type', 'Items', 'Published', 'Archived']}
+                    rows={archived.map(t => [
+                      <Button variant="plain" onClick={() => openTaskDetail(t)}>{t.task_no}</Button>,
+                      <TaskTypeLabel type={t.task_type} fallback={t.label_type || ''} />,
+                      String(t.item_count || 0),
+                      formatToronto(t.published_at || t.created_at),
+                      formatToronto(t.archived_at || t.created_at),
+                    ])}
+                  />
+                )}
+              </BlockStack>
+            </Card>
+            <div style={{ height: 120 }} />
           </BlockStack>
         </Layout.Section>
       </Layout>
@@ -481,6 +567,16 @@ function BuyerPriceChange() {
         </div>
       )}
 
+      {/* Reverse opened from a Published row (2026-10-08) */}
+      {openScheduledId && (
+        <ScheduledTaskModal
+          taskId={openScheduledId}
+          locationNames={locationNames}
+          onClose={() => setOpenScheduledId(null)}
+          onChanged={() => { setScheduledVersion(v => v + 1); fetchTasks(); }}
+        />
+      )}
+
       {/* Published task item detail popup */}
       {detailTask && (
         <div style={{
@@ -496,7 +592,12 @@ function BuyerPriceChange() {
               {/* Task name · label type */}
               <Text variant="headingMd" fontWeight="bold">
                 Task {detailTask.task_no}
-                {detailTask.label_type && (
+                {detailTask.task_type && (
+                  <span style={{ fontWeight: 400, color: '#6d7175' }}>
+                    {' · '}<TaskTypeLabel type={detailTask.task_type} />
+                  </span>
+                )}
+                {!detailTask.task_type && detailTask.label_type && (
                   <span style={{ fontWeight: 400, color: '#6d7175' }}>
                     {' · '}{detailTask.label_type}
                   </span>
@@ -511,7 +612,7 @@ function BuyerPriceChange() {
             {detailTask.locations && detailTask.locations.length > 0 && (
               <div style={{ marginTop: '6px' }}>
                 <Text variant="bodySm" tone="subdued">
-                  {detailTask.locations.join(', ')}
+                  {detailTask.task_type ? excludedText(detailTask.locations, locationNames) : detailTask.locations.join(', ')}
                 </Text>
               </div>
             )}
@@ -523,7 +624,20 @@ function BuyerPriceChange() {
             )}
 
             <div style={{ marginTop: '16px' }}>
-              {detailLoading ? <Spinner /> : (
+              {detailLoading ? <Spinner /> : detailTask.task_type ? (
+                // Create Task tasks (2026-10-08): what was changed in Shopify.
+                <DataTable
+                  columnContentTypes={['text','text','text','text','text']}
+                  headings={['SKU', 'Name', 'Price', 'Compare-at', 'Result']}
+                  rows={detailItems.map(item => [
+                    item.sku,
+                    item.name || '-',
+                    item.apply_status === 'done' ? `${money(item.old_price)} → ${money(item.new_price)}` : money(item.csv_price),
+                    item.apply_status === 'done' ? `${money(item.old_compare_at)} → ${money(item.new_compare_at)}` : '—',
+                    item.apply_status === 'done' ? (item.apply_note || 'Changed') : (item.apply_note || item.apply_status || ''),
+                  ])}
+                />
+              ) : (
                 <DataTable
                   columnContentTypes={['text','text','text']}
                   headings={['SKU', 'Name', 'Price']}

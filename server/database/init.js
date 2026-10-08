@@ -1228,6 +1228,29 @@ const initDatabase = async () => {
         PRIMARY KEY (metafield, choice_value)
       )
     `);
+    // Sub types Duplicate (2026-10-08, Hera): like Sub collections, one
+    // sub type value may now sit under several Types (and an unassigned copy
+    // may be kept, product_type NULL). The old "one value → one Type"
+    // primary key is replaced by "never twice under the same Type". Existing
+    // rows are kept as they are. id only keeps the copies in order.
+    await client.query(`
+      DO $$
+      DECLARE c TEXT;
+      BEGIN
+        SELECT conname INTO c FROM pg_constraint
+          WHERE conrelid = 'import_metafield_assignments'::regclass AND contype = 'p';
+        IF c IS NOT NULL THEN
+          EXECUTE format('ALTER TABLE import_metafield_assignments DROP CONSTRAINT %I', c);
+        END IF;
+      END $$
+    `);
+    await client.query('ALTER TABLE import_metafield_assignments ALTER COLUMN product_type DROP NOT NULL');
+    await client.query('ALTER TABLE import_metafield_assignments ADD COLUMN IF NOT EXISTS id SERIAL');
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS import_metafield_assignments_type_key
+        ON import_metafield_assignments (metafield, choice_value, product_type)
+        WHERE product_type IS NOT NULL
+    `);
 
     // Import Products → Settings → Sub collections (2026-09-25, Hera).
     // custom.sub_collection is a free-text metafield, so the values come from
@@ -1283,6 +1306,65 @@ const initDatabase = async () => {
     // Online → New products (2026-10-07): when new variants are added to an
     // existing product, the row only covers those SKUs (NULL = all variants).
     await client.query('ALTER TABLE new_arrival ADD COLUMN IF NOT EXISTS variant_ids TEXT[]');
+
+    // ── Price Change (2026-10-08, Hera) ───────────────────────────────────
+    // These four tables were created by hand when Price Change was first
+    // built; the CREATE statements below only run on a fresh database.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS price_change_counter (
+        id INTEGER PRIMARY KEY,
+        last_number INTEGER NOT NULL DEFAULT 0
+      )
+    `);
+    // (no ON CONFLICT: the hand-made table may not have a unique id)
+    await client.query('INSERT INTO price_change_counter (id, last_number) SELECT 1, 0 WHERE NOT EXISTS (SELECT 1 FROM price_change_counter WHERE id = 1)');
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS price_change_tasks (
+        id SERIAL PRIMARY KEY,
+        task_no TEXT NOT NULL,
+        note TEXT,
+        locations TEXT[] NOT NULL DEFAULT '{}',
+        label_type TEXT,
+        status TEXT NOT NULL DEFAULT 'active',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS price_change_items (
+        id SERIAL PRIMARY KEY,
+        task_id INTEGER REFERENCES price_change_tasks(id) ON DELETE CASCADE,
+        sku TEXT,
+        name TEXT,
+        price TEXT,
+        barcode TEXT,
+        compare_at_price TEXT
+      )
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS price_change_location_status (
+        id SERIAL PRIMARY KEY,
+        task_id INTEGER REFERENCES price_change_tasks(id) ON DELETE CASCADE,
+        location TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        printed_at TIMESTAMPTZ,
+        auto_delete_at TIMESTAMPTZ
+      )
+    `);
+    // Scheduling / reverse / task type (status now also: scheduled, applying,
+    // applied, failed — see server/services/priceChange.js).
+    for (const col of [
+      'task_type TEXT', 'product_types TEXT[]', 'scheduled_at TIMESTAMPTZ', 'applied_at TIMESTAMPTZ',
+      'publish_at TIMESTAMPTZ', 'published_at TIMESTAMPTZ', 'archived_at TIMESTAMPTZ',
+      'reverse_at TIMESTAMPTZ', 'reverse_task_type TEXT', 'reverse_of INTEGER', 'reverse_task_id INTEGER', 'error TEXT',
+    ]) await client.query(`ALTER TABLE price_change_tasks ADD COLUMN IF NOT EXISTS ${col}`);
+    for (const col of [
+      'variant_id TEXT', 'product_id TEXT', 'product_type TEXT', 'csv_price TEXT',
+      'old_price TEXT', 'old_compare_at TEXT', 'old_discontinued TEXT', 'set_discontinued BOOLEAN',
+      'new_price TEXT', 'new_compare_at TEXT', 'apply_status TEXT', 'apply_note TEXT',
+      'applied_at TIMESTAMPTZ', 'source_item_id INTEGER',
+    ]) await client.query(`ALTER TABLE price_change_items ADD COLUMN IF NOT EXISTS ${col}`);
+    // Stores mark the WIG part of a task Done separately ('main' / 'wig').
+    await client.query("ALTER TABLE price_change_location_status ADD COLUMN IF NOT EXISTS part TEXT NOT NULL DEFAULT 'main'");
 
     // Display section and Sub collection are no longer assigned through
     // import_metafield_assignments (Hera 2026-09-25: Display section uses the

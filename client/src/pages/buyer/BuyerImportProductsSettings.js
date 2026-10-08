@@ -27,16 +27,31 @@ function fmt(iso) {
 }
 
 // One Sub types / Sub collections / Display sections card.
+// 2026-10-08 (Hera): Duplicate / Delete duplicated, same as the Sub
+// collections card — a sub type shared by several Types gets one copy per
+// Type. The card now keeps a list of rows (one per copy, type null = not
+// assigned yet) instead of one Type per value.
+let assignUid = 0;
+const toAssignRows = (data) => {
+  const list = Array.isArray(data.rows)
+    ? data.rows
+    : (data.choices || []).map(c => ({ value: c, type: (data.assignments || {})[c] || null }));
+  return list.map(r => { assignUid += 1; return { value: r.value, type: r.type || null, uid: `a${assignUid}` }; });
+};
+const assignRowsEqual = (a, b) => JSON.stringify((a || []).map(r => [r.value, r.type || null]))
+  === JSON.stringify((b || []).map(r => [r.value, r.type || null]));
+
 function AssignCard({ field, title, noun, types, onDirtyChange, registerSave, onSaved }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState('');
   const [choices, setChoices] = useState([]);
-  const [assign, setAssign] = useState({}); // choice → type
-  const [original, setOriginal] = useState({});
+  const [rows, setRows] = useState([]);         // [{ value, type|null, uid }]
+  const [original, setOriginal] = useState([]);
   const [type, setType] = useState('');
   const [saving, setSaving] = useState(false);
   const [definitionFound, setDefinitionFound] = useState(true);
+  const [mode, setMode] = useState(null);       // null | 'duplicate' | 'delete'
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -44,9 +59,10 @@ function AssignCard({ field, title, noun, types, onDirtyChange, registerSave, on
       const res = await fetch(`/api/import-products/settings/assignments/${field}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Load failed');
+      const list = toAssignRows(data);
       setChoices(data.choices || []);
-      setAssign(data.assignments || {});
-      setOriginal(data.assignments || {});
+      setRows(list);
+      setOriginal(list);
       setDefinitionFound(!!data.definitionFound);
     } catch (e) {
       setError(e.message);
@@ -60,18 +76,19 @@ function AssignCard({ field, title, noun, types, onDirtyChange, registerSave, on
     if (!type && types.length) setType(types[0]);
   }, [types, type]);
 
-  const dirty = JSON.stringify(assign) !== JSON.stringify(original);
+  const dirty = !assignRowsEqual(rows, original);
   useEffect(() => { onDirtyChange(field, dirty); }, [dirty, field, onDirtyChange]);
 
   const save = useCallback(async () => {
     setSaving(true); setError(''); setSaved('');
     try {
       const res = await fetch(`/api/import-products/settings/assignments/${field}`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ assignments: assign }),
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rows: rows.map(r => ({ value: r.value, type: r.type || null })) }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Save failed');
-      setOriginal(assign);
+      setOriginal(rows);
       setSaved('Saved.');
       if (onSaved) onSaved();
     } catch (e) {
@@ -79,17 +96,60 @@ function AssignCard({ field, title, noun, types, onDirtyChange, registerSave, on
     } finally {
       setSaving(false);
     }
-  }, [field, assign, onSaved]);
-  useEffect(() => { registerSave(field, save, () => setAssign(original)); }, [field, save, original, registerSave]);
+  }, [field, rows, onSaved]);
+  useEffect(() => { registerSave(field, save, () => { setRows(original); setMode(null); }); }, [field, save, original, registerSave]);
 
-  const unassigned = choices.filter(c => !assign[c]);
-  const assignedHere = Object.keys(assign).filter(c => assign[c] === type);
-  const stale = new Set(Object.keys(assign).filter(c => !choices.includes(c)));
+  const countByValue = rows.reduce((m, r) => { m[r.value] = (m[r.value] || 0) + 1; return m; }, {});
+  const unassigned = rows.filter(r => !r.type);
+  const assigned = rows.filter(r => r.type);
+  const assignedHere = rows.filter(r => r.type === type);
+  const stale = new Set(rows.map(r => r.value).filter(v => !choices.includes(v)));
+
+  const clickValue = (r) => {
+    setError(''); setSaved('');
+    if (mode === 'duplicate') {
+      assignUid += 1;
+      setRows(list => {
+        const i = list.findIndex(x => x.uid === r.uid);
+        const copy = { value: r.value, type: null, uid: `a${assignUid}` };
+        return [...list.slice(0, i + 1), copy, ...list.slice(i + 1)];
+      });
+      setMode(null);
+      return;
+    }
+    if (mode === 'delete') {
+      if (r.type || (countByValue[r.value] || 0) < 2) {
+        setError(`"${r.value}" can't be deleted — only an unassigned copy of a duplicated value can be deleted.`);
+      } else {
+        setRows(list => list.filter(x => x.uid !== r.uid));
+      }
+      setMode(null);
+      return;
+    }
+    if (r.type || !type) return;
+    if (rows.some(x => x.type === type && x.value === r.value)) {
+      setError(`"${r.value}" is already assigned to ${type}. Use a different type.`);
+      return;
+    }
+    setRows(list => list.map(x => (x.uid === r.uid ? { ...x, type } : x)));
+  };
 
   return (
     <Card>
       <BlockStack gap="300">
-        <Text variant="headingMd" as="h2">{title}</Text>
+        <InlineStack align="space-between" blockAlign="center">
+          <Text variant="headingMd" as="h2">{title}</Text>
+          {!loading && (
+            <InlineStack gap="200">
+              <Tooltip content="Click this button then click the duplicated value you wish to delete.">
+                <Button pressed={mode === 'delete'} onClick={() => setMode(m => (m === 'delete' ? null : 'delete'))} disabled={!rows.length}>Delete duplicated</Button>
+              </Tooltip>
+              <Tooltip content="Click this button then click a value to duplicate one, if that value is shared in more than one types.">
+                <Button pressed={mode === 'duplicate'} onClick={() => setMode(m => (m === 'duplicate' ? null : 'duplicate'))} disabled={!rows.length}>Duplicate</Button>
+              </Tooltip>
+            </InlineStack>
+          )}
+        </InlineStack>
         {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
         {saved && <Banner tone="success" onDismiss={() => setSaved('')}>{saved}</Banner>}
         {!definitionFound && !loading && <Banner tone="warning">The metafield definition for {title.toLowerCase()} was not found in Shopify.</Banner>}
@@ -98,11 +158,31 @@ function AssignCard({ field, title, noun, types, onDirtyChange, registerSave, on
             <Text tone="subdued">
               {unassigned.length ? `${title} not assigned yet` : `All ${noun} have been assigned.`}
             </Text>
-            <InlineStack gap="200" wrap>
-              {unassigned.map(c => (
-                <Tag key={c} onClick={type ? () => setAssign(a => ({ ...a, [c]: type })) : undefined}>{c}</Tag>
+            {mode && (
+              <Text tone="subdued">
+                {mode === 'duplicate' ? 'Click a value to duplicate it.' : 'Click an unassigned duplicated value to delete it.'}
+              </Text>
+            )}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+              {unassigned.map(r => (
+                <PillButton key={r.uid} onClick={(type || mode) ? () => clickValue(r) : undefined} active={mode === 'delete' && (countByValue[r.value] || 0) > 1}>
+                  {r.value}
+                </PillButton>
               ))}
-            </InlineStack>
+              {/* Assigned values, grey; clickable only to Duplicate them. */}
+              {assigned.length > 0 && (
+                <span style={{ color: '#6d7175' }}>
+                  {assigned.map((r, i) => (
+                    <span key={r.uid} title={`Assigned to ${r.type}`}>
+                      {mode === 'duplicate'
+                        ? <span onClick={() => clickValue(r)} style={{ cursor: 'pointer', textDecoration: 'underline' }}>{r.value}</span>
+                        : r.value}
+                      {i < assigned.length - 1 ? ', ' : ''}
+                    </span>
+                  ))}
+                </span>
+              )}
+            </div>
             <div style={{ maxWidth: 260 }}>
               <Select
                 label={`Select type to see assigned ${noun}`}
@@ -113,9 +193,9 @@ function AssignCard({ field, title, noun, types, onDirtyChange, registerSave, on
             </div>
             <InlineStack gap="200" wrap>
               {assignedHere.length === 0 && <Text tone="subdued">None assigned to {type || 'this type'}.</Text>}
-              {assignedHere.map(c => (
-                <Tag key={c} onRemove={() => setAssign(a => { const n = { ...a }; delete n[c]; return n; })}>
-                  {stale.has(c) ? `${c} (No longer in Shopify)` : c}
+              {assignedHere.map(r => (
+                <Tag key={r.uid} onRemove={() => setRows(list => list.map(x => (x.uid === r.uid ? { ...x, type: null } : x)))}>
+                  {stale.has(r.value) ? `${r.value} (No longer in Shopify)` : r.value}
                 </Tag>
               ))}
             </InlineStack>
@@ -171,9 +251,16 @@ function SubCollectionsCard({ types, subTypeVersion, onDirtyChange, registerSave
       const assignments = d.assignments || {};
       const choices = d.choices || [];
       const byType = {};
-      for (const [st, t] of Object.entries(assignments)) (byType[t] = byType[t] || []).push(st);
+      // 2026-10-08: a sub type may sit under several Types (Duplicate), so
+      // read every copy from rows; the one-Type map is the fallback.
+      if (Array.isArray(d.rows)) {
+        for (const r of d.rows) if (r.type && !(byType[r.type] || []).includes(r.value)) (byType[r.type] = byType[r.type] || []).push(r.value);
+      } else {
+        for (const [st, t] of Object.entries(assignments)) (byType[t] = byType[t] || []).push(st);
+      }
       Object.values(byType).forEach(l => l.sort());
-      setSubTypeInfo({ allAssigned: choices.every(c => assignments[c]), byType });
+      const assignedValues = Array.isArray(d.rows) ? new Set(d.rows.filter(r => r.type).map(r => r.value)) : null;
+      setSubTypeInfo({ allAssigned: choices.every(c => (assignedValues ? assignedValues.has(c) : assignments[c])), byType });
     }).catch(e => !stop && setError(e.message));
     return () => { stop = true; };
   }, [subTypeVersion]);

@@ -198,6 +198,11 @@ export function subCollectionOptions(row, columns, pools, isFirstOfGroup, preset
   return hit ? map[hit] : [];
 }
 
+// JSON metafields (custom.qrop, 2026-10-08): the cell must be valid JSON.
+export function isJson(v) {
+  try { JSON.parse(String(v)); return true; } catch (e) { return false; }
+}
+
 export function parseBool(v) {
   const s = lc(v);
   if (['true', 'yes', 'y', '1'].includes(s)) return true;
@@ -339,6 +344,34 @@ export function normalizePresetValue(presetKey, v) {
   return String(v).trim();
 }
 
+// ─── Reading the file / cleaning cells (2026-10-08, Hera) ────────────────────
+// A buyer CSV saved by Excel as plain "CSV (Comma delimited)" is NOT UTF-8:
+// a hidden non-breaking space copied from a supplier list became an invalid
+// byte, the browser turned it into "\uFFFD" (�), and it ended up in a SKU
+// and barcode in Shopify ("661157104234�"). So:
+//   1. decodeCsvBuffer: read as UTF-8; if the bytes aren't valid UTF-8, read
+//      them again as Windows-1252 (what Excel uses), so the hidden space is
+//      a real space again.
+//   2. cleanCell: non-breaking spaces → normal spaces; zero-width / BOM
+//      characters removed. SKU / Barcode / Handle are also trimmed.
+//   3. validate() blocks any cell that still contains "�".
+export const UNREADABLE_CHAR = '\uFFFD';
+export function decodeCsvBuffer(buffer) {
+  let text;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+  } catch (e) {
+    text = new TextDecoder('windows-1252').decode(buffer);
+  }
+  return text.replace(/^\uFEFF/, '');
+}
+const INVISIBLE = /[\u200B-\u200D\u2060\uFEFF\u00AD]/g;
+const NBSP = /[\u00A0\u2007\u202F]/g;
+export function cleanCell(v) {
+  return String(v == null ? '' : v).replace(INVISIBLE, '').replace(NBSP, ' ');
+}
+const TRIMMED_FIELDS = new Set(['sku', 'barcode', 'handle']);
+
 // ─── Rows ────────────────────────────────────────────────────────────────────
 // Raw CSV data rows → row objects. Blank rows and image-only rows (a Handle
 // plus nothing but ignored image columns) are dropped.
@@ -349,7 +382,8 @@ export function buildRows(dataRows, columns) {
     let meaningful = 0;
     for (const c of columns) {
       if (c.csvIndex == null) continue;
-      let v = cells[c.csvIndex] == null ? '' : String(cells[c.csvIndex]);
+      let v = cleanCell(cells[c.csvIndex]); // hidden characters (2026-10-08)
+      if (c.kind === 'field' && TRIMMED_FIELDS.has(c.field)) v = v.trim();
       if (c.preset) v = normalizePresetValue(c.preset, v);
       values[c.id] = v;
       if (!isBlank(v) && !(c.kind === 'field' && c.field === 'handle')) meaningful++;
@@ -482,6 +516,12 @@ export function validate({ rows, columns, groups, mode, presets, pools, precheck
       const { value } = effectiveCell(r, c, { isFirstOfGroup: isFirst, presets });
       const v = String(value).trim();
       if (!v) continue;
+      // Unreadable character (2026-10-08) — checked on every column the
+      // table shows, before anything else, so it can never reach Shopify.
+      if (v.includes(UNREADABLE_CHAR)) {
+        addCell(r, c, `${c.header}: contains an unreadable character (�) — save the CSV as "CSV UTF-8" or retype this value`);
+        continue;
+      }
       // Product-level values only count on a product's first row.
       if (c.level === 'product' && !isFirst && mode === 'add') continue;
       if (c.level === 'product' && existingFirstIds.has(r.id) && !(c.kind === 'field' && /^(handle|option\dName)$/.test(c.field))) continue;
@@ -502,6 +542,9 @@ export function validate({ rows, columns, groups, mode, presets, pools, precheck
           if (!pool.some(x => lc(x) === lc(v))) addCell(r, c, `"${v}" is not assigned to this Type in Import Settings`);
         } else if (c.def && c.def.type === 'boolean' && parseBool(v) === null) {
           addCell(r, c, `"${v}" is not true/false`);
+        } else if (c.def && c.def.type === 'json' && !isJson(v)) {
+          // e.g. variant custom.qrop (header "qrop" / "QROP", 2026-10-08)
+          addCell(r, c, `${c.header}: not valid JSON`);
         } else if (c.def && c.def.choices && c.def.choices.length && !c.def.type.startsWith('list.') && !c.def.choices.some(x => lc(x) === lc(v))) {
           addCell(r, c, `"${v}" is not one of the metafield's preset choices`);
         }

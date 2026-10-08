@@ -16,7 +16,7 @@ import {
   MAX_ROWS, MAX_COLUMNS, PRESETS, buildColumns, buildRows, groupRows, validate,
   productLevelConflicts, buildPayload, cellValue, colFor,
   applyTypeRules, normalizeSubCollections, isSubTypeCol, isSubCollectionCol, subCollectionOptions, subCollectionKey, subCollectionItems,
-  assignTargets, columnTargetValue,
+  assignTargets, columnTargetValue, decodeCsvBuffer, cleanCell,
 } from './importProducts/importModel';
 
 // Header Rule (2026-10-06, Hera): how column headers are recognised.
@@ -177,16 +177,23 @@ function BuyerImportProducts() {
     e.target.value = '';
     if (!f) return;
     setStartError('');
-    Papa.parse(f, {
-      skipEmptyLines: 'greedy',
-      complete: (res) => {
-        const all = res.data || [];
-        if (!all.length) { setStartError('The CSV is empty.'); return; }
-        setCsv({ headers: all[0], data: all.slice(1) });
-        setFileName(f.name);
-      },
-      error: (err) => setStartError(`Could not read the CSV: ${err.message}`),
-    });
+    // Read the bytes ourselves so a non-UTF-8 (Excel "CSV (Comma delimited)")
+    // file is decoded correctly — see decodeCsvBuffer (2026-10-08).
+    const reader = new FileReader();
+    reader.onerror = () => setStartError('Could not read the CSV.');
+    reader.onload = () => {
+      Papa.parse(decodeCsvBuffer(reader.result), {
+        skipEmptyLines: 'greedy',
+        complete: (res) => {
+          const all = res.data || [];
+          if (!all.length) { setStartError('The CSV is empty.'); return; }
+          setCsv({ headers: all[0].map(h => cleanCell(h)), data: all.slice(1) });
+          setFileName(f.name);
+        },
+        error: (err) => setStartError(`Could not read the CSV: ${err.message}`),
+      });
+    };
+    reader.readAsArrayBuffer(f);
   };
 
   const confirmStart = async () => {
@@ -523,7 +530,12 @@ function BuyerImportProducts() {
                   </InlineStack>
                   <ButtonGroup variant="segmented">
                     <Button pressed={mode === 'add'} onClick={() => setMode('add')} disabled={locked}>Add new</Button>
-                    <Button pressed={mode === 'update'} onClick={() => setMode('update')} disabled={locked}>Update existing</Button>
+                    {/* Update existing is on hold (Hera 2026-10-08): greyed out and
+                        not selectable for buyers; a simpler version is planned
+                        under Purchasing › Price Change. The code is kept. */}
+                    <Tooltip content="Not available for now.">
+                      <Button pressed={mode === 'update'} onClick={() => setMode('update')} disabled>Update existing</Button>
+                    </Tooltip>
                   </ButtonGroup>
                   <div style={{ marginLeft: 'auto' }}>
                     <Button variant="primary" onClick={confirmStart} loading={loadingStart} disabled={locked}>Confirm</Button>

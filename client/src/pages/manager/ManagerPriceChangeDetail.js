@@ -3,16 +3,25 @@ import {
   Page, Layout, Card, Button, BlockStack, InlineStack,
   Text, Banner, Spinner, Modal, Select, TextField
 } from '@shopify/polaris';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import MobileModalSafeArea from '../../components/MobileModalSafeArea';
 // Store location: remembered per Shopify account, loaded before this page
 // renders by ManagerLocationGate (2026-09-29) — replaces reading
 // localStorage 'managerLocation' directly. See client/src/accountMemory.js.
 import { getManagerLocation } from '../../accountMemory';
+// Task type in the title, WIG part, live prices (2026-10-08, Hera) — spec:
+// claude/PRICE_CHANGE_SCHEDULE_REVERSE_SPEC.md
+import { TaskTypeLabel } from '../shared/priceChangeShared';
 
 function ManagerPriceChangeDetail() {
   const { taskId } = useParams();
   const navigate = useNavigate();
+  // ?part=wig → only the WIG items; ?part=main → everything else (2026-10-08).
+  const [searchParams] = useSearchParams();
+  const part = searchParams.get('part') === 'wig' ? 'wig' : searchParams.get('part') === 'main' ? 'main' : '';
+  // Current Price per SKU, read live from Shopify (exact SKU).
+  const [live, setLive] = useState(null);
+  const [printSkipped, setPrintSkipped] = useState([]);
   const location = getManagerLocation() || '';
 
   const [task, setTask]     = useState(null);
@@ -33,21 +42,28 @@ function ManagerPriceChangeDetail() {
     setLoading(true);
     try {
       const [taskRes, itemsRes] = await Promise.all([
-        fetch(`/api/price-change-tasks/${taskId}/items`),
+        fetch(`/api/price-change-tasks/${taskId}/items${part ? `?part=${part}` : ''}`),
         fetch(`/api/price-change-tasks/manager?location=${encodeURIComponent(location)}`),
       ]);
       const itemsData = await taskRes.json();
       const tasksData = await itemsRes.json();
-      const taskData = tasksData.find(t => String(t.id) === String(taskId));
+      // One manager row per task part since 2026-10-08 — pick this part's.
+      const same = tasksData.filter(t => String(t.id) === String(taskId));
+      const taskData = same.find(t => (t.part || 'main') === (part || 'main')) || same[0];
       if (!taskData) throw new Error('Task not found');
       setTask(taskData);
       setItems(itemsData);
+      // Live prices for the list (labels are printed from live data too).
+      fetch('/api/price-change-tasks/live-prices', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ skus: itemsData.map(i => i.sku).filter(Boolean) }),
+      }).then(r => r.json()).then(d => setLive(d && !d.error ? d : {})).catch(() => setLive({}));
     } catch (e) {
       setError(e.message);
     } finally {
       setLoading(false);
     }
-  }, [taskId, location]);
+  }, [taskId, location, part]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -95,7 +111,13 @@ function ManagerPriceChangeDetail() {
         } catch { /* skip, will fall back to stored values */ }
       }));
 
-      const printContent = buildPrintHtml(tmpl, items, qty, metafieldMap);
+      // No stale prices (2026-10-08, Hera): an item whose live data can't be
+      // read is NOT printed from the task's stored values — it is listed instead.
+      const missing = items.filter(it => it.sku && !metafieldMap[it.sku]).map(it => it.sku);
+      setPrintSkipped(missing);
+      const printable = items.filter(it => it.sku && metafieldMap[it.sku]);
+      if (!printable.length) throw new Error('Could not read the current prices from Shopify — nothing printed. Please try again.');
+      const printContent = buildPrintHtml(tmpl, printable, qty, metafieldMap);
       const win = window.open('', '_blank');
       if (!win) throw new Error('Pop-up blocked. Please allow pop-ups.');
       win.document.write(printContent);
@@ -260,7 +282,12 @@ ${barcodeScript}</head><body>${allLabels}</body></html>`;
     </Page>
   );
 
-  const pageTitle = `Price Change ${task.task_no}${task.label_type ? ` · ${task.label_type}` : ''}`;
+  // Title (2026-10-08): "{task number}  ● {task type}", or "{task number}  WIG"
+  // for the WIG part. Older tasks keep "Price Change 000137 · Regular price".
+  const pageTitle = part === 'wig' ? `${task.task_no}  WIG`
+    : task.task_type ? task.task_no
+      : `Price Change ${task.task_no}${task.label_type ? ` · ${task.label_type}` : ''}`;
+  const titleMetadata = part !== 'wig' && task.task_type ? <TaskTypeLabel type={task.task_type} /> : undefined;
 
   const templateOptions = templates.map(t => ({
     label: `${t.name} (${t.paper_width_mm}×${t.paper_height_mm}mm)`,
@@ -270,6 +297,7 @@ ${barcodeScript}</head><body>${allLabels}</body></html>`;
   return (
     <Page
       title={pageTitle}
+      titleMetadata={titleMetadata}
       backAction={{ onAction: () => navigate('/manager/label-print') }}
       primaryAction={{ content: 'Print', onAction: openPrintModal }}
     >
@@ -280,6 +308,11 @@ ${barcodeScript}</head><body>${allLabels}</body></html>`;
             {printSuccess && (
               <Banner tone="success" onDismiss={() => setPrintSuccess(false)}>
                 Labels printed successfully.
+              </Banner>
+            )}
+            {printSkipped.length > 0 && (
+              <Banner tone="warning" onDismiss={() => setPrintSkipped([])}>
+                Not printed — the current price could not be read from Shopify: {printSkipped.join(', ')}
               </Banner>
             )}
 
@@ -306,7 +339,8 @@ ${barcodeScript}</head><body>${allLabels}</body></html>`;
                         <td style={{ padding: '10px 12px', fontWeight: '500' }}>{item.sku}</td>
                         <td style={{ padding: '10px 12px', color: '#202223' }}>{item.name || '-'}</td>
                         <td style={{ padding: '10px 12px', color: '#008060', fontWeight: '600' }}>
-                          {item.price ? `$${item.price}` : '-'}
+                          {/* Live price (2026-10-08); was the price stored in the task. */}
+                          {live === null ? '…' : live[item.sku] ? `$${live[item.sku].price}` : <span style={{ color: '#d72c0d', fontWeight: 400 }}>not found</span>}
                         </td>
                         <td style={{ padding: '10px 12px', textAlign: 'right' }}>1</td>
                       </tr>

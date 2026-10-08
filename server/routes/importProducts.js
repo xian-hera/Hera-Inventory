@@ -162,12 +162,34 @@ router.get('/settings/assignments/:field', async (req, res) => {
     if (!cfg) return res.status(404).json({ error: 'Unknown field' });
     const defs = await fetchDefinitions(cfg.ownerType);
     const def = defs.find(d => d.namespace === cfg.namespace && d.key === cfg.key);
-    const r = await pool.query('SELECT choice_value, product_type FROM import_metafield_assignments WHERE metafield = $1', [req.params.field]);
+    const r = await pool.query('SELECT choice_value, product_type FROM import_metafield_assignments WHERE metafield = $1 ORDER BY id', [req.params.field]);
+    const choices = (def && def.choices) || [];
+    // rows (2026-10-08, Hera — Sub types Duplicate): one entry per copy of a
+    // value, type null = not assigned. Every Shopify choice appears at least
+    // once (an unsaved choice = one unassigned row). Unassigned copies of a
+    // value no longer in Shopify are left out; assigned ones are kept so the
+    // card can show them as "No longer in Shopify".
+    const byValue = new Map();
+    for (const x of r.rows) {
+      if (!byValue.has(x.choice_value)) byValue.set(x.choice_value, []);
+      byValue.get(x.choice_value).push(x.product_type || null);
+    }
+    const rows = [];
+    for (const c of choices) {
+      const list = byValue.get(c) || [null];
+      for (const t of list) rows.push({ value: c, type: t });
+      byValue.delete(c);
+    }
+    for (const [v, list] of byValue) for (const t of list) if (t) rows.push({ value: v, type: t });
+    // assignments (value → one Type) kept for older callers.
+    const assignments = {};
+    for (const x of r.rows) if (x.product_type && !assignments[x.choice_value]) assignments[x.choice_value] = x.product_type;
     res.json({
       definitionFound: !!def,
       name: def ? def.name : null,
-      choices: (def && def.choices) || [],
-      assignments: Object.fromEntries(r.rows.map(x => [x.choice_value, x.product_type])),
+      choices,
+      assignments,
+      rows,
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -178,11 +200,37 @@ router.put('/settings/assignments/:field', async (req, res) => {
   const field = req.params.field;
   if (!ASSIGNABLE[field]) return res.status(404).json({ error: 'Unknown field' });
   const assignments = req.body.assignments && typeof req.body.assignments === 'object' ? req.body.assignments : {};
+  // rows (2026-10-08, Hera — Sub types Duplicate): [{ value, type|null }],
+  // the same value may be under several Types but never twice under one.
+  // Without rows the old value → Type map is used as before.
+  let rows = null;
+  if (Array.isArray(req.body.rows)) {
+    rows = [];
+    const seen = new Set();
+    for (const x of req.body.rows) {
+      const value = x && x.value != null ? String(x.value) : '';
+      const type = x && x.type ? String(x.type) : null;
+      if (!value) continue;
+      if (type) {
+        const k = `${value}\u0000${type}`;
+        if (seen.has(k)) return res.status(400).json({ error: `"${value}" is assigned to ${type} more than once.` });
+        seen.add(k);
+      }
+      rows.push({ value, type });
+    }
+  }
   const db = await pool.connect();
   try {
     await db.query('BEGIN');
     await db.query('DELETE FROM import_metafield_assignments WHERE metafield = $1', [field]);
-    for (const [choice, type] of Object.entries(assignments)) {
+    if (rows) {
+      for (const x of rows) {
+        await db.query(
+          'INSERT INTO import_metafield_assignments (metafield, choice_value, product_type) VALUES ($1, $2, $3)',
+          [field, x.value, x.type]
+        );
+      }
+    } else for (const [choice, type] of Object.entries(assignments)) {
       if (!choice || !type) continue;
       await db.query(
         'INSERT INTO import_metafield_assignments (metafield, choice_value, product_type) VALUES ($1, $2, $3)',
@@ -463,7 +511,7 @@ router.get('/options', async (req, res) => {
       [type]
     );
     const asg = await pool.query(
-      'SELECT metafield, choice_value FROM import_metafield_assignments WHERE LOWER(product_type) = LOWER($1) ORDER BY choice_value',
+      'SELECT DISTINCT metafield, choice_value FROM import_metafield_assignments WHERE LOWER(product_type) = LOWER($1) ORDER BY choice_value',
       [type]
     );
     const pick = (f) => asg.rows.filter(r => r.metafield === f).map(r => r.choice_value);

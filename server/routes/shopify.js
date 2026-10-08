@@ -911,7 +911,7 @@ router.get('/variant-by-sku', async (req, res) => {
     const client = new shopify.clients.Graphql({ session });
 
     const query = `{
-      productVariants(first: 1, query: "${activeFilter(`sku:${sku.replace(/"/g, '')}`)}") {
+      productVariants(first: 10, query: "${activeFilter(`sku:${sku.replace(/"/g, '')}`)}") {
         edges {
           node {
             id title sku price compareAtPrice barcode
@@ -926,7 +926,11 @@ router.get('/variant-by-sku', async (req, res) => {
     }`;
 
     const response = await shopifyRequest(client, query);
-    const edge = response?.data?.productVariants?.edges?.[0];
+    // Exact SKU only (2026-10-08): Shopify's sku: search is token based and
+    // this used to take the first loose match ("first: 1"), which could be a
+    // different SKU. Price Change labels print from this.
+    const wanted = String(sku).trim();
+    const edge = (response?.data?.productVariants?.edges || []).find(e => String(e.node.sku || '').trim() === wanted);
     if (!edge) return res.status(404).json({ error: 'SKU not found' });
 
     // Formerly had a "main_sku redirect" here for bundle products (see

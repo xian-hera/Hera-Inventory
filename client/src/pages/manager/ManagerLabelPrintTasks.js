@@ -10,6 +10,9 @@ import MobileModalSafeArea from '../../components/MobileModalSafeArea';
 // renders by ManagerLocationGate (2026-09-29) — replaces reading
 // localStorage 'managerLocation' directly. See client/src/accountMemory.js.
 import { getManagerLocation } from '../../accountMemory';
+// Task type dot + WIG part (2026-10-08, Hera) — spec:
+// claude/PRICE_CHANGE_SCHEDULE_REVERSE_SPEC.md
+import { TaskTypeLabel } from '../shared/priceChangeShared';
 
 function formatDate(str) {
   if (!str) return '';
@@ -110,25 +113,73 @@ function ManagerLabelPrintTasks() {
     }
   };
 
-  const handleMarkDone = async (taskId) => {
-    setDoneLoadingIds(prev => [...prev, taskId]);
+  // part (2026-10-08): 'main' or 'wig' — the WIG part of a task is Done on its own.
+  const handleMarkDone = async (taskId, part = 'main') => {
+    const key = `${taskId}:${part}`;
+    setDoneLoadingIds(prev => [...prev, key]);
     try {
       const res = await fetch(`/api/price-change-tasks/${taskId}/done`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ location }),
+        body: JSON.stringify({ location, part }),
       });
       if (!res.ok) throw new Error('Failed to mark as done');
       // Update local state so button immediately becomes "Done" text
       setPriceTasks(prev =>
-        prev.map(t => t.id === taskId ? { ...t, location_status: 'done' } : t)
+        prev.map(t => t.id === taskId && (t.part || 'main') === part ? { ...t, location_status: 'done' } : t)
       );
     } catch (e) {
       setError('Failed to mark task as done.');
     } finally {
-      setDoneLoadingIds(prev => prev.filter(id => id !== taskId));
+      setDoneLoadingIds(prev => prev.filter(id => id !== key));
     }
   };
+
+  // Rows come per task part; group them: main row + optional "└ WIG" branch.
+  // A task with only WIG items is one row with WIG in red bold (Hera 2026-10-08).
+  const priceGroups = [];
+  {
+    const byId = new Map();
+    for (const t of priceTasks) {
+      if (!byId.has(t.id)) { byId.set(t.id, { id: t.id, main: null, wig: null }); priceGroups.push(byId.get(t.id)); }
+      byId.get(t.id)[(t.part || 'main') === 'wig' ? 'wig' : 'main'] = t;
+    }
+  }
+  const doneCell = (t) => {
+    const part = t.part || 'main';
+    if (t.location_status === 'done') return <Text tone="success" fontWeight="medium">Done</Text>;
+    return (
+      <Button size="slim" tone="success" loading={doneLoadingIds.includes(`${t.id}:${part}`)} onClick={() => handleMarkDone(t.id, part)}>
+        Done
+      </Button>
+    );
+  };
+  const typesText = (t) => ((t.item_types || []).filter(Boolean).join(', ') || '-');
+  const priceRows = [];
+  for (const g of priceGroups) {
+    const head = g.main || g.wig;
+    const onlyWig = !g.main && !!g.wig;
+    const mainUrl = `/manager/price-change/${g.id}${onlyWig ? '?part=wig' : g.wig ? '?part=main' : ''}`;
+    priceRows.push([
+      <Button variant="plain" onClick={() => navigate(mainUrl)}>{head.task_no}</Button>,
+      <TaskTypeLabel type={head.task_type} fallback={head.label_type || 'Regular price'} />,
+      onlyWig ? <span style={{ color: '#d72c0d', fontWeight: 700 }}>WIG</span> : typesText(head),
+      String(head.item_count || 0),
+      formatDate(head.published_at || head.created_at),
+      head.note || '-',
+      doneCell(head),
+    ]);
+    if (g.main && g.wig) {
+      priceRows.push([
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, paddingLeft: 8 }}>
+          <span style={{ color: '#6d7175' }}>└</span>
+          <Button variant="plain" onClick={() => navigate(`/manager/price-change/${g.id}?part=wig`)}>WIG</Button>
+        </span>,
+        '', '', String(g.wig.item_count || 0), '', '',
+        doneCell(g.wig),
+      ]);
+    }
+  }
 
   const toggleSelect = (id) => {
     setSelectedIds(prev =>
@@ -216,36 +267,9 @@ function ManagerLabelPrintTasks() {
               ) : (
                 <Card padding="0">
                   <DataTable
-                    columnContentTypes={['text', 'text', 'text', 'text', 'text', 'text']}
-                    headings={['Task', 'Type', 'Items', 'Published', 'Note', '']}
-                    rows={priceTasks.map(t => {
-                      const isDone = t.location_status === 'done';
-                      const isLoadingDone = doneLoadingIds.includes(t.id);
-                      return [
-                        <Button
-                          variant="plain"
-                          onClick={() => navigate(`/manager/price-change/${t.id}`)}
-                        >
-                          {t.task_no}
-                        </Button>,
-                        t.label_type || 'Regular price',
-                        String(t.item_count || 0),
-                        formatDate(t.created_at),
-                        t.note || '-',
-                        isDone ? (
-                          <Text tone="success" fontWeight="medium">Done</Text>
-                        ) : (
-                          <Button
-                            size="slim"
-                            tone="success"
-                            loading={isLoadingDone}
-                            onClick={() => handleMarkDone(t.id)}
-                          >
-                            Done
-                          </Button>
-                        ),
-                      ];
-                    })}
+                    columnContentTypes={['text', 'text', 'text', 'text', 'text', 'text', 'text']}
+                    headings={['Task', 'Task type', 'Types', 'Items', 'Published', 'Note', '']}
+                    rows={priceRows}
                   />
                 </Card>
               )}

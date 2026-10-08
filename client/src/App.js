@@ -45,6 +45,9 @@ const ManagerWigDemo = lazyWithReload(() => import(/* webpackChunkName: "manager
 const ManagerLabelPrintTasks = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerLabelPrintTasks'));
 const ManagerLabelPrintTaskDetail = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerLabelPrintTaskDetail'));
 const BuyerPriceChange = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerPriceChange'));
+// Price Change › Create Task / Settings (2026-10-08)
+const BuyerPriceChangeCreate = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerPriceChangeCreate'));
+const BuyerPriceChangeSettings = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerPriceChangeSettings'));
 const ManagerPriceChangeDetail = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerPriceChangeDetail'));
 const ManagerEmployeeCap = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerEmployeeCap'));
 const ManagerPOReceiving = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerPOReceiving'));
@@ -143,6 +146,8 @@ function App() {
           <Route path="/buyer/label-templates" element={<BuyerLabelTemplates />} />
           <Route path="/buyer/label-templates/:id" element={<BuyerLabelEditor />} />
           <Route path="/buyer/price-change" element={<BuyerPriceChange />} />
+          <Route path="/buyer/price-change/create" element={<BuyerPriceChangeCreate />} />
+          <Route path="/buyer/price-change/settings" element={<BuyerPriceChangeSettings />} />
           <Route path="/buyer/product-database" element={<ProductDatabaseSettings />} />
           <Route path="/buyer/po-receiving" element={<BuyerPOReceiving />} />
           <Route path="/buyer/po-receiving/import" element={<BuyerPOImportInvoice />} />
