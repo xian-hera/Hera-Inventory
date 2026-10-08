@@ -27,14 +27,33 @@ const SETTINGS_KEY = 'price_change_settings';
 const STATUS_FILTER = '(product_status:active OR product_status:draft)';
 
 // ─── Settings ────────────────────────────────────────────────────────────────
-// { hiddenTypes: [], rules: [{ id, types: [], percent, cents }], keepExistingCompareAt: false }
+// { hiddenTypes: [], rules: [{ id, types: [], percent, cents }], keepExistingCompareAt: false,
+//   emptyRules: [{ id, types: [], namespace, key }] }
+// emptyRules (2026-10-09, Hera — "Empty Metafields for Discontinued"):
+// variant metafields deleted (set to null) when a Discontinued task runs,
+// for SKUs of the listed types.
 async function getSettings() {
   const v = (await getSetting(SETTINGS_KEY, {})) || {};
   return {
     hiddenTypes: Array.isArray(v.hiddenTypes) ? v.hiddenTypes.map(String) : [],
     rules: Array.isArray(v.rules) ? v.rules : [],
     keepExistingCompareAt: v.keepExistingCompareAt === true,
+    emptyRules: Array.isArray(v.emptyRules) ? v.emptyRules : [],
   };
+}
+// Discontinued tasks always write these two themselves — never emptied.
+const RESERVED_METAFIELDS = ['custom.discontinued', 'custom.name'];
+// Variant metafields to empty for one product type: [{ namespace, key }].
+function emptyMetafieldsForType(emptyRules, productType) {
+  const t = lc(productType);
+  const out = new Map();
+  for (const r of emptyRules || []) {
+    if (!(r.types || []).some(x => lc(x) === t)) continue;
+    const id = `${r.namespace}.${r.key}`;
+    if (RESERVED_METAFIELDS.includes(id.toLowerCase())) continue;
+    out.set(id, { namespace: r.namespace, key: r.key });
+  }
+  return [...out.values()];
 }
 async function saveSettings(s) {
   await setSetting(SETTINGS_KEY, s);
@@ -142,14 +161,15 @@ async function variantState(ids) {
 
 // Discontinued tasks also mark the variant's custom.name (2026-10-09, Hera):
 //   empty → no change; already has "@" → no change;
-//   has "#" → the LAST "#" becomes "@";
+//   has "#" → the "#" becomes "@"; several "#" next to each other ("##",
+//   "###") become ONE "@" ("ABC ##123" → "ABC @123"). Names only ever have
+//   one such group; if there were more, the last group is the one replaced.
 //   otherwise "@" goes right before the first space, or at the end if none.
 // Returns the new name, or null when nothing changes.
 function discontinuedName(name) {
   const s = name == null ? '' : String(name);
   if (!s.trim() || s.includes('@')) return null;
-  const hash = s.lastIndexOf('#');
-  if (hash >= 0) return `${s.slice(0, hash)}@${s.slice(hash + 1)}`;
+  if (s.includes('#')) return s.replace(/#+(?=[^#]*$)/, '@');
   const sp = s.indexOf(' ');
   return sp >= 0 ? `${s.slice(0, sp)}@${s.slice(sp)}` : `${s}@`;
 }
@@ -274,6 +294,25 @@ async function writeDiscontinued(sets, deletes) {
   return errors;
 }
 
+async function clearMetafields(dels) {
+  // dels: [{ itemId, variantId, namespace, key }] — Empty Metafields rules
+  const errors = new Map();
+  for (let i = 0; i < dels.length; i += 25) {
+    const batch = dels.slice(i, i + 25);
+    try {
+      const data = await gql(
+        `mutation($m: [MetafieldIdentifierInput!]!) { metafieldsDelete(metafields: $m) { userErrors { field message } } }`,
+        { m: batch.map(b => ({ ownerId: b.variantId, namespace: b.namespace, key: b.key })) }
+      );
+      const msg = userErrorText(data.metafieldsDelete);
+      if (msg) batch.forEach(b => errors.set(b.itemId, `Metafield not emptied — ${msg}`));
+    } catch (e) {
+      batch.forEach(b => errors.set(b.itemId, `Metafield not emptied — ${e.message}`));
+    }
+  }
+  return errors;
+}
+
 async function writeNames(sets) {
   // sets: [{ itemId, variantId, value, type }] — custom.name (Discontinued)
   const errors = new Map();
@@ -336,6 +375,12 @@ async function applyTask(taskId) {
   const metaSet = [];
   const metaDel = [];
   const nameSet = [];
+  const clearList = []; // Empty Metafields for Discontinued
+  const queueClears = (it, cur) => {
+    for (const m of emptyMetafieldsForType(settings.emptyRules, cur.productType)) {
+      clearList.push({ itemId: it.id, variantId: it.variant_id, namespace: m.namespace, key: m.key });
+    }
+  };
   const planned = new Map(); // itemId → fields
 
   for (const it of items) {
@@ -354,6 +399,8 @@ async function applyTask(taskId) {
       const nameLeft = !!it.new_name && (cur.name || null) === (it.old_name || null);
       if (isNew && !nameLeft) {
         await setItem(it.id, { ...recorded, status: 'done', nameWritten: !!it.new_name && cur.name === it.new_name });
+        // Emptying is safe to repeat — make sure it happened.
+        if (task.task_type === 'discontinued' && !task.reverse_of) queueClears(it, cur);
         continue;
       }
       if (!isNew && !isOld) { await skipItem(it.id, 'Changed in Shopify while the price change was running — not changed'); continue; }
@@ -405,6 +452,7 @@ async function applyTask(taskId) {
     // Reverse never touches custom.name (Hera 2026-10-09); f.newName is
     // only set by a Discontinued change.
     if (f.newName && cur.name !== f.newName) nameSet.push({ itemId: it.id, variantId: it.variant_id, value: f.newName, type: cur.nameType });
+    if (f.setDiscontinued && task.task_type === 'discontinued' && !task.reverse_of) queueClears(it, cur);
     if (f.restoreDiscontinued) {
       if (f.restoreValue == null) metaDel.push({ itemId: it.id, variantId: it.variant_id });
       else metaSet.push({ itemId: it.id, variantId: it.variant_id, value: String(f.restoreValue) });
@@ -417,10 +465,16 @@ async function applyTask(taskId) {
     metaSet.filter(m => !priceErrors.has(m.itemId)), metaDel.filter(m => !priceErrors.has(m.itemId))
   );
   const nameErrors = await writeNames(nameSet.filter(m => !priceErrors.has(m.itemId)));
+  // Only emptied for SKUs whose price change worked. The emptied fields are
+  // not listed on the item (Hera); only a failure is noted.
+  const clearErrors = await clearMetafields(clearList.filter(m => !priceErrors.has(m.itemId)));
+  for (const [id, msg] of clearErrors) {
+    if (!planned.has(id)) await pool.query(`UPDATE price_change_items SET apply_note = $2 WHERE id = $1`, [id, msg]);
+  }
   for (const [id, f] of planned) {
     if (priceErrors.has(id)) await setItem(id, { ...f, status: 'failed', note: `Not changed — ${priceErrors.get(id)}` });
     else {
-      const note = [metaErrors.get(id), nameErrors.get(id)].filter(Boolean).join(' · ') || null;
+      const note = [metaErrors.get(id), nameErrors.get(id), clearErrors.get(id)].filter(Boolean).join(' · ') || null;
       // A name that could not be written is not recorded as the new name.
       const nameFailed = nameErrors.has(id);
       await setItem(id, { ...f, newName: nameFailed ? null : f.newName, status: 'done', note, nameWritten: !!f.newName && !nameFailed });
@@ -440,6 +494,8 @@ async function applyTask(taskId) {
        publish_at = NOW() + make_interval(mins => $2::int), error = NULL WHERE id = $1`,
     [taskId, PUBLISH_DELAY_MIN]
   );
+  // Reverse is offered for Promotion only (2026-10-09, Hera); a reverse
+  // already scheduled on another type before that still runs.
   if (!task.reverse_of && task.reverse_at && !task.reverse_task_id) await createReverseTask(task);
 }
 
@@ -533,5 +589,5 @@ async function safeApply(id) {
 module.exports = {
   TIMEZONE, PUBLISH_DELAY_MIN, MIN_LEAD_MIN, MIN_REVERSE_GAP_MIN, TASK_TYPES,
   getSettings, saveSettings, ruleForType, applyRule, toCents, fromCents, torontoToDate,
-  findBySku, variantState, processRows, discontinuedName, nextTaskNo, applyTask, publishTask, runDue,
+  findBySku, variantState, processRows, discontinuedName, emptyMetafieldsForType, RESERVED_METAFIELDS, nextTaskNo, applyTask, publishTask, runDue,
 };

@@ -156,7 +156,10 @@ function BuyerPriceChangeCreate() {
   };
 
   // ── Publish ──
-  const publishReady = date && time && (!reverseOn || (revDate && revTime && revType));
+  // Reverse is offered for Promotion tasks only (2026-10-09, Hera).
+  const canReverse = taskType === 'promotion';
+  const withReverse = canReverse && reverseOn;
+  const publishReady = date && time && (!withReverse || (revDate && revTime && revType));
   const submit = async (now) => {
     setSaving(true);
     setError('');
@@ -168,7 +171,7 @@ function BuyerPriceChangeCreate() {
           productTypes: types, locations, taskType, note: note.trim() || null,
           items: result.items,
           when: now ? 'now' : { date, time },
-          reverse: reverseOn ? { date: revDate, time: revTime, taskType: revType } : null,
+          reverse: withReverse ? { date: revDate, time: revTime, taskType: revType } : null,
         }),
       });
       const d = await res.json();
@@ -288,7 +291,7 @@ function BuyerPriceChangeCreate() {
                       <div style={{ width: 170 }}><TextField label="Date" labelHidden type="date" value={date} onChange={setDate} autoComplete="off" /></div>
                       <div style={{ width: 130 }}><TextField label="Time" labelHidden type="time" value={time} onChange={setTime} autoComplete="off" /></div>
                     </InlineStack>
-                    {reverseOn && (
+                    {withReverse && (
                       <BlockStack gap="200">
                         <div style={{ marginTop: 8 }}><Text variant="bodySm" tone="subdued">The price change will be reversed at the time set below.</Text></div>
                         <InlineStack gap="300" blockAlign="center">
@@ -304,9 +307,11 @@ function BuyerPriceChangeCreate() {
                       </BlockStack>
                     )}
                   </BlockStack>
-                  <div style={{ paddingTop: 24 }}>
-                    <Checkbox label="Schedule a Reverse" checked={reverseOn} onChange={setReverseOn} />
-                  </div>
+                  {canReverse && (
+                    <div style={{ paddingTop: 24 }}>
+                      <Checkbox label="Schedule a Reverse" checked={reverseOn} onChange={setReverseOn} />
+                    </div>
+                  )}
                   <div style={{ marginLeft: 'auto', paddingTop: 20 }}>
                     <InlineStack gap="200" blockAlign="center">
                       <Button onClick={() => { setNoteDraft(note); setNoteOpen(true); }}>{note ? 'Edit note' : 'Add note'}</Button>
@@ -320,7 +325,7 @@ function BuyerPriceChangeCreate() {
                         >
                           <ActionList items={[{
                             content: 'Publish Now',
-                            disabled: reverseOn && !(revDate && revTime && revType),
+                            disabled: withReverse && !(revDate && revTime && revType),
                             onAction: () => submit(true),
                           }]} />
                         </Popover>

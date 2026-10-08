@@ -192,6 +192,52 @@ router.delete('/settings/rules/:ruleId', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Empty Metafields for Discontinued (2026-10-09, Hera) ──
+// body { types: [], namespace, key } — variant metafields only.
+// Warns (does not refuse) when Shopify has no definition for it.
+router.post('/settings/empty-rules', async (req, res) => {
+  try {
+    const types = Array.isArray(req.body.types) ? req.body.types.map(String).filter(Boolean) : [];
+    const namespace = String(req.body.namespace || '').trim();
+    const key = String(req.body.key || '').trim();
+    if (!types.length) return res.status(400).json({ error: 'Choose at least one type.' });
+    if (!namespace || !key) return res.status(400).json({ error: 'Fill in Name space and Key.' });
+    if (!/^[A-Za-z0-9_-]+$/.test(namespace) || !/^[A-Za-z0-9_-]+$/.test(key)) {
+      return res.status(400).json({ error: 'Name space and Key may only contain letters, numbers, "_" and "-".' });
+    }
+    const id = `${namespace}.${key}`;
+    if (PC.RESERVED_METAFIELDS.includes(id.toLowerCase())) {
+      return res.status(400).json({ error: `${id} is already set by Discontinued tasks — it can't be emptied.` });
+    }
+    const s = await PC.getSettings();
+    const lcx = (x) => String(x).trim().toLowerCase();
+    for (const t of types) {
+      const dup = s.emptyRules.find(r => lcx(`${r.namespace}.${r.key}`) === lcx(id) && (r.types || []).some(x => lcx(x) === lcx(t)));
+      if (dup) return res.status(400).json({ error: `"${t}" already has a rule for ${id}.` });
+    }
+    let warning = null;
+    try {
+      const { fetchDefinitions } = require('../services/productData');
+      const defs = await fetchDefinitions('PRODUCTVARIANT');
+      if (!defs.some(d => d.namespace === namespace && d.key === key)) {
+        warning = `No variant metafield definition ${id} was found in Shopify. The rule was saved; check the Name space and Key.`;
+      }
+    } catch (e) {
+      warning = `Could not check ${id} in Shopify (${e.message}). The rule was saved.`;
+    }
+    s.emptyRules = [...s.emptyRules, { id: `e${Date.now()}`, types, namespace, key }];
+    const saved = await PC.saveSettings(s);
+    res.json({ ...saved, warning });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+router.delete('/settings/empty-rules/:ruleId', async (req, res) => {
+  try {
+    const s = await PC.getSettings();
+    s.emptyRules = s.emptyRules.filter(r => r.id !== req.params.ruleId);
+    res.json(await PC.saveSettings(s));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Process (Upload CSV step) ──
 // body { productTypes, taskType, rows: [{ row, sku, price }] }
 router.post('/process', async (req, res) => {
@@ -224,6 +270,8 @@ router.post('/scheduled', async (req, res) => {
     try {
       applyAt = now ? new Date() : whenOf(when, 'Change time');
       if (reverse) {
+        // Reverse is for Promotion tasks only (2026-10-09, Hera).
+        if (taskType !== 'promotion') throw new Error('Only Promotion tasks can have a reverse.');
         if (!typeOk(reverse.taskType)) throw new Error('Reverse: choose the task type the stores will see.');
         reverseAt = whenOf(reverse, 'Reverse time');
       }
@@ -318,6 +366,9 @@ router.patch('/:id/schedule', async (req, res) => {
       if (b.reverse === null) { reverseAt = null; reverseType = null; }
       else if (b.reverse) {
         if (t.reverse_of) throw new Error('A reverse task has no reverse of its own.');
+        // New reverses only for Promotion (2026-10-09); one already planned
+        // on another type can still be moved or removed.
+        if (!t.reverse_at && t.task_type !== 'promotion') throw new Error('Only Promotion tasks can have a reverse.');
         reverseAt = b.reverse.date ? whenOf(b.reverse, 'Reverse time') : reverseAt;
         reverseType = b.reverse.taskType || reverseType;
         if (!typeOk(reverseType)) throw new Error('Reverse: choose the task type the stores will see.');

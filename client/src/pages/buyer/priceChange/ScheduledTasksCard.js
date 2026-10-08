@@ -148,7 +148,8 @@ export function ScheduledTaskModal({ taskId, locationNames, onClose, onChanged }
                         style={{ border: 'none', background: 'none', color: '#d72c0d', fontWeight: 700, fontSize: 18, cursor: 'pointer' }}>✕</button>
                     )}
                   </InlineStack>
-                ) : editable && (
+                ) : editable && t.task_type === 'promotion' && (
+                  // Reverse: Promotion tasks only (2026-10-09, Hera)
                   <Button variant="plain" onClick={() => setEdit({ field: 'addRev', date: '', time: '', taskType: '' })}>Add reverse</Button>
                 ))}
               </InlineStack>

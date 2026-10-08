@@ -6,6 +6,8 @@
 //      price for the SKU.
 //   3. Compare-at price — Promotion / Discontinued: overwrite an existing
 //      Compare-at price (default) or keep it.
+//   4. Empty Metafields for Discontinued (2026-10-09) — per type: variant
+//      metafields (namespace.key) deleted when a Discontinued task runs.
 import React, { useState, useEffect } from 'react';
 import {
   Page, Card, BlockStack, InlineStack, Text, Button, Banner, TextField, Select,
@@ -29,6 +31,12 @@ function BuyerPriceChangeSettings() {
   const [percent, setPercent] = useState('');
   const [cents, setCents] = useState('99');
   const [keep, setKeep] = useState('overwrite');
+  // Empty Metafields for Discontinued
+  const [emptyAdding, setEmptyAdding] = useState(false);
+  const [emptyTypes, setEmptyTypes] = useState([]);
+  const [emptyNs, setEmptyNs] = useState('');
+  const [emptyKey, setEmptyKey] = useState('');
+  const [emptyWarning, setEmptyWarning] = useState('');
 
   const apply = (s, types) => {
     setSettings(s);
@@ -56,6 +64,7 @@ function BuyerPriceChangeSettings() {
       if (!res.ok) throw new Error(d.error || 'Save failed');
       apply(d);
       setMsg(m => ({ ...m, [card]: 'Saved.' }));
+      if (card === 'empty') setEmptyWarning(d.warning || '');
       return true;
     } catch (e) {
       setError(e.message);
@@ -69,6 +78,7 @@ function BuyerPriceChangeSettings() {
   const freeTypes = allTypes.filter(t => !usedTypes.has(t.toLowerCase()));
   const percentOk = Number(percent) > 0 && Number(percent) < 100;
   const centsOk = /^\d{1,2}$/.test(String(cents).trim());
+  const nsOk = (v) => /^[A-Za-z0-9_-]+$/.test(String(v).trim());
   const Saved = ({ card }) => (msg[card] ? <Banner tone="success" onDismiss={() => setMsg(m => ({ ...m, [card]: '' }))}>{msg[card]}</Banner> : null);
 
   return (
@@ -136,6 +146,55 @@ function BuyerPriceChangeSettings() {
                             onClick={async () => {
                               const ok = await call('rules', '/api/price-change-tasks/settings/rules', 'POST', { types: ruleTypes, percent: Number(percent), cents: parseInt(cents, 10) });
                               if (ok) setAdding(false);
+                            }}>Add</Button>
+                        </InlineStack>
+                      </div>
+                    </InlineStack>
+                  )}
+                </BlockStack>
+              </Card>
+
+              <Card>
+                <BlockStack gap="300">
+                  <Text variant="headingMd" as="h2">Empty Metafields for Discontinued</Text>
+                  <Text tone="subdued">When a Discontinued task runs, these variant metafields are emptied for SKUs of the selected types. custom.discontinued and custom.name are set by the task itself and can't be added here.</Text>
+                  <Saved card="empty" />
+                  {emptyWarning && <Banner tone="warning" onDismiss={() => setEmptyWarning('')}>{emptyWarning}</Banner>}
+                  {(settings.emptyRules || []).length === 0 && <Text tone="subdued">No rules yet.</Text>}
+                  {(settings.emptyRules || []).map(r => (
+                    <InlineStack key={r.id} gap="300" blockAlign="center" wrap={false}>
+                      <button
+                        type="button"
+                        aria-label="Delete rule"
+                        onClick={() => call('empty', `/api/price-change-tasks/settings/empty-rules/${encodeURIComponent(r.id)}`, 'DELETE')}
+                        style={{ border: 'none', background: 'none', color: '#d72c0d', fontWeight: 700, fontSize: 18, cursor: 'pointer', padding: 0 }}
+                      >×</button>
+                      <Text fontWeight="medium">{r.types.join(', ')}</Text>
+                      <Text tone="subdued">— empty {r.namespace}.{r.key}</Text>
+                    </InlineStack>
+                  ))}
+                  {!emptyAdding ? (
+                    <InlineStack><Button onClick={() => { setEmptyAdding(true); setEmptyTypes([]); setEmptyNs(''); setEmptyKey(''); }}>Add rule</Button></InlineStack>
+                  ) : (
+                    <InlineStack gap="400" blockAlign="end" wrap>
+                      <div style={{ minWidth: 220 }}>
+                        <MultiSelectDropdown label="Type" options={allTypes} selected={emptyTypes} onChange={setEmptyTypes} placeholder="Choose" />
+                      </div>
+                      <div style={{ width: 170 }}>
+                        <TextField label="Name space" value={emptyNs} onChange={setEmptyNs} autoComplete="off" placeholder="custom"
+                          error={emptyNs !== '' && !nsOk(emptyNs) ? 'Letters, numbers, _ and - only' : undefined} />
+                      </div>
+                      <div style={{ width: 170 }}>
+                        <TextField label="Key" value={emptyKey} onChange={setEmptyKey} autoComplete="off"
+                          error={emptyKey !== '' && !nsOk(emptyKey) ? 'Letters, numbers, _ and - only' : undefined} />
+                      </div>
+                      <div style={{ marginLeft: 'auto' }}>
+                        <InlineStack gap="200">
+                          <Button onClick={() => setEmptyAdding(false)}>Cancel</Button>
+                          <Button variant="primary" loading={saving === 'empty'} disabled={!emptyTypes.length || !nsOk(emptyNs) || !nsOk(emptyKey)}
+                            onClick={async () => {
+                              const ok = await call('empty', '/api/price-change-tasks/settings/empty-rules', 'POST', { types: emptyTypes, namespace: emptyNs.trim(), key: emptyKey.trim() });
+                              if (ok) setEmptyAdding(false);
                             }}>Add</Button>
                         </InlineStack>
                       </div>
