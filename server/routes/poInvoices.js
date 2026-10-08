@@ -1319,6 +1319,57 @@ router.get('/manager/receiving/:id', async (req, res) => {
   }
 });
 
+// GET /api/po-invoices/manager/receiving/:id/items/:itemId/system-qty
+// "Current Qty {n}" in the count modal (2026-10-08, Hera): the live Shopify
+// Available quantity of ONE line item's SKU at this invoice's receiving
+// location, fetched when the modal opens (not for every item up front when
+// the invoice loads — faster page load, and the number is as fresh as the
+// moment the manager is counting). Returns { available: null } when the SKU
+// has no inventory level at that location; a Shopify failure is a 500 and
+// the modal simply omits the line.
+router.get('/manager/receiving/:id/items/:itemId/system-qty', async (req, res) => {
+  try {
+    const { id, itemId } = req.params;
+    const r = await pool.query(
+      `SELECT it.sku, i.shopify_location_id
+       FROM po_invoice_items it JOIN po_invoices i ON i.id = it.invoice_id
+       WHERE it.id = $1 AND it.invoice_id = $2`,
+      [itemId, id]
+    );
+    if (r.rows.length === 0) return res.status(404).json({ error: 'Item not found' });
+    const { sku, shopify_location_id } = r.rows[0];
+    if (!sku || !shopify_location_id) return res.json({ available: null });
+
+    const { getShopify, getSession } = require('../shopify');
+    const session = await getSession();
+    const shopify = getShopify();
+    const client = new shopify.clients.Graphql({ session });
+    const query = `
+      query systemQty($filter: String!, $locationId: ID!) {
+        productVariants(first: 1, query: $filter) {
+          edges { node {
+            inventoryItem {
+              inventoryLevel(locationId: $locationId) {
+                quantities(names: ["available"]) { name quantity }
+              }
+            }
+          } }
+        }
+      }
+    `;
+    const response = await shopifyRequest(client, query, {
+      filter: activeFilter(`barcode:${sku}`),
+      locationId: shopify_location_id,
+    });
+    const level = response?.data?.productVariants?.edges?.[0]?.node?.inventoryItem?.inventoryLevel;
+    const available = level ? (level.quantities?.find(q => q.name === 'available')?.quantity ?? 0) : null;
+    res.json({ available });
+  } catch (e) {
+    console.error('GET /api/po-invoices/manager/receiving/:id/items/:itemId/system-qty error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Multi-count history (2026-09-24, Hera). Every modal Submit / Correct
 // appends one entry to po_invoice_items.count_history; store_count is then
 // recomputed from it (still the ABSOLUTE counted quantity every other part

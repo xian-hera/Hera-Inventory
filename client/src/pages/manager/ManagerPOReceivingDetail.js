@@ -175,13 +175,38 @@ function ManagerPOReceivingDetail() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // "Current Qty" shown under the SKU in the count modal — the live Shopify
+  // Available at this invoice's location for just this item, fetched each
+  // time the modal opens (not for every item when the page loads).
+  // status: 'loading' | 'done' | 'error'. The ref guards against a slow
+  // response from a previously opened item landing on the current modal.
+  const [sysQty, setSysQty] = useState({ status: 'loading', value: null });
+  const sysQtyItemRef = useRef(null);
+
+  const fetchSystemQty = async (item) => {
+    sysQtyItemRef.current = item.id;
+    setSysQty({ status: 'loading', value: null });
+    try {
+      const res = await fetch(`/api/po-invoices/manager/receiving/${invoiceId}/items/${item.id}/system-qty`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      if (sysQtyItemRef.current !== item.id) return;
+      setSysQty({ status: 'done', value: data.available });
+    } catch (e) {
+      if (sysQtyItemRef.current !== item.id) return;
+      setSysQty({ status: 'error', value: null });
+    }
+  };
+
   const openPopup = (item) => {
     setPopupItem(item);
     setCountInput('');
     setCountError('');
+    fetchSystemQty(item);
   };
 
   const closePopup = () => {
+    sysQtyItemRef.current = null;
     setPopupItem(null);
     setCountInput('');
     setCountError('');
@@ -643,6 +668,17 @@ function ManagerPOReceivingDetail() {
                     {popupItem.name}
                   </div>
                   <div style={{ fontSize: '13px', color: '#6d7175' }}>{popupItem.sku}</div>
+                  {/* Live Shopify Available at this invoice's location (see
+                      fetchSystemQty) — omitted if the lookup failed or the
+                      SKU has no inventory level there. */}
+                  {sysQty.status === 'loading' && (
+                    <div style={{ fontSize: '13px', color: '#6d7175' }}>Loading current qty...</div>
+                  )}
+                  {sysQty.status === 'done' && sysQty.value !== null && sysQty.value !== undefined && (
+                    <div style={{ fontSize: '13px', color: '#6d7175' }}>
+                      Current Qty <strong>{sysQty.value}</strong>
+                    </div>
+                  )}
                 </div>
 
                 <div style={{ fontSize: '13px', color: '#6d7175', marginBottom: '-8px' }}>
