@@ -8,7 +8,7 @@ export const TIMEZONE = 'America/Toronto';
 export const TASK_TYPES = [
   { value: 'regular', label: 'Regular', color: '#4fb3ea', help: 'Update Price ONLY' },
   { value: 'promotion', label: 'Promotion', color: '#f2c94c', help: 'Update Price and Compare-at Price ONLY' },
-  { value: 'discontinued', label: 'Discontinued', color: '#e5483a', help: 'Update Price and Compare-at Price, Discontinued metafield, and mark Name with @' },
+  { value: 'discontinued', label: 'Discontinued', color: '#e5483a', help: 'Update Price and Compare-at Price, Discontinued metafield, and adding @ to custom.name, or replace #' },
 ];
 export const taskTypeOf = (v) => TASK_TYPES.find(t => t.value === v) || null;
 
