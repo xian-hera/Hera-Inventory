@@ -1362,9 +1362,18 @@ const initDatabase = async () => {
       'old_price TEXT', 'old_compare_at TEXT', 'old_discontinued TEXT', 'set_discontinued BOOLEAN',
       'new_price TEXT', 'new_compare_at TEXT', 'apply_status TEXT', 'apply_note TEXT',
       'applied_at TIMESTAMPTZ', 'source_item_id INTEGER',
+      // Discontinued also marks custom.name with "@" (2026-10-09, Hera).
+      'old_name TEXT', 'new_name TEXT',
     ]) await client.query(`ALTER TABLE price_change_items ADD COLUMN IF NOT EXISTS ${col}`);
     // Stores mark the WIG part of a task Done separately ('main' / 'wig').
     await client.query("ALTER TABLE price_change_location_status ADD COLUMN IF NOT EXISTS part TEXT NOT NULL DEFAULT 'main'");
+    // Reverse tasks now carry the original task's note (2026-10-09, Hera).
+    // Reverse tasks made before that have no note: copy it over when empty.
+    await client.query(`
+      UPDATE price_change_tasks r SET note = o.note
+      FROM price_change_tasks o
+      WHERE r.reverse_of = o.id AND (r.note IS NULL OR r.note = '') AND o.note IS NOT NULL AND o.note <> ''
+    `);
 
     // Display section and Sub collection are no longer assigned through
     // import_metafield_assignments (Hera 2026-09-25: Display section uses the

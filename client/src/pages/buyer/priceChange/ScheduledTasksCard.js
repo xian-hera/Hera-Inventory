@@ -238,13 +238,14 @@ export default function ScheduledTasksCard({ locationNames, version, onChanged }
               <BlockStack gap="050" inlineAlign="start">
                 <Button variant="plain" onClick={() => setOpenId(t.id)}>{t.task_no}</Button>
                 {t.reverse_of_no && <Text variant="bodySm" tone="subdued">Reverse of {t.reverse_of_no}</Text>}
-                <StatusLine t={t} />
+                <div style={{ whiteSpace: 'normal', maxWidth: 220 }}><StatusLine t={t} /></div>
               </BlockStack>,
               <TaskTypeLabel type={t.task_type} />,
-              (t.product_types || []).join(', '),
+              // Types / Locations wrap instead of widening the table (2026-10-09).
+              <div style={{ whiteSpace: 'normal', minWidth: 90 }}>{(t.product_types || []).join(', ')}</div>,
               String(t.item_count || 0),
               <span>{formatToronto(t.scheduled_at)}{t.reverse_at ? <span title={`Reverse ${formatToronto(t.reverse_at)}`}> {LOOP}</span> : ''}</span>,
-              excludedText(t.locations, locationNames),
+              <div style={{ whiteSpace: 'normal', minWidth: 90 }}>{excludedText(t.locations, locationNames)}</div>,
             ])}
           />
         )}

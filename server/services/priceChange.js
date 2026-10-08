@@ -121,6 +121,7 @@ async function variantState(ids) {
       `query($ids: [ID!]!) { nodes(ids: $ids) { ... on ProductVariant {
         id sku price compareAtPrice
         discontinued: metafield(namespace: "custom", key: "discontinued") { value }
+        customName: metafield(namespace: "custom", key: "name") { value type }
         product { id productType status }
       } } }`,
       { ids: list.slice(i, i + 50) }
@@ -130,11 +131,27 @@ async function variantState(ids) {
       out.set(n.id, {
         sku: String(n.sku || '').trim(), price: n.price, compareAt: n.compareAtPrice,
         discontinued: n.discontinued ? n.discontinued.value : null,
+        name: n.customName ? n.customName.value : null,
+        nameType: n.customName ? n.customName.type : null,
         productId: n.product.id, productType: n.product.productType, status: n.product.status,
       });
     }
   }
   return out;
+}
+
+// Discontinued tasks also mark the variant's custom.name (2026-10-09, Hera):
+//   empty → no change; already has "@" → no change;
+//   has "#" → the LAST "#" becomes "@";
+//   otherwise "@" goes right before the first space, or at the end if none.
+// Returns the new name, or null when nothing changes.
+function discontinuedName(name) {
+  const s = name == null ? '' : String(name);
+  if (!s.trim() || s.includes('@')) return null;
+  const hash = s.lastIndexOf('#');
+  if (hash >= 0) return `${s.slice(0, hash)}@${s.slice(hash + 1)}`;
+  const sp = s.indexOf(' ');
+  return sp >= 0 ? `${s.slice(0, sp)}@${s.slice(sp)}` : `${s}@`;
 }
 
 const variantName = (v) => {
@@ -257,6 +274,25 @@ async function writeDiscontinued(sets, deletes) {
   return errors;
 }
 
+async function writeNames(sets) {
+  // sets: [{ itemId, variantId, value, type }] — custom.name (Discontinued)
+  const errors = new Map();
+  for (let i = 0; i < sets.length; i += 25) {
+    const batch = sets.slice(i, i + 25);
+    try {
+      const data = await gql(
+        `mutation($m: [MetafieldsSetInput!]!) { metafieldsSet(metafields: $m) { metafields { id } userErrors { field message } } }`,
+        { m: batch.map(b => ({ ownerId: b.variantId, namespace: 'custom', key: 'name', type: b.type || 'single_line_text_field', value: b.value })) }
+      );
+      const msg = userErrorText(data.metafieldsSet);
+      if (msg) batch.forEach(b => errors.set(b.itemId, `Name not changed — ${msg}`));
+    } catch (e) {
+      batch.forEach(b => errors.set(b.itemId, `Name not changed — ${e.message}`));
+    }
+  }
+  return errors;
+}
+
 // price / compare_at_price are the store-facing columns of the original
 // (hand-made) table — their type may be NUMERIC, so they get their own
 // parameters ($10, $11) instead of sharing the TEXT ones.
@@ -264,11 +300,16 @@ const setItem = (id, f) => pool.query(
   `UPDATE price_change_items SET old_price = $2, old_compare_at = $3, old_discontinued = $4, set_discontinued = $5,
      new_price = $6, new_compare_at = $7, apply_status = $8, apply_note = $9,
      price = COALESCE($10, price), compare_at_price = $11,
+     old_name = $12, new_name = $13,
+     name = CASE WHEN $8 = 'done' AND $14 THEN $13 ELSE name END,
      applied_at = CASE WHEN $8 = 'writing' THEN applied_at ELSE NOW() END
    WHERE id = $1`,
   [id, f.oldPrice ?? null, f.oldCompareAt ?? null, f.oldDiscontinued ?? null, !!f.setDiscontinued,
     f.newPrice ?? null, f.newCompareAt ?? null, f.status, f.note ?? null,
-    f.newPrice ?? null, f.newCompareAt ?? null]
+    f.newPrice ?? null, f.newCompareAt ?? null,
+    // custom.name (Discontinued): old_name / new_name; the item's display
+    // name follows the new name once it is written ($14).
+    f.oldName ?? null, f.newName ?? null, !!(f.newName && f.nameWritten)]
 );
 const skipItem = (id, note) => pool.query(
   `UPDATE price_change_items SET apply_status = 'skipped', apply_note = $2, applied_at = NOW() WHERE id = $1`, [id, note]
@@ -294,6 +335,7 @@ async function applyTask(taskId) {
   const byProduct = new Map();
   const metaSet = [];
   const metaDel = [];
+  const nameSet = [];
   const planned = new Map(); // itemId → fields
 
   for (const it of items) {
@@ -304,12 +346,21 @@ async function applyTask(taskId) {
       const recorded = {
         oldPrice: it.old_price, oldCompareAt: it.old_compare_at, oldDiscontinued: it.old_discontinued,
         newPrice: it.new_price, newCompareAt: it.new_compare_at, setDiscontinued: it.set_discontinued,
+        oldName: it.old_name, newName: it.new_name,
       };
       const isNew = sameMoney(cur.price, it.new_price) && (toCents(cur.compareAt) || null) === (toCents(it.new_compare_at) || null);
       const isOld = sameMoney(cur.price, it.old_price) && (toCents(cur.compareAt) || null) === (toCents(it.old_compare_at) || null);
-      if (isNew) { await setItem(it.id, { ...recorded, status: 'done' }); continue; }
-      if (!isOld) { await skipItem(it.id, 'Changed in Shopify while the price change was running — not changed'); continue; }
-      f = recorded; // write again with the values recorded the first time
+      // The name is only written if it still has the value read the first time.
+      const nameLeft = !!it.new_name && (cur.name || null) === (it.old_name || null);
+      if (isNew && !nameLeft) {
+        await setItem(it.id, { ...recorded, status: 'done', nameWritten: !!it.new_name && cur.name === it.new_name });
+        continue;
+      }
+      if (!isNew && !isOld) { await skipItem(it.id, 'Changed in Shopify while the price change was running — not changed'); continue; }
+      // write again with the values recorded the first time (price already
+      // done → only the name is left)
+      f = isNew ? { ...recorded, priceDone: true } : recorded;
+      if (!nameLeft) f.newName = it.new_name && cur.name === it.new_name ? it.new_name : null;
     } else if (!task.reverse_of) {
       let newPrice = it.csv_price;
       if (newPrice == null || newPrice === '') {
@@ -326,6 +377,7 @@ async function applyTask(taskId) {
         oldPrice: cur.price, oldCompareAt: cur.compareAt, oldDiscontinued: cur.discontinued,
         newPrice: fromCents(toCents(newPrice)), newCompareAt: newCompareAt == null ? null : fromCents(toCents(newCompareAt)),
         setDiscontinued: task.task_type === 'discontinued',
+        oldName: cur.name, newName: task.task_type === 'discontinued' ? discontinuedName(cur.name) : null,
       };
     } else {
       // Reverse: restore what the original recorded, if nobody changed it since.
@@ -345,9 +397,14 @@ async function applyTask(taskId) {
     // Record before writing, so a restart can tell what was meant.
     await setItem(it.id, { ...f, status: 'writing' });
     const input = { id: it.variant_id, price: f.newPrice, compareAtPrice: f.newCompareAt == null ? null : f.newCompareAt };
-    if (!byProduct.has(cur.productId)) byProduct.set(cur.productId, []);
-    byProduct.get(cur.productId).push({ itemId: it.id, input });
+    if (!f.priceDone) {
+      if (!byProduct.has(cur.productId)) byProduct.set(cur.productId, []);
+      byProduct.get(cur.productId).push({ itemId: it.id, input });
+    }
     if (f.setDiscontinued) metaSet.push({ itemId: it.id, variantId: it.variant_id, value: 'true' });
+    // Reverse never touches custom.name (Hera 2026-10-09); f.newName is
+    // only set by a Discontinued change.
+    if (f.newName && cur.name !== f.newName) nameSet.push({ itemId: it.id, variantId: it.variant_id, value: f.newName, type: cur.nameType });
     if (f.restoreDiscontinued) {
       if (f.restoreValue == null) metaDel.push({ itemId: it.id, variantId: it.variant_id });
       else metaSet.push({ itemId: it.id, variantId: it.variant_id, value: String(f.restoreValue) });
@@ -359,9 +416,15 @@ async function applyTask(taskId) {
   const metaErrors = await writeDiscontinued(
     metaSet.filter(m => !priceErrors.has(m.itemId)), metaDel.filter(m => !priceErrors.has(m.itemId))
   );
+  const nameErrors = await writeNames(nameSet.filter(m => !priceErrors.has(m.itemId)));
   for (const [id, f] of planned) {
     if (priceErrors.has(id)) await setItem(id, { ...f, status: 'failed', note: `Not changed — ${priceErrors.get(id)}` });
-    else await setItem(id, { ...f, status: 'done', note: metaErrors.get(id) || null });
+    else {
+      const note = [metaErrors.get(id), nameErrors.get(id)].filter(Boolean).join(' · ') || null;
+      // A name that could not be written is not recorded as the new name.
+      const nameFailed = nameErrors.has(id);
+      await setItem(id, { ...f, newName: nameFailed ? null : f.newName, status: 'done', note, nameWritten: !!f.newName && !nameFailed });
+    }
   }
 
   const done = (await pool.query(
@@ -386,9 +449,10 @@ async function createReverseTask(task) {
     await client.query('BEGIN');
     const taskNo = await nextTaskNo(client);
     const r = await client.query(
+      // The note is carried over to the reverse task (2026-10-09, Hera).
       `INSERT INTO price_change_tasks (task_no, note, locations, status, task_type, product_types, scheduled_at, reverse_of)
-       VALUES ($1, NULL, $2, 'scheduled', $3, $4, $5, $6) RETURNING id`,
-      [taskNo, task.locations, task.reverse_task_type || task.task_type, task.product_types, task.reverse_at, task.id]
+       VALUES ($1, $7, $2, 'scheduled', $3, $4, $5, $6) RETURNING id`,
+      [taskNo, task.locations, task.reverse_task_type || task.task_type, task.product_types, task.reverse_at, task.id, task.note || null]
     );
     const id = r.rows[0].id;
     await client.query(
@@ -469,5 +533,5 @@ async function safeApply(id) {
 module.exports = {
   TIMEZONE, PUBLISH_DELAY_MIN, MIN_LEAD_MIN, MIN_REVERSE_GAP_MIN, TASK_TYPES,
   getSettings, saveSettings, ruleForType, applyRule, toCents, fromCents, torontoToDate,
-  findBySku, variantState, processRows, nextTaskNo, applyTask, publishTask, runDue,
+  findBySku, variantState, processRows, discontinuedName, nextTaskNo, applyTask, publishTask, runDue,
 };

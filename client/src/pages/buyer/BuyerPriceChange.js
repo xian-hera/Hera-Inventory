@@ -340,7 +340,9 @@ function BuyerPriceChange() {
       <TaskTypeLabel type={task.task_type} fallback={task.label_type || ''} />,
       String(task.item_count || 0),
       unfinished.length > 0
-        ? <div style={{ fontSize: '13px', color: '#d72c0d' }}>{unfinished.join(', ')}</div>
+        // Long lists wrap inside the cell instead of widening the table
+        // (DataTable cells don't wrap by default) — 2026-10-09, Hera.
+        ? <div style={{ fontSize: '13px', color: '#d72c0d', whiteSpace: 'normal', minWidth: 160 }}>{unfinished.join(', ')}</div>
         : <Badge tone="success">All done</Badge>,
     ];
   });
@@ -586,7 +588,7 @@ function BuyerPriceChange() {
         }}>
           <div style={{
             background: 'white', borderRadius: '12px', padding: '24px',
-            width: '100%', maxWidth: '680px', maxHeight: '80vh', overflowY: 'auto',
+            width: '100%', maxWidth: detailTask.task_type ? '920px' : '680px', maxHeight: '80vh', overflowY: 'auto', // wider for Create Task tasks (more columns, 2026-10-09)
           }}>
             <InlineStack align="space-between">
               {/* Task name · label type */}
@@ -626,17 +628,35 @@ function BuyerPriceChange() {
             <div style={{ marginTop: '16px' }}>
               {detailLoading ? <Spinner /> : detailTask.task_type ? (
                 // Create Task tasks (2026-10-08): what was changed in Shopify.
-                <DataTable
-                  columnContentTypes={['text','text','text','text','text']}
-                  headings={['SKU', 'Name', 'Price', 'Compare-at', 'Result']}
-                  rows={detailItems.map(item => [
-                    item.sku,
-                    item.name || '-',
-                    item.apply_status === 'done' ? `${money(item.old_price)} → ${money(item.new_price)}` : money(item.csv_price),
-                    item.apply_status === 'done' ? `${money(item.old_compare_at)} → ${money(item.new_compare_at)}` : '—',
-                    item.apply_status === 'done' ? (item.apply_note || 'Changed') : (item.apply_note || item.apply_status || ''),
-                  ])}
-                />
+                // Discontinued (not its reverse) also shows the custom.name
+                // change, e.g. "Kamila 1B → Kamila@ 1B" (2026-10-09).
+                (() => {
+                  const showName = detailTask.task_type === 'discontinued' && !detailTask.reverse_of;
+                  const nameCell = (item) => (item.new_name
+                    ? (
+                      <div style={{ whiteSpace: 'normal', minWidth: 140 }}>
+                        <div style={{ color: '#6d7175' }}>{item.old_name || ''}</div>
+                        <div>→ {item.new_name}</div>
+                      </div>
+                    )
+                    : (item.apply_status === 'done' ? 'No change' : '—'));
+                  return (
+                    <DataTable
+                      columnContentTypes={showName ? ['text','text','text','text','text','text'] : ['text','text','text','text','text']}
+                      headings={showName
+                        ? ['SKU', 'Name', 'Price', 'Compare-at', 'custom.name', 'Result']
+                        : ['SKU', 'Name', 'Price', 'Compare-at', 'Result']}
+                      rows={detailItems.map(item => [
+                        item.sku,
+                        item.name || '-',
+                        item.apply_status === 'done' ? `${money(item.old_price)} → ${money(item.new_price)}` : money(item.csv_price),
+                        item.apply_status === 'done' ? `${money(item.old_compare_at)} → ${money(item.new_compare_at)}` : '—',
+                        ...(showName ? [nameCell(item)] : []),
+                        item.apply_status === 'done' ? (item.apply_note || 'Changed') : (item.apply_note || item.apply_status || ''),
+                      ])}
+                    />
+                  );
+                })()
               ) : (
                 <DataTable
                   columnContentTypes={['text','text','text']}
