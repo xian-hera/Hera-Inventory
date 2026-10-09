@@ -679,6 +679,23 @@ const initDatabase = async () => {
     await client.query(`ALTER TABLE po_invoices ADD COLUMN IF NOT EXISTS commit_started_at TIMESTAMPTZ`).catch(() => {});
     await client.query(`ALTER TABLE po_invoices ADD COLUMN IF NOT EXISTS commit_error TEXT`).catch(() => {});
 
+    // Undo commit (2026-10-09, Hera). A committed (archived) invoice can be
+    // undone for as long as it still exists (90-day retention). `undoable` is
+    // set TRUE only by commits finished after this feature shipped, whose
+    // every line item has its pre-commit values recorded (see the
+    // po_invoice_items columns below) — older committed invoices stay FALSE
+    // and get no Undo button. `status_before_commit` is the status the
+    // invoice returns to on undo; `supplier_last_committed_before` is the
+    // supplier's last_committed_at before this commit overwrote it.
+    // `undoing`/`undo_started_at`/`undo_error` mirror committing/
+    // commit_started_at/commit_error for the background undo job.
+    await client.query(`ALTER TABLE po_invoices ADD COLUMN IF NOT EXISTS undoable BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
+    await client.query(`ALTER TABLE po_invoices ADD COLUMN IF NOT EXISTS status_before_commit TEXT`).catch(() => {});
+    await client.query(`ALTER TABLE po_invoices ADD COLUMN IF NOT EXISTS supplier_last_committed_before TIMESTAMPTZ`).catch(() => {});
+    await client.query(`ALTER TABLE po_invoices ADD COLUMN IF NOT EXISTS undoing BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
+    await client.query(`ALTER TABLE po_invoices ADD COLUMN IF NOT EXISTS undo_started_at TIMESTAMPTZ`).catch(() => {});
+    await client.query(`ALTER TABLE po_invoices ADD COLUMN IF NOT EXISTS undo_error TEXT`).catch(() => {});
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS po_number_counter (
         id          INTEGER PRIMARY KEY DEFAULT 1,
@@ -784,6 +801,19 @@ const initDatabase = async () => {
     // manually-added rows instead of wiping them on reprocess, and lets the
     // buyer-side UI sort manually-added rows above ordinary CSV rows.
     await client.query(`ALTER TABLE po_invoice_items ADD COLUMN IF NOT EXISTS added_manually BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
+
+    // Undo commit (2026-10-09): what commitInvoice() is about to change for
+    // this line item, written BEFORE it touches Shopify so a retry after a
+    // crash never re-records already-modified values (undo_recorded).
+    // committed_qty = the quantity added to Shopify at the invoice's location
+    // (undo subtracts it); cost_changed/cost_before = whether the unit cost
+    // was overwritten and what it was; name_before = po_supplier_skus.name
+    // before the commit's write-back.
+    await client.query(`ALTER TABLE po_invoice_items ADD COLUMN IF NOT EXISTS undo_recorded BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
+    await client.query(`ALTER TABLE po_invoice_items ADD COLUMN IF NOT EXISTS committed_qty INTEGER`).catch(() => {});
+    await client.query(`ALTER TABLE po_invoice_items ADD COLUMN IF NOT EXISTS cost_changed BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
+    await client.query(`ALTER TABLE po_invoice_items ADD COLUMN IF NOT EXISTS cost_before NUMERIC(16,6)`).catch(() => {});
+    await client.query(`ALTER TABLE po_invoice_items ADD COLUMN IF NOT EXISTS name_before TEXT`).catch(() => {});
 
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_po_invoice_items_invoice_id ON po_invoice_items (invoice_id)

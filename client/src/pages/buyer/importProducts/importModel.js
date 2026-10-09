@@ -168,11 +168,26 @@ export function formatSubCollection(v) {
 
 // Display section is only imported for HAIR & SKIN CARE: for any other Type
 // its column is shown greyed out and ignored (and named in the report).
+// WIG (2026-10-09, Hera): Product category is always "Wigs" (set by the
+// server), so the added empty category column is dropped and a CSV
+// category column is greyed out and ignored. custom.wig_number is only
+// available in Shopify for products in the Wigs category.
+export const WIG_TYPE = 'WIG';
+export const isWigType = (t) => lc(t) === lc(WIG_TYPE);
 export function applyTypeRules(columns, productType) {
   const hsc = lc(productType) === lc(DISPLAY_SECTION_TYPE);
-  return columns.map(c => (isDisplaySectionCol(c) && !hsc
-    ? { ...c, kind: 'unmatched', typeSkipped: true, reason: `Display section is only imported for ${DISPLAY_SECTION_TYPE}` }
-    : c));
+  const wig = isWigType(productType);
+  return columns
+    .filter(c => !(wig && c.synthetic && c.kind === 'field' && c.field === 'category'))
+    .map(c => {
+      if (isDisplaySectionCol(c) && !hsc) {
+        return { ...c, kind: 'unmatched', typeSkipped: true, reason: `Display section is only imported for ${DISPLAY_SECTION_TYPE}` };
+      }
+      if (wig && c.kind === 'field' && c.field === 'category') {
+        return { ...c, kind: 'unmatched', typeSkipped: true, reason: 'for WIG the Product category is always set to Wigs' };
+      }
+      return c;
+    });
 }
 
 // Sub collection values from the CSV are shown/imported in Title Case.

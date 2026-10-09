@@ -15,7 +15,7 @@ import FullBleed from '../../components/FullBleed';
 import {
   MAX_ROWS, MAX_COLUMNS, PRESETS, buildColumns, buildRows, groupRows, validate,
   productLevelConflicts, buildPayload, cellValue, colFor,
-  applyTypeRules, normalizeSubCollections, isSubTypeCol, isSubCollectionCol, subCollectionOptions, subCollectionKey, subCollectionItems,
+  applyTypeRules, isWigType, normalizeSubCollections, isSubTypeCol, isSubCollectionCol, subCollectionOptions, subCollectionKey, subCollectionItems,
   assignTargets, columnTargetValue, decodeCsvBuffer, cleanCell,
 } from './importProducts/importModel';
 
@@ -676,6 +676,10 @@ function BuyerImportProducts() {
                 {typeSkippedCols.map(c => (
                   <Banner key={c.id} tone="warning">Column "{c.header}" will be ignored — {c.reason}.</Banner>
                 ))}
+                {/* WIG: category set by Hub (2026-10-09, Hera) */}
+                {isWigType(productType) && !typeSkippedCols.some(c => c.field === 'category') && (
+                  <Banner tone="info">Type WIG: Product category is set to Wigs automatically for new products.</Banner>
+                )}
                 {handleWarningCount > 0 && (
                   <Banner tone="warning">{handleWarningCount} new product(s) have a Title whose handle is already used by another product (orange Handle cells). They will be created with a numbered handle. To add variants to the existing product instead, fill in its Handle.</Banner>
                 )}

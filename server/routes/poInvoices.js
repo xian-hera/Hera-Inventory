@@ -1770,6 +1770,26 @@ async function commitInvoice(invoiceId) {
 
     const hasCost = item.effective_cost !== null && item.effective_cost !== undefined;
 
+    // Undo commit (2026-10-09): record what this item's commit is about to
+    // change — BEFORE any Shopify write, and only once (undo_recorded), so a
+    // retry after a crash mid-item keeps the original pre-commit values
+    // instead of re-recording already-modified ones. A promotional invoice
+    // (or an item with no cost) never touches cost, so cost_changed stays
+    // FALSE and undo only subtracts the inventory.
+    if (!item.undo_recorded) {
+      const costWillChange = !invoice.is_promotional && hasCost;
+      const nameRes = await pool.query(
+        'SELECT name FROM po_supplier_skus WHERE supplier_id = $1 AND sku = $2 LIMIT 1',
+        [invoice.supplier_id, item.sku]
+      );
+      await pool.query(
+        `UPDATE po_invoice_items
+         SET undo_recorded = TRUE, committed_qty = $1, cost_changed = $2, cost_before = $3, name_before = $4
+         WHERE id = $5`,
+        [actualQty, costWillChange, costWillChange ? snapshot.currentCost : null, nameRes.rows[0]?.name ?? null, item.id]
+      );
+    }
+
     if (!invoice.is_promotional && hasCost) {
       const totalQty = snapshot.currentQty + actualQty;
       const newCost = totalQty > 0
@@ -1856,8 +1876,26 @@ async function commitInvoice(invoiceId) {
   // as a permanent legacy synonym for pre-existing rows; going forward this
   // is the only place that ever sets the status on commit, and it now goes
   // straight to 'archived'.
-  await pool.query(`UPDATE po_invoices SET status = 'archived', committed_at = NOW() WHERE id = $1`, [invoiceId]);
-  await pool.query('UPDATE po_suppliers SET last_committed_at = NOW() WHERE id = $1', [invoice.supplier_id]);
+  //
+  // Undo commit (2026-10-09): one shared timestamp for committed_at and the
+  // supplier's last_committed_at, so undo can tell whether the supplier's
+  // value is still the one THIS commit wrote. `undoable` only if every line
+  // item has its pre-commit values recorded — an invoice whose earlier items
+  // were committed by the pre-feature code (then resumed after deploy) can't
+  // be fully undone.
+  const committedAt = new Date();
+  const supRes = await pool.query('SELECT last_committed_at FROM po_suppliers WHERE id = $1', [invoice.supplier_id]);
+  const supplierPrev = supRes.rows[0]?.last_committed_at ?? null;
+  const unrecorded = await pool.query(
+    'SELECT 1 FROM po_invoice_items WHERE invoice_id = $1 AND undo_recorded = FALSE LIMIT 1', [invoiceId]
+  );
+  await pool.query(
+    `UPDATE po_invoices
+     SET status = 'archived', committed_at = $1, undoable = $2, status_before_commit = $3, supplier_last_committed_before = $4
+     WHERE id = $5`,
+    [committedAt, unrecorded.rows.length === 0, invoice.status, supplierPrev, invoiceId]
+  );
+  await pool.query('UPDATE po_suppliers SET last_committed_at = $1 WHERE id = $2', [committedAt, invoice.supplier_id]);
 
   // Retention is now time-based (90 days, item 10) instead of the old
   // 200-row cap — see cleanupExpiredArchived(), run lazily on every read of
@@ -2005,6 +2043,184 @@ router.post('/pending/commit-many', async (req, res) => {
   }
 });
 
+// ─── Undo commit ──────────────────────────────────────────────────────────
+// (2026-10-09, Hera) Reverses a committed invoice as if it never happened:
+//   - inventory: subtracts item.committed_qty at the invoice's location (a
+//     negative adjustment — nothing about the previous stock is needed, and
+//     going negative if units were sold in the meantime is accepted);
+//   - cost: writes item.cost_before back unconditionally (only for items
+//     whose commit actually changed it — never for a promotional invoice or a
+//     cost-less item) — no check for changes made since the commit;
+//   - po_supplier_skus.name back to item.name_before;
+//   - supplier.last_committed_at back to what it was — but only if it is
+//     still the value this commit wrote (a later commit's timestamp stays);
+//   - the invoice returns to the status it had before the commit, items keep
+//     their counts but are marked not committed again.
+// Runs in the background like commit: lock = undoing, heartbeat =
+// undo_started_at, per-item resumability = item.committed flips back to FALSE
+// right after each item is reversed. Only invoices with `undoable` (committed
+// after this feature shipped) can be undone; the window is simply "still
+// exists" (90-day retention, see cleanupExpiredArchived).
+
+// Deterministic UUID so a retried undo of the same item (crash between the
+// Shopify call and the committed=FALSE write) re-sends the SAME idempotency
+// key and Shopify doesn't apply the subtraction twice.
+function deterministicUuid(seed) {
+  const h = crypto.createHash('sha256').update(seed).digest('hex');
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`;
+}
+
+async function touchUndoHeartbeat(invoiceId) {
+  try {
+    await pool.query('UPDATE po_invoices SET undo_started_at = NOW() WHERE id = $1', [invoiceId]);
+  } catch (e) {
+    console.error(`Undo heartbeat failed for invoice ${invoiceId}:`, e.message);
+  }
+}
+
+// Atomic acquire. Returns { ok: true } or { error } (human-readable reason).
+async function acquireUndoLock(id) {
+  const got = await pool.query(
+    `UPDATE po_invoices SET undoing = TRUE, undo_started_at = NOW(), undo_error = NULL
+     WHERE id = $1 AND status = 'archived' AND undoable = TRUE AND committing = FALSE
+       AND (undoing = FALSE OR undo_started_at IS NULL OR undo_started_at < NOW() - INTERVAL '${COMMIT_STALE_MS / 1000} seconds')
+     RETURNING id`,
+    [id]
+  );
+  if (got.rows.length > 0) return { ok: true };
+  const cur = await pool.query('SELECT status, undoable, undoing FROM po_invoices WHERE id = $1', [id]);
+  if (cur.rows.length === 0) throw new Error('Invoice not found');
+  const inv = cur.rows[0];
+  if (inv.status !== 'archived') return { error: 'This invoice is not committed.' };
+  if (!inv.undoable) return { error: 'This invoice was committed before Undo was available, so it cannot be undone.' };
+  if (inv.undoing) return { error: 'This invoice is already being undone — please wait for it to finish.' };
+  return { error: 'This invoice cannot be undone right now.' };
+}
+
+async function undoInvoiceCommit(invoiceId) {
+  const invRes = await pool.query('SELECT * FROM po_invoices WHERE id = $1', [invoiceId]);
+  if (invRes.rows.length === 0) throw new Error('Invoice not found');
+  const invoice = invRes.rows[0];
+  const committedAtMs = new Date(invoice.committed_at).getTime();
+
+  const itemsRes = await pool.query('SELECT * FROM po_invoice_items WHERE invoice_id = $1 ORDER BY id ASC', [invoiceId]);
+
+  const { getShopify, getSession } = require('../shopify');
+  const session = await getSession();
+  const shopify = getShopify();
+  const client = new shopify.clients.Graphql({ session });
+
+  for (const item of itemsRes.rows) {
+    // Not committed = already undone by an earlier (interrupted) attempt.
+    if (!item.committed) continue;
+    await touchUndoHeartbeat(invoiceId);
+    if (!item.undo_recorded) throw new Error(`SKU ${item.sku}: no pre-commit record, cannot undo`);
+
+    const qty = Number(item.committed_qty) || 0;
+    if (item.cost_changed || qty !== 0) {
+      const snapshot = await getVariantSnapshot(client, item.sku);
+      if (!snapshot) throw new Error(`SKU ${item.sku}: inventory item not found in Shopify`);
+
+      if (item.cost_changed) {
+        const costResp = await shopifyRequest(client, `
+          mutation restoreCost($id: ID!, $input: InventoryItemInput!) {
+            inventoryItemUpdate(id: $id, input: $input) {
+              inventoryItem { id }
+              userErrors { field message }
+            }
+          }
+        `, { id: snapshot.inventoryItemId, input: { cost: Number(item.cost_before) } });
+        const costErrors = costResp?.data?.inventoryItemUpdate?.userErrors || [];
+        if (costErrors.length > 0) {
+          throw new Error(`SKU ${item.sku}: cost restore failed — ${costErrors.map(e => e.message).join('; ')}`);
+        }
+      }
+
+      if (qty !== 0) {
+        const invResp = await shopifyRequest(client, `
+          mutation undoInventory($input: InventoryAdjustQuantitiesInput!, $idempotencyKey: String!) {
+            inventoryAdjustQuantities(input: $input) @idempotent(key: $idempotencyKey) {
+              inventoryAdjustmentGroup { id }
+              userErrors { field message code }
+            }
+          }
+        `, {
+          input: {
+            reason: 'correction',
+            name: 'available',
+            changes: [{
+              inventoryItemId: snapshot.inventoryItemId,
+              locationId: invoice.shopify_location_id,
+              delta: -qty,
+              changeFromQuantity: null,
+            }],
+          },
+          idempotencyKey: deterministicUuid(`undo:${item.id}:${committedAtMs}`),
+        });
+        const invErrors = invResp?.data?.inventoryAdjustQuantities?.userErrors || [];
+        if (invErrors.length > 0) {
+          throw new Error(`SKU ${item.sku}: inventory reversal failed — ${invErrors.map(e => e.message).join('; ')}`);
+        }
+      }
+    }
+
+    await pool.query(
+      `UPDATE po_supplier_skus SET name = $1, updated_at = NOW() WHERE supplier_id = $2 AND sku = $3`,
+      [item.name_before, invoice.supplier_id, item.sku]
+    );
+
+    // Reversed — flip back so a resumed undo skips it, and a later re-commit
+    // treats it as fresh (the recorded values are re-taken at that commit).
+    await pool.query(
+      `UPDATE po_invoice_items
+       SET committed = FALSE, undo_recorded = FALSE, committed_qty = NULL,
+           cost_changed = FALSE, cost_before = NULL, name_before = NULL
+       WHERE id = $1`,
+      [item.id]
+    );
+    await touchUndoHeartbeat(invoiceId);
+  }
+
+  await pool.query(
+    `UPDATE po_suppliers SET last_committed_at = $1 WHERE id = $2 AND last_committed_at = $3`,
+    [invoice.supplier_last_committed_before, invoice.supplier_id, invoice.committed_at]
+  );
+  await pool.query(
+    `UPDATE po_invoices
+     SET status = COALESCE(status_before_commit, 'pending'), committed_at = NULL, undoable = FALSE,
+         status_before_commit = NULL, supplier_last_committed_before = NULL,
+         undoing = FALSE, undo_error = NULL, commit_error = NULL, updated_at = NOW()
+     WHERE id = $1`,
+    [invoiceId]
+  );
+}
+
+async function runInvoiceUndo(id) {
+  try {
+    await undoInvoiceCommit(id);
+  } catch (e) {
+    console.error(`runInvoiceUndo error for invoice ${id}:`, e.message);
+    await pool.query(`UPDATE po_invoices SET undoing = FALSE, undo_error = $1 WHERE id = $2`, [e.message, id])
+      .catch(err => console.error(`Failed to clear undoing flag for invoice ${id}:`, err.message));
+  }
+}
+
+// POST /api/po-invoices/committed/:id/undo — starts the undo and returns
+// immediately; the committed-detail page polls GET /committed/:id (undoing /
+// undo_error, then a 404 once the invoice is back to a pre-commit status).
+router.post('/committed/:id/undo', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const lock = await acquireUndoLock(id);
+    if (lock.error) return res.status(409).json({ error: lock.error });
+    res.json({ started: true });
+    runInvoiceUndo(id); // fire-and-forget — intentionally not awaited
+  } catch (e) {
+    console.error('POST /api/po-invoices/committed/:id/undo error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ─── Committed history detail ────────────────────────────────────────────────
 
 // GET /api/po-invoices/committed/:id
@@ -2017,8 +2233,14 @@ router.get('/committed/:id', async (req, res) => {
       [id]
     );
     if (invRes.rows.length === 0) return res.status(404).json({ error: 'Invoice not found' });
+    const invoice = invRes.rows[0];
+    // Same idea as the stale `committing` lock on GET /pending/:id: an undo
+    // with no heartbeat for COMMIT_STALE_MS is dead, report it as not running
+    // so the Undo button comes back instead of spinning forever.
+    const undoStart = invoice.undo_started_at ? new Date(invoice.undo_started_at).getTime() : 0;
+    invoice.undoing = !!invoice.undoing && Date.now() - undoStart < COMMIT_STALE_MS;
     const itemsRes = await pool.query('SELECT * FROM po_invoice_items WHERE invoice_id = $1 ORDER BY id ASC', [id]);
-    res.json({ invoice: invRes.rows[0], items: itemsRes.rows });
+    res.json({ invoice, items: itemsRes.rows });
   } catch (e) {
     console.error('GET /api/po-invoices/committed/:id error:', e);
     res.status(500).json({ error: e.message });

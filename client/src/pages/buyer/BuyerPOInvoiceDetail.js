@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Page, Layout, Card, BlockStack, InlineStack, Text, Badge, Banner, Spinner
+  Page, Layout, Card, BlockStack, InlineStack, Text, Badge, Banner, Spinner, Modal, TextField
 } from '@shopify/polaris';
 import { useNavigate, useParams } from 'react-router-dom';
 import InfoTooltip from '../../components/InfoTooltip';
@@ -35,6 +35,57 @@ function BuyerPOInvoiceDetail() {
   // Settings change immediately changes how this already-committed invoice
   // is displayed too.
   const [costComparison, setCostComparison] = useState({ cad: 'invoice_cost', usd: 'invoice_cost' });
+
+  // Undo commit (2026-10-09, Hera) — reverses this invoice's Shopify changes
+  // (inventory, cost) and returns it to its pre-commit status. The button only
+  // shows for invoices flagged `undoable` by the server. Requires typing
+  // CONFIRM; the undo itself runs in the background on the server, so this
+  // page polls while invoice.undoing is true and, once the invoice is no
+  // longer a committed one (GET /committed/:id → 404), moves to its pending
+  // detail page.
+  const [undoModalOpen, setUndoModalOpen] = useState(false);
+  const [undoConfirmText, setUndoConfirmText] = useState('');
+  const [startingUndo, setStartingUndo] = useState(false);
+  const undoing = !!(invoice && invoice.undoing);
+
+  useEffect(() => {
+    if (!undoing) return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/po-invoices/committed/${invoiceId}`);
+        if (res.status === 404) {
+          navigate(`/buyer/po-receiving/pending/${invoiceId}`, { replace: true });
+          return;
+        }
+        const data = await res.json();
+        if (res.ok) {
+          setInvoice(data.invoice);
+          setItems(data.items);
+        }
+      } catch (e) { /* keep polling */ }
+    }, 1500);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [undoing, invoiceId]);
+
+  const handleUndoCommit = async () => {
+    setStartingUndo(true);
+    setError('');
+    try {
+      const res = await fetch(`/api/po-invoices/committed/${invoiceId}/undo`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setUndoModalOpen(false);
+      setUndoConfirmText('');
+      setInvoice(prev => ({ ...prev, undoing: true, undo_error: null }));
+    } catch (e) {
+      setError(e.message);
+      setUndoModalOpen(false);
+      setUndoConfirmText('');
+    } finally {
+      setStartingUndo(false);
+    }
+  };
 
   useEffect(() => {
     (async () => {
@@ -168,6 +219,14 @@ function BuyerPOInvoiceDetail() {
       }
       backAction={{ onAction: () => navigate('/buyer/po-receiving/commit-later') }}
       secondaryActions={[
+        // Left of Export PDF. Only for invoices committed after Undo shipped
+        // (server flag `undoable`); while an undo runs it shows as busy.
+        ...((invoice.undoable || undoing) ? [{
+          content: undoing ? 'Undoing...' : 'Undo commit',
+          onAction: () => { setUndoConfirmText(''); setUndoModalOpen(true); },
+          loading: undoing,
+          disabled: undoing,
+        }] : []),
         { content: 'Export PDF', onAction: handleExportPdf, loading: exportingPdf, disabled: exportingPdf },
         { content: 'Delete', destructive: true, onAction: handleDelete },
       ]}
@@ -176,6 +235,18 @@ function BuyerPOInvoiceDetail() {
         <Layout.Section>
           <BlockStack gap="300">
             {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
+
+            {undoing && (
+              <Banner tone="info">Undoing this commit... It is OK to leave this page.</Banner>
+            )}
+            {!undoing && invoice.undo_error && (
+              <Banner tone="critical">
+                <div style={{ whiteSpace: 'pre-line' }}>
+                  Undo failed: {invoice.undo_error}
+                  {'\n'}Click Undo commit to continue. Line items that were already reversed will not be reversed again.
+                </div>
+              </Banner>
+            )}
 
             {invoice.invoice_number && (
               <Text tone="subdued" variant="bodySm">Invoice Number: {invoice.invoice_number}</Text>
@@ -283,6 +354,36 @@ function BuyerPOInvoiceDetail() {
           </BlockStack>
         </Layout.Section>
       </Layout>
+
+      <Modal
+        open={undoModalOpen}
+        onClose={() => { if (!startingUndo) setUndoModalOpen(false); }}
+        title="Undo this commit?"
+        primaryAction={{
+          content: 'Undo commit',
+          destructive: true,
+          onAction: handleUndoCommit,
+          loading: startingUndo,
+          disabled: undoConfirmText !== 'CONFIRM' || startingUndo,
+        }}
+        secondaryActions={[{ content: 'Cancel', onAction: () => setUndoModalOpen(false), disabled: startingUndo }]}
+      >
+        <Modal.Section>
+          <BlockStack gap="300">
+            <Text>
+              This will subtract the inventory this commit added in Shopify, restore each SKU's cost to what it was
+              before the commit (even if it has changed since), and return this invoice to its status before it was
+              committed ({String(invoice.status_before_commit || 'pending').replace(/_/g, ' ')}).
+            </Text>
+            <Text>Type CONFIRM to proceed.</Text>
+            <TextField
+              label="" labelHidden autoComplete="off"
+              value={undoConfirmText} onChange={setUndoConfirmText}
+              placeholder="CONFIRM"
+            />
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
     </Page>
   );
 }

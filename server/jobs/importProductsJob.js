@@ -22,6 +22,11 @@ const {
 } = require('../services/productData');
 const { refreshRows } = require('../services/newArrival');
 
+// Type WIG → Product category "Wigs" (Apparel & Accessories > Clothing
+// Accessories > Hair Accessories > Wigs), 2026-10-09 (Hera).
+const WIGS_CATEGORY_ID = 'gid://shopify/TaxonomyCategory/aa-2-14-12';
+const isWigImport = (t) => String(t == null ? '' : t).trim().toLowerCase() === 'wig';
+
 const STATUS_FILTER = '(product_status:active OR product_status:draft)';
 
 // ─── Lookups ─────────────────────────────────────────────────────────────────
@@ -430,7 +435,12 @@ async function addProduct(p, ctx) {
   if (has(f.tags)) input.tags = splitTags(f.tags);
   if (has(f.seoTitle) || has(f.seoDescription)) input.seo = { title: str(f.seoTitle) || undefined, description: str(f.seoDescription) || undefined };
   if (has(f.giftCard)) { const b = parseBool(f.giftCard); if (b !== null) input.giftCard = b; }
-  if (has(f.category)) {
+  if (isWigImport(ctx.productType)) {
+    // WIG (2026-10-09, Hera): new products always get the Wigs category —
+    // custom.wig_number is only available for products in Wigs, and the
+    // category is set here, before the metafields are written.
+    input.category = WIGS_CATEGORY_ID;
+  } else if (has(f.category)) {
     const id = await ctx.resolveCategory(f.category);
     if (id) input.category = id;
     else report.push(`Column "Product category" skipped — "${str(f.category)}" not found in Shopify taxonomy`);
