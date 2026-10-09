@@ -5,6 +5,35 @@ const { pool } = require('../database/init');
 // Purchasing user groups (2026-10-09): the Buyer list only shows tasks whose
 // type is the current group's or unassigned. See routes/userGroups.js.
 const { getGroupFilter, arrayVisibleSql } = require('./userGroups');
+// Purchase-order lock (2026-10): see server/poLock.js
+const { getPoLockedSet, norm: normSku } = require('../poLock');
+
+// Weekly Count items whose SKU is in a not-yet-committed invoice at the task's
+// location are "PO locked": the manager skips them, any count already entered
+// is discarded, and the buyer's commit ignores them. Returns the locked set
+// (normalized SKUs). Scan Count mode tasks and archived tasks are left alone.
+// Discarding resets the item exactly like the manager's own "Reset" would.
+async function applyPoLock(task, items) {
+  if (!task || task.scan_count_mode || task.status === 'archived' || task.status === 'draft') return new Set();
+  const open = items.filter(i => !i.is_committed);
+  const locked = await getPoLockedSet(task.shopify_location_id, open.map(i => i.barcode));
+  if (locked.size === 0) return locked;
+  try {
+    await pool.query(
+      `UPDATE task_items
+          SET scan_history = '[]'::jsonb, poh = NULL, soh = NULL, is_correct = FALSE
+        WHERE task_id = $1
+          AND COALESCE(is_committed, FALSE) = FALSE
+          AND LOWER(TRIM(barcode)) = ANY($2::text[])
+          AND (poh IS NOT NULL OR soh IS NOT NULL OR is_correct = TRUE
+               OR jsonb_array_length(COALESCE(scan_history, '[]'::jsonb)) > 0)`,
+      [task.id, [...locked]]
+    );
+  } catch (e) {
+    console.error('applyPoLock discard failed:', e.message);
+  }
+  return locked;
+}
 
 // GET /api/tasks - get all tasks with filters
 router.get('/', async (req, res) => {
@@ -200,12 +229,26 @@ router.get('/:id', async (req, res) => {
     const taskResult = await pool.query('SELECT * FROM tasks WHERE id = $1', [id]);
     if (taskResult.rows.length === 0) return res.status(404).json({ error: 'Task not found' });
 
-    const itemsResult = await pool.query(
+    let itemsResult = await pool.query(
       'SELECT * FROM task_items WHERE task_id = $1 ORDER BY id',
       [id]
     );
 
-    res.json({ ...taskResult.rows[0], items: itemsResult.rows });
+    // PO lock (2026-10): computed live on every load; any count already
+    // entered for a locked item is discarded (see applyPoLock above).
+    const locked = await applyPoLock(taskResult.rows[0], itemsResult.rows);
+    if (locked.size > 0) {
+      itemsResult = await pool.query(
+        'SELECT * FROM task_items WHERE task_id = $1 ORDER BY id',
+        [id]
+      );
+    }
+    const itemsOut = itemsResult.rows.map(i => ({
+      ...i,
+      po_locked: !i.is_committed && locked.has(normSku(i.barcode)),
+    }));
+
+    res.json({ ...taskResult.rows[0], items: itemsOut });
   } catch (e) {
     console.error('GET /api/tasks/:id error:', e);
     res.status(500).json({ error: e.message });
@@ -293,6 +336,12 @@ async function runTaskCommit(id, itemIds) {
     const taskRes = await pool.query('SELECT * FROM tasks WHERE id = $1', [id]);
     const task = taskRes.rows[0];
     if (!task) return; // task deleted mid-flight — nothing to do
+
+    // PO lock (2026-10): items in a not-yet-committed invoice are skipped —
+    // applyPoLock resets them (poh → NULL), and the loop below skips any item
+    // with poh NULL. Server decides at commit time.
+    const allTaskItems = await pool.query('SELECT * FROM task_items WHERE task_id = $1', [id]);
+    await applyPoLock(task, allTaskItems.rows);
 
     const items = await pool.query(
       'SELECT * FROM task_items WHERE id = ANY($1) AND task_id = $2',

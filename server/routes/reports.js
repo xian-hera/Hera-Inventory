@@ -5,6 +5,8 @@ const { pool } = require('../database/init');
 const { getShopify, getSession, activeFilter } = require('../shopify');
 // Purchasing user groups (2026-10-09) — see routes/userGroups.js
 const { getGroupFilter, scalarVisibleSql } = require('./userGroups');
+// Purchase-order lock (2026-10): see server/poLock.js
+const { getPoLockedSet, norm: normSku } = require('../poLock');
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ZERO QTY REPORTS  (buyer-side)
@@ -111,6 +113,11 @@ router.post('/submit', async (req, res) => {
     const { items } = req.body;
     if (!items || items.length === 0) return res.status(400).json({ error: 'No items' });
 
+    // PO lock (2026-10): the server has the final say — an item whose SKU is in
+    // a not-yet-committed invoice at its location is skipped (not stored).
+    const lockedByLoc = new Map(); // shopify_location_id → Set of locked SKUs
+    const skipped = [];
+
     for (const item of items) {
       let shopifyLocationId = item.shopify_location_id || item.locationId || null;
       if (!shopifyLocationId && item.location) {
@@ -119,6 +126,16 @@ router.post('/submit', async (req, res) => {
           [item.location]
         );
         if (mapRow.rows.length > 0) shopifyLocationId = mapRow.rows[0].shopify_location_id;
+      }
+
+      if (shopifyLocationId) {
+        if (!lockedByLoc.has(shopifyLocationId)) {
+          lockedByLoc.set(shopifyLocationId, await getPoLockedSet(shopifyLocationId, items.map(i => i.barcode)));
+        }
+        if (lockedByLoc.get(shopifyLocationId).has(normSku(item.barcode))) {
+          skipped.push(item.barcode);
+          continue;
+        }
       }
 
       // 改动一：存 type（productType）而非 department
@@ -139,7 +156,7 @@ router.post('/submit', async (req, res) => {
       );
     }
 
-    res.json({ success: true });
+    res.json({ success: true, skipped });
   } catch (e) {
     console.error('POST /api/reports/submit error:', e);
     res.status(500).json({ error: e.message });
@@ -293,6 +310,41 @@ router.get('/drafts', async (req, res) => {
     res.json(result.rows);
   } catch (e) {
     console.error('GET /api/reports/drafts error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/reports/drafts-checked?location=MTL01  (2026-10, Hera)
+// Same as GET /drafts, plus the PO lock check: drafts whose SKU is now in a
+// not-yet-committed invoice at that location are deleted and their SKUs come
+// back in `removed` so the manager page can say so.
+// → { drafts: [...], removed: ['sku', ...] }
+router.get('/drafts-checked', async (req, res) => {
+  try {
+    const { location } = req.query;
+    if (!location) return res.status(400).json({ error: 'location required' });
+    await pool.query('DELETE FROM zero_qty_drafts WHERE expires_at < NOW()');
+    const result = await pool.query(
+      'SELECT * FROM zero_qty_drafts WHERE location = $1 ORDER BY created_at ASC',
+      [location]
+    );
+    let drafts = result.rows;
+    const removed = [];
+    if (drafts.length > 0) {
+      const locId = drafts.find(d => d.shopify_location_id)?.shopify_location_id;
+      const locked = await getPoLockedSet(locId, drafts.map(d => d.barcode));
+      if (locked.size > 0) {
+        const gone = drafts.filter(d => locked.has(normSku(d.barcode)));
+        if (gone.length > 0) {
+          await pool.query('DELETE FROM zero_qty_drafts WHERE id = ANY($1)', [gone.map(d => d.id)]);
+          removed.push(...gone.map(d => d.barcode));
+          drafts = drafts.filter(d => !locked.has(normSku(d.barcode)));
+        }
+      }
+    }
+    res.json({ drafts, removed });
+  } catch (e) {
+    console.error('GET /api/reports/drafts-checked error:', e);
     res.status(500).json({ error: e.message });
   }
 });

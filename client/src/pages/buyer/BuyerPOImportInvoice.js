@@ -1488,19 +1488,34 @@ function BuyerPOImportInvoice() {
                     //   pending        → default Send to store, dropdown [Commit later, Commit]
                     //   sent_to_store  → default Commit later,  dropdown [Commit]
                     //   store_counted  → default Commit,        dropdown [Commit later]
+                    // 2026-10 (Hera): the "Commit later" button is no longer
+                    // offered on the invoice detail page. Now:
+                    //   pending        → default Send to store, dropdown [Commit]
+                    //   sent_to_store  → Commit (single button, no dropdown)
+                    //   store_counted  → Commit (single button, no dropdown)
+                    // (the commit_later entry and handleCommitLater are kept
+                    // below, just not listed in CONFIG.) A status with an
+                    // empty dropdown renders a plain button without the arrow.
                     const ACTIONS = {
                       send_to_store: { content: 'Send to store', onAction: handleSendToStore, loading: sendingToStore },
                       commit_later: { content: 'Commit later', onAction: handleCommitLater },
                       commit: { content: 'Commit', onAction: handleCommitNow, loading: committing },
                     };
                     const CONFIG = {
-                      pending: { default: 'send_to_store', dropdown: ['commit_later', 'commit'] },
-                      sent_to_store: { default: 'commit_later', dropdown: ['commit'] },
-                      store_counted: { default: 'commit', dropdown: ['commit_later'] },
+                      pending: { default: 'send_to_store', dropdown: ['commit'] },
+                      sent_to_store: { default: 'commit', dropdown: [] },
+                      store_counted: { default: 'commit', dropdown: [] },
                     };
                     const config = CONFIG[status] || CONFIG.pending;
                     const defaultAction = ACTIONS[config.default];
                     const dropdownActions = config.dropdown.map(key => ACTIONS[key]);
+                    if (dropdownActions.length === 0) {
+                      return (
+                        <Button variant="primary" onClick={defaultAction.onAction} loading={defaultAction.loading} disabled={disabled}>
+                          {defaultAction.content}
+                        </Button>
+                      );
+                    }
                     return (
                       <Popover
                         active={actionsMenuOpen}

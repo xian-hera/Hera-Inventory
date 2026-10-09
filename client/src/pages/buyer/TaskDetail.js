@@ -122,9 +122,10 @@ function TaskDetail() {
     try {
       const itemIds = all
         ? task.items
-            .filter(i => !i.is_correct && i.poh !== null && !i.is_committed)
+            .filter(i => !i.is_correct && i.poh !== null && !i.is_committed && !i.po_locked)
             .map(i => i.id)
-        : selectedItemIds;
+        // PO-locked items (2026-10) are ignored; the server also skips them.
+        : selectedItemIds.filter(id => !task.items.find(i => i.id === id)?.po_locked);
 
       if (itemIds.length === 0 && !all) {
         setError('No items to commit.');
@@ -335,6 +336,24 @@ function TaskDetail() {
   };
 
   const rows = task.items.map(item => {
+    // PO-locked row (2026-10): light-yellow cells, "PO" as the result; it is
+    // skipped when committing.
+    if (item.po_locked) {
+      const hl = (node) => (
+        <div style={{ background: '#fff3b0', margin: '-12px -16px', padding: '12px 16px', minHeight: '24px' }}>{node}</div>
+      );
+      return [
+        hl(<Checkbox
+          checked={selectedItemIds.includes(item.id)}
+          onChange={() => toggleSelectOne(item.id)}
+        />),
+        hl(item.name || '-'),
+        hl(item.barcode || '-'),
+        hl(''),
+        hl(<strong>PO</strong>),
+      ];
+    }
+
     let detail = '';
     let result = '';
 
