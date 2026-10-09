@@ -1593,6 +1593,44 @@ const initDatabase = async () => {
       )
     `);
 
+    // ── Purchasing user groups (2026-10-09, Hera) — claude/USER_GROUPS_FEATURE.md
+    // user_groups: Settings → User Group. `types` = the product types this
+    // group works with; one type belongs to at most one group (enforced by
+    // PUT /api/user-groups, case-insensitive). A type in NO group is visible
+    // to every group.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS user_groups (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        types TEXT[] NOT NULL DEFAULT '{}',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_user_groups_name_lower ON user_groups (LOWER(name))`);
+    // account_groups: the group each Shopify staff account picked on entering
+    // Purchasing. choice = 'ALL' or a user_groups.id as text. Rows pointing to
+    // a deleted group are removed when the group is deleted.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS account_groups (
+        account_id TEXT PRIMARY KEY,
+        choice TEXT NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    // transfer_tag_types: Transfer Settings → Tag of Types. Which product types
+    // a Transfer tag stands for, so Transfers follow the same user-group rules
+    // as everything else. Every tag here also lives in transfer_tag_pool
+    // (and cannot be deleted from the pool while it is here).
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS transfer_tag_types (
+        id SERIAL PRIMARY KEY,
+        tag TEXT NOT NULL,
+        types TEXT[] NOT NULL DEFAULT '{}',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_transfer_tag_types_lower ON transfer_tag_types (LOWER(tag))`);
+
     await client.query('COMMIT');
     console.log('✓ Database initialized successfully');
   } catch (e) {

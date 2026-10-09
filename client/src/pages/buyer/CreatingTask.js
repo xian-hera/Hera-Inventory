@@ -9,6 +9,7 @@ import MultiSelectDropdown from '../../components/MultiSelectDropdown';
 import SearchWithFilters from '../../components/SearchWithFilters';
 import InfoTooltip from '../../components/InfoTooltip';
 import { useLocationMap } from '../shared/locationMap';
+import { useGroupContext } from '../../userGroup'; // Purchasing user groups, 2026-10-09
 
 const SCAN_COUNT_TOOLTIP_TEXT =
   'Users scan each item they find on the shelf without manually counting. Each scan is automatically counted, and the final quantity is calculated when the scan is complete. Scans of unlisted items will be ignored.';
@@ -59,6 +60,9 @@ function newMetafieldRow() {
 
 function CreatingTask() {
   const navigate = useNavigate();
+  // User group (2026-10-09): the Types dropdown only offers the current
+  // group's types plus the unassigned ones.
+  const groupCtx = useGroupContext();
 
   const [selectedTypes, setSelectedTypes]       = useState([]);
   const [selectedLocations, setSelectedLocations] = useState([]);
@@ -432,7 +436,7 @@ function CreatingTask() {
                   <InlineStack gap="400" wrap align="start">
                     <MultiSelectDropdown
                       label="Types"
-                      options={TYPE_OPTIONS}
+                      options={groupCtx.filterTypes(TYPE_OPTIONS)}
                       selected={selectedTypes}
                       onChange={setSelectedTypes}
                       placeholder="Select types"

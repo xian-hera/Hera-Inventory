@@ -1,23 +1,32 @@
 const express = require('express');
 const router = express.Router();
 const { pool } = require('../database/init');
+// Purchasing user groups (2026-10-09): the Buyer Home badges count only what
+// the current group can see in the lists. See routes/userGroups.js.
+const { getGroupFilter, arrayVisibleSql, scalarVisibleSql } = require('./userGroups');
 
 // GET /api/badges/buyer
 router.get('/buyer', async (req, res) => {
   try {
+    const groupFilter = await getGroupFilter(req);
+    const gParams = groupFilter ? [groupFilter.blockedTypes] : [];
+
     // Weekly Inventory Count: tasks in 'reviewing' status
     const weeklyRes = await pool.query(
-      `SELECT COUNT(*) FROM tasks WHERE status = 'reviewing'`
+      `SELECT COUNT(*) FROM tasks WHERE status = 'reviewing'${groupFilter ? ` AND ${arrayVisibleSql('types', 1)}` : ''}`,
+      gParams
     );
 
     // Zero/Low Inventory Count: zero_qty_reports in 'reviewing' status
     const zeroLowRes = await pool.query(
-      `SELECT COUNT(*) FROM zero_qty_reports WHERE status = 'reviewing'`
+      `SELECT COUNT(*) FROM zero_qty_reports WHERE status = 'reviewing'${groupFilter ? ` AND ${scalarVisibleSql('type', 1)}` : ''}`,
+      gParams
     );
 
     // Stock Losses: entries in 'reviewing' status
     const stockLossesRes = await pool.query(
-      `SELECT COUNT(*) FROM stock_losses WHERE status = 'reviewing'`
+      `SELECT COUNT(*) FROM stock_losses WHERE status = 'reviewing'${groupFilter ? ` AND ${scalarVisibleSql('product_type', 1)}` : ''}`,
+      gParams
     );
 
     // Price Change alert: any active price change task that has at least one
@@ -31,7 +40,8 @@ router.get('/buyer', async (req, res) => {
             SELECT 1 FROM price_change_location_status ls
             WHERE ls.task_id = t.id AND ls.status = 'pending'
           )
-      `);
+          ${groupFilter ? `AND ${arrayVisibleSql('t.product_types', 1)}` : ''}
+      `, gParams);
       priceChangeAlert = parseInt(priceChangeRes.rows[0].count) > 0;
     } catch (e) {
       // Table may not exist yet

@@ -3,6 +3,8 @@ const router = express.Router();
 const crypto = require('crypto');
 const { pool } = require('../database/init');
 const { activeFilter } = require('../shopify');
+// Purchasing user groups (2026-10-09) — see routes/userGroups.js
+const { getGroupFilter, arrayVisibleSql } = require('./userGroups');
 
 // 90-day retention for archived invoices (item 10) — replaces the old
 // 200-row HISTORY_LIMIT cap that commitInvoice() used to enforce inline.
@@ -699,6 +701,13 @@ router.get('/pending', async (req, res) => {
       JOIN po_suppliers s ON s.id = i.supplier_id
       LEFT JOIN po_invoice_items it ON it.invoice_id = i.id
       WHERE i.status IN ('pending', 'sent_to_store', 'store_counted', 'committed', 'archived')`;
+    // User group (2026-10-09): an invoice belongs to its supplier's carried
+    // types — visible when any of them is the group's or unassigned.
+    const groupFilter = await getGroupFilter(req);
+    if (groupFilter) {
+      params.push(groupFilter.blockedTypes);
+      query += ` AND ${arrayVisibleSql('s.types_carrying', params.length)}`;
+    }
     if (q) {
       params.push(`%${q}%`);
       query += ` AND i.id IN (

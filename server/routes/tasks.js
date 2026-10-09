@@ -2,6 +2,9 @@ const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
 const { pool } = require('../database/init');
+// Purchasing user groups (2026-10-09): the Buyer list only shows tasks whose
+// type is the current group's or unassigned. See routes/userGroups.js.
+const { getGroupFilter, arrayVisibleSql } = require('./userGroups');
 
 // GET /api/tasks - get all tasks with filters
 router.get('/', async (req, res) => {
@@ -11,6 +14,12 @@ router.get('/', async (req, res) => {
     let conditions = [];
     let params = [];
     let paramIndex = 1;
+
+    const groupFilter = await getGroupFilter(req);
+    if (groupFilter) {
+      conditions.push(arrayVisibleSql('t.types', paramIndex++));
+      params.push(groupFilter.blockedTypes);
+    }
 
     // types filter: task must contain ALL of the selected types (or ANY — here we use overlap &&)
     // Logic: if any selected type is in the task's types array, it matches

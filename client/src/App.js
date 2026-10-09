@@ -110,6 +110,11 @@ const ManagerPOReceivingHistoryDetail = lazyWithReload(() => import(/* webpackCh
 const ManagerTransferHistoryDetail = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerTransferHistoryDetail'));
 const ManagerNewArrival = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerNewArrival')); // Store → New Arrival, 2026-09-29
 const BuyerNewArrivalSettings = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerNewArrivalSettings')); // its rules, 2026-09-29
+// Purchasing user groups (2026-10-09, Hera): BuyerGroupGate wraps every /buyer
+// route (layout route below) and asks for a group when none is on record;
+// Settings → User Group edits the groups. See client/src/userGroup.js.
+const BuyerGroupGate = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './components/BuyerGroupGate'));
+const BuyerUserGroupSettings = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerUserGroupSettings'));
 
 // Shown while a section file is downloading. Plain "Loading..." text, not a
 // Polaris Spinner — see claude/UI_RULES_READ_FIRST.md rule 1.
@@ -130,8 +135,10 @@ function App() {
         <Routes>
           <Route path="/" element={<Home />} />
 
-          {/* Buyer */}
+          {/* Buyer — every route below sits inside the user-group gate (2026-10-09) */}
+          <Route element={<BuyerGroupGate />}>
           <Route path="/buyer" element={<BuyerHome />} />
+          <Route path="/buyer/settings/user-group" element={<BuyerUserGroupSettings />} />
           <Route path="/buyer/inventory-count" element={<BuyerInventoryCount />} />
           <Route path="/buyer/settings" element={<BuyerSettings />} />
           <Route path="/buyer/settings/new-arrival" element={<BuyerNewArrivalSettings />} />
@@ -174,6 +181,7 @@ function App() {
           <Route path="/buyer/po-receiving/box-po/ongoing" element={<BuyerBoxPOOngoing />} />
           <Route path="/buyer/po-receiving/box-po/past" element={<BuyerBoxPOPast />} />
           <Route path="/buyer/po-receiving/box-po/:id" element={<BuyerBoxPODetail />} />
+          </Route>
 
           {/* Warehouse */}
           <Route path="/warehouse" element={<WarehouseHome />} />

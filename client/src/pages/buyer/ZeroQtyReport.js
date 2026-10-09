@@ -6,6 +6,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import MultiSelectDropdown from '../../components/MultiSelectDropdown';
 import { useLocationMap } from '../shared/locationMap';
+import { useGroupContext } from '../../userGroup'; // Purchasing user groups, 2026-10-09
 
 // Location list: comes from the shared location map (pages/shared/locationMap.js,
 // 2026-09-24) with HQ filtered out — this page's hardcoded list never
@@ -68,6 +69,7 @@ function formatDate(dateStr) {
 
 function ZeroQtyReport() {
   const navigate = useNavigate();
+  const groupCtx = useGroupContext(); // user group → Types filter options, 2026-10-09
   const [reports, setReports]                   = useState([]);
   const [loading, setLoading]                   = useState(false);
   const [error, setError]                       = useState('');
@@ -264,7 +266,7 @@ function ZeroQtyReport() {
                 {/* 改动一：Types 多选，替换 Department */}
                 <MultiSelectDropdown
                   label="Types"
-                  options={TYPE_OPTIONS}
+                  options={groupCtx.filterTypes(TYPE_OPTIONS)}
                   selected={selectedTypes}
                   onChange={setSelectedTypes}
                   labelMap={TYPE_LABEL_MAP}

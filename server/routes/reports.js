@@ -3,6 +3,8 @@ const router = express.Router();
 const crypto = require('crypto');
 const { pool } = require('../database/init');
 const { getShopify, getSession, activeFilter } = require('../shopify');
+// Purchasing user groups (2026-10-09) — see routes/userGroups.js
+const { getGroupFilter, scalarVisibleSql } = require('./userGroups');
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ZERO QTY REPORTS  (buyer-side)
@@ -16,6 +18,13 @@ router.get('/', async (req, res) => {
     let conditions = [];
     let params = [];
     let paramIndex = 1;
+
+    // User group: only this group's / unassigned types (2026-10-09)
+    const groupFilter = await getGroupFilter(req);
+    if (groupFilter) {
+      conditions.push(scalarVisibleSql('type', paramIndex++));
+      params.push(groupFilter.blockedTypes);
+    }
 
     if (type && type !== 'ALL') {
       const types = type.split(',');

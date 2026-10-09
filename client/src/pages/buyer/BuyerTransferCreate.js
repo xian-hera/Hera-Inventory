@@ -5,9 +5,13 @@ import {
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import { fetchLocationMap } from '../shared/locationMap';
+import { useGroupContext } from '../../userGroup'; // Purchasing user groups, 2026-10-09
 
 function BuyerTransferCreate() {
   const navigate = useNavigate();
+  // User group (2026-10-09): the candidate tags below only list the current
+  // group's tags plus tags no group owns (Settings → Transfer → Tag of Types).
+  const groupCtx = useGroupContext();
   const csvInputRef = useRef(null);
   const orderCounter = useRef(0);
 
@@ -342,7 +346,7 @@ function BuyerTransferCreate() {
                         </div>
                         <Text variant="bodySm" tone="subdued">Press Enter to submit a tag</Text>
                         <InlineStack gap="150" wrap>
-                          {tagOptions.filter(t => !selectedTags.includes(t)).map(tag => (
+                          {groupCtx.filterTags(tagOptions).filter(t => !selectedTags.includes(t)).map(tag => (
                             <span key={tag} style={TAG_OPTION_STYLE} onClick={() => toggleTag(tag)}>
                               {tag}
                             </span>

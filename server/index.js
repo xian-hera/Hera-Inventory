@@ -54,6 +54,8 @@ app.use('/api/influencers', require('./routes/influencers'));
 app.use('/api/settings', require('./routes/settings'));
 // Per-account PIN + Store location memory (2026-09-29) — see routes/accountMemory.js
 app.use('/api/account-memory', require('./routes/accountMemory').router);
+// Purchasing user groups (2026-10-09) — see routes/userGroups.js
+app.use('/api/user-groups', require('./routes/userGroups'));
 app.use('/api/employees', require('./routes/employees'));
 app.use('/api/po-suppliers', require('./routes/poSuppliers'));
 app.use('/api/po-invoices', require('./routes/poInvoices'));

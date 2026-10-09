@@ -8,6 +8,7 @@ import {
 import { useNavigate, useParams } from 'react-router-dom';
 import InfoTooltip from '../../components/InfoTooltip';
 import { useLocationMap } from '../shared/locationMap';
+import { useGroupContext } from '../../userGroup'; // Purchasing user groups, 2026-10-09
 
 // Location list: comes from the shared location map (pages/shared/locationMap.js,
 // 2026-09-24). The hardcoded 19-code LOCATIONS constant that used to live here
@@ -101,6 +102,9 @@ function buildExportFilename(poNumberPart, supplierName, locationVal, dateStr) {
 function BuyerPOImportInvoice() {
   const navigate = useNavigate();
   const { invoiceId: invoiceIdParam } = useParams();
+  // User group (2026-10-09): the Supplier dropdown only offers suppliers that
+  // carry a type of the current group (or an unassigned type).
+  const groupCtx = useGroupContext();
 
   const [invoiceId, setInvoiceId] = useState(invoiceIdParam ? Number(invoiceIdParam) : null);
   const [loading, setLoading] = useState(!!invoiceIdParam);
@@ -375,9 +379,12 @@ function BuyerPOImportInvoice() {
     return () => document.removeEventListener('mousedown', handleClick);
   }, [supplierDropdownOpen]);
 
+  // (the group limit applies to the dropdown candidates only — allSuppliers
+  // itself stays complete so an already-chosen supplier is always found)
+  const groupSuppliers = allSuppliers.filter(s => groupCtx.typesVisible(s.types_carrying));
   const filteredSuppliers = supplierQuery
-    ? allSuppliers.filter(s => s.name.includes(supplierQuery))
-    : allSuppliers;
+    ? groupSuppliers.filter(s => s.name.includes(supplierQuery))
+    : groupSuppliers;
 
   // ── Card 2: line-item search dropdown ───────────────────────────────────
   // Same portal-positioning + outside-click-close pattern as the supplier

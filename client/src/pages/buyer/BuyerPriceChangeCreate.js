@@ -16,6 +16,7 @@ import MultiSelectDropdown from '../../components/MultiSelectDropdown';
 import { useLocationMap } from '../shared/locationMap';
 import { decodeCsvBuffer, cleanCell } from './importProducts/importModel';
 import { TASK_TYPES, taskTypeOf, excludedText } from '../shared/priceChangeShared';
+import { useGroupContext } from '../../userGroup'; // Purchasing user groups, 2026-10-09
 
 const NARROW = { maxWidth: '62.375rem', margin: '0 auto', width: '100%' };
 
@@ -38,6 +39,9 @@ function BuyerPriceChangeCreate() {
   const navigate = useNavigate();
   const fileRef = useRef(null);
   const { names: locationNames } = useLocationMap();
+  // User group (2026-10-09): the Type dropdown offers only the current group's
+  // types plus unassigned ones, on top of the page's own hidden-types setting.
+  const groupCtx = useGroupContext();
 
   // ── Start ──
   const [allTypes, setAllTypes] = useState([]);
@@ -204,7 +208,7 @@ function BuyerPriceChangeCreate() {
                 <Text variant="headingMd" as="h2">Start</Text>
                 <InlineStack gap="400" blockAlign="end" wrap>
                   <div style={{ minWidth: 220 }}>
-                    <MultiSelectDropdown label="Type" options={allTypes} selected={types} onChange={setTypes} placeholder="Choose" showSelectAll />
+                    <MultiSelectDropdown label="Type" options={groupCtx.filterTypes(allTypes)} selected={types} onChange={setTypes} placeholder="Choose" showSelectAll />
                   </div>
                   <div style={{ minWidth: 220 }}>
                     <MultiSelectDropdown

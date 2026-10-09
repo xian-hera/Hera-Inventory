@@ -2,10 +2,19 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import '@shopify/polaris/build/esm/styles.css';
 import App from './App';
+// Purchasing user groups (2026-10-09): the current group rides along on every
+// /api request as the X-User-Group header — see client/src/userGroup.js.
+import { groupHeaderValue } from './userGroup';
 
 // Global fetch interceptor for session reauth
 const originalFetch = window.fetch;
 window.fetch = async (...args) => {
+  const group = groupHeaderValue();
+  if (group && typeof args[0] === 'string' && args[0].startsWith('/api/')) {
+    const headers = new Headers((args[1] && args[1].headers) || {});
+    headers.set('X-User-Group', group);
+    args = [args[0], { ...(args[1] || {}), headers }];
+  }
   const response = await originalFetch(...args);
   if (response.status === 401) {
     const data = await response.clone().json().catch(() => ({}));

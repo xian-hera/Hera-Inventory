@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
 const { pool } = require('../database/init');
+// Purchasing user groups (2026-10-09) — see routes/userGroups.js
+const { getGroupFilter, scalarVisibleSql } = require('./userGroups');
 
 // Poll Shopify until a newly created file finishes processing and has a
 // permanent CDN url. Shopify's fileCreate is async: right after creation
@@ -187,6 +189,13 @@ router.get('/buyer', async (req, res) => {
     let conditions = [];
     let params = [];
     let idx = 1;
+
+    // User group: only this group's / unassigned types (2026-10-09)
+    const groupFilter = await getGroupFilter(req);
+    if (groupFilter) {
+      conditions.push(scalarVisibleSql('product_type', idx++));
+      params.push(groupFilter.blockedTypes);
+    }
 
     if (location && location !== 'ALL') {
       const locs = location.split(',');

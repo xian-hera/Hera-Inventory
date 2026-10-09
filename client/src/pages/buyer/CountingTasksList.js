@@ -6,6 +6,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import MultiSelectDropdown from '../../components/MultiSelectDropdown';
 import { useLocationMap } from '../shared/locationMap';
+import { useGroupContext } from '../../userGroup'; // Purchasing user groups, 2026-10-09
 
 // Location list: comes from the shared location map (pages/shared/locationMap.js,
 // 2026-09-24). The hardcoded 19-code LOCATIONS constant that used to live here
@@ -82,6 +83,7 @@ const TOTAL_COLUMNS = 7; // checkbox + No./Types/Location/Inaccurate/Date/Status
 
 function CountingTasksList() {
   const navigate = useNavigate();
+  const groupCtx = useGroupContext(); // user group → Types filter options, 2026-10-09
   const [tasks, setTasks]                         = useState([]);
   const [loading, setLoading]                     = useState(false);
   const [error, setError]                         = useState('');
@@ -172,7 +174,7 @@ function CountingTasksList() {
                 {/* 改动一：Types 多选，替换 Department 单选 */}
                 <MultiSelectDropdown
                   label="Types"
-                  options={TYPE_OPTIONS}
+                  options={groupCtx.filterTypes(TYPE_OPTIONS)}
                   selected={selectedTypes}
                   onChange={setSelectedTypes}
                   labelMap={TYPE_LABEL_MAP}

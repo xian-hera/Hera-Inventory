@@ -162,6 +162,10 @@ function BuyerSettings() {
             <Button size="large" fullWidth onClick={openModal}>
               Set PIN
             </Button>
+            {/* Purchasing user groups (2026-10-09, Hera) */}
+            <Button size="large" fullWidth onClick={() => navigate('/buyer/settings/user-group')}>
+              User Group
+            </Button>
             <Button size="large" fullWidth tone="critical" onClick={handleLogout}>
               Log out
             </Button>

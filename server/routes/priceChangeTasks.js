@@ -4,6 +4,9 @@ const { pool } = require('../database/init');
 // Scheduled price changes / reverse / task types / WIG part (2026-10-08,
 // Hera). Spec: claude/PRICE_CHANGE_SCHEDULE_REVERSE_SPEC.md
 const PC = require('../services/priceChange');
+// Purchasing user groups (2026-10-09): Buyer lists show only tasks whose
+// product_types are the current group's or unassigned. See routes/userGroups.js.
+const { getGroupFilter, arrayVisibleSql } = require('./userGroups');
 
 async function generateTaskNo(client) {
   const res = await client.query(
@@ -32,6 +35,9 @@ async function cleanupExpired() {
 router.get('/', async (req, res) => {
   try {
     await cleanupExpired();
+    const groupFilter = await getGroupFilter(req);
+    const gParams = groupFilter ? [groupFilter.blockedTypes] : [];
+    const gSql = groupFilter ? `AND ${arrayVisibleSql('t.product_types', 1)}` : '';
     const result = await pool.query(`
       SELECT
         t.*,
@@ -45,10 +51,10 @@ router.get('/', async (req, res) => {
       FROM price_change_tasks t
       LEFT JOIN price_change_items i ON i.task_id = t.id
       LEFT JOIN price_change_location_status ls ON ls.task_id = t.id
-      WHERE t.status = 'active'
+      WHERE t.status = 'active' ${gSql}
       GROUP BY t.id
       ORDER BY COALESCE(t.published_at, t.created_at) DESC
-    `);
+    `, gParams);
     res.json(result.rows);
   } catch (e) {
     console.error('GET /api/price-change-tasks error:', e);
@@ -307,15 +313,18 @@ router.post('/scheduled', async (req, res) => {
 // ── Scheduled Tasks card ──
 router.get('/scheduled', async (req, res) => {
   try {
+    const groupFilter = await getGroupFilter(req);
+    const gParams = groupFilter ? [groupFilter.blockedTypes] : [];
+    const gSql = groupFilter ? `AND ${arrayVisibleSql('t.product_types', 1)}` : '';
     const r = await pool.query(`
       SELECT t.id, t.task_no, t.note, t.locations, t.status, t.task_type, t.product_types, t.scheduled_at,
              t.publish_at, t.reverse_at, t.reverse_task_type, t.reverse_of, t.error,
              (SELECT ro.task_no FROM price_change_tasks ro WHERE ro.id = t.reverse_of) AS reverse_of_no,
              (SELECT COUNT(*)::int FROM price_change_items i WHERE i.task_id = t.id AND COALESCE(i.apply_status, 'pending') <> 'skipped') AS item_count
       FROM price_change_tasks t
-      WHERE t.status IN ('scheduled', 'applying', 'applied', 'failed')
+      WHERE t.status IN ('scheduled', 'applying', 'applied', 'failed') ${gSql}
       ORDER BY t.scheduled_at NULLS LAST, t.id
-    `);
+    `, gParams);
     res.json(r.rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -418,12 +427,15 @@ router.get('/archived', async (req, res) => {
       await pool.query('DELETE FROM price_change_items WHERE task_id = ANY($1)', [oldIds]);
       await pool.query('DELETE FROM price_change_tasks WHERE id = ANY($1)', [oldIds]);
     }
+    const groupFilter = await getGroupFilter(req);
+    const gParams = groupFilter ? [groupFilter.blockedTypes] : [];
+    const gSql = groupFilter ? `AND ${arrayVisibleSql('t.product_types', 1)}` : '';
     const r = await pool.query(`
       SELECT t.*,
         (SELECT COUNT(*)::int FROM price_change_items i WHERE i.task_id = t.id AND (i.apply_status IS NULL OR i.apply_status = 'done')) AS item_count
-      FROM price_change_tasks t WHERE t.status = 'archived'
+      FROM price_change_tasks t WHERE t.status = 'archived' ${gSql}
       ORDER BY COALESCE(t.archived_at, t.created_at) DESC
-    `);
+    `, gParams);
     res.json(r.rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

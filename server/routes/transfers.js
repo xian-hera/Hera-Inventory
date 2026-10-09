@@ -3,6 +3,9 @@ const router = express.Router();
 const crypto = require('crypto');
 const { pool } = require('../database/init');
 const { getShopify, getSession, activeFilter } = require('../shopify');
+// Purchasing user groups (2026-10-09): Buyer Transfer lists follow the tag →
+// types mapping (Tag of Types) and the user's group. See routes/userGroups.js.
+const { getGroupFilter, arrayVisibleSql } = require('./userGroups');
 
 const RECENT_LIMIT = 20;
 const HISTORY_LIMIT = 200;
@@ -526,14 +529,15 @@ router.post('/', async (req, res) => {
 // writes.
 router.get('/recent', async (req, res) => {
   try {
+    const groupFilter = await getGroupFilter(req);
     const result = await pool.query(
       `SELECT id, transfer_no, shopify_transfer_id, shopify_transfer_name, shopify_transfer_url,
               from_location, to_location, committed_at, auto_committed
        FROM transfers
-       WHERE status = 'archived'
+       WHERE status = 'archived'${groupFilter ? ` AND ${arrayVisibleSql('tags', 2)}` : ''}
        ORDER BY committed_at DESC
        LIMIT $1`,
-      [RECENT_LIMIT]
+      groupFilter ? [RECENT_LIMIT, groupFilter.hiddenTags] : [RECENT_LIMIT]
     );
     res.json(result.rows);
   } catch (e) {
@@ -551,6 +555,12 @@ router.get('/history', async (req, res) => {
              from_location, to_location, committed_at, auto_committed
       FROM transfers
       WHERE status = 'archived'`;
+    // User group (2026-10-09): hide transfers whose tags all belong to other groups
+    const groupFilter = await getGroupFilter(req);
+    if (groupFilter) {
+      params.push(groupFilter.hiddenTags);
+      query += ` AND ${arrayVisibleSql('tags', params.length)}`;
+    }
     if (q) {
       params.push(`%${q}%`);
       query += ` AND id IN (
@@ -587,11 +597,14 @@ router.get('/ongoing', async (req, res) => {
     // each transfer's tags — added to this SELECT alongside the columns the
     // page already used. `tags` is a TEXT[] on the transfers table (set at
     // Create Transfer, see POST / above); pg returns it as a JS array.
+    const groupFilter = await getGroupFilter(req);
     const result = await pool.query(
       `SELECT id, transfer_no, shopify_transfer_id, shopify_transfer_name, shopify_transfer_url,
               from_location, to_location, status, created_at, on_hold, auto_committed, tags
        FROM transfers
-       ORDER BY created_at DESC`
+       ${groupFilter ? `WHERE ${arrayVisibleSql('tags', 1)}` : ''}
+       ORDER BY created_at DESC`,
+      groupFilter ? [groupFilter.hiddenTags] : []
     );
     res.json(result.rows);
   } catch (e) {
@@ -700,7 +713,13 @@ router.get('/manager/home', async (req, res) => {
 
 router.get('/tags', async (req, res) => {
   try {
-    const result = await pool.query('SELECT id, tag FROM transfer_tag_pool ORDER BY tag ASC');
+    // `locked` (2026-10-09): the tag is used by Tag of Types, so it cannot be
+    // deleted from the pool (no red × in BuyerTransferSettings).
+    const result = await pool.query(
+      `SELECT p.id, p.tag,
+              EXISTS (SELECT 1 FROM transfer_tag_types tt WHERE LOWER(tt.tag) = LOWER(p.tag)) AS locked
+       FROM transfer_tag_pool p ORDER BY p.tag ASC`
+    );
     res.json(result.rows);
   } catch (e) {
     console.error('GET /api/transfers/tags error:', e);
@@ -729,11 +748,95 @@ router.delete('/tags/:tagId', async (req, res) => {
     // Deleting a Tag pool entry never touches published transfers (spec doc
     // section 3): the pool is only ever read as Create Transfer's candidate
     // list, never linked back to an existing transfer's own tags.
+    // 2026-10-09: EXCEPT a tag used by Tag of Types is locked — refuse here too
+    // (the frontend just hides the ×; this is the real guard).
+    const locked = await pool.query(
+      `SELECT 1 FROM transfer_tag_pool p JOIN transfer_tag_types tt ON LOWER(tt.tag) = LOWER(p.tag)
+       WHERE p.id = $1 LIMIT 1`,
+      [req.params.tagId]
+    );
+    if (locked.rows.length > 0) {
+      return res.status(409).json({ error: 'This tag is used in Tag of Types. Remove it there first.' });
+    }
     await pool.query('DELETE FROM transfer_tag_pool WHERE id = $1', [req.params.tagId]);
     res.json({ success: true });
   } catch (e) {
     console.error('DELETE /api/transfers/tags/:tagId error:', e);
     res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── Tag of Types (BuyerTransferSettings.js, 2026-10-09) ────────────────────
+// Which product types a Transfer tag stands for — lets Transfers follow the
+// Purchasing user groups. GET → [{ id, tag, types }]. PUT replaces the whole
+// list (card Save): body { items: [{ id?, tag, types: [] }] }. Every tag saved
+// here is also added to the tag pool when missing (case-insensitive); removing
+// or renaming a tag here leaves the pool entry in place (it just unlocks).
+router.get('/tag-types', async (req, res) => {
+  try {
+    const r = await pool.query('SELECT id, tag, types FROM transfer_tag_types ORDER BY LOWER(tag) ASC, id ASC');
+    res.json(r.rows);
+  } catch (e) {
+    console.error('GET /api/transfers/tag-types error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.put('/tag-types', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const input = Array.isArray(req.body && req.body.items) ? req.body.items : null;
+    if (!input) return res.status(400).json({ error: 'items required' });
+    const cleaned = [];
+    const seen = new Set();
+    for (const it of input) {
+      const tag = String((it && it.tag) || '').trim();
+      if (!tag) return res.status(400).json({ error: 'Tag is required.' });
+      if (tag.length > 20) return res.status(400).json({ error: 'Tag must be 20 characters or fewer.' });
+      if (seen.has(tag.toLowerCase())) return res.status(400).json({ error: `Tag "${tag}" is used twice.` });
+      seen.add(tag.toLowerCase());
+      const types = [];
+      const typeSeen = new Set();
+      for (const t of Array.isArray(it.types) ? it.types : []) {
+        const tt = String(t || '').trim();
+        if (!tt || typeSeen.has(tt.toLowerCase())) continue;
+        typeSeen.add(tt.toLowerCase());
+        types.push(tt);
+      }
+      if (types.length === 0) return res.status(400).json({ error: `Tag "${tag}" needs at least one type.` });
+      cleaned.push({ id: it.id ? parseInt(it.id, 10) : null, tag, types });
+    }
+
+    await client.query('BEGIN');
+    const existing = (await client.query('SELECT id FROM transfer_tag_types')).rows;
+    const existingIds = new Set(existing.map((r) => r.id));
+    const keepIds = new Set(cleaned.filter((c) => c.id && existingIds.has(c.id)).map((c) => c.id));
+    const removed = existing.filter((r) => !keepIds.has(r.id)).map((r) => r.id);
+    if (removed.length) await client.query('DELETE FROM transfer_tag_types WHERE id = ANY($1::int[])', [removed]);
+    // Move updated rows to temporary names first so swapping two names can't
+    // collide on the unique LOWER(tag) index.
+    for (const c of cleaned.filter((x) => x.id && existingIds.has(x.id))) {
+      await client.query('UPDATE transfer_tag_types SET tag = $1 WHERE id = $2', [`__tmp_${c.id}_${Date.now()}`, c.id]);
+    }
+    for (const c of cleaned) {
+      if (c.id && existingIds.has(c.id)) {
+        await client.query('UPDATE transfer_tag_types SET tag = $1, types = $2 WHERE id = $3', [c.tag, c.types, c.id]);
+      } else {
+        await client.query('INSERT INTO transfer_tag_types (tag, types) VALUES ($1, $2)', [c.tag, c.types]);
+      }
+      const inPool = await client.query('SELECT 1 FROM transfer_tag_pool WHERE LOWER(tag) = LOWER($1)', [c.tag]);
+      if (inPool.rows.length === 0) await client.query('INSERT INTO transfer_tag_pool (tag) VALUES ($1)', [c.tag]);
+    }
+    await client.query('COMMIT');
+    const r = await pool.query('SELECT id, tag, types FROM transfer_tag_types ORDER BY LOWER(tag) ASC, id ASC');
+    res.json(r.rows);
+  } catch (e) {
+    try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
+    console.error('PUT /api/transfers/tag-types error:', e);
+    if (e && e.code === '23505') return res.status(400).json({ error: 'Tag names must be unique.' });
+    res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
   }
 });
 
