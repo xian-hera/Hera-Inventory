@@ -252,7 +252,7 @@ function BuyerWigDemo() {
   ];
 
   return (
-    <Page title="Wig DEMO" backAction={{ onAction: () => navigate('/buyer') }}>
+    <Page title="Demo Wig" backAction={{ onAction: () => navigate('/buyer') }}>
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">

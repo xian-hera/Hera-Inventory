@@ -5,6 +5,7 @@ import {
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import { fetchLocationMap } from '../shared/locationMap';
+import FulfilCountInfo from '../shared/FulfilCountInfo';
 // Store location: remembered per Shopify account, loaded before this page
 // renders by ManagerLocationGate (2026-09-29) — replaces reading
 // localStorage 'managerLocation' directly. See client/src/accountMemory.js.
@@ -235,6 +236,7 @@ function ManagerZeroQtyReport() {
       const existing = items.find(i => i.barcode === data.barcode);
       setPopupData({ ...data, locationId: loc.id });
       setPopupSoh(data.soh ?? null);
+      setPopupCommitted(data.committed ?? 0);
       setPopupScanHistory(existing?.scan_history || []);
       setCountInput('');
     } catch (e) {
@@ -500,11 +502,10 @@ function ManagerZeroQtyReport() {
                           fontWeight: 'bold', cursor: 'pointer', width: '100%' }}>
                           System {popupSoh}　Correct
                         </button>
-                        {popupCommitted > 0 && (
-                          <div style={{ textAlign: 'center', fontSize: '13px', color: '#e67c00', fontWeight: '500' }}>
-                            {popupCommitted} committed
-                          </div>
-                        )}
+                        {/* Fulfillment-location info (2026-10): committed/picked only
+                            come back for the location set in Online Settings; it
+                            replaces the old one-line "N committed" text. */}
+                        <FulfilCountInfo soh={popupSoh} committed={popupCommitted} picked={popupData?.picked ?? 0} />
                         <button
                           onClick={() => openHistory(popupData.barcode)}
                           disabled={historyLoading}

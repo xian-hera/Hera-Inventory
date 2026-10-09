@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Page, Layout, Card, Button, BlockStack, InlineStack,
-  Checkbox, Badge, Text, Banner, Spinner
+  Checkbox, Badge, Text, Banner
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import MultiSelectDropdown from '../../components/MultiSelectDropdown';
+import DateRangeFilter from '../../components/DateRangeFilter';
 import { useLocationMap } from '../shared/locationMap';
 import { useGroupContext } from '../../userGroup'; // Purchasing user groups, 2026-10-09
 
@@ -14,7 +15,9 @@ import { useGroupContext } from '../../userGroup'; // Purchasing user groups, 20
 // sort below) was removed; the shared map is already in that same
 // MTL/EDM/CAL/OTT/QC/HQ order.
 
-const STATUS_OPTIONS = ['counting','reviewing','committed','auto_committed','draft','archived'];
+// 2026-10-09 (Hera): committed / auto_committed / draft removed from the
+// Status filter dropdown — only counting / reviewing / archived are offered.
+const STATUS_OPTIONS = ['counting','reviewing','archived'];
 
 // 改动一：9个 Type，含缩写显示
 const TYPE_OPTIONS = [
@@ -89,8 +92,8 @@ function CountingTasksList() {
   const [error, setError]                         = useState('');
   const [selectedTypes, setSelectedTypes]         = useState([]);
   const [selectedLocations, setSelectedLocations] = useState([]);
-  const [selectedStatuses, setSelectedStatuses]   = useState(['counting','reviewing','committed','auto_committed','draft']);
-  const [date, setDate]                           = useState('ALL');
+  const [selectedStatuses, setSelectedStatuses]   = useState(['counting','reviewing']);
+  const [dateRange, setDateRange]                 = useState(null); // null = ALL, else { from, to } (YYYY-MM-DD)
   const [selectedIds, setSelectedIds]             = useState([]);
   const { names: locationNames } = useLocationMap();
   const locationOrder = useMemo(() => new Map(locationNames.map((loc, i) => [loc, i])), [locationNames]);
@@ -103,7 +106,7 @@ function CountingTasksList() {
       if (selectedTypes.length > 0) params.append('types', selectedTypes.join(','));
       if (selectedLocations.length > 0) params.append('location', selectedLocations.join(','));
       if (selectedStatuses.length > 0) params.append('status', selectedStatuses.join(','));
-      if (date !== 'ALL') params.append('date', date);
+      if (dateRange) { params.append('dateFrom', dateRange.from); params.append('dateTo', dateRange.to); }
       const res = await fetch(`/api/tasks?${params.toString()}`);
       const data = await res.json();
       setTasks(data);
@@ -112,7 +115,7 @@ function CountingTasksList() {
     } finally {
       setLoading(false);
     }
-  }, [selectedTypes, selectedLocations, selectedStatuses, date]);
+  }, [selectedTypes, selectedLocations, selectedStatuses, dateRange]);
 
   useEffect(() => { fetchTasks(); }, [fetchTasks]);
 
@@ -191,19 +194,8 @@ function CountingTasksList() {
                   selected={selectedStatuses}
                   onChange={setSelectedStatuses}
                 />
-                <BlockStack gap="100">
-                  <Text variant="bodySm" tone="subdued">Date</Text>
-                  <select
-                    value={date}
-                    onChange={e => setDate(e.target.value)}
-                    style={{ padding: '6px 10px', border: '1px solid #c9cccf', borderRadius: '6px', fontSize: '14px' }}
-                  >
-                    <option value="ALL">ALL</option>
-                    <option value="today">Today</option>
-                    <option value="7days">7 days</option>
-                    <option value="30days">30 days</option>
-                  </select>
-                </BlockStack>
+                {/* Date range (2026-10-09): replaces the old ALL / Today / 7 days / 30 days select */}
+                <DateRangeFilter label="Date" value={dateRange} onChange={setDateRange} />
               </InlineStack>
             </Card>
 
@@ -226,7 +218,7 @@ function CountingTasksList() {
 
                 {loading ? (
                   <div style={{ padding: '16px' }}>
-                    <InlineStack align="center"><Spinner /></InlineStack>
+                    <InlineStack align="center"><Text tone="subdued">Loading...</Text></InlineStack>
                   </div>
                 ) : displayedTasks.length === 0 ? (
                   <div style={{ padding: '16px' }}>

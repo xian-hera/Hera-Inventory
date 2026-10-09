@@ -216,4 +216,52 @@ router.get('/pin/list', async (req, res) => {
   }
 });
 
+// ── Online Order fulfillment location (2026-10, Hera) ─────────────────────────
+// The ONE location that ships web orders. Only when that location is being
+// counted does the manager's count modal show Committed / Picked / Expected on
+// shelf (see GET /api/shopify/inventory). Stored in app_settings under
+// 'online_fulfillment_location' as { locationId, name }; no row = not set
+// (nobody sees the extra info). Name is kept alongside the id for display.
+// GET → { locationId, name } (both null when not set)
+router.get('/fulfillment-location', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT value FROM app_settings WHERE key = 'online_fulfillment_location'`
+    );
+    const v = rows[0]?.value || {};
+    res.json({ locationId: v.locationId || null, name: v.name || null });
+  } catch (e) {
+    console.error('GET /api/settings/fulfillment-location error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PUT body: { locationId: '<shopify id>' | null } — null clears the setting.
+// The id must exist in location_map (the shared location list).
+router.put('/fulfillment-location', async (req, res) => {
+  try {
+    const locationId = req.body && req.body.locationId ? String(req.body.locationId) : null;
+    if (!locationId) {
+      await pool.query(`DELETE FROM app_settings WHERE key = 'online_fulfillment_location'`);
+      return res.json({ locationId: null, name: null });
+    }
+    const { rows } = await pool.query(
+      `SELECT location_name FROM location_map WHERE shopify_location_id = $1 LIMIT 1`,
+      [locationId]
+    );
+    if (!rows.length) return res.status(400).json({ error: 'Unknown location.' });
+    const value = { locationId, name: rows[0].location_name };
+    await pool.query(
+      `INSERT INTO app_settings (key, value)
+       VALUES ('online_fulfillment_location', $1)
+       ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()`,
+      [JSON.stringify(value)]
+    );
+    res.json(value);
+  } catch (e) {
+    console.error('PUT /api/settings/fulfillment-location error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = router;

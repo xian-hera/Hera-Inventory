@@ -5,6 +5,7 @@ import {
 } from '@shopify/polaris';
 import { useNavigate, useParams } from 'react-router-dom';
 import { fetchLocationMap } from '../shared/locationMap';
+import FulfilCountInfo from '../shared/FulfilCountInfo';
 import useKeyboardInset from '../../components/useKeyboardInset';
 // Store location: remembered per Shopify account, loaded before this page
 // renders by ManagerLocationGate (2026-09-29) — replaces reading
@@ -81,6 +82,7 @@ function ManagerTaskDetail() {
   const [popupItem, setPopupItem]           = useState(null);
   const [popupSoh, setPopupSoh]             = useState(null);
   const [popupCommitted, setPopupCommitted] = useState(0);
+  const [popupPicked, setPopupPicked]       = useState(0);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [countInput, setCountInput]         = useState('');
   const [countWarning, setCountWarning]     = useState('');
@@ -203,6 +205,7 @@ function ManagerTaskDetail() {
       const data = await res.json();
       setPopupSoh(data.soh ?? null);
       setPopupCommitted(data.committed ?? 0);
+      setPopupPicked(data.picked ?? 0);
       setTask(prev => ({
         ...prev,
         items: prev.items.map(i => i.id === item.id ? { ...i, soh: data.soh ?? null } : i),
@@ -235,6 +238,7 @@ function ManagerTaskDetail() {
     setPopupItem(null);
     setPopupSoh(null);
     setPopupCommitted(0);
+    setPopupPicked(0);
     setCountInput('');
     setCountWarning('');
     oversizeValueRef.current = null;
@@ -933,11 +937,11 @@ function ManagerTaskDetail() {
                       </button>
                     </div>
 
-                    {popupCommitted > 0 && (
-                      <div style={{ textAlign: 'center', fontSize: '13px', color: '#e67c00', fontWeight: '500' }}>
-                        {popupCommitted} committed
-                      </div>
-                    )}
+                    {/* Fulfillment-location info (2026-10): the server only sends
+                        committed/picked for the location set in Online Settings,
+                        so every other location keeps showing nothing here. It
+                        replaces the old one-line "N committed" text. */}
+                    <FulfilCountInfo soh={popupSoh} committed={popupCommitted} picked={popupPicked} />
                     <button
                       onClick={() => openHistory(popupItem.barcode)}
                       disabled={historyLoading}

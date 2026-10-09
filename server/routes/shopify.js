@@ -403,6 +403,43 @@ router.get('/inventory', async (req, res) => {
     const result = await fetchInventoryForBarcode(client, barcode, locationId);
     if (!result) return res.status(404).json({ error: 'Product not found' });
 
+    // Fulfillment location extras (2026-10, Hera): only when the location being
+    // counted is the one chosen in Online → Settings → "Fulfillment location",
+    // also return that location's Committed quantity and the variant's
+    // custom.picked metafield (written by Hera Fulfiller) so the manager's count
+    // modal can show Available / Committed / Picked / Expected on shelf.
+    // Any failure here is swallowed — the plain answer above is still returned.
+    try {
+      const { pool } = require('../database/init');
+      const { rows } = await pool.query(
+        `SELECT value FROM app_settings WHERE key = 'online_fulfillment_location'`
+      );
+      const fulfilId = rows[0]?.value?.locationId;
+      if (fulfilId && fulfilId === decodeURIComponent(locationId)) {
+        const extra = await shopifyRequest(client, `
+          query getCommittedPicked($id: ID!, $loc: ID!) {
+            productVariant(id: $id) {
+              metafield(namespace: "custom", key: "picked") { value }
+              inventoryItem {
+                inventoryLevel(locationId: $loc) {
+                  quantities(names: ["committed"]) { name quantity }
+                }
+              }
+            }
+          }
+        `, { id: result.variantId, loc: fulfilId });
+        const v = extra?.data?.productVariant;
+        const committed = v?.inventoryItem?.inventoryLevel?.quantities
+          ?.find(q => q.name === 'committed')?.quantity ?? 0;
+        const picked = parseInt(v?.metafield?.value, 10);
+        result.fulfillmentLocation = true;
+        result.committed = committed;
+        result.picked = Number.isFinite(picked) ? picked : 0;
+      }
+    } catch (e) {
+      console.error('[inventory] fulfillment extras failed:', e.message);
+    }
+
     res.json(result);
   } catch (e) {
     console.error('[inventory] error:', e.message, e.stack);

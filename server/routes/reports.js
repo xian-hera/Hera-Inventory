@@ -14,7 +14,7 @@ const { getGroupFilter, scalarVisibleSql } = require('./userGroups');
 router.get('/', async (req, res) => {
   try {
     // 改动一：department → type
-    const { type, location, status, date } = req.query;
+    const { type, location, status, date, dateFrom, dateTo } = req.query;
     let conditions = [];
     let params = [];
     let paramIndex = 1;
@@ -47,6 +47,19 @@ router.get('/', async (req, res) => {
       else if (date === '7days') interval = '7 days';
       else if (date === '30days') interval = '30 days';
       if (interval) conditions.push(`submitted_at >= NOW() - INTERVAL '${interval}'`);
+    }
+
+    // Date range (2026-10-09): dateFrom / dateTo = YYYY-MM-DD, both inclusive,
+    // compared against the row's America/Toronto calendar day. The old
+    // date=today/7days/30days param above is kept for any other caller.
+    const isYmd = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+    if (isYmd(dateFrom)) {
+      conditions.push(`(submitted_at AT TIME ZONE 'America/Toronto')::date >= $${paramIndex++}::date`);
+      params.push(dateFrom);
+    }
+    if (isYmd(dateTo)) {
+      conditions.push(`(submitted_at AT TIME ZONE 'America/Toronto')::date <= $${paramIndex++}::date`);
+      params.push(dateTo);
     }
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';

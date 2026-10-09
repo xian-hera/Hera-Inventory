@@ -184,7 +184,7 @@ router.get('/', async (req, res) => {
 // GET /api/stock-losses/buyer
 router.get('/buyer', async (req, res) => {
   try {
-    const { location, status, reason, date, types } = req.query;
+    const { location, status, reason, date, types, dateFrom, dateTo } = req.query;
 
     let conditions = [];
     let params = [];
@@ -219,6 +219,19 @@ router.get('/buyer', async (req, res) => {
       if (interval) {
         conditions.push(`submitted_at >= NOW() - INTERVAL '${interval}'`);
       }
+    }
+
+    // Date range (2026-10-09): dateFrom / dateTo = YYYY-MM-DD, both inclusive,
+    // compared against the row's America/Toronto calendar day. The old
+    // date=today/7days/30days param above is kept for any other caller.
+    const isYmd = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+    if (isYmd(dateFrom)) {
+      conditions.push(`(submitted_at AT TIME ZONE 'America/Toronto')::date >= $${idx++}::date`);
+      params.push(dateFrom);
+    }
+    if (isYmd(dateTo)) {
+      conditions.push(`(submitted_at AT TIME ZONE 'America/Toronto')::date <= $${idx++}::date`);
+      params.push(dateTo);
     }
     if (types && types !== 'ALL') {
       const typeList = types.split(',');

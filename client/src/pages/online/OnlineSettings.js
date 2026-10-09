@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
-  Page, Layout, Button, BlockStack, TextField, Banner, Modal, Text
+  Page, Layout, Button, BlockStack, TextField, Banner, Modal, Text, Card, Select
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import { logoutPin } from '../../accountMemory';
+import { useLocationMap } from '../shared/locationMap';
 
 // Online Settings — same style, similar functionality as CRMSettings.js
 // (2026-09-21, Hera): Set PIN + Log out only, no "Sync Employees from
@@ -25,6 +26,57 @@ const PIN_LIST_SECTIONS = [
 
 function OnlineSettings() {
   const navigate = useNavigate();
+
+  // ── Fulfillment location card (2026-10, Hera) ──────────────────────────────
+  // The one location that ships web orders. Only when that location is being
+  // counted does the manager's count modal show Committed / Picked / Expected
+  // on shelf. Options come from the shared location map; '' = "Null" (clears).
+  const { locations: fulfilLocations } = useLocationMap();
+  const [fulfilLoading, setFulfilLoading] = useState(true);
+  const [fulfilSaved, setFulfilSaved]     = useState('');   // id on the server ('' = none)
+  const [fulfilValue, setFulfilValue]     = useState('');   // current selection
+  const [fulfilSaving, setFulfilSaving]   = useState(false);
+  const [fulfilMsg, setFulfilMsg]         = useState(null); // { tone, text }
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res  = await fetch('/api/settings/fulfillment-location');
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to load.');
+        if (!cancelled) {
+          setFulfilSaved(data.locationId || '');
+          setFulfilValue(data.locationId || '');
+        }
+      } catch (e) {
+        if (!cancelled) setFulfilMsg({ tone: 'critical', text: e.message });
+      } finally {
+        if (!cancelled) setFulfilLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const saveFulfil = async () => {
+    setFulfilSaving(true);
+    setFulfilMsg(null);
+    try {
+      const res  = await fetch('/api/settings/fulfillment-location', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ locationId: fulfilValue || null }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Failed to save.');
+      setFulfilSaved(data.locationId || '');
+      setFulfilMsg({ tone: 'success', text: 'Saved.' });
+    } catch (e) {
+      setFulfilMsg({ tone: 'critical', text: e.message });
+    } finally {
+      setFulfilSaving(false);
+    }
+  };
 
   // ── PIN modal state ────────────────────────────────────────────────────────
   const [showModal, setShowModal]       = useState(false);
@@ -153,6 +205,37 @@ function OnlineSettings() {
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">
+            <Card>
+              <BlockStack gap="300">
+                <Text variant="headingMd" as="h2">Fulfillment location</Text>
+                {fulfilMsg && (
+                  <Banner tone={fulfilMsg.tone} onDismiss={() => setFulfilMsg(null)}>{fulfilMsg.text}</Banner>
+                )}
+                {fulfilLoading ? (
+                  <Text tone="subdued">Loading...</Text>
+                ) : (
+                  <>
+                    <Select
+                      label="Location"
+                      options={[
+                        { label: 'Null', value: '' },
+                        ...fulfilLocations.map(l => ({ label: l.name, value: l.id })),
+                      ]}
+                      value={fulfilValue}
+                      onChange={(v) => { setFulfilValue(v); setFulfilMsg(null); }}
+                    />
+                    <Button
+                      variant="primary"
+                      onClick={saveFulfil}
+                      loading={fulfilSaving}
+                      disabled={fulfilValue === fulfilSaved}
+                    >
+                      Save
+                    </Button>
+                  </>
+                )}
+              </BlockStack>
+            </Card>
             <Button size="large" fullWidth onClick={openModal}>
               Set PIN
             </Button>

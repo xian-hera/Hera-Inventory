@@ -210,10 +210,10 @@ function BuyerHome() {
               </span>
             </Button>
 
-            {/* Wig - Demo (2026-09-17, Hera: rename "Wig DEMO" to "Wig - Demo"
-                and move it to just before Settings) */}
+            {/* Demo Wig (2026-09-17, Hera: rename "Wig DEMO" to "Wig - Demo"
+                and move it to just before Settings; 2026-10-09: renamed to "Demo Wig") */}
             <Button size="large" fullWidth onClick={() => navigate('/buyer/wig-demo')}>
-              Wig - Demo
+              Demo Wig
             </Button>
 
             {/* Settings */}

@@ -3,7 +3,7 @@ import ReactDOM from 'react-dom';
 import Papa from 'papaparse';
 import {
   Page, Layout, Card, Button, ButtonGroup, BlockStack, InlineStack, Text, TextField,
-  Banner, Badge, Checkbox, Spinner, Popover, ActionList, Modal
+  Banner, Badge, Checkbox, Popover, ActionList, Modal
 } from '@shopify/polaris';
 import { useNavigate, useParams } from 'react-router-dom';
 import InfoTooltip from '../../components/InfoTooltip';
@@ -342,7 +342,9 @@ function BuyerPOImportInvoice() {
 
   // ── Card: supplier dropdown ──────────────────────────────────────────────
   // Shows the full supplier list on open; typing filters that list locally
-  // (case-sensitive, matching the field's own placeholder). The dropdown is
+  // (2026-10-09, Hera: case-INsensitive prefix match — typing "A" narrows
+  // to names starting with A, "AB" to names starting with AB; it used to be
+  // a case-sensitive "contains" match). The dropdown is
   // rendered via a portal into document.body (positioned with
   // getBoundingClientRect, same pattern as MultiSelectDropdown) so it floats
   // above the Card instead of being clipped by it.
@@ -383,7 +385,7 @@ function BuyerPOImportInvoice() {
   // itself stays complete so an already-chosen supplier is always found)
   const groupSuppliers = allSuppliers.filter(s => groupCtx.typesVisible(s.types_carrying));
   const filteredSuppliers = supplierQuery
-    ? groupSuppliers.filter(s => s.name.includes(supplierQuery))
+    ? groupSuppliers.filter(s => (s.name || '').toLowerCase().startsWith(supplierQuery.trimStart().toLowerCase()))
     : groupSuppliers;
 
   // ── Card 2: line-item search dropdown ───────────────────────────────────
@@ -1067,7 +1069,7 @@ function BuyerPOImportInvoice() {
   if (loading) {
     return (
       <Page title="Create New Purchase Order" backAction={{ onAction: () => navigate(backPath) }}>
-        <Layout><Layout.Section><InlineStack align="center"><Spinner /></InlineStack></Layout.Section></Layout>
+        <Layout><Layout.Section><InlineStack align="center"><Text tone="subdued">Loading...</Text></InlineStack></Layout.Section></Layout>
       </Page>
     );
   }
@@ -1190,7 +1192,6 @@ function BuyerPOImportInvoice() {
                     <div ref={supplierFieldRef} style={{ minWidth: 220, position: 'relative' }}>
                       <TextField
                         label="Supplier"
-                        placeholder="case sensitive"
                         value={supplierQuery}
                         onChange={handleSupplierQueryChange}
                         onFocus={openSupplierDropdown}
@@ -1250,7 +1251,7 @@ function BuyerPOImportInvoice() {
 
                     <div style={{ minWidth: 160 }}>
                       <TextField
-                        label="Invoice date"
+                        label="Invoice Date"
                         type="date"
                         value={invoiceDate}
                         onChange={handleDateChange}
@@ -1261,7 +1262,7 @@ function BuyerPOImportInvoice() {
 
                     <div style={{ paddingTop: '22px' }}>
                       <Button variant="primary" onClick={handleConfirm} disabled={disabled || !supplierId || !location}>
-                        Confirm to continue
+                        Confirm
                       </Button>
                     </div>
                   </InlineStack>
@@ -1305,7 +1306,7 @@ function BuyerPOImportInvoice() {
                     disabled={disabled || !itemsEditable}
                   />
                 </div>
-                {savingReference && <Spinner size="small" />}
+                {savingReference && <Text tone="subdued" variant="bodySm">Saving...</Text>}
                 <div style={{ width: 160 }}>
                   <TextField
                     label="Invoice Date"
@@ -1316,7 +1317,7 @@ function BuyerPOImportInvoice() {
                     disabled={disabled || !itemsEditable}
                   />
                 </div>
-                {savingDate && <Spinner size="small" />}
+                {savingDate && <Text tone="subdued" variant="bodySm">Saving...</Text>}
               </InlineStack>
             )}
 

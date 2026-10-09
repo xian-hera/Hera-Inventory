@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Page, Layout, Card, Button, BlockStack, InlineStack,
-  Text, Checkbox, Banner, Badge, Spinner
+  Text, Checkbox, Banner, Badge
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import MultiSelectDropdown from '../../components/MultiSelectDropdown';
+import DateRangeFilter from '../../components/DateRangeFilter';
 import { useLocationMap } from '../shared/locationMap';
 import { useGroupContext } from '../../userGroup'; // Purchasing user groups, 2026-10-09
 
@@ -104,7 +105,7 @@ function BuyerStockLosses() {
   const { names: locationNames } = useLocationMap();
   const [selectedStatuses, setSelectedStatuses] = useState(['reviewing', 'committed']);
   const [selectedReason, setSelectedReason]     = useState('ALL');
-  const [date, setDate]                         = useState('ALL');
+  const [dateRange, setDateRange]               = useState(null); // null = ALL, else { from, to } (YYYY-MM-DD)
 
   const [selectedIds, setSelectedIds]           = useState([]);
   const [customReasons, setCustomReasons]       = useState([]);
@@ -125,7 +126,7 @@ function BuyerStockLosses() {
       if (selectedLocations.length > 0) params.append('location', selectedLocations.join(','));
       if (selectedStatuses.length > 0)  params.append('status', selectedStatuses.join(','));
       if (selectedReason !== 'ALL')     params.append('reason', selectedReason);
-      if (date !== 'ALL')               params.append('date', date);
+      if (dateRange) { params.append('dateFrom', dateRange.from); params.append('dateTo', dateRange.to); }
 
       const res = await fetch(`/api/stock-losses/buyer?${params.toString()}`);
       const data = await res.json();
@@ -136,7 +137,7 @@ function BuyerStockLosses() {
     } finally {
       setLoading(false);
     }
-  }, [selectedTypes, selectedLocations, selectedStatuses, selectedReason, date]);
+  }, [selectedTypes, selectedLocations, selectedStatuses, selectedReason, dateRange]);
 
   useEffect(() => { fetchEntries(); }, [fetchEntries]);
 
@@ -354,19 +355,8 @@ function BuyerStockLosses() {
                     ))}
                   </select>
                 </BlockStack>
-                <BlockStack gap="100">
-                  <Text variant="bodySm" tone="subdued">Date</Text>
-                  <select
-                    value={date}
-                    onChange={e => setDate(e.target.value)}
-                    style={{ padding: '6px 10px', border: '1px solid #c9cccf', borderRadius: '6px', fontSize: '14px' }}
-                  >
-                    <option value="ALL">ALL</option>
-                    <option value="today">Today</option>
-                    <option value="7days">7 days</option>
-                    <option value="30days">30 days</option>
-                  </select>
-                </BlockStack>
+                {/* Date range (2026-10-09): replaces the old ALL / Today / 7 days / 30 days select */}
+                <DateRangeFilter label="Date" value={dateRange} onChange={setDateRange} />
               </InlineStack>
             </Card>
 
@@ -388,7 +378,7 @@ function BuyerStockLosses() {
                 </InlineStack>
 
                 {loading ? (
-                  <InlineStack align="center"><Spinner /></InlineStack>
+                  <InlineStack align="center"><Text tone="subdued">Loading...</Text></InlineStack>
                 ) : entries.length === 0 ? (
                   <Text tone="subdued" alignment="center">No entries found.</Text>
                 ) : (

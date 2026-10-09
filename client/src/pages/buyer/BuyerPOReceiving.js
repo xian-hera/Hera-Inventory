@@ -9,7 +9,7 @@ function BuyerPOReceiving() {
 
   return (
     <Page
-      title="Receiving PO"
+      title="Purchase Orders"
       backAction={{ onAction: () => navigate('/buyer') }}
       secondaryActions={[{ content: 'BOX PO', onAction: () => navigate('/buyer/po-receiving/box-po') }]}
       primaryAction={{ content: 'Settings', onAction: () => navigate('/buyer/po-receiving/settings') }}

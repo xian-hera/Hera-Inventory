@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Page, Layout, Card, Button, BlockStack, InlineStack,
-  Text, Checkbox, Banner, Badge, Spinner
+  Text, Checkbox, Banner, Badge
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import MultiSelectDropdown from '../../components/MultiSelectDropdown';
+import DateRangeFilter from '../../components/DateRangeFilter';
 import { useLocationMap } from '../shared/locationMap';
 import { useGroupContext } from '../../userGroup'; // Purchasing user groups, 2026-10-09
 
@@ -76,8 +77,8 @@ function ZeroQtyReport() {
   const [committing, setCommitting]             = useState(false);
   const [selectedTypes, setSelectedTypes]       = useState([]);
   const [selectedLocations, setSelectedLocations] = useState([]);
-  const [selectedStatuses, setSelectedStatuses] = useState(['reviewing', 'committed']);
-  const [date, setDate]                         = useState('ALL');
+  const [selectedStatuses, setSelectedStatuses] = useState(['reviewing']);
+  const [dateRange, setDateRange]               = useState(null); // null = ALL, else { from, to } (YYYY-MM-DD)
   const [selectedIds, setSelectedIds]           = useState([]);
   const { names: locationNames } = useLocationMap({ excludeHQ: true });
   const locationOrder = new Map(locationNames.map((loc, i) => [loc, i]));
@@ -92,7 +93,7 @@ function ZeroQtyReport() {
       if (selectedTypes.length > 0) params.append('type', selectedTypes.join(','));
       if (selectedLocations.length > 0) params.append('location', selectedLocations.join(','));
       if (selectedStatuses.length > 0) params.append('status', selectedStatuses.join(','));
-      if (date !== 'ALL') params.append('date', date);
+      if (dateRange) { params.append('dateFrom', dateRange.from); params.append('dateTo', dateRange.to); }
       const res = await fetch(`/api/reports?${params.toString()}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
@@ -111,7 +112,7 @@ function ZeroQtyReport() {
     } finally {
       setLoading(false);
     }
-  }, [selectedTypes, selectedLocations, selectedStatuses, date]);
+  }, [selectedTypes, selectedLocations, selectedStatuses, dateRange]);
 
   useEffect(() => { fetchReports(); }, [fetchReports]);
 
@@ -279,23 +280,12 @@ function ZeroQtyReport() {
                 />
                 <MultiSelectDropdown
                   label="Status"
-                  options={['reviewing', 'committed', 'archived']}
+                  options={['reviewing', 'archived'] /* 2026-10-09 (Hera): 'committed' removed from the Status filter */}
                   selected={selectedStatuses}
                   onChange={setSelectedStatuses}
                 />
-                <BlockStack gap="100">
-                  <Text variant="bodySm" tone="subdued">Date</Text>
-                  <select
-                    value={date}
-                    onChange={e => setDate(e.target.value)}
-                    style={{ padding: '6px 10px', border: '1px solid #c9cccf', borderRadius: '6px', fontSize: '14px' }}
-                  >
-                    <option value="ALL">ALL</option>
-                    <option value="today">Today</option>
-                    <option value="7days">7 days</option>
-                    <option value="30days">30 days</option>
-                  </select>
-                </BlockStack>
+                {/* Date range (2026-10-09): replaces the old ALL / Today / 7 days / 30 days select */}
+                <DateRangeFilter label="Date" value={dateRange} onChange={setDateRange} />
               </InlineStack>
             </Card>
 
@@ -318,7 +308,7 @@ function ZeroQtyReport() {
 
                 {loading ? (
                   <div style={{ padding: '16px' }}>
-                    <InlineStack align="center"><Spinner /></InlineStack>
+                    <InlineStack align="center"><Text tone="subdued">Loading...</Text></InlineStack>
                   </div>
                 ) : sortedReports.length === 0 ? (
                   <div style={{ padding: '16px' }}>
