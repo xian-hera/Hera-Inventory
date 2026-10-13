@@ -37,4 +37,19 @@ async function getPoLockedSet(shopifyLocationId, barcodes) {
   }
 }
 
-module.exports = { getPoLockedSet, norm };
+// The "PO lock" switch (Buyer → Purchase Orders → Settings), default OFF.
+// ON  → the manager side enforces the lock (yellow, no counting, counts of
+//       locked items discarded, Manual Count notice / draft removal / skip).
+// OFF → managers never see or are blocked by it. The Buyer's task detail
+//       highlights PO-related items and skips them on commit either way.
+async function isManagerLockEnabled() {
+  try {
+    const { rows } = await pool.query(`SELECT value FROM app_settings WHERE key = 'po_lock_enabled'`);
+    return rows[0]?.value?.enabled === true;
+  } catch (e) {
+    console.error('poLock.isManagerLockEnabled failed:', e.message);
+    return false;
+  }
+}
+
+module.exports = { getPoLockedSet, isManagerLockEnabled, norm };

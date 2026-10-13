@@ -14,20 +14,25 @@ async function locationId(name) {
   return r.rows.length ? r.rows[0].shopify_location_id : null;
 }
 
-function bulkQuery(locId) {
+function bulkQuery(locId, pubIds = []) {
   const level = locId
     ? `inventoryItem { inventoryLevel(locationId: ${JSON.stringify(locId)}) { quantities(names: ["available"]) { quantity } } }`
     : '';
+  // Channel check (Hera 2026-10-13): pub0, pub1 … = published on that channel?
+  // Asked for the product and for each variant (variant-level publishing).
+  const pubs = pubIds.map((id, i) => `pub${i}: publishedOnPublication(publicationId: ${JSON.stringify(id)})`).join('\n          ');
   return `{
     products(query: "status:active") {
       edges { node {
         id title vendor productType
         options { name }
+        ${pubs}
         variants { edges { node {
           id sku availableForSale inventoryQuantity
           selectedOptions { name value }
           metafield(namespace: "custom", key: "discontinued") { value }
           ${level}
+          ${pubs}
         } } }
       } }
     }
@@ -71,7 +76,11 @@ async function scan(opts) {
   const minTotal = Number(cfg.suggestIgnore.minTotal) || 0;
   const locId = await locationId(locName);
 
-  const url = await runBulk(bulkQuery(locId));
+  const channels = (cfg.channelCheck || []).filter(c => c && c.id);
+  const pubIds = channels.map(c => c.id);
+  // Published on every chosen channel? (no channel chosen -> always true)
+  const onAll = o => pubIds.every((_, i) => o[`pub${i}`] === true);
+  const url = await runBulk(bulkQuery(locId, pubIds));
   const products = new Map();
   if (url) {
     const text = await (await fetch(url)).text();
@@ -88,9 +97,14 @@ async function scan(opts) {
   for (const p of products.values()) {
     const opt = ruleOptionFor(rules, p.productType, (p.options || []).map(o => o.name));
     if (!opt) continue;
+    // Channel check: the product and the variant must both be published on every
+    // chosen channel; anything else is skipped as if it did not exist.
+    if (!onAll(p)) continue;
+    const kept = p.variants.filter(onAll);
+    if (!kept.length) continue;
     hitProducts++;
     const pid = p.id.split('/').pop();
-    for (const v of p.variants) {
+    for (const v of kept) {
       const so = (v.selectedOptions || []).find(s => s.name === opt);
       if (!so) continue;
       const key = codeKey(so.value);
@@ -131,7 +145,7 @@ async function scan(opts) {
   }
   // Lazy require: swatchCandidates also loads swatchStore.
   await require('../services/swatchCandidates').refreshCandidates(null);
-  return { products: products.size, hitProducts, codes: groups.size, locationFound: !!locId, scannedWith: rules };
+  return { products: products.size, hitProducts, codes: groups.size, locationFound: !!locId, scannedWith: rules, channels: channels.map(c => c.name) };
 }
 
 // Starts a scan in the background unless one is already running.

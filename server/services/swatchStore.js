@@ -46,6 +46,11 @@ const DEFAULT_CONFIG = {
   abbreviations: DEFAULT_ABBR,               // §5.5, editable later
   // §5.6 "建议 Ignore": every SKU discontinued + no stock here + total < minTotal
   suggestIgnore: { locationName: 'MTL10', minTotal: 3 },
+  // Sales channels a variant must be published on to be scanned (Hera 2026-10-13):
+  // [{ id: 'gid://shopify/Publication/…', name }]. A variant counts only when it
+  // AND its product are published on EVERY channel listed; otherwise it is
+  // skipped as if it did not exist. Empty = no channel check.
+  channelCheck: [],
 };
 
 function mergeConfig(saved) {
@@ -64,6 +69,7 @@ function mergeConfig(saved) {
     rules: Array.isArray(s.rules) ? s.rules : [],
     mode: ['off', 'preview', 'live'].includes(s.mode) ? s.mode : 'off',
     hideSelectors: Array.isArray(s.hideSelectors) ? s.hideSelectors : DEFAULT_CONFIG.hideSelectors,
+    channelCheck: Array.isArray(s.channelCheck) ? s.channelCheck : [],
   };
 }
 

@@ -130,7 +130,9 @@ function ManagerTaskDetail() {
   const fetchTask = useCallback(async () => {
     setLoading(true);
     try {
-      const res  = await fetch(`/api/tasks/${taskId}`);
+      // ?manager=1 (2026-10): tells the server this is the store's page, so PO
+      // lock info (po_locked) is only sent while the "PO lock" switch is ON.
+      const res  = await fetch(`/api/tasks/${taskId}?manager=1`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       setTask(data);

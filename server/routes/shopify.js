@@ -407,9 +407,12 @@ router.get('/inventory', async (req, res) => {
     // invoice at this location — the count modals then show "Purchase Orders
     // related, skip this item without counting." instead of the count UI.
     try {
-      const { getPoLockedSet } = require('../poLock');
-      const lockedSet = await getPoLockedSet(decodeURIComponent(locationId), [result.barcode, barcode]);
-      result.poLocked = lockedSet.size > 0;
+      // Only while the "PO lock" switch (Buyer → PO → Settings) is ON.
+      const { getPoLockedSet, isManagerLockEnabled } = require('../poLock');
+      if (await isManagerLockEnabled()) {
+        const lockedSet = await getPoLockedSet(decodeURIComponent(locationId), [result.barcode, barcode]);
+        result.poLocked = lockedSet.size > 0;
+      }
     } catch (e) {
       console.error('[inventory] po lock check failed:', e.message);
     }

@@ -6,7 +6,7 @@ const { getShopify, getSession, activeFilter } = require('../shopify');
 // Purchasing user groups (2026-10-09) — see routes/userGroups.js
 const { getGroupFilter, scalarVisibleSql } = require('./userGroups');
 // Purchase-order lock (2026-10): see server/poLock.js
-const { getPoLockedSet, norm: normSku } = require('../poLock');
+const { getPoLockedSet, isManagerLockEnabled, norm: normSku } = require('../poLock');
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ZERO QTY REPORTS  (buyer-side)
@@ -115,6 +115,8 @@ router.post('/submit', async (req, res) => {
 
     // PO lock (2026-10): the server has the final say — an item whose SKU is in
     // a not-yet-committed invoice at its location is skipped (not stored).
+    // Only enforced while the "PO lock" switch (Buyer → PO → Settings) is ON.
+    const lockOn = await isManagerLockEnabled();
     const lockedByLoc = new Map(); // shopify_location_id → Set of locked SKUs
     const skipped = [];
 
@@ -128,7 +130,7 @@ router.post('/submit', async (req, res) => {
         if (mapRow.rows.length > 0) shopifyLocationId = mapRow.rows[0].shopify_location_id;
       }
 
-      if (shopifyLocationId) {
+      if (lockOn && shopifyLocationId) {
         if (!lockedByLoc.has(shopifyLocationId)) {
           lockedByLoc.set(shopifyLocationId, await getPoLockedSet(shopifyLocationId, items.map(i => i.barcode)));
         }
@@ -330,7 +332,7 @@ router.get('/drafts-checked', async (req, res) => {
     );
     let drafts = result.rows;
     const removed = [];
-    if (drafts.length > 0) {
+    if (drafts.length > 0 && await isManagerLockEnabled()) {
       const locId = drafts.find(d => d.shopify_location_id)?.shopify_location_id;
       const locked = await getPoLockedSet(locId, drafts.map(d => d.barcode));
       if (locked.size > 0) {

@@ -95,6 +95,11 @@ const initDatabase = async () => {
     // one was actually verified on the floor. See PATCH /scan-count (sets it
     // true), /restart-scan (resets it), and /complete-scan in tasks.js.
     await client.query(`ALTER TABLE task_items ADD COLUMN IF NOT EXISTS ever_scanned BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
+    // Migration (2026-10, Hera — PO lock): po_flagged = "this item was seen in a
+    // not-yet-committed purchase order". Once that invoice is committed, the
+    // buyer's view refreshes the item's System qty ONCE and clears the flag.
+    // See applyPoLock / refreshPoFlagged in routes/tasks.js.
+    await client.query(`ALTER TABLE task_items ADD COLUMN IF NOT EXISTS po_flagged BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS zero_qty_reports (

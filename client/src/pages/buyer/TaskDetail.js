@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Page, Layout, Card, Button, BlockStack, InlineStack,
-  Text, DataTable, Checkbox, Banner, Badge, TextField, Spinner
+  Text, DataTable, Checkbox, Banner, Badge, TextField, Spinner, Modal
 } from '@shopify/polaris';
 import { useNavigate, useParams } from 'react-router-dom';
 
@@ -54,6 +54,7 @@ function TaskDetail() {
   const [editingItemId, setEditingItemId] = useState(null);
   const [sendingBack, setSendingBack] = useState(false);
   const [editingValue, setEditingValue] = useState('');
+  const [showAutoArchived, setShowAutoArchived] = useState(false);
 
   // quiet=true skips the full-page loading spinner — used while polling for
   // commit progress so the table doesn't flicker every couple seconds.
@@ -65,6 +66,9 @@ function TaskDetail() {
       if (!res.ok) throw new Error(data.error);
       setTask(data);
       setNotes(data.notes || []);
+      // The server refreshed System qty of items whose purchase order has been
+      // committed and found nothing left to commit → it archived the task.
+      if (data.auto_archived) setShowAutoArchived(true);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -122,10 +126,12 @@ function TaskDetail() {
     try {
       const itemIds = all
         ? task.items
-            .filter(i => !i.is_correct && i.poh !== null && !i.is_committed && !i.po_locked)
+            .filter(i => !i.is_correct && i.poh !== null && !i.is_committed)
             .map(i => i.id)
-        // PO-locked items (2026-10) are ignored; the server also skips them.
-        : selectedItemIds.filter(id => !task.items.find(i => i.id === id)?.po_locked);
+        // PO-related items (2026-10): not filtered here — the server checks at
+        // commit time which of them are still in an uncommitted invoice and
+        // skips those (and refreshes System qty of the ones that are free now).
+        : selectedItemIds;
 
       if (itemIds.length === 0 && !all) {
         setError('No items to commit.');
@@ -336,24 +342,6 @@ function TaskDetail() {
   };
 
   const rows = task.items.map(item => {
-    // PO-locked row (2026-10): light-yellow cells, "PO" as the result; it is
-    // skipped when committing.
-    if (item.po_locked) {
-      const hl = (node) => (
-        <div style={{ background: '#fff3b0', margin: '-12px -16px', padding: '12px 16px', minHeight: '24px' }}>{node}</div>
-      );
-      return [
-        hl(<Checkbox
-          checked={selectedItemIds.includes(item.id)}
-          onChange={() => toggleSelectOne(item.id)}
-        />),
-        hl(item.name || '-'),
-        hl(item.barcode || '-'),
-        hl(''),
-        hl(<strong>PO</strong>),
-      ];
-    }
-
     let detail = '';
     let result = '';
 
@@ -421,7 +409,7 @@ function TaskDetail() {
       }
     }
 
-    return [
+    const cells = [
       <Checkbox
         checked={selectedItemIds.includes(item.id)}
         onChange={() => toggleSelectOne(item.id)}
@@ -431,6 +419,23 @@ function TaskDetail() {
       detail,
       item.is_committed ? <Badge tone="success">committed</Badge> : result,
     ];
+
+    // PO-related row (2026-10): light-yellow cells, and "PO" next to the count
+    // result (the manager's count is still shown for reference). Such an item
+    // is skipped when committing while its invoice is still uncommitted.
+    if (item.po_locked) {
+      const hl = (node) => (
+        <div style={{ background: '#fff3b0', margin: '-12px -16px', padding: '12px 16px', minHeight: '24px' }}>{node}</div>
+      );
+      cells[4] = (
+        <InlineStack gap="200" blockAlign="center" wrap={false}>
+          {cells[4]}
+          <strong>PO</strong>
+        </InlineStack>
+      );
+      return cells.map(hl);
+    }
+    return cells;
   });
 
   return (
@@ -439,6 +444,16 @@ function TaskDetail() {
       subtitle={[typesLabel, task.location].filter(Boolean).join('  ')}
       backAction={{ onAction: () => navigate('/buyer/counting-tasks') }}
     >
+      <Modal
+        open={showAutoArchived}
+        onClose={() => setShowAutoArchived(false)}
+        title="Task archived"
+        primaryAction={{ content: 'OK', onAction: () => setShowAutoArchived(false) }}
+      >
+        <Modal.Section>
+          <Text>All qty matched, task has been archived automatically.</Text>
+        </Modal.Section>
+      </Modal>
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">
@@ -446,6 +461,10 @@ function TaskDetail() {
             <InlineStack align="space-between">
               <InlineStack gap="200">
                 {getStatusBadge(task.status)}
+                {/* Some items committed, task still open (e.g. PO-related items waiting) */}
+                {task.status === 'reviewing' && task.items.some(i => i.is_committed) && (
+                  <Badge tone="attention">Partially committed</Badge>
+                )}
               </InlineStack>
               <Text variant="bodySm" tone="subdued">{formatDate(task.created_at)}</Text>
             </InlineStack>

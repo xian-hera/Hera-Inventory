@@ -1,6 +1,6 @@
 // Online › Swatch › Style & Text (spec §7). Defaults = the reference app.
 import React, { useState, useEffect } from 'react';
-import { Card, BlockStack, InlineStack, Text, Button, TextField, Select, Banner, Modal } from '@shopify/polaris';
+import { Card, BlockStack, InlineStack, Text, Button, TextField, Select, Banner, Modal, Checkbox } from '@shopify/polaris';
 import { api, fmtTime } from './swatchApi';
 
 const clone = (c) => JSON.parse(JSON.stringify({
@@ -99,7 +99,7 @@ function CardPreview({ s, kind, icons, soldOut }) {
   );
 }
 
-function SwatchStyleTab({ config, setConfig, meta, afterSave }) {
+function SwatchStyleTab({ config, setConfig, meta, refreshMeta, afterSave }) {
   const [v, setV] = useState(clone(config));
   const [err, setErr] = useState('');
   const [saving, setSaving] = useState(false);
@@ -236,6 +236,36 @@ function SwatchStyleTab({ config, setConfig, meta, afterSave }) {
             onChange={(x) => setV(o => ({ ...o, icons: { ...o.icons, magnifier: x } }))}
             multiline={2} autoComplete="off" error={svgOk ? undefined : 'Must start with <svg'} />
           <Text tone="subdued" variant="bodySm">Suggested Ignore = every SKU of the colour is discontinued, has no stock at this location, and the total stock is below this number.</Text>
+          {/* Channel check (Hera 2026-10-13) */}
+          <BlockStack gap="100">
+            <InlineStack gap="300" blockAlign="center">
+              <Text fontWeight="semibold">Scan only variants published on</Text>
+              <Button variant="plain" onClick={refreshMeta}>Refresh channel list</Button>
+            </InlineStack>
+            {(meta.publications || []).length === 0 && (
+              <Text tone="subdued" variant="bodySm">No channel list yet — click “Refresh channel list”.</Text>
+            )}
+            <InlineStack gap="400" wrap>
+              {(meta.publications || []).map(p => {
+                const on = (v.channelCheck || []).some(c => c.id === p.id);
+                return (
+                  <Checkbox key={p.id} label={p.name} checked={on}
+                    onChange={(x) => setV(o => ({ ...o, channelCheck: x
+                      ? [...(o.channelCheck || []).filter(c => c.id !== p.id), { id: p.id, name: p.name }]
+                      : (o.channelCheck || []).filter(c => c.id !== p.id) }))} />
+                );
+              })}
+              {/* A saved channel that is no longer in Shopify's list stays visible so it can be unticked */}
+              {(v.channelCheck || []).filter(c => !(meta.publications || []).some(p => p.id === c.id)).map(c => (
+                <Checkbox key={c.id} label={`${c.name} (not found)`} checked
+                  onChange={() => setV(o => ({ ...o, channelCheck: (o.channelCheck || []).filter(x => x.id !== c.id) }))} />
+              ))}
+            </InlineStack>
+            <Text tone="subdued" variant="bodySm">
+              A variant is scanned only if it and its product are published on every channel ticked here; others are skipped as if they did not exist.
+              Nothing ticked = no channel check. After changing this, run a new scan in the Color codes tab.
+            </Text>
+          </BlockStack>
         </BlockStack>
       </Card>
 

@@ -259,6 +259,7 @@ function SwatchCodesTab({ meta, refreshMeta, setBanner, config }) {
               {running ? `Scanning… ${scan.objects ? `${scan.objects} objects read` : ''}`
                 : scan && scan.status === 'done' ? `Last scan ${fmtTime(scan.finishedAt)} · ${scan.hitProducts} products · ${scan.codes} colour codes`
                   + (scan.scannedWith ? ` · ${scan.scannedWith.map(r => `${r.optionName} in ${r.productTypes.join('/')}`).join('; ')}` : '')
+                  + (scan.channels && scan.channels.length ? ` · published on ${scan.channels.join(' + ')}` : '')
                   : scan && scan.status === 'failed' ? `Last scan failed: ${scan.error}` : 'Never scanned'}
             </Text>
             <Text tone="subdued" variant="bodySm">Reads every Active product in Shopify (published online or not). The list below shows the result of the last scan — opening this page does not query Shopify.</Text>

@@ -163,9 +163,17 @@ async function allStrings(field) {
 // Vendor / product type lists are cached in app_settings (2026-10-01, Hera:
 // opening the page must not query Shopify). Fetched from Shopify only the
 // first time, or with POST /meta/refresh.
+// Sales channels (publications) for the channel check (Hera 2026-10-13).
+async function allPublications() {
+  const d = await gql(`{ publications(first: 100) { nodes { id name catalog { title } } } }`);
+  return (d.publications.nodes || [])
+    .map(p => ({ id: p.id, name: (p.catalog && p.catalog.title) || p.name || p.id }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
 async function refreshMetaCache() {
-  const [vendors, productTypes] = await Promise.all([allStrings('productVendors'), allStrings('productTypes')]);
-  const value = { vendors, productTypes, refreshedAt: new Date().toISOString() };
+  const [vendors, productTypes, publications] = await Promise.all([allStrings('productVendors'), allStrings('productTypes'), allPublications()]);
+  const value = { vendors, productTypes, publications, refreshedAt: new Date().toISOString() };
   await pool.query(
     `INSERT INTO app_settings (key, value, updated_at) VALUES ('swatch_meta_cache', $1::jsonb, NOW())
      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [JSON.stringify(value)]);
@@ -205,6 +213,14 @@ router.put('/config', wrap(async (req, res) => {
   if (svg) {
     if (!/^\s*<svg[\s>]/i.test(svg)) throw fail(400, 'The magnifier icon must be SVG code starting with <svg');
     if (/<script|<foreignObject|\son[a-z]+\s*=|javascript:/i.test(svg)) throw fail(400, 'The magnifier SVG may not contain scripts or event handlers');
+  }
+  // Channel check: [{ id, name }] of Shopify publications (Hera 2026-10-13).
+  if (body.channelCheck !== undefined) {
+    if (!Array.isArray(body.channelCheck)) throw fail(400, 'channelCheck must be a list');
+    const seen = new Set();
+    body.channelCheck = body.channelCheck
+      .filter(c => c && /^gid:\/\/shopify\/Publication\/\d+$/.test(String(c.id)) && !seen.has(c.id) && seen.add(c.id))
+      .map(c => ({ id: String(c.id), name: String(c.name || c.id) }));
   }
   if (body.rules) {
     if (!Array.isArray(body.rules)) throw fail(400, 'rules must be a list');

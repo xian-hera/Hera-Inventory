@@ -80,6 +80,39 @@ function BuyerPOSettings() {
     setCostComparison({ cad: data.cad || 'invoice_cost', usd: data.usd || 'invoice_cost' });
   }, []);
 
+  // PO lock switch (2026-10, Hera): default OFF. See the "PO lock" card below.
+  const [poLock, setPoLock] = useState(false);
+  const [poLockSaving, setPoLockSaving] = useState(false);
+
+  const fetchPoLock = useCallback(async () => {
+    const res = await fetch('/api/po-settings/po-lock');
+    const data = await res.json();
+    setPoLock(!!data.enabled);
+  }, []);
+
+  const togglePoLock = async () => {
+    if (poLockSaving) return;
+    setError('');
+    const next = !poLock;
+    setPoLockSaving(true);
+    setPoLock(next);
+    try {
+      const res = await fetch('/api/po-settings/po-lock', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: next }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setPoLock(!!data.enabled);
+    } catch (e) {
+      setPoLock(!next);
+      setError(e.message);
+    } finally {
+      setPoLockSaving(false);
+    }
+  };
+
   const fetchTypeHistory = useCallback(async () => {
     const res = await fetch('/api/po-settings/type-update-history');
     const data = await res.json();
@@ -94,7 +127,7 @@ function BuyerPOSettings() {
   }, []);
 
   useEffect(() => {
-    Promise.all([fetchMetafields(), fetchTypeHistory(), fetchCostComparison()]).finally(() => setLoading(false));
+    Promise.all([fetchMetafields(), fetchTypeHistory(), fetchCostComparison(), fetchPoLock().catch(() => {})]).finally(() => setLoading(false));
     fetch('/api/shopify/product-types').then(r => r.json()).then(data => setTypeOptions(Array.isArray(data) ? data : [])).catch(() => {});
     fetchUpdateStatus().then(isRunning => { if (isRunning) startPolling(); });
     return () => { if (pollTimer.current) clearInterval(pollTimer.current); };
@@ -325,6 +358,36 @@ function BuyerPOSettings() {
                     />
                   </BlockStack>
                 </div>
+              </InlineStack>
+            </Card>
+
+            <BlockStack gap="200">
+              <Text variant="headingMd">PO lock</Text>
+              <Text tone="subdued">
+                Lock the items that are included in uncommitted invoice from Store's weekly inventory counting tasks.
+              </Text>
+            </BlockStack>
+
+            <Card>
+              <InlineStack gap="300" blockAlign="center">
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={poLock}
+                  onClick={togglePoLock}
+                  disabled={poLockSaving}
+                  style={{
+                    width: 44, height: 24, borderRadius: 12, border: 'none', padding: 0,
+                    background: poLock ? '#008060' : '#c9cccf', position: 'relative',
+                    cursor: poLockSaving ? 'not-allowed' : 'pointer', transition: 'background 0.15s',
+                  }}
+                >
+                  <span style={{
+                    position: 'absolute', top: 2, left: poLock ? 22 : 2, width: 20, height: 20,
+                    borderRadius: '50%', background: 'white', transition: 'left 0.15s',
+                  }} />
+                </button>
+                <Text>{poLock ? 'On' : 'Off'}</Text>
               </InlineStack>
             </Card>
 
