@@ -417,7 +417,10 @@ const TASK_COMMIT_STALE_MS = 5 * 60 * 1000;
 // now land on the task row (`commit_warnings`, `committing`) instead of in
 // the original HTTP response, since by the time this finishes nobody may
 // still be listening on that response.
-async function runTaskCommit(id, itemIds) {
+// `includeLocked` (2026-10): the buyer chose "Commit anyway" in the PO-lock
+// dialog — items that are in an uncommitted invoice are committed too instead
+// of being skipped.
+async function runTaskCommit(id, itemIds, includeLocked = false) {
   const errors = [];
   try {
     const taskRes = await pool.query('SELECT * FROM tasks WHERE id = $1', [id]);
@@ -465,7 +468,7 @@ async function runTaskCommit(id, itemIds) {
     for (const item of items.rows) {
       // Never apply an item twice (already committed), and skip PO-locked items.
       if (item.is_committed) continue;
-      if (lockedNow.has(normSku(item.barcode))) continue;
+      if (!includeLocked && lockedNow.has(normSku(item.barcode))) continue;
       if (item.is_correct || item.poh === null || item.soh === null) continue;
 
       const delta = item.poh - item.soh;
@@ -602,10 +605,13 @@ async function runTaskCommit(id, itemIds) {
 router.patch('/:id/commit', async (req, res) => {
   try {
     const { id } = req.params;
-    const { itemIds } = req.body;
+    const { itemIds, lockedMode } = req.body;
     if (!itemIds || itemIds.length === 0) {
       return res.status(400).json({ error: 'No items to commit.' });
     }
+    // lockedMode (2026-10): 'include' = "Commit anyway" (PO-locked items are
+    // committed too); anything else = skip them (default).
+    const includeLocked = lockedMode === 'include';
 
     const taskRes = await pool.query('SELECT * FROM tasks WHERE id = $1', [id]);
     if (taskRes.rows.length === 0) return res.status(404).json({ error: 'Task not found' });
@@ -631,7 +637,7 @@ router.patch('/:id/commit', async (req, res) => {
 
     res.json({ started: true, total: itemIds.length });
 
-    runTaskCommit(id, itemIds); // fire-and-forget — intentionally not awaited
+    runTaskCommit(id, itemIds, includeLocked); // fire-and-forget — intentionally not awaited
   } catch (e) {
     console.error('PATCH /api/tasks/:id/commit error:', e);
     res.status(500).json({ error: e.message });

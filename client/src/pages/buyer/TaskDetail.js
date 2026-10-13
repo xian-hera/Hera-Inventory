@@ -55,6 +55,9 @@ function TaskDetail() {
   const [sendingBack, setSendingBack] = useState(false);
   const [editingValue, setEditingValue] = useState('');
   const [showAutoArchived, setShowAutoArchived] = useState(false);
+  // PO-lock dialog (2026-10): { all, items } while the buyer is asked what to do
+  // with locked items involved in a commit.
+  const [lockPrompt, setLockPrompt] = useState(null);
 
   // quiet=true skips the full-page loading spinner — used while polling for
   // commit progress so the table doesn't flicker every couple seconds.
@@ -115,29 +118,41 @@ function TaskDetail() {
     });
   };
 
-  const handleCommit = async (all) => {
+  // lockedMode (2026-10): undefined = first click — if the commit involves
+  // PO-locked items, ask first (dialog below); 'skip' = Skip locked; 'include'
+  // = Commit anyway. The server decides again at commit time which items are
+  // really locked (and refreshes System qty of PO-related items that are free).
+  const handleCommit = async (all, lockedMode) => {
     if (!task) return;
     if (task.status === 'counting') {
       setError('Counting not finished yet.');
       return;
     }
+    const itemIds = all
+      ? task.items
+          .filter(i => !i.is_correct && i.poh !== null && !i.is_committed)
+          .map(i => i.id)
+      : selectedItemIds;
+
+    if (itemIds.length === 0 && !all) {
+      setError('No items to commit.');
+      return;
+    }
+
+    if (!lockedMode) {
+      // Only items that would really be committed (counted, mismatching, not
+      // committed yet) and are PO-locked count as "involved".
+      const lockedInvolved = task.items.filter(i =>
+        itemIds.includes(i.id) && i.po_locked && !i.is_committed && !i.is_correct && i.poh !== null);
+      if (lockedInvolved.length > 0) {
+        setLockPrompt({ all, items: lockedInvolved });
+        return;
+      }
+    }
+
     setCommitting(true);
     setError('');
     try {
-      const itemIds = all
-        ? task.items
-            .filter(i => !i.is_correct && i.poh !== null && !i.is_committed)
-            .map(i => i.id)
-        // PO-related items (2026-10): not filtered here — the server checks at
-        // commit time which of them are still in an uncommitted invoice and
-        // skips those (and refreshes System qty of the ones that are free now).
-        : selectedItemIds;
-
-      if (itemIds.length === 0 && !all) {
-        setError('No items to commit.');
-        setCommitting(false);
-        return;
-      }
 
       // The commit itself now runs in the background on the server — this
       // request only starts it and returns immediately (see PATCH
@@ -146,7 +161,7 @@ function TaskDetail() {
       const res = await fetch(`/api/tasks/${taskId}/commit`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ itemIds }),
+        body: JSON.stringify({ itemIds, lockedMode: lockedMode === 'include' ? 'include' : 'skip' }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
@@ -444,6 +459,35 @@ function TaskDetail() {
       subtitle={[typesLabel, task.location].filter(Boolean).join('  ')}
       backAction={{ onAction: () => navigate('/buyer/counting-tasks') }}
     >
+      <Modal
+        open={!!lockPrompt}
+        onClose={() => setLockPrompt(null)}
+        title="Locked items"
+        primaryAction={{
+          content: 'Skip locked',
+          onAction: () => { const p = lockPrompt; setLockPrompt(null); handleCommit(p.all, 'skip'); },
+        }}
+        secondaryActions={[
+          {
+            content: 'Commit anyway',
+            destructive: true,
+            onAction: () => { const p = lockPrompt; setLockPrompt(null); handleCommit(p.all, 'include'); },
+          },
+          { content: 'Cancel', onAction: () => setLockPrompt(null) },
+        ]}
+      >
+        <Modal.Section>
+          <BlockStack gap="300">
+            {lockPrompt && lockPrompt.items.map(i => (
+              <Text key={i.id}>{i.barcode} {i.name}</Text>
+            ))}
+            <Text>
+              {lockPrompt && lockPrompt.items.length > 1 ? 'are' : 'is'} being locked, due to existing in uncommitted purchase invoice.
+            </Text>
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
+
       <Modal
         open={showAutoArchived}
         onClose={() => setShowAutoArchived(false)}
