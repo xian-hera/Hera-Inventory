@@ -535,6 +535,22 @@ async function publishTask(taskId) {
      WHERE id = $1 AND status = 'applied' RETURNING id, locations`, [taskId]
   )).rows[0];
   if (!t) return;
+  // WIG (2026-10-14, Hera): every variant's price is changed, but a store
+  // shows only one variant of each wig as its demo — so the store list gets
+  // ONE variant per product: the first in the CSV (lowest item id) among
+  // the variants whose change worked. The others are hidden from the store
+  // only; Purchasing's task detail still lists them all.
+  await pool.query(
+    `UPDATE price_change_items i SET store_hidden = TRUE
+     WHERE i.task_id = $1 AND LOWER(COALESCE(i.product_type, '')) = 'wig'
+       AND (i.apply_status IS NULL OR i.apply_status = 'done')
+       AND i.product_id IS NOT NULL
+       AND EXISTS (SELECT 1 FROM price_change_items f
+                   WHERE f.task_id = i.task_id AND f.product_id = i.product_id AND f.id < i.id
+                     AND LOWER(COALESCE(f.product_type, '')) = 'wig'
+                     AND (f.apply_status IS NULL OR f.apply_status = 'done'))`,
+    [taskId]
+  );
   const parts = (await pool.query(
     `SELECT DISTINCT CASE WHEN LOWER(COALESCE(product_type, '')) = 'wig' THEN 'wig' ELSE 'main' END AS part
      FROM price_change_items WHERE task_id = $1 AND (apply_status IS NULL OR apply_status = 'done')`, [taskId]

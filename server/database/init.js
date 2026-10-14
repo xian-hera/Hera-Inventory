@@ -1399,6 +1399,10 @@ const initDatabase = async () => {
       'applied_at TIMESTAMPTZ', 'source_item_id INTEGER',
       // Discontinued also marks custom.name with "@" (2026-10-09, Hera).
       'old_name TEXT', 'new_name TEXT',
+      // WIG: stores print one label per product (2026-10-14, Hera). Set when
+      // the task is published; TRUE = price changed, but not on the store
+      // label list. NULL/FALSE for everything published before that.
+      'store_hidden BOOLEAN',
     ]) await client.query(`ALTER TABLE price_change_items ADD COLUMN IF NOT EXISTS ${col}`);
     // Stores mark the WIG part of a task Done separately ('main' / 'wig').
     await client.query("ALTER TABLE price_change_location_status ADD COLUMN IF NOT EXISTS part TEXT NOT NULL DEFAULT 'main'");

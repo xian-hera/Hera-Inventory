@@ -455,13 +455,16 @@ router.post('/live-prices', async (req, res) => {
 // GET /api/price-change-tasks/:id/items[?part=main|wig]
 // part (2026-10-08): 'wig' = WIG items only, 'main' = everything else.
 // Items a scheduled change skipped are left out.
+// store_hidden (2026-10-14): extra WIG variants (one per product is kept)
+// are left out of the store list.
 router.get('/:id/items', async (req, res) => {
   try {
     const part = req.query.part === 'wig' ? 'wig' : req.query.part === 'main' ? 'main' : '';
     const partSql = part === 'wig' ? "AND LOWER(COALESCE(product_type, '')) = 'wig'"
       : part === 'main' ? "AND LOWER(COALESCE(product_type, '')) <> 'wig'" : '';
     const result = await pool.query(
-      `SELECT * FROM price_change_items WHERE task_id = $1 AND (apply_status IS NULL OR apply_status = 'done') ${partSql} ORDER BY id`,
+      `SELECT * FROM price_change_items WHERE task_id = $1 AND (apply_status IS NULL OR apply_status = 'done')
+         AND store_hidden IS NOT TRUE ${partSql} ORDER BY id`,
       [req.params.id]
     );
     res.json(result.rows);
@@ -497,6 +500,7 @@ router.get('/manager', async (req, res) => {
         ON ls.task_id = t.id AND ls.location = $1
       LEFT JOIN price_change_items i ON i.task_id = t.id
         AND (i.apply_status IS NULL OR i.apply_status = 'done')
+        AND i.store_hidden IS NOT TRUE
         AND (CASE WHEN LOWER(COALESCE(i.product_type, '')) = 'wig' THEN 'wig' ELSE 'main' END) = COALESCE(ls.part, 'main')
       WHERE t.status = 'active'
         AND (ls.status = 'pending' OR (ls.status = 'done' AND ls.auto_delete_at > NOW()))
