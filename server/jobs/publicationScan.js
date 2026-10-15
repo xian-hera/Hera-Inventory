@@ -46,6 +46,9 @@ function cleanParams(body) {
   };
   return {
     types, channels, published, discontinued,
+    // "Product matches too" (Hera 2026-10-15): the product must also be in the
+    // wanted state on every chosen channel, not only the variant.
+    productToo: b.productToo === true,
     fulfillmentQty: qty(b.fulfillmentQty, 'Fulfillment Qty'),
     totalQty: qty(b.totalQty, 'Total Qty'),
   };
@@ -65,13 +68,12 @@ function metaState(m) {
   return 'other';
 }
 
-// searchOverride: used only by the debug check (one variant by barcode).
 // product_status must be lowercase: tested 2026-10-15 on the live store,
 // productVariants(query: "product_status:ACTIVE") matches NOTHING (the docs'
 // uppercase example is wrong), while "product_status:active" works. With the
 // uppercase value every scan came back empty.
-function bulkQuery({ types, pubs, settings, locationId, searchOverride }) {
-  const q = searchOverride || `product_status:active AND (${types.map(t => `product_type:${searchQuote(t)}`).join(' OR ')})`;
+function bulkQuery({ types, pubs, settings, locationId }) {
+  const q = `product_status:active AND (${types.map(t => `product_type:${searchQuote(t)}`).join(' OR ')})`;
   const pubFields = pubs.map((p, i) => `p${i}: publishedOnPublication(publicationId: ${JSON.stringify(p.id)})`).join('\n            ');
   const mf = (alias, m) => `${alias}: metafield(namespace: ${JSON.stringify(m.namespace)}, key: ${JSON.stringify(m.key)}) { value }`;
   const productMeta = [];
@@ -123,7 +125,7 @@ const qtyOf = (level) => {
   return q ? Number(q.quantity) || 0 : 0;
 };
 
-// One variant against the filters. Returns every check (for the debug view)
+// One variant against the filters. Returns every check
 // and the table row.
 function evaluate(v, levelList, params, settings, pubs) {
   const p = v.product || {};
@@ -131,12 +133,14 @@ function evaluate(v, levelList, params, settings, pubs) {
   const published = (obj) => new Set(pubs.filter((x, i) => obj && obj[`p${i}`] === true).map(x => x.id));
   // §4.4: a product with only the default variant is judged by the product.
   const on = published(isDefault ? p : v);
+  const productOn = published(p);
   const wantOn = params.published === 'yes';
   const disc = metaState(settings.discontinued.owner === 'product' ? p.disc : v.disc);
   const fulfilQty = qtyOf(v.inventoryItem && v.inventoryItem.fulfil);
   const totalQty = levelList.reduce((s, l) => s + qtyOf(l), 0);
   const checks = {
-    published: params.channels.every(id => on.has(id) === wantOn),
+    published: params.channels.every(id => on.has(id) === wantOn)
+      && (!params.productToo || params.channels.every(id => productOn.has(id) === wantOn)),
     discontinued: disc === params.discontinued,
     fulfillmentQty: compare(fulfilQty, params.fulfillmentQty),
     totalQty: compare(totalQty, params.totalQty),
@@ -356,44 +360,4 @@ function getAction(id) {
   return actions.get(Number(id)) || null;
 }
 
-// ─── Debug (temporary, 2026-10-15) ───────────────────────────────────────────
-// Runs the exact scan query for one variant (by barcode) twice — as a normal
-// query and as a bulk operation — and shows every filter check against the
-// latest scan's filters. GET /api/publication/debug/variant?barcode=…
-async function debugVariant(barcode) {
-  const code = String(barcode || '').trim();
-  if (!/^[A-Za-z0-9_-]+$/.test(code)) throw fail(400, 'Give ?barcode=');
-  const settings = await getSettings();
-  const latest = await getLatestScan();
-  const params = latest && latest.params && latest.params.types ? latest.params : null;
-  const loc = await pool.query('SELECT shopify_location_id FROM location_map WHERE location_name = $1', [settings.fulfillmentLocation]);
-  const locationId = loc.rows.length ? loc.rows[0].shopify_location_id : null;
-  const pubs = await listPublications();
-  const search = `barcode:${code}`;
-  const bq = bulkQuery({ types: [], pubs, settings, locationId, searchOverride: search });
-
-  const out = { settings, latestScanParams: params, locationId, publications: pubs.map((x, i) => `p${i} = ${x.name}`), search };
-  // 1) normal query
-  try {
-    const nq = bq.replace('productVariants(query:', 'productVariants(first: 5, query:').replace('inventoryLevels {', 'inventoryLevels(first: 50) {');
-    const d = await gql(nq);
-    out.normal = d.productVariants.edges.map(e => e.node);
-  } catch (e) {
-    out.normalError = e.message;
-  }
-  // 2) bulk operation (what the scan really uses)
-  try {
-    const url = await runBulk(bq, () => {});
-    const { variants, levels } = await readBulk(url);
-    out.bulk = [...variants.values()].map(v => ({
-      raw: v,
-      levels: levels.get(v.id) || [],
-      evaluation: params ? (({ pass, checks, values }) => ({ pass, checks, values }))(evaluate(v, levels.get(v.id) || [], params, settings, pubs)) : 'no scan yet',
-    }));
-  } catch (e) {
-    out.bulkError = e.message;
-  }
-  return out;
-}
-
-module.exports = { startScan, getScan, getLatestScan, getLatestDoneScan, startAction, getAction, cleanParams, debugVariant };
+module.exports = { startScan, getScan, getLatestScan, getLatestDoneScan, startAction, getAction, cleanParams };

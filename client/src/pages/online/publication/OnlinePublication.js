@@ -31,6 +31,8 @@ const api = {
 const TH = { textAlign: 'left', padding: '10px 8px', fontSize: 13, fontWeight: 600, borderBottom: '1px solid #e1e3e5', verticalAlign: 'bottom', whiteSpace: 'nowrap' };
 const TD = { padding: '8px', fontSize: 13, borderTop: '1px solid #f1f1f1', verticalAlign: 'top', wordBreak: 'break-word' };
 const LINK = { color: '#2c6ecb' };
+// Light green pill for the "Scanning…" status (Hera 2026-10-15).
+const PILL = { display: 'inline-block', background: '#d5f5df', color: '#0c5132', borderRadius: 999, padding: '4px 12px', fontSize: 13, lineHeight: '20px' };
 
 const COMPARE_OPTIONS = [
   { label: 'less than', value: 'lt' },
@@ -179,6 +181,7 @@ function defaultFilters(meta) {
     types: meta.productTypes.includes('WIG') ? ['WIG'] : [],
     channels: meta.channels.map(c => c.id),
     published: 'yes',
+    productToo: false,
     discontinued: 'empty',
     fulfillmentQty: { compare: 'lt', value: '1' },
     totalQty: { compare: 'lt', value: '1' },
@@ -193,6 +196,7 @@ function filtersFromParams(p, meta) {
     types: Array.isArray(p.types) ? p.types : d.types,
     channels: Array.isArray(p.channels) ? p.channels.filter(id => meta.channels.some(c => c.id === id)) : d.channels,
     published: p.published || d.published,
+    productToo: p.productToo === true,
     discontinued: p.discontinued || d.discontinued,
     fulfillmentQty: q(p.fulfillmentQty, d.fulfillmentQty),
     totalQty: q(p.totalQty, d.totalQty),
@@ -335,7 +339,9 @@ function PublishingTab({ meta, groups, settings, setBanner }) {
       )}
       <Card>
         <BlockStack gap="300">
-          <InlineStack gap="300" blockAlign="end" wrap>
+          {/* First row: Type, Channels, Published, Discontinued. Top-aligned so the
+              "Product matches too" checkbox under Channels doesn't push the others down. */}
+          <InlineStack gap="300" blockAlign="start" wrap>
             <div style={{ width: 160 }}>
               <MultiSelectDropdown label="Type" options={meta.productTypes} selected={filters.types}
                 onChange={(v) => set({ types: v })} placeholder="Choose" />
@@ -345,6 +351,10 @@ function PublishingTab({ meta, groups, settings, setBanner }) {
                 options={meta.channels.map(c => ({ value: c.id, label: c.name }))} selected={filters.channels}
                 onChange={(v) => set({ channels: v })} placeholder="Choose"
                 formatDisplay={(sel, all) => (sel.length && sel.length === all.length ? 'All channels' : (sel.length ? sel.map(channelName).join(', ') : 'Choose'))} />
+              {/* Hera 2026-10-15: the product must match the Published choice too. */}
+              <div style={{ marginTop: 4 }}>
+                <Checkbox label="Product matches too" checked={filters.productToo} onChange={(v) => set({ productToo: v })} />
+              </div>
             </div>
             <div style={{ width: 90 }}>
               <Select label="Published" options={[{ label: 'Yes', value: 'yes' }, { label: 'No', value: 'no' }]}
@@ -353,17 +363,27 @@ function PublishingTab({ meta, groups, settings, setBanner }) {
             <div style={{ width: 110 }}>
               <Select label="Discontinued" options={DISC_OPTIONS} value={filters.discontinued} onChange={(v) => set({ discontinued: v })} />
             </div>
-            <QtyFilter label="Fulfillment Qty" value={filters.fulfillmentQty} onChange={(v) => set({ fulfillmentQty: v })} />
-            <QtyFilter label="Total Qty" value={filters.totalQty} onChange={(v) => set({ totalQty: v })} />
+          </InlineStack>
+          {/* Second row (Hera 2026-10-15): the two Qty filters, Scan on the right. */}
+          <InlineStack gap="300" blockAlign="end" align="space-between" wrap={false}>
+            <InlineStack gap="300" blockAlign="end" wrap={false}>
+              <QtyFilter label="Fulfillment Qty" value={filters.fulfillmentQty} onChange={(v) => set({ fulfillmentQty: v })} />
+              <QtyFilter label="Total Qty" value={filters.totalQty} onChange={(v) => set({ totalQty: v })} />
+            </InlineStack>
             <Button variant="primary" onClick={startScan} loading={starting}
               disabled={!filtersOk || missing.length > 0 || scanning || acting}>Scan</Button>
           </InlineStack>
           <Text tone="subdued" variant="bodySm">
-            Only Active products are scanned. Channels and Published: every chosen channel must match.
+            Only Active products are scanned. Channels and Published: every chosen channel must match
+            (the variant's own setting; tick Product matches too to require the product as well).
             Qty = {settings.qty === 'on_hand' ? 'On hand' : 'Available'} (Settings).
           </Text>
           {scanning && (
-            <Text tone="subdued">Scanning… {scan.objects ? `${scan.objects} items read from Shopify` : 'waiting for Shopify'}. You can leave this page; the scan keeps running.</Text>
+            <div>
+              <span style={PILL}>
+                Scanning… {scan.objects ? `${scan.objects} items read from Shopify` : 'waiting for Shopify'}. You can leave this page; the scan keeps running.
+              </span>
+            </div>
           )}
           {scan && scan.status === 'failed' && (
             <Banner tone="critical">Scan failed: {scan.error}</Banner>
@@ -405,13 +425,18 @@ function PublishingTab({ meta, groups, settings, setBanner }) {
 
       <Card padding="200">
         <BlockStack gap="200">
-          {results && (
+          {/* While scanning, the previous scan's summary is replaced (Hera 2026-10-15). */}
+          {scanning && (
+            <div><span style={PILL}>Scanning...</span></div>
+          )}
+          {results && !scanning && (
             <Text tone="subdued" variant="bodySm">
               Last scan {fmtTime(results.finishedAt)} · {(rp.types || []).join(', ')} · Published {rp.published === 'no' ? 'No' : 'Yes'}
               {' '}· Discontinued {DISC_OPTIONS.find(o => o.value === rp.discontinued)?.label || '—'}
               {rp.fulfillmentQty ? ` · ${rp.fulfillmentLocation} ${COMPARE_TEXT[rp.fulfillmentQty.compare]} ${rp.fulfillmentQty.value}` : ''}
               {rp.totalQty ? ` · Total ${COMPARE_TEXT[rp.totalQty.compare]} ${rp.totalQty.value}` : ''}
-              {' '}({qtyLabel}) · {results.objects} variants read · {data.total} result{data.total === 1 ? '' : 's'}
+              {rp.productToo ? ' · Product matches too' : ''}
+              {' '}({qtyLabel}) · {data.total} result{data.total === 1 ? '' : 's'}
             </Text>
           )}
           <div style={{ overflowX: 'auto' }}>
