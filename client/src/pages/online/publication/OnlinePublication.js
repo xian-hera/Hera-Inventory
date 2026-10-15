@@ -90,8 +90,12 @@ function GroupRow({ group, channelOptions, onChange, onDelete }) {
 function ChannelGroupsCard({ meta, groups, setGroups, setBanner }) {
   const [draft, setDraft] = useState(groups);
   const [saving, setSaving] = useState(false);
+  // Read-only summary by default (Hera 2026-10-15): only the group names +
+  // Edit. The editing card opens on Edit, or by itself while no group exists.
+  const [editing, setEditing] = useState(groups.length === 0);
   const keySeq = useRef(0);
-  useEffect(() => { setDraft(groups.map(g => ({ ...g, key: `g${g.id}` }))); }, [groups]);
+  const resetDraft = useCallback(() => setDraft(groups.map(g => ({ ...g, key: `g${g.id}` }))), [groups]);
+  useEffect(() => { resetDraft(); }, [resetDraft]);
 
   // Channels saved in a group but no longer in Shopify stay listed as "(removed channel)".
   const known = new Set(meta.channels.map(c => c.id));
@@ -106,6 +110,7 @@ function ChannelGroupsCard({ meta, groups, setGroups, setBanner }) {
     try {
       const d = await api.put('/groups', { groups: draft.map(({ id, name, channelIds }) => ({ id, name, channelIds })) });
       setGroups(d.groups);
+      setEditing(d.groups.length === 0);
       setBanner({ tone: 'success', text: 'Channel groups saved.' });
     } catch (e) {
       setBanner({ tone: 'critical', text: e.message });
@@ -120,6 +125,13 @@ function ChannelGroupsCard({ meta, groups, setGroups, setBanner }) {
         <Text variant="headingMd" as="h2">Channel Groups</Text>
         <Text tone="subdued" variant="bodySm">Group the channels for better management.</Text>
       </BlockStack>
+      {!editing && (
+        <InlineStack gap="300" blockAlign="center" wrap>
+          <Text fontWeight="bold">{groups.map(g => g.name).join(', ')}</Text>
+          <Button variant="plain" onClick={() => { resetDraft(); setEditing(true); }}>Edit</Button>
+        </InlineStack>
+      )}
+      {editing && (
       <Card>
         <BlockStack gap="400">
           {draft.length === 0 && <Text tone="subdued">No group yet.</Text>}
@@ -133,10 +145,16 @@ function ChannelGroupsCard({ meta, groups, setGroups, setBanner }) {
               keySeq.current += 1;
               setDraft(d => [...d, { id: null, key: `new${keySeq.current}`, name: '', channelIds: [] }]);
             }}>+Add group</Button>
-            <Button variant="primary" onClick={save} loading={saving}>Save</Button>
+            <InlineStack gap="200">
+              {groups.length > 0 && (
+                <Button onClick={() => { resetDraft(); setEditing(false); }} disabled={saving}>Cancel</Button>
+              )}
+              <Button variant="primary" onClick={save} loading={saving}>Save</Button>
+            </InlineStack>
           </InlineStack>
         </BlockStack>
       </Card>
+      )}
     </BlockStack>
   );
 }
