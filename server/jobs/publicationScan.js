@@ -291,18 +291,31 @@ const MUTATION = {
 
 async function runAction(action, rows, pubIds) {
   const input = pubIds.map(publicationId => ({ publicationId }));
+  // Publish also publishes the PRODUCT (Hera 2026-10-15): a variant is only
+  // visible on a channel when its product is published there too. Each product
+  // is published once per action; its result is reused for its other rows.
+  const productResult = new Map(); // product id -> error text ('' = ok)
   for (const row of rows) {
-    // §4.4: default-variant products — product and variant together.
-    const targets = row.is_default_variant ? [row.product_id, row.variant_id] : [row.variant_id];
+    // Unpublish: the variant only, except default-variant products (§4.4),
+    // where product and variant go together.
+    const withProduct = action.kind === 'publish' || row.is_default_variant;
+    const targets = withProduct ? [row.product_id, row.variant_id] : [row.variant_id];
     const errors = [];
     for (const id of targets) {
+      const isProduct = id === row.product_id;
+      if (isProduct && productResult.has(id)) {
+        if (productResult.get(id)) errors.push(`Product: ${productResult.get(id)}`);
+        continue;
+      }
       try {
         const d = await gql(MUTATION[action.kind], { id, input });
         const payload = d[action.kind === 'publish' ? 'publishablePublish' : 'publishableUnpublish'];
         const t = userErrorText(payload);
-        if (t) errors.push(t);
+        if (isProduct) productResult.set(id, t);
+        if (t) errors.push(isProduct ? `Product: ${t}` : t);
       } catch (e) {
-        errors.push(e.message);
+        if (isProduct) productResult.set(id, e.message);
+        errors.push(isProduct ? `Product: ${e.message}` : e.message);
       }
     }
     if (errors.length) {
@@ -322,9 +335,12 @@ async function startAction(kind, body) {
   if (!['publish', 'unpublish'].includes(kind)) throw fail(400, 'Unknown action');
   if (runningAction) throw fail(409, 'A publish / unpublish is already running.');
   if (runningScan) throw fail(409, 'Wait for the scan to finish first.');
+  // allInScan (Hera 2026-10-15, "Select all in result"): every row of the scan
+  // the page shows (scanId), instead of the rows ticked on the current page.
+  const allInScan = body.allInScan === true;
   const itemIds = Array.isArray(body.itemIds) ? body.itemIds.map(Number).filter(Number.isInteger) : [];
   const groupIds = Array.isArray(body.groupIds) ? body.groupIds.map(Number).filter(Number.isInteger) : [];
-  if (!itemIds.length) throw fail(400, 'Select at least one row.');
+  if (!allInScan && !itemIds.length) throw fail(400, 'Select at least one row.');
   if (!groupIds.length) throw fail(400, 'Choose at least one group.');
 
   const g = await pool.query('SELECT publication_ids FROM publication_channel_groups WHERE id = ANY($1)', [groupIds]);
@@ -336,8 +352,11 @@ async function startAction(kind, body) {
 
   const latest = await getLatestDoneScan();
   if (!latest) throw fail(400, 'Scan first.');
-  const rows = (await pool.query(
-    'SELECT * FROM publication_scan_items WHERE scan_id = $1 AND id = ANY($2) ORDER BY id', [latest.id, itemIds])).rows;
+  if (allInScan && Number(body.scanId) !== latest.id) throw fail(409, 'The scan results have changed. Reload the page.');
+  const rows = allInScan
+    ? (await pool.query('SELECT * FROM publication_scan_items WHERE scan_id = $1 ORDER BY id', [latest.id])).rows
+    : (await pool.query(
+      'SELECT * FROM publication_scan_items WHERE scan_id = $1 AND id = ANY($2) ORDER BY id', [latest.id, itemIds])).rows;
   if (!rows.length) throw fail(400, 'The selected rows are no longer in the scan results. Reload the page.');
 
   const id = ++actionSeq;

@@ -211,6 +211,8 @@ function PublishingTab({ meta, groups, settings, setBanner }) {
   const [data, setData] = useState({ items: [], total: 0, pageSize: 100 });
   const [loadingRows, setLoadingRows] = useState(false);
   const [selected, setSelected] = useState([]);
+  // "Select all in result" (Hera 2026-10-15): every row of the scan, all pages.
+  const [allInResult, setAllInResult] = useState(false);
   const [publishGroups, setPublishGroups] = useState([]);
   const [unpublishGroups, setUnpublishGroups] = useState([]);
   const [action, setAction] = useState(null);
@@ -264,6 +266,7 @@ function PublishingTab({ meta, groups, settings, setBanner }) {
   useEffect(() => { loadRows(); }, [loadRows]);
   // Selection is per page (Hera 2026-10-15): cleared when the page changes.
   useEffect(() => { setSelected([]); }, [results, page]);
+  useEffect(() => { setAllInResult(false); }, [results]);
 
   // Poll a running publish / unpublish.
   useEffect(() => {
@@ -315,9 +318,14 @@ function PublishingTab({ meta, groups, settings, setBanner }) {
     const chNames = [...new Set(chosen.flatMap(g => g.channelIds))].map(channelName);
     const verb = kind === 'publish' ? 'Publish' : 'Unpublish';
     const prep = kind === 'publish' ? 'to' : 'from';
-    if (!window.confirm(`${verb} ${selected.length} selected item(s) ${prep}:\n${chNames.join(', ')}?`)) return;
+    const count = allInResult ? data.total : selected.length;
+    const note = kind === 'publish' ? '\n\nThe products of these items are published to the same channels too.' : '';
+    if (!window.confirm(`${verb} ${count} selected item(s) ${prep}:\n${chNames.join(', ')}?${note}`)) return;
     try {
-      const d = await api.post(`/${kind}`, { itemIds: selected, groupIds: groupIds.map(Number) });
+      const body = allInResult
+        ? { allInScan: true, scanId: results.id, groupIds: groupIds.map(Number) }
+        : { itemIds: selected, groupIds: groupIds.map(Number) };
+      const d = await api.post(`/${kind}`, body);
       setAction(d.action);
     } catch (e) {
       setBanner({ tone: 'critical', text: e.message });
@@ -326,7 +334,8 @@ function PublishingTab({ meta, groups, settings, setBanner }) {
 
   const rows = data.items;
   const pages = Math.max(1, Math.ceil(data.total / data.pageSize));
-  const allSelected = rows.length > 0 && rows.every(r => selected.includes(r.id));
+  const allSelected = allInResult || (rows.length > 0 && rows.every(r => selected.includes(r.id)));
+  const hasSelection = allInResult || selected.length > 0;
   const rp = (results && results.params) || {};
   const fulfilHeader = `${rp.fulfillmentLocation || 'Fulfillment'} Qty`;
   const qtyLabel = rp.qty === 'on_hand' ? 'On hand' : 'Available';
@@ -412,12 +421,12 @@ function PublishingTab({ meta, groups, settings, setBanner }) {
       {/* MultiSelectDropdown needs a label (it finds its open list by label). */}
       <InlineStack gap="300" align="end" blockAlign="end" wrap>
         <Button onClick={() => runAction('publish', publishGroups)}
-          disabled={!selected.length || !publishGroups.length || acting || scanning}>Publish selected to</Button>
+          disabled={!hasSelection || !publishGroups.length || acting || scanning}>Publish selected to</Button>
         <div style={{ width: 160 }}>
           <MultiSelectDropdown label="Group" options={groupOptions} selected={publishGroups} onChange={setPublishGroups} placeholder="Group" />
         </div>
         <Button onClick={() => runAction('unpublish', unpublishGroups)}
-          disabled={!selected.length || !unpublishGroups.length || acting || scanning}>Unpublish selected from</Button>
+          disabled={!hasSelection || !unpublishGroups.length || acting || scanning}>Unpublish selected from</Button>
         <div style={{ width: 160 }}>
           <MultiSelectDropdown label="Group " options={groupOptions} selected={unpublishGroups} onChange={setUnpublishGroups} placeholder="Group" />
         </div>
@@ -439,12 +448,21 @@ function PublishingTab({ meta, groups, settings, setBanner }) {
               {' '}({qtyLabel}) · {data.total} result{data.total === 1 ? '' : 's'}
             </Text>
           )}
+          {results && !scanning && data.total > 0 && (
+            <InlineStack gap="300" blockAlign="center">
+              <Checkbox label="Select all in result" checked={allInResult}
+                onChange={(v) => { setAllInResult(v); setSelected([]); }} />
+              <Text tone="subdued" variant="bodySm">
+                {allInResult ? `All ${data.total} items selected (every page).` : (selected.length ? `${selected.length} selected on this page.` : '')}
+              </Text>
+            </InlineStack>
+          )}
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr>
                   <th style={{ ...TH, width: 32 }}>
-                    <Checkbox label="Select all" labelHidden checked={allSelected} disabled={!rows.length}
+                    <Checkbox label="Select all" labelHidden checked={allSelected} disabled={!rows.length || allInResult}
                       onChange={() => setSelected(allSelected ? [] : rows.map(r => r.id))} />
                   </th>
                   <th style={TH}>Title</th>
@@ -471,7 +489,7 @@ function PublishingTab({ meta, groups, settings, setBanner }) {
                   return (
                     <tr key={r.id}>
                       <td style={TD}>
-                        <Checkbox label="Select" labelHidden checked={selected.includes(r.id)}
+                        <Checkbox label="Select" labelHidden checked={allInResult || selected.includes(r.id)} disabled={allInResult}
                           onChange={(c) => setSelected(s => (c ? [...s, r.id] : s.filter(x => x !== r.id)))} />
                       </td>
                       <td style={TD}><a href={`${ADMIN}${pid}`} target="_blank" rel="noreferrer" style={LINK}>{r.title}</a></td>
