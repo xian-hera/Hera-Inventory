@@ -411,7 +411,7 @@ function PublishingTab({ meta, groups, settings, setBanner }) {
               {' '}· Discontinued {DISC_OPTIONS.find(o => o.value === rp.discontinued)?.label || '—'}
               {rp.fulfillmentQty ? ` · ${rp.fulfillmentLocation} ${COMPARE_TEXT[rp.fulfillmentQty.compare]} ${rp.fulfillmentQty.value}` : ''}
               {rp.totalQty ? ` · Total ${COMPARE_TEXT[rp.totalQty.compare]} ${rp.totalQty.value}` : ''}
-              {' '}({qtyLabel}) · {data.total} result{data.total === 1 ? '' : 's'}
+              {' '}({qtyLabel}) · {results.objects} variants read · {data.total} result{data.total === 1 ? '' : 's'}
             </Text>
           )}
           <div style={{ overflowX: 'auto' }}>

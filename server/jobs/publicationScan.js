@@ -65,8 +65,9 @@ function metaState(m) {
   return 'other';
 }
 
-function bulkQuery({ types, pubs, settings, locationId }) {
-  const q = `product_status:ACTIVE AND (${types.map(t => `product_type:${searchQuote(t)}`).join(' OR ')})`;
+// searchOverride: used only by the debug check (one variant by barcode).
+function bulkQuery({ types, pubs, settings, locationId, searchOverride }) {
+  const q = searchOverride || `product_status:ACTIVE AND (${types.map(t => `product_type:${searchQuote(t)}`).join(' OR ')})`;
   const pubFields = pubs.map((p, i) => `p${i}: publishedOnPublication(publicationId: ${JSON.stringify(p.id)})`).join('\n            ');
   const mf = (alias, m) => `${alias}: metafield(namespace: ${JSON.stringify(m.namespace)}, key: ${JSON.stringify(m.key)}) { value }`;
   const productMeta = [];
@@ -118,17 +119,40 @@ const qtyOf = (level) => {
   return q ? Number(q.quantity) || 0 : 0;
 };
 
-async function scan(scanId, params, settings) {
-  const loc = await pool.query('SELECT shopify_location_id FROM location_map WHERE location_name = $1', [settings.fulfillmentLocation]);
-  if (!loc.rows.length || !loc.rows[0].shopify_location_id) throw new Error(`Location ${settings.fulfillmentLocation} was not found in the location map.`);
-  const pubs = await listPublications();
-  const pubIndex = new Map(pubs.map((p, i) => [p.id, i]));
-  const missing = params.channels.filter(id => !pubIndex.has(id));
-  if (missing.length) throw new Error('A chosen channel no longer exists in Shopify. Reload the page and choose again.');
+// One variant against the filters. Returns every check (for the debug view)
+// and the table row.
+function evaluate(v, levelList, params, settings, pubs) {
+  const p = v.product || {};
+  const isDefault = !!p.hasOnlyDefaultVariant;
+  const published = (obj) => new Set(pubs.filter((x, i) => obj && obj[`p${i}`] === true).map(x => x.id));
+  // §4.4: a product with only the default variant is judged by the product.
+  const on = published(isDefault ? p : v);
+  const wantOn = params.published === 'yes';
+  const disc = metaState(settings.discontinued.owner === 'product' ? p.disc : v.disc);
+  const fulfilQty = qtyOf(v.inventoryItem && v.inventoryItem.fulfil);
+  const totalQty = levelList.reduce((s, l) => s + qtyOf(l), 0);
+  const checks = {
+    published: params.channels.every(id => on.has(id) === wantOn),
+    discontinued: disc === params.discontinued,
+    fulfillmentQty: compare(fulfilQty, params.fulfillmentQty),
+    totalQty: compare(totalQty, params.totalQty),
+  };
+  const pos = metaState(settings.posOnly.owner === 'product' ? p.pos : v.pos);
+  return {
+    pass: Object.values(checks).every(Boolean),
+    checks,
+    values: { isDefault, publishedOn: pubs.filter(x => on.has(x.id)).map(x => x.name), discontinued: disc, fulfilQty, totalQty },
+    row: {
+      productId: p.id, variantId: v.id, isDefault,
+      title: p.title || '', variantName: isDefault ? '' : (v.title || ''), vendor: p.vendor || '',
+      posOnly: pos === 'true' ? 'True' : (pos === 'false' ? 'False' : ''),
+      fulfilQty, totalQty, pubIds: [...on],
+    },
+  };
+}
 
-  const url = await runBulk(bulkQuery({ types: params.types, pubs, settings, locationId: loc.rows[0].shopify_location_id }),
-    n => { if (runningScan) runningScan.objects = n; });
-
+// Reads the bulk result file: variants by id + inventory level lines by variant id.
+async function readBulk(url) {
   // Lines come ungrouped (API 2026-01+): a level line may arrive before its
   // variant, so collect everything first and join afterwards.
   const variants = new Map();
@@ -146,32 +170,26 @@ async function scan(scanId, params, settings) {
       }
     }
   }
+  return { variants, levels };
+}
 
-  const published = (obj) => new Set(pubs.filter((p, i) => obj && obj[`p${i}`] === true).map(p => p.id));
+async function scan(scanId, params, settings) {
+  const loc = await pool.query('SELECT shopify_location_id FROM location_map WHERE location_name = $1', [settings.fulfillmentLocation]);
+  if (!loc.rows.length || !loc.rows[0].shopify_location_id) throw new Error(`Location ${settings.fulfillmentLocation} was not found in the location map.`);
+  const pubs = await listPublications();
+  const pubIndex = new Map(pubs.map((p, i) => [p.id, i]));
+  const missing = params.channels.filter(id => !pubIndex.has(id));
+  if (missing.length) throw new Error('A chosen channel no longer exists in Shopify. Reload the page and choose again.');
+
+  const url = await runBulk(bulkQuery({ types: params.types, pubs, settings, locationId: loc.rows[0].shopify_location_id }),
+    n => { if (runningScan) runningScan.objects = n; });
+
+  const { variants, levels } = await readBulk(url);
+
   const rows = [];
   for (const v of variants.values()) {
-    const p = v.product || {};
-    const isDefault = !!p.hasOnlyDefaultVariant;
-    // §4.4: a product with only the default variant is judged by the product.
-    const on = published(isDefault ? p : v);
-    const wantOn = params.published === 'yes';
-    if (!params.channels.every(id => on.has(id) === wantOn)) continue;
-
-    const disc = settings.discontinued.owner === 'product' ? p.disc : v.disc;
-    if (metaState(disc) !== params.discontinued) continue;
-
-    const fulfilQty = qtyOf(v.inventoryItem && v.inventoryItem.fulfil);
-    if (!compare(fulfilQty, params.fulfillmentQty)) continue;
-    const totalQty = (levels.get(v.id) || []).reduce((s, l) => s + qtyOf(l), 0);
-    if (!compare(totalQty, params.totalQty)) continue;
-
-    const pos = metaState(settings.posOnly.owner === 'product' ? p.pos : v.pos);
-    rows.push({
-      productId: p.id, variantId: v.id, isDefault,
-      title: p.title || '', variantName: isDefault ? '' : (v.title || ''), vendor: p.vendor || '',
-      posOnly: pos === 'true' ? 'True' : (pos === 'false' ? 'False' : ''),
-      fulfilQty, totalQty, pubIds: [...on],
-    });
+    const r = evaluate(v, levels.get(v.id) || [], params, settings, pubs);
+    if (r.pass) rows.push(r.row);
   }
   rows.sort((a, b) => a.title.localeCompare(b.title) || a.variantName.localeCompare(b.variantName));
 
@@ -334,4 +352,44 @@ function getAction(id) {
   return actions.get(Number(id)) || null;
 }
 
-module.exports = { startScan, getScan, getLatestScan, getLatestDoneScan, startAction, getAction, cleanParams };
+// ─── Debug (temporary, 2026-10-15) ───────────────────────────────────────────
+// Runs the exact scan query for one variant (by barcode) twice — as a normal
+// query and as a bulk operation — and shows every filter check against the
+// latest scan's filters. GET /api/publication/debug/variant?barcode=…
+async function debugVariant(barcode) {
+  const code = String(barcode || '').trim();
+  if (!/^[A-Za-z0-9_-]+$/.test(code)) throw fail(400, 'Give ?barcode=');
+  const settings = await getSettings();
+  const latest = await getLatestScan();
+  const params = latest && latest.params && latest.params.types ? latest.params : null;
+  const loc = await pool.query('SELECT shopify_location_id FROM location_map WHERE location_name = $1', [settings.fulfillmentLocation]);
+  const locationId = loc.rows.length ? loc.rows[0].shopify_location_id : null;
+  const pubs = await listPublications();
+  const search = `barcode:${code}`;
+  const bq = bulkQuery({ types: [], pubs, settings, locationId, searchOverride: search });
+
+  const out = { settings, latestScanParams: params, locationId, publications: pubs.map((x, i) => `p${i} = ${x.name}`), search };
+  // 1) normal query
+  try {
+    const nq = bq.replace('productVariants(query:', 'productVariants(first: 5, query:').replace('inventoryLevels {', 'inventoryLevels(first: 50) {');
+    const d = await gql(nq);
+    out.normal = d.productVariants.edges.map(e => e.node);
+  } catch (e) {
+    out.normalError = e.message;
+  }
+  // 2) bulk operation (what the scan really uses)
+  try {
+    const url = await runBulk(bq, () => {});
+    const { variants, levels } = await readBulk(url);
+    out.bulk = [...variants.values()].map(v => ({
+      raw: v,
+      levels: levels.get(v.id) || [],
+      evaluation: params ? (({ pass, checks, values }) => ({ pass, checks, values }))(evaluate(v, levels.get(v.id) || [], params, settings, pubs)) : 'no scan yet',
+    }));
+  } catch (e) {
+    out.bulkError = e.message;
+  }
+  return out;
+}
+
+module.exports = { startScan, getScan, getLatestScan, getLatestDoneScan, startAction, getAction, cleanParams, debugVariant };

@@ -191,4 +191,9 @@ router.get('/actions/:id', wrap(async (req, res) => {
   res.json({ action });
 }));
 
+// Temporary debug check (2026-10-15): one variant through the scan query.
+router.get('/debug/variant', wrap(async (req, res) => {
+  res.json(await job.debugVariant(req.query.barcode));
+}));
+
 module.exports = router;
