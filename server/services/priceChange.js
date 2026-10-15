@@ -141,7 +141,7 @@ async function variantState(ids) {
         id sku price compareAtPrice
         discontinued: metafield(namespace: "custom", key: "discontinued") { value }
         customName: metafield(namespace: "custom", key: "name") { value type }
-        product { id productType status }
+        product { id productType status wigNumber: metafield(namespace: "custom", key: "wig_number") { value type } }
       } } }`,
       { ids: list.slice(i, i + 50) }
     );
@@ -153,6 +153,7 @@ async function variantState(ids) {
         name: n.customName ? n.customName.value : null,
         nameType: n.customName ? n.customName.type : null,
         productId: n.product.id, productType: n.product.productType, status: n.product.status,
+        wigNumberType: n.product.wigNumber ? n.product.wigNumber.type : null,
       });
     }
   }
@@ -182,7 +183,8 @@ const variantName = (v) => {
 };
 
 // ─── Process (Upload CSV step) ───────────────────────────────────────────────
-// rows: [{ row, sku, price }] (price '' / undefined = not given)
+// rows: [{ row, sku, price, wigNumber }] (price '' / undefined = not given;
+// wigNumber is read only for WIG items of a Discontinued task)
 // → { items: [...], skipped: [{ row, sku, reason }] }
 async function processRows({ productTypes, taskType, rows }) {
   const settings = await getSettings();
@@ -203,7 +205,7 @@ async function processRows({ productTypes, taskType, rows }) {
       if (c === null || c < 0) { skipped.push({ row: r.row, sku, reason: `Price "${raw}" is not a valid price` }); continue; }
       csvPrice = fromCents(c);
     }
-    candidates.push({ row: r.row, sku, csvPrice });
+    candidates.push({ row: r.row, sku, csvPrice, wigNumber: String(r.wigNumber == null ? '' : r.wigNumber).trim() });
   }
 
   const found = await findBySku(candidates.map(c => c.sku));
@@ -215,6 +217,10 @@ async function processRows({ productTypes, taskType, rows }) {
     const v = list[0];
     const type = v.product.productType || '';
     if (!wanted.has(lc(type))) { skipped.push({ row: c.row, sku: c.sku, reason: `Type "${type || 'none'}" is not selected` }); continue; }
+    // WIG + Discontinued: the CSV's Wig Number goes to the product's
+    // custom.wig_number (2026-10-15, Hera) — required.
+    const needsWig = taskType === 'discontinued' && lc(type) === 'wig';
+    if (needsWig && !c.wigNumber) { skipped.push({ row: c.row, sku: c.sku, reason: 'Wig number is empty' }); continue; }
     let rule = null;
     if (c.csvPrice === null) {
       rule = taskType === 'discontinued' ? ruleForType(settings.rules, type) : null;
@@ -227,10 +233,28 @@ async function processRows({ productTypes, taskType, rows }) {
       row: c.row, sku: c.sku, variantId: v.id, productId: v.product.id, productType: type,
       name: variantName(v), barcode: v.barcode || '', csvPrice: c.csvPrice, currentPrice: v.price,
       rule: rule ? { percent: rule.percent, cents: rule.cents } : null,
+      wigNumber: needsWig ? c.wigNumber : '',
     });
   }
+  // Variants of one product share one custom.wig_number: if the CSV gives
+  // them different values, none of that product's rows are used.
+  const wigByProduct = new Map();
+  for (const it of items) {
+    if (!it.wigNumber) continue;
+    if (!wigByProduct.has(it.productId)) wigByProduct.set(it.productId, []);
+    wigByProduct.get(it.productId).push(it);
+  }
+  const conflict = new Set();
+  for (const [pid, list] of wigByProduct) {
+    if (new Set(list.map(x => x.wigNumber)).size > 1) {
+      conflict.add(pid);
+      const rowsTxt = list.map(x => x.row).join(', ');
+      list.forEach(x => skipped.push({ row: x.row, sku: x.sku, reason: `Conflicting Wig number for the same product (rows ${rowsTxt})` }));
+    }
+  }
+  const kept = conflict.size ? items.filter(it => !conflict.has(it.productId) || !it.wigNumber) : items;
   skipped.sort((a, b) => (a.row || 0) - (b.row || 0));
-  return { items, skipped };
+  return { items: kept, skipped };
 }
 
 // ─── Task numbers ────────────────────────────────────────────────────────────
@@ -332,6 +356,26 @@ async function writeNames(sets) {
   return errors;
 }
 
+async function writeWigNumbers(sets) {
+  // sets: [{ productId, value, type, itemIds }] — product metafield
+  // custom.wig_number (WIG + Discontinued). Returns Map itemId → error.
+  const errors = new Map();
+  for (let i = 0; i < sets.length; i += 25) {
+    const batch = sets.slice(i, i + 25);
+    try {
+      const data = await gql(
+        `mutation($m: [MetafieldsSetInput!]!) { metafieldsSet(metafields: $m) { metafields { id } userErrors { field message } } }`,
+        { m: batch.map(b => ({ ownerId: b.productId, namespace: 'custom', key: 'wig_number', type: b.type || 'single_line_text_field', value: b.value })) }
+      );
+      const msg = userErrorText(data.metafieldsSet);
+      if (msg) batch.forEach(b => b.itemIds.forEach(id => errors.set(id, `Wig number not set — ${msg}`)));
+    } catch (e) {
+      batch.forEach(b => b.itemIds.forEach(id => errors.set(id, `Wig number not set — ${e.message}`)));
+    }
+  }
+  return errors;
+}
+
 // price / compare_at_price are the store-facing columns of the original
 // (hand-made) table — their type may be NUMERIC, so they get their own
 // parameters ($10, $11) instead of sharing the TEXT ones.
@@ -376,6 +420,15 @@ async function applyTask(taskId) {
   const metaDel = [];
   const nameSet = [];
   const clearList = []; // Empty Metafields for Discontinued
+  // WIG + Discontinued: product-level custom.wig_number. productId → { value, type, itemIds }
+  const wigSets = new Map();
+  const queueWig = (it, cur) => {
+    if (task.reverse_of || task.task_type !== 'discontinued') return;
+    const v = String(it.wig_number == null ? '' : it.wig_number).trim();
+    if (!v || String(cur.productType || '').toLowerCase() !== 'wig') return;
+    if (!wigSets.has(cur.productId)) wigSets.set(cur.productId, { productId: cur.productId, value: v, type: cur.wigNumberType, itemIds: [] });
+    wigSets.get(cur.productId).itemIds.push(it.id);
+  };
   const queueClears = (it, cur) => {
     for (const m of emptyMetafieldsForType(settings.emptyRules, cur.productType)) {
       clearList.push({ itemId: it.id, variantId: it.variant_id, namespace: m.namespace, key: m.key });
@@ -401,6 +454,7 @@ async function applyTask(taskId) {
         await setItem(it.id, { ...recorded, status: 'done', nameWritten: !!it.new_name && cur.name === it.new_name });
         // Emptying is safe to repeat — make sure it happened.
         if (task.task_type === 'discontinued' && !task.reverse_of) queueClears(it, cur);
+        queueWig(it, cur); // safe to repeat
         continue;
       }
       if (!isNew && !isOld) { await skipItem(it.id, 'Changed in Shopify while the price change was running — not changed'); continue; }
@@ -453,6 +507,7 @@ async function applyTask(taskId) {
     // only set by a Discontinued change.
     if (f.newName && cur.name !== f.newName) nameSet.push({ itemId: it.id, variantId: it.variant_id, value: f.newName, type: cur.nameType });
     if (f.setDiscontinued && task.task_type === 'discontinued' && !task.reverse_of) queueClears(it, cur);
+    queueWig(it, cur);
     if (f.restoreDiscontinued) {
       if (f.restoreValue == null) metaDel.push({ itemId: it.id, variantId: it.variant_id });
       else metaSet.push({ itemId: it.id, variantId: it.variant_id, value: String(f.restoreValue) });
@@ -471,10 +526,18 @@ async function applyTask(taskId) {
   for (const [id, msg] of clearErrors) {
     if (!planned.has(id)) await pool.query(`UPDATE price_change_items SET apply_note = $2 WHERE id = $1`, [id, msg]);
   }
+  // Wig number only for products with at least one variant whose price write
+  // worked (or was already done).
+  const wigErrors = await writeWigNumbers(
+    [...wigSets.values()].filter(w => w.itemIds.some(id => !priceErrors.has(id)))
+  );
+  for (const [id, msg] of wigErrors) {
+    if (!planned.has(id)) await pool.query(`UPDATE price_change_items SET apply_note = $2 WHERE id = $1`, [id, msg]);
+  }
   for (const [id, f] of planned) {
     if (priceErrors.has(id)) await setItem(id, { ...f, status: 'failed', note: `Not changed — ${priceErrors.get(id)}` });
     else {
-      const note = [metaErrors.get(id), nameErrors.get(id), clearErrors.get(id)].filter(Boolean).join(' · ') || null;
+      const note = [metaErrors.get(id), nameErrors.get(id), clearErrors.get(id), wigErrors.get(id)].filter(Boolean).join(' · ') || null;
       // A name that could not be written is not recorded as the new name.
       const nameFailed = nameErrors.has(id);
       await setItem(id, { ...f, newName: nameFailed ? null : f.newName, status: 'done', note, nameWritten: !!f.newName && !nameFailed });

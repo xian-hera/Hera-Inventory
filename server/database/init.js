@@ -1403,6 +1403,9 @@ const initDatabase = async () => {
       // the task is published; TRUE = price changed, but not on the store
       // label list. NULL/FALSE for everything published before that.
       'store_hidden BOOLEAN',
+      // WIG + Discontinued: CSV "Wig Number" → product metafield
+      // custom.wig_number, written when the task runs (2026-10-15, Hera).
+      'wig_number TEXT',
     ]) await client.query(`ALTER TABLE price_change_items ADD COLUMN IF NOT EXISTS ${col}`);
     // Stores mark the WIG part of a task Done separately ('main' / 'wig').
     await client.query("ALTER TABLE price_change_location_status ADD COLUMN IF NOT EXISTS part TEXT NOT NULL DEFAULT 'main'");

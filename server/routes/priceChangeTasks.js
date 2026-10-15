@@ -253,6 +253,10 @@ router.post('/process', async (req, res) => {
     if (!typeOk(taskType)) return res.status(400).json({ error: 'Choose a task type.' });
     if (!Array.isArray(rows) || !rows.length) return res.status(400).json({ error: 'No rows in the CSV.' });
     if (rows.length > 2000) return res.status(400).json({ error: 'Too many rows (limit 2000).' });
+    // WIG Discontinued tasks need the CSV's Wig Number column (2026-10-15).
+    if (taskType === 'discontinued' && productTypes.some(t => String(t).toLowerCase() === 'wig') && !rows.some(r => r.wigNumber !== undefined)) {
+      return res.status(400).json({ error: "WIG Discontinued tasks need a 'Wig Number' column in the CSV." });
+    }
     res.json(await PC.processRows({ productTypes, taskType, rows }));
   } catch (e) {
     console.error('POST /api/price-change-tasks/process error:', e);
@@ -293,9 +297,11 @@ router.post('/scheduled', async (req, res) => {
     )).rows[0];
     for (const it of items) {
       await client.query(
-        `INSERT INTO price_change_items (task_id, sku, name, barcode, price, variant_id, product_id, product_type, csv_price, apply_status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending')`,
-        [t.id, it.sku, it.name || null, it.barcode || null, it.csvPrice || null, it.variantId, it.productId, it.productType || null, it.csvPrice || null]
+        `INSERT INTO price_change_items (task_id, sku, name, barcode, price, variant_id, product_id, product_type, csv_price, apply_status, wig_number)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', $10)`,
+        [t.id, it.sku, it.name || null, it.barcode || null, it.csvPrice || null, it.variantId, it.productId, it.productType || null, it.csvPrice || null,
+          // Only a WIG item of a Discontinued task carries a Wig Number.
+          (taskType === 'discontinued' && String(it.productType || '').toLowerCase() === 'wig' && String(it.wigNumber || '').trim()) ? String(it.wigNumber).trim() : null]
       );
     }
     await client.query('COMMIT');

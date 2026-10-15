@@ -632,6 +632,8 @@ function BuyerPriceChange() {
                 // change, e.g. "Kamila 1B → Kamila@ 1B" (2026-10-09).
                 (() => {
                   const showName = detailTask.task_type === 'discontinued' && !detailTask.reverse_of;
+                  // WIG Discontinued items carry a Wig Number (custom.wig_number, 2026-10-15).
+                  const showWig = showName && detailItems.some(item => item.wig_number);
                   const nameCell = (item) => (item.new_name
                     ? (
                       <div style={{ whiteSpace: 'normal', minWidth: 140 }}>
@@ -642,9 +644,9 @@ function BuyerPriceChange() {
                     : (item.apply_status === 'done' ? 'No change' : '—'));
                   return (
                     <DataTable
-                      columnContentTypes={showName ? ['text','text','text','text','text','text'] : ['text','text','text','text','text']}
+                      columnContentTypes={showName ? ['text','text','text','text','text','text',...(showWig ? ['text'] : [])] : ['text','text','text','text','text']}
                       headings={showName
-                        ? ['SKU', 'Name', 'Price', 'Compare-at', 'custom.name', 'Result']
+                        ? ['SKU', 'Name', 'Price', 'Compare-at', 'custom.name', ...(showWig ? ['Wig number'] : []), 'Result']
                         : ['SKU', 'Name', 'Price', 'Compare-at', 'Result']}
                       rows={detailItems.map(item => [
                         item.sku,
@@ -652,6 +654,7 @@ function BuyerPriceChange() {
                         item.apply_status === 'done' ? `${money(item.old_price)} → ${money(item.new_price)}` : money(item.csv_price),
                         item.apply_status === 'done' ? `${money(item.old_compare_at)} → ${money(item.new_compare_at)}` : '—',
                         ...(showName ? [nameCell(item)] : []),
+                        ...(showWig ? [item.wig_number || '—'] : []),
                         item.apply_status === 'done' ? (item.apply_note || 'Changed') : (item.apply_note || item.apply_status || ''),
                       ])}
                     />

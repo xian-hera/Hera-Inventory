@@ -107,7 +107,8 @@ function BuyerPriceChangeCreate() {
     reader.onerror = () => setError('Could not read the CSV.');
     reader.onload = () => {
       const all = Papa.parse(decodeCsvBuffer(reader.result), { skipEmptyLines: 'greedy' }).data || [];
-      // Header row = first row with a "SKU" cell; only SKU and Price are read.
+      // Header row = first row with a "SKU" cell; only SKU and Price are read
+      // (plus Wig Number for WIG Discontinued tasks).
       const norm = (v) => cleanCell(v).trim().toLowerCase();
       const hi = all.findIndex(r => (r || []).some(c => norm(c) === 'sku'));
       if (hi === -1) { setError('The CSV needs a column with the header "SKU".'); return; }
@@ -115,12 +116,18 @@ function BuyerPriceChangeCreate() {
       const skuCol = head.indexOf('sku');
       let priceCol = head.indexOf('price');
       if (priceCol === -1) priceCol = head.indexOf('variant price');
+      // WIG + Discontinued: the "Wig Number" column is required (2026-10-15, Hera).
+      const needWig = taskType === 'discontinued' && (types || []).some(t => String(t).toLowerCase() === 'wig');
+      const wigCol = head.indexOf('wig number');
+      if (needWig && wigCol === -1) { setError("WIG Discontinued tasks need a 'Wig Number' column in the CSV."); return; }
       const rows = [];
       for (let i = hi + 1; i < all.length; i++) {
         const cells = all[i] || [];
         const sku = cleanCell(cells[skuCol]).trim();
         if (!sku) continue;
-        rows.push({ row: i + 1, sku, price: priceCol === -1 ? '' : cleanCell(cells[priceCol]).trim() });
+        const r = { row: i + 1, sku, price: priceCol === -1 ? '' : cleanCell(cells[priceCol]).trim() };
+        if (needWig) r.wigNumber = cleanCell(cells[wigCol]).trim();
+        rows.push(r);
       }
       if (!rows.length) { setError('No SKUs found in the CSV.'); return; }
       setCsvRows(rows);
@@ -245,7 +252,7 @@ function BuyerPriceChangeCreate() {
               <BlockStack gap="300">
                 <Text variant="headingMd" as="h2">Upload csv</Text>
                 <InlineStack gap="300" blockAlign="center">
-                  <Tooltip content={<span>Only SKU and Price columns with Headers are required,<br />Other columns will be ignored.</span>}>
+                  <Tooltip content={<span>Only SKU and Price columns with Headers are required{taskType === 'discontinued' && (types || []).some(t => String(t).toLowerCase() === 'wig') ? <>,<br />plus Wig Number for WIG Discontinued tasks</> : null},<br />Other columns will be ignored.</span>}>
                     <Button onClick={() => fileRef.current && fileRef.current.click()}>Upload CSV</Button>
                   </Tooltip>
                   <input ref={fileRef} type="file" accept=".csv,text/csv" style={{ display: 'none' }} onChange={onFile} />
