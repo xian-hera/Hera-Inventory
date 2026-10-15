@@ -245,7 +245,7 @@ function BuyerTransferOngoing() {
   const locationOptions = locationNames.map(n => ({ value: n, label: n }));
 
   return (
-    <Page title="Ongoing Transfer" backAction={{ onAction: () => navigate('/buyer/transfer') }}>
+    <Page title="Transfer List" backAction={{ onAction: () => navigate('/buyer/transfer') }}>
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">

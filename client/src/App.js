@@ -77,6 +77,8 @@ const OnlineNewProductsSettings = lazyWithReload(() => import(/* webpackChunkNam
 const OnlineSwatch = lazyWithReload(() => import(/* webpackChunkName: "online" */ './pages/online/swatch/OnlineSwatch'));
 // Online › Dashboard + tabs — 2026-10-01, see claude/ONLINE_DASHBOARD_SPEC.md
 const OnlineDashboard = lazyWithReload(() => import(/* webpackChunkName: "online" */ './pages/online/OnlineDashboard'));
+// Online › Publication — 2026-10-15, see claude/PUBLICATION_FEATURE_SPEC.md
+const OnlinePublication = lazyWithReload(() => import(/* webpackChunkName: "online" */ './pages/online/publication/OnlinePublication'));
 const ProductDatabaseSettings = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/ProductDatabaseSettings'));
 const BuyerPOReceiving = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerPOReceiving'));
 const BuyerPOImportInvoice = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerPOImportInvoice'));
@@ -239,6 +241,7 @@ function App() {
           <Route path="/online/new-products/finalized" element={<OnlineNewProductsFinalized />} />
           <Route path="/online/new-products/settings" element={<OnlineNewProductsSettings />} />
           <Route path="/online/swatch" element={<OnlineHome tab="swatch"><OnlineSwatch inTabs /></OnlineHome>} />
+          <Route path="/online/publication" element={<OnlineHome tab="publication"><OnlinePublication inTabs /></OnlineHome>} />
         </Routes>
           </Suspense>
         </PageErrorBoundary>

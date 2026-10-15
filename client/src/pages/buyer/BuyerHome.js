@@ -4,6 +4,7 @@ import {
   ButtonGroup, Popover, Tooltip, Modal, TextField, InlineStack, Divider, Text, Box,
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
+import { useGroupContext } from '../../userGroup';
 
 const BADGE_STYLE = {
   display: 'inline-flex',
@@ -121,6 +122,7 @@ function AddNewArrivalModal({ open, onClose }) {
 
 function BuyerHome() {
   const navigate = useNavigate();
+  const groupCtx = useGroupContext();
   const [importMenuOpen, setImportMenuOpen] = useState(false);
   const [addArrivalOpen, setAddArrivalOpen] = useState(false);
 
@@ -197,9 +199,9 @@ function BuyerHome() {
               Purchase Orders
             </Button>
 
-            {/* Transfer */}
+            {/* Transfers (2026-10-15, Hera: was "Transfer") */}
             <Button size="large" fullWidth onClick={() => navigate('/buyer/transfer')}>
-              Transfer
+              Transfers
             </Button>
 
             {/* Price Change */}
@@ -212,9 +214,15 @@ function BuyerHome() {
 
             {/* Demo Wig (2026-09-17, Hera: rename "Wig DEMO" to "Wig - Demo"
                 and move it to just before Settings; 2026-10-09: renamed to "Demo Wig") */}
-            <Button size="large" fullWidth onClick={() => navigate('/buyer/wig-demo')}>
-              Demo Wig
-            </Button>
+            {/* 2026-10-15 (Hera): treated as Type WIG for user groups — hidden
+                when WIG belongs to another group; shown for the group that has
+                WIG, for ALL / no group, and when WIG is in no group. Only the
+                button is hidden (the page itself is not blocked). */}
+            {groupCtx.ready && groupCtx.typeAllowed('WIG') && (
+              <Button size="large" fullWidth onClick={() => navigate('/buyer/wig-demo')}>
+                Demo Wig
+              </Button>
+            )}
 
             {/* Settings */}
             <Button size="large" fullWidth onClick={() => navigate('/buyer/settings')}>

@@ -271,7 +271,7 @@ function BuyerTransferCreate() {
 
   return (
     <Page
-      title="Create Transfer"
+      title="Create New Transfer"
       backAction={{ onAction: handleDiscard }}
       primaryAction={{ content: 'Discard', destructive: true, onAction: handleDiscard }}
     >
@@ -311,7 +311,7 @@ function BuyerTransferCreate() {
                         </select>
                       </BlockStack>
                       <BlockStack gap="100">
-                        <Text variant="bodySm" tone="subdued">Reference name</Text>
+                        <Text variant="bodySm" tone="subdued">Reference Name</Text>
                         <TextField
                           label=""
                           labelHidden

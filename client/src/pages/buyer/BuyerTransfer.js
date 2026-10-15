@@ -26,7 +26,7 @@ function BuyerTransfer() {
 
   return (
     <Page
-      title="Transfer"
+      title="Transfers"
       backAction={{ onAction: () => navigate('/buyer') }}
       primaryAction={{ content: 'Settings', onAction: () => navigate('/buyer/transfer/settings') }}
     >
@@ -34,10 +34,10 @@ function BuyerTransfer() {
         <Layout.Section>
           <BlockStack gap="400">
             <Button size="large" fullWidth onClick={() => navigate('/buyer/transfer/create')}>
-              Create Transfer
+              Create New Transfer
             </Button>
             <Button size="large" fullWidth onClick={() => navigate('/buyer/transfer/ongoing')}>
-              Ongoing Transfer
+              Transfer List
             </Button>
 
             <Card>

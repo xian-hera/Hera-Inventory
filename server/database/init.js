@@ -1646,6 +1646,50 @@ const initDatabase = async () => {
     `);
     await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_transfer_tag_types_lower ON transfer_tag_types (LOWER(tag))`);
 
+    // ── Online › Publication (2026-10-15, Hera) — claude/PUBLICATION_FEATURE_SPEC.md
+    // publication_channel_groups: Channel Groups card. publication_ids = Shopify
+    // Publication gids; one channel may sit in several groups.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS publication_channel_groups (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        publication_ids TEXT[] NOT NULL DEFAULT '{}',
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    // publication_scans / publication_scan_items: the Publishing scan (a
+    // background job). Only the latest scan's items are kept.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS publication_scans (
+        id SERIAL PRIMARY KEY,
+        status TEXT NOT NULL DEFAULT 'running',
+        params JSONB NOT NULL DEFAULT '{}',
+        objects INTEGER NOT NULL DEFAULT 0,
+        matched INTEGER NOT NULL DEFAULT 0,
+        error TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        finished_at TIMESTAMPTZ
+      )
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS publication_scan_items (
+        id SERIAL PRIMARY KEY,
+        scan_id INTEGER NOT NULL REFERENCES publication_scans(id) ON DELETE CASCADE,
+        product_id TEXT NOT NULL,
+        variant_id TEXT NOT NULL,
+        is_default_variant BOOLEAN NOT NULL DEFAULT FALSE,
+        title TEXT,
+        variant_name TEXT,
+        vendor TEXT,
+        pos_only TEXT,
+        fulfillment_qty INTEGER,
+        total_qty INTEGER,
+        publication_ids TEXT[] NOT NULL DEFAULT '{}'
+      )
+    `);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_publication_scan_items_scan ON publication_scan_items (scan_id, id)`);
+
     await client.query('COMMIT');
     console.log('✓ Database initialized successfully');
   } catch (e) {

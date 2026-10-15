@@ -69,6 +69,7 @@ app.use('/api/new-products', require('./routes/newProducts'));
 app.use('/api/store-new-arrivals', require('./routes/storeNewArrivals').router); // Store → New Arrival, 2026-09-29
 app.use('/api/online-tasks', require('./routes/onlineTasks')); // Online › Dashboard, 2026-10-01
 app.use('/api/swatch', require('./routes/swatch')); // Online › Swatch, 2026-10-01 (Phase 0: debug metafield only)
+app.use('/api/publication', require('./routes/publication')); // Online › Publication, 2026-10-15
 
 // Serve static files in production
 if (process.env.NODE_ENV === 'production') {

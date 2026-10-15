@@ -27,6 +27,8 @@ const TABS = [
   { id: 'birthday-reward', label: 'Birthday Reward', path: '/online/birthday-reward' },
   { id: 'influencers', label: 'Influencer Management', path: '/online/influencers' },
   { id: 'swatch', label: 'Swatch', path: '/online/swatch' },
+  // Publication (2026-10-15, Hera) — claude/PUBLICATION_FEATURE_SPEC.md
+  { id: 'publication', label: 'Publication', path: '/online/publication' },
 ];
 
 // The PIN is checked once per visit to the Online section, not again on
