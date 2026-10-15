@@ -18,6 +18,10 @@
   try { D = JSON.parse(dataEl.textContent); } catch (e) { console.warn('[Hera Swatch] bad data', e); return; }
   if (D.debug) console.log('[Hera Swatch] data', D);
   var N = D.optionIndex;
+  // Spec §6.2.1: when EVERY variant is hidden (sold out + discontinued), nothing
+  // is hidden — the picker is drawn as usual with everything SOLD OUT (2026-10-15 fix:
+  // before, an empty picker was drawn and the page showed two "Color :" labels).
+  var ALL_HIDDEN = D.variants.length > 0 && D.variants.every(function (v) { return v.h; });
   var VALUES = D.values;
   var wrap, list, label, modal, order = null, orderCtx = null, armed = null, modalIdx = 0, modalList = [];
 
@@ -49,7 +53,7 @@
     var st = {};
     VALUES.forEach(function (x) { st[x.v] = { vis: false, av: false }; });
     D.variants.forEach(function (vr) {
-      if (vr.h) return;
+      if (vr.h && !ALL_HIDDEN) return;
       for (var j = 0; j < N; j++) if (vr.o[j] !== sel[j]) return;
       var s = st[vr.o[N]];
       if (!s) return;
@@ -110,6 +114,8 @@
         '<span class="hs-name">' + esc(x.v) + '</span></div>';
     }).join('');
     modalList = shown;
+    // Nothing to show -> no stray "Color :" label (the original picker stays, see markOn()).
+    wrap.style.display = shown.length ? '' : 'none';
   }
 
   function onClick(e) {

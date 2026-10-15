@@ -236,6 +236,11 @@ function SwatchStyleTab({ config, setConfig, meta, refreshMeta, afterSave }) {
             onChange={(x) => setV(o => ({ ...o, icons: { ...o.icons, magnifier: x } }))}
             multiline={2} autoComplete="off" error={svgOk ? undefined : 'Must start with <svg'} />
           <Text tone="subdued" variant="bodySm">Suggested Ignore = every SKU of the colour is discontinued, has no stock at this location, and the total stock is below this number.</Text>
+          {/* Storefront hiding switch (Hera 2026-10-15, spec §6.2.1) */}
+          <Checkbox label="Hide the discontinued and out of stock variants on storefront"
+            checked={v.hideDiscontinued !== false}
+            onChange={(x) => setV(o => ({ ...o, hideDiscontinued: x }))}
+            helpText="On: a variant that is sold out AND marked custom.discontinued = true is not shown in Hera Swatch. Off: it is shown as SOLD OUT." />
           {/* Channel check (Hera 2026-10-13) */}
           <BlockStack gap="100">
             <InlineStack gap="300" blockAlign="center">

@@ -15,7 +15,9 @@
     - outputs the CSS that hides the theme's / Swatch King's colour group,
       the data the script needs (colour values + image file names resolved
       with file_url, variants with available / hidden), and loads the script.
-  A variant is hidden when it is sold out AND custom.discontinued = true (§6.2.1).
+  A variant is hidden when it is sold out AND custom.discontinued = true (§6.2.1),
+  unless the Hub switch "Hide the discontinued and out of stock variants on
+  storefront" is off (config hideDiscontinued == false; missing = on, 2026-10-15).
 
   Phase 0 test settings ("Debug log", "Test file name") were removed here;
   "Debug log" now prints the picker's data in the console.
@@ -158,7 +160,7 @@
     {%- for vr in product.variants -%}
       {%- liquid
         assign hidden = false
-        if vr.available == false and vr.metafields.custom.discontinued.value == true
+        if hs_cfg.hideDiscontinued != false and vr.available == false and vr.metafields.custom.discontinued.value == true
           assign hidden = true
         endif
       -%}

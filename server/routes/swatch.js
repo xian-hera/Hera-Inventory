@@ -544,6 +544,8 @@ router.get('/list', wrap(async (req, res) => {
   const vendor = req.query.vendor ? String(req.query.vendor) : null;
   const type = req.query.type ? String(req.query.type) : null;
   const filter = String(req.query.filter || 'all');
+  // With the storefront hiding switch off, nothing counts as hidden (2026-10-15).
+  const hideOn = (await store.getConfig()).hideDiscontinued !== false;
   const scanRows = (await pool.query(`
     SELECT s.*, l.id AS lib_id, l.name AS lib_name, l.prefix AS lib_prefix,
       a.id AS a_id, a.original_name AS a_name, a.filename AS a_filename, a.alt AS a_alt, a.url AS a_url, a.width AS a_width, a.height AS a_height,
@@ -564,7 +566,7 @@ router.get('/list', wrap(async (req, res) => {
       vendor: s.vendor, library: s.lib_id ? { id: s.lib_id, name: s.lib_name, prefix: s.lib_prefix } : null,
       code: s.code, codeKey: s.code_key, productTypes: s.product_types,
       products: s.products, productCount: s.products.length, variantCount: s.variant_count,
-      status, hidden: s.hidden, suggestIgnore: s.suggest_ignore && status !== 'matched',
+      status, hidden: s.hidden && hideOn, suggestIgnore: s.suggest_ignore && status !== 'matched',
       ignored: !s.a_id && s.ig_at ? { reason: s.ig_reason, at: s.ig_at } : null,
       file: s.a_id ? { imageId: s.a_id, name: s.a_name, filename: s.a_filename, alt: s.a_alt, url: s.a_url, width: s.a_width, height: s.a_height } : null,
       candidate: !s.a_id && s.c_id

@@ -177,6 +177,8 @@ async function buildPayload() {
     selector: cfg.selector,
     scope: cfg.scope,
     hideSelectors: cfg.hideSelectors,
+    // false = sold-out discontinued variants stay visible (as SOLD OUT) on the storefront
+    hideDiscontinued: cfg.hideDiscontinued !== false,
     vendorLibrary,
     style: cfg.style,
     text: cfg.text,

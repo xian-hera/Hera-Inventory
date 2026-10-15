@@ -51,6 +51,9 @@ const DEFAULT_CONFIG = {
   // AND its product are published on EVERY channel listed; otherwise it is
   // skipped as if it did not exist. Empty = no channel check.
   channelCheck: [],
+  // Storefront: treat a variant that is sold out AND custom.discontinued = true
+  // as not existing (spec §6.2.1). Switch added 2026-10-15 (Hera); on by default.
+  hideDiscontinued: true,
 };
 
 function mergeConfig(saved) {
@@ -70,6 +73,7 @@ function mergeConfig(saved) {
     mode: ['off', 'preview', 'live'].includes(s.mode) ? s.mode : 'off',
     hideSelectors: Array.isArray(s.hideSelectors) ? s.hideSelectors : DEFAULT_CONFIG.hideSelectors,
     channelCheck: Array.isArray(s.channelCheck) ? s.channelCheck : [],
+    hideDiscontinued: typeof s.hideDiscontinued === 'boolean' ? s.hideDiscontinued : true,
   };
 }
 
