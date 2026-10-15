@@ -11,12 +11,18 @@ function formatDate(dateStr) {
   return `${d.getFullYear()}.${months[d.getMonth()]}.${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
 }
 
+// 2026-10-15 (Hera): the committed (archived) transfers list under the two
+// buttons is no longer shown — they are viewed in Transfer List with the
+// "archived" status filter. Code kept; set to true to bring the list back.
+const SHOW_RECENT_LIST = false;
+
 function BuyerTransfer() {
   const navigate = useNavigate();
   const [recent, setRecent] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (!SHOW_RECENT_LIST) { setLoading(false); return undefined; }
     fetch('/api/transfers/recent')
       .then(r => r.json())
       .then(data => setRecent(Array.isArray(data) ? data : []))
@@ -40,6 +46,7 @@ function BuyerTransfer() {
               Transfer List
             </Button>
 
+            {SHOW_RECENT_LIST && (
             <Card>
               <BlockStack gap="300">
                 {loading ? (
@@ -98,6 +105,7 @@ function BuyerTransfer() {
                 )}
               </BlockStack>
             </Card>
+            )}
           </BlockStack>
         </Layout.Section>
       </Layout>
