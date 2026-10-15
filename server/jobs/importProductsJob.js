@@ -27,6 +27,15 @@ const { refreshRows } = require('../services/newArrival');
 const WIGS_CATEGORY_ID = 'gid://shopify/TaxonomyCategory/aa-2-14-12';
 const isWigImport = (t) => String(t == null ? '' : t).trim().toLowerCase() === 'wig';
 
+// Link column (2026-10-15, Hera): same rule as the import page —
+// "www.x.com/a" → "https://www.x.com/a"; anything else → '' (not kept).
+function normalizeLink(v) {
+  let s = String(v == null ? '' : v).trim();
+  if (!s) return '';
+  if (!/^https?:\/\//i.test(s)) s = `https://${s}`;
+  return /^https?:\/\/[^\s/]+\.[^\s]+$/i.test(s) && !/\s/.test(s) ? s : '';
+}
+
 const STATUS_FILTER = '(product_status:active OR product_status:draft)';
 
 // ─── Lookups ─────────────────────────────────────────────────────────────────
@@ -550,10 +559,11 @@ async function addProduct(p, ctx) {
   if (!(posOnly && parseBool(posOnly.value) === true)) {
     try {
       const ins = await pool.query(
-        `INSERT INTO new_arrival (shopify_product_id, title, product_type, skus)
-         VALUES ($1, $2, $3, $4)
+        `INSERT INTO new_arrival (shopify_product_id, title, product_type, skus, link)
+         VALUES ($1, $2, $3, $4, $5)
          ON CONFLICT (shopify_product_id) DO NOTHING RETURNING id`,
-        [product.id, product.title, input.productType, created.map(c => c.sku).filter(Boolean)]
+        // link: the Link column (Hub only, 2026-10-15) — not sent to Shopify.
+        [product.id, product.title, input.productType, created.map(c => c.sku).filter(Boolean), normalizeLink(f.link) || null]
       );
       if (ins.rows.length) ctx.newArrivalIds.push(ins.rows[0].id);
     } catch (e) {

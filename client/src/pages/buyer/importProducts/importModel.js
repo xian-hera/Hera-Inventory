@@ -38,6 +38,9 @@ export const FIELDS = {
   tracked: { level: 'variant', label: 'Inventory tracker' },
   inventoryPolicy: { level: 'variant', label: 'Continue selling' },
   requiresShipping: { level: 'variant', label: 'Requires shipping' },
+  // Link (2026-10-15, Hera): not a Shopify field. Kept by Hub only and shown
+  // as "Click" in Online → New products until the product is finalized.
+  link: { level: 'product', label: 'Link', hubOnly: true },
 };
 
 // Both Shopify CSV formats (new template + old export), lower-cased.
@@ -66,6 +69,7 @@ const ALIASES = {
   'inventory tracker': 'tracked', 'variant inventory tracker': 'tracked',
   'continue selling when out of stock': 'inventoryPolicy', 'variant inventory policy': 'inventoryPolicy',
   'requires shipping': 'requiresShipping', 'variant requires shipping': 'requiresShipping',
+  'link': 'link',
 };
 
 // Columns deliberately not imported (spec §5.1): images, online-store
@@ -218,6 +222,15 @@ export function isJson(v) {
   try { JSON.parse(String(v)); return true; } catch (e) { return false; }
 }
 
+// Link column (2026-10-15): "www.x.com/a" → "https://www.x.com/a";
+// returns '' when the value isn't a web link. The server applies the same rule.
+export function normalizeLink(v) {
+  let s = String(v == null ? '' : v).trim();
+  if (!s) return '';
+  if (!/^https?:\/\//i.test(s)) s = `https://${s}`;
+  return /^https?:\/\/[^\s/]+\.[^\s]+$/i.test(s) && !/\s/.test(s) ? s : '';
+}
+
 export function parseBool(v) {
   const s = lc(v);
   if (['true', 'yes', 'y', '1'].includes(s)) return true;
@@ -308,6 +321,12 @@ export function buildColumns(headers, definitions, manual = {}) {
   // empty when the CSV has no category column; empty cells send nothing.
   if (!usedFields.has('category')) {
     columns.push({ id: 'x_category', header: 'Product category', csvIndex: null, kind: 'field', field: 'category', level: 'product', synthetic: true });
+  }
+
+  // Link is always in the table too (Hera 2026-10-15): added empty when the
+  // CSV has no Link column, so the buyer can paste links in the table.
+  if (!usedFields.has('link')) {
+    columns.push({ id: 'x_link', header: 'Link', csvIndex: null, kind: 'field', field: 'link', level: 'product', synthetic: true });
   }
 
   // Sub type and Sub collection are always in the table (Hera 2026-10-08):
@@ -569,6 +588,8 @@ export function validate({ rows, columns, groups, mode, presets, pools, precheck
       // block them here so the buyer fixes them before importing).
       else if (priceCols.includes(c) && Number(v.replace(/,/g, '')) < 0) addCell(r, c, `${FIELDS[c.field].label} "${v}" can't be negative`);
       if (c === bcCol && /[;,|]/.test(v)) addCell(r, c, 'Only one barcode per variant can be imported for now');
+      // Link (2026-10-15): only a note — a value that isn't a web link is not kept.
+      if (c.kind === 'field' && c.field === 'link' && !normalizeLink(v)) addWarn(r, c, `"${v}" is not a web link — it will not be kept`);
     }
 
     const sku = skuCol ? String(cellValue(r, skuCol)).trim() : '';

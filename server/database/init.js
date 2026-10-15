@@ -1341,6 +1341,9 @@ const initDatabase = async () => {
     // Online → New products (2026-10-07): when new variants are added to an
     // existing product, the row only covers those SKUs (NULL = all variants).
     await client.query('ALTER TABLE new_arrival ADD COLUMN IF NOT EXISTS variant_ids TEXT[]');
+    // Link from Import Products (2026-10-15, Hera): shown as "Click" in
+    // Online → New products; the row (and the link) goes away on Finalize.
+    await client.query('ALTER TABLE new_arrival ADD COLUMN IF NOT EXISTS link TEXT');
 
     // ── Price Change (2026-10-08, Hera) ───────────────────────────────────
     // These four tables were created by hand when Price Change was first

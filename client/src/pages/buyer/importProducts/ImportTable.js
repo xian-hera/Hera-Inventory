@@ -39,12 +39,14 @@ export function orderColumns(columns, presetsOn, metafieldsOn) {
   // column is placed right after Title (and after the preset group) below.
   const addedMf = (c) => c.synthetic && !c.preset && c.kind === 'metafield';
   const addedCat = (c) => c.synthetic && c.kind === 'field' && c.field === 'category';
+  const addedLink = (c) => c.synthetic && c.kind === 'field' && c.field === 'link'; // last column (2026-10-15)
   let list = [
-    ...columns.filter(c => c.synthetic && !c.preset && !addedMf(c) && !addedCat(c)),
+    ...columns.filter(c => c.synthetic && !c.preset && !addedMf(c) && !addedCat(c) && !addedLink(c)),
     ...columns.filter(c => c.csvIndex != null).sort((a, b) => a.csvIndex - b.csvIndex),
     ...columns.filter(addedMf),
     ...columns.filter(addedCat), // moved next to Title with the trio below
     ...columns.filter(c => c.synthetic && c.preset),
+    ...columns.filter(addedLink),
   ];
   if (!presetsOn) {
     list = list.filter(c => !(c.synthetic && c.preset));
@@ -81,7 +83,8 @@ export function orderColumns(columns, presetsOn, metafieldsOn) {
     while (presetsOn && list[at] && list[at].preset) at += 1;
     list.splice(at, 0, ...trio);
   }
-  return list;
+  // The Link column Hub adds always sits at the end (2026-10-15).
+  return [...list.filter(c => !addedLink(c)), ...list.filter(addedLink)];
 }
 
 // Dropdown pool for a column, or null for a textbox column.
@@ -293,6 +296,7 @@ function ImportTable({
               const title = c.kind === 'unmatched' ? `Will be ignored — ${c.reason || 'not matched'}`
                 : c.kind === 'shopifyMf' ? 'Shopify category metafield — shown only, not imported'
                 : c.synthetic && c.preset ? 'Added by Presets'
+                : c.kind === 'field' && c.field === 'link' ? 'Not sent to Shopify — shown as "Click" in Online → New products until the product is finalized'
                 : c.synthetic && (c.kind === 'metafield' || (c.kind === 'field' && c.field === 'category')) ? 'Not in the CSV — added by Hub so you can fill it in' : '';
               const inner = (
                 <span style={{ color: disabled ? '#8c9196' : undefined }}>

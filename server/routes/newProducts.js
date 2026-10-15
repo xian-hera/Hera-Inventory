@@ -31,6 +31,8 @@ function rowToItem(r) {
     // Only these SKUs are new (variants added to an existing product,
     // 2026-10-07); null = the whole product is new.
     variantIds: r.variant_ids || null,
+    // Link from Import Products (2026-10-15) — "Click" in the Link column.
+    link: r.link || null,
     createdAt: r.created_at,
     finalizedAt: r.finalized_at,
     refreshedAt: r.refreshed_at,

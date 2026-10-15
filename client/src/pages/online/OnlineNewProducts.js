@@ -25,6 +25,7 @@ const COL = {
   weight: 87,       // "Weight" + 2 × 3 characters
   tags: 140,        // 20 characters
   special: 350,     // 50 characters, split between the group's own columns
+  link: 70,         // "Link" / "Click" + padding (2026-10-15)
 };
 const TABLE_W = Object.values(COL).reduce((a, b) => a + b, 0);
 const ONE_LINE = { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };
@@ -128,6 +129,7 @@ function GroupCard({ group, onChanged, setBanner }) {
               {mfs.length
                 ? mfs.map(m => <col key={`${m.level}.${m.namespace}.${m.key}`} style={{ width: COL.special / mfs.length }} />)
                 : <col style={{ width: COL.special }} />}
+              <col style={{ width: COL.link }} />
             </colgroup>
             <thead>
               <tr>
@@ -143,6 +145,8 @@ function GroupCard({ group, onChanged, setBanner }) {
                 {mfs.length
                   ? mfs.map(m => <th key={`${m.level}.${m.namespace}.${m.key}`} style={TH}><Trunc text={m.name} /></th>)
                   : <th style={TH} />}
+                {/* Link given by Buyer at import (2026-10-15, Hera) */}
+                <th style={TH}>Link</th>
               </tr>
             </thead>
             <tbody>
@@ -184,11 +188,16 @@ function GroupCard({ group, onChanged, setBanner }) {
                     {mfs.length
                       ? mfs.map(m => <td key={`${m.level}.${m.namespace}.${m.key}`} style={TD}><Trunc text={(i.metafields || {})[`${m.level}.${m.namespace}.${m.key}`] || ''} /></td>)
                       : <td style={TD} />}
+                    <td style={TD}>
+                      {i.link && /^https?:\/\//i.test(i.link)
+                        ? <a href={i.link} target="_blank" rel="noopener noreferrer" title={i.link}>Click</a>
+                        : ''}
+                    </td>
                   </tr>
                 );
               })}
               {items.length === 0 && (
-                <tr><td colSpan={7 + Math.max(1, mfs.length)} style={{ ...TD, textAlign: 'center', color: '#6d7175', padding: 20 }}>No products.</td></tr>
+                <tr><td colSpan={8 + Math.max(1, mfs.length)} style={{ ...TD, textAlign: 'center', color: '#6d7175', padding: 20 }}>No products.</td></tr>
               )}
             </tbody>
           </table>
