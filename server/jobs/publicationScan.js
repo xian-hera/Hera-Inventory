@@ -66,8 +66,12 @@ function metaState(m) {
 }
 
 // searchOverride: used only by the debug check (one variant by barcode).
+// product_status must be lowercase: tested 2026-10-15 on the live store,
+// productVariants(query: "product_status:ACTIVE") matches NOTHING (the docs'
+// uppercase example is wrong), while "product_status:active" works. With the
+// uppercase value every scan came back empty.
 function bulkQuery({ types, pubs, settings, locationId, searchOverride }) {
-  const q = searchOverride || `product_status:ACTIVE AND (${types.map(t => `product_type:${searchQuote(t)}`).join(' OR ')})`;
+  const q = searchOverride || `product_status:active AND (${types.map(t => `product_type:${searchQuote(t)}`).join(' OR ')})`;
   const pubFields = pubs.map((p, i) => `p${i}: publishedOnPublication(publicationId: ${JSON.stringify(p.id)})`).join('\n            ');
   const mf = (alias, m) => `${alias}: metafield(namespace: ${JSON.stringify(m.namespace)}, key: ${JSON.stringify(m.key)}) { value }`;
   const productMeta = [];
