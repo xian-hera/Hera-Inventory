@@ -5,6 +5,9 @@ import {
 import { useNavigate, useParams } from 'react-router-dom';
 import InfoTooltip from '../../components/InfoTooltip';
 
+// 2026-10-16 (Hera): money shown with thousands separators, e.g. 111,791.63.
+const fmtMoney = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
 const EFFECTIVE_COST_TOOLTIP_USD = `effective cost = invoice cost + adjustment + unit discount + converted to CAD`;
 const EFFECTIVE_COST_TOOLTIP_CAD = `effective cost = invoice cost + adjustment + unit discount`;
 
@@ -204,9 +207,13 @@ function BuyerPOInvoiceDetail() {
     return (isQtyMismatch(b) ? 1 : 0) - (isQtyMismatch(a) ? 1 : 0);
   });
   const subtotalCad = items.reduce((sum, it) => sum + (Number(it.quantity) || 0) * (Number(it.effective_cost) || 0), 0);
-  const subtotalUsd = isUsdSupplier
-    ? items.reduce((sum, it) => sum + (Number(it.quantity) || 0) * (Number(it.raw_cost) || 0), 0)
-    : null;
+  // USD subtotal (2026-10-16, Hera): the USD equivalent of the CAD subtotal
+  // (CAD ÷ FX rate). Was: sum of quantity × Invoice Cost only (0.00 when
+  // Invoice Cost is empty).
+  const usdFx = Number(invoice.fx_rate) || 0;
+  const subtotalUsd = isUsdSupplier && usdFx > 0 ? subtotalCad / usdFx : null;
+  // The Unit Discount column only shows when the CSV had one (some item has a value).
+  const showUnitDiscount = items.some(it => String(it.unit_discount_raw ?? '').trim() !== '');
 
   return (
     <Page
@@ -270,11 +277,12 @@ function BuyerPOInvoiceDetail() {
 
             <Card>
               <BlockStack gap="200">
-                <InlineStack align="end" gap="400">
-                  {isUsdSupplier && (
-                    <Text tone="subdued" variant="bodySm">USD subtotal: {subtotalUsd.toFixed(2)}</Text>
-                  )}
-                  <Text variant="bodyMd" fontWeight="bold">CAD subtotal: {subtotalCad.toFixed(2)}</Text>
+                <InlineStack align="end">
+                  <Text variant="bodyMd" as="span">
+                    Subtotal{subtotalUsd !== null ? ` USD$${fmtMoney(subtotalUsd)}` : ''}
+                    {'\u00A0\u00A0\u00A0'}
+                    <span style={{ fontWeight: 700 }}>CAD${fmtMoney(subtotalCad)}</span>
+                  </Text>
                 </InlineStack>
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
@@ -288,6 +296,9 @@ function BuyerPOInvoiceDetail() {
                         ))}
                         <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Committed qty</th>
                         <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Invoice Cost</th>
+                        {showUnitDiscount && (
+                          <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Unit Discount</th>
+                        )}
                         <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>
                           <InfoTooltip text={isUsdSupplier ? EFFECTIVE_COST_TOOLTIP_USD : EFFECTIVE_COST_TOOLTIP_CAD}>
                             Effective Cost
@@ -326,6 +337,9 @@ function BuyerPOInvoiceDetail() {
                             <td style={{ padding: '10px', fontWeight: highlighted && compareMode === 'invoice_cost' ? 'bold' : undefined }}>
                               {hasRawCost ? Number(it.raw_cost).toFixed(2) : '—'}
                             </td>
+                            {showUnitDiscount && (
+                              <td style={{ padding: '10px' }}>{String(it.unit_discount_raw ?? '').trim() || '—'}</td>
+                            )}
                             <td style={{ padding: '10px', fontWeight: highlighted && compareMode === 'effective_cost' ? 'bold' : undefined }}>
                               {!hasEffectiveCost ? (
                                 <Text tone="critical">missing</Text>

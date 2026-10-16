@@ -58,6 +58,17 @@ function newMetafieldRow() {
   return { id: Date.now() + Math.random(), level: 'product', condition: 'value matches exactly', key: '', value: '' };
 }
 
+// 2026-10-16 (Hera): line items are listed A → Z by Name (items without a
+// name last) on Creating task, Preview task and the published task page.
+const compareByName = (a, b) => {
+  const an = (a && a.name) || '';
+  const bn = (b && b.name) || '';
+  if (!an && !bn) return 0;
+  if (!an) return 1;
+  if (!bn) return -1;
+  return an.localeCompare(bn, undefined, { numeric: true, sensitivity: 'base' });
+};
+
 function CreatingTask() {
   const navigate = useNavigate();
   // User group (2026-10-09): the Types dropdown only offers the current
@@ -403,7 +414,7 @@ function CreatingTask() {
       )
     : products;
 
-  const rows = filteredProducts.map(p => [
+  const rows = [...filteredProducts].sort(compareByName).map(p => [
     <Checkbox
       checked={selectedProductBarcodes.includes(p.barcode)}
       onChange={() => toggleSelectProduct(p.barcode)}

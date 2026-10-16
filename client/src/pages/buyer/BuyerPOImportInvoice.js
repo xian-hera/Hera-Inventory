@@ -56,6 +56,9 @@ const COLLISION_TOOLTIP = `Two or more unit codes on this invoice resolved to th
 
 const MISSING_COST_TOOLTIP = `This line item has no cost — it was left blank in the CSV and there's no Supplier cost metafield value to fall back on. It can still be committed: inventory will be received as normal, but the cost (and Shopify's average cost) will not be updated for it. Fill in a cost on the CSV, or set the SKU's Supplier cost metafield in Shopify, then re-process if you want the cost to be included.`;
 
+// 2026-10-16 (Hera): money shown with thousands separators, e.g. 111,791.63.
+const fmtMoney = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
 const EFFECTIVE_COST_TOOLTIP_USD = `effective cost = invoice cost + adjustment + unit discount + converted to CAD`;
 const EFFECTIVE_COST_TOOLTIP_CAD = `effective cost = invoice cost + adjustment + unit discount`;
 
@@ -1120,9 +1123,14 @@ function BuyerPOImportInvoice() {
     return (a.name || '').localeCompare(b.name || '');
   });
   const subtotalCad = items.reduce((sum, it) => sum + (Number(it.quantity) || 0) * (Number(it.effective_cost) || 0), 0);
-  const subtotalUsd = isUsdSupplier
-    ? items.reduce((sum, it) => sum + (Number(it.quantity) || 0) * (Number(it.raw_cost) || 0), 0)
-    : null;
+  // USD subtotal (2026-10-16, Hera): the USD equivalent of the CAD subtotal
+  // (CAD ÷ FX rate), so the two always correspond. Was: sum of quantity ×
+  // Invoice Cost only, which showed 0.00 when Invoice Cost is empty (Supplier
+  // Cost is then used for the math).
+  const usdFx = Number(supplier?.fx_rate) || 0;
+  const subtotalUsd = isUsdSupplier && usdFx > 0 ? subtotalCad / usdFx : null;
+  // The Unit Discount column only shows when the CSV had one (some item has a value).
+  const showUnitDiscount = items.some(it => String(it.unit_discount_raw ?? '').trim() !== '');
 
   // "Partially committed" (2026-10-06, Hera) — display-only, not a database
   // status: no commit is running right now, but some line items were already
@@ -1558,11 +1566,12 @@ function BuyerPOImportInvoice() {
             {items.length > 0 && (
               <Card>
                 <BlockStack gap="200">
-                  <InlineStack align="end" gap="400">
-                    {isUsdSupplier && (
-                      <Text tone="subdued" variant="bodySm">USD subtotal: {subtotalUsd.toFixed(2)}</Text>
-                    )}
-                    <Text variant="bodyMd" fontWeight="bold">CAD subtotal: {subtotalCad.toFixed(2)}</Text>
+                  <InlineStack align="end">
+                    <Text variant="bodyMd" as="span">
+                      Subtotal{subtotalUsd !== null ? ` USD$${fmtMoney(subtotalUsd)}` : ''}
+                      {'\u00A0\u00A0\u00A0'}
+                      <span style={{ fontWeight: 700 }}>CAD${fmtMoney(subtotalCad)}</span>
+                    </Text>
                   </InlineStack>
                   <div style={{ overflowX: 'auto' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
@@ -1580,6 +1589,9 @@ function BuyerPOImportInvoice() {
                             <th key={h} style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>{h}</th>
                           ))}
                           <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Invoice Cost</th>
+                          {showUnitDiscount && (
+                            <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Unit Discount</th>
+                          )}
                           <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>
                             <InfoTooltip text={isUsdSupplier ? EFFECTIVE_COST_TOOLTIP_USD : EFFECTIVE_COST_TOOLTIP_CAD}>
                               Effective Cost
@@ -1744,6 +1756,9 @@ function BuyerPOImportInvoice() {
                                   </>
                                 )}
                               </td>
+                              {showUnitDiscount && (
+                                <td style={{ padding: '10px' }}>{String(it.unit_discount_raw ?? '').trim() || '—'}</td>
+                              )}
                               <td style={{ padding: '10px', fontWeight: highlighted && compareMode === 'effective_cost' ? 'bold' : undefined }}>
                                 {!hasEffectiveCost ? (
                                   <Text tone="critical">missing</Text>

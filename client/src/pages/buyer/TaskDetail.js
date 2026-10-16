@@ -32,6 +32,17 @@ function getStatusBadge(status) {
   return <Badge tone={toneMap[status] || ''}>{status}</Badge>;
 }
 
+// 2026-10-16 (Hera): line items are listed A → Z by Name (items without a
+// name last) on Creating task, Preview task and the published task page.
+const compareByName = (a, b) => {
+  const an = (a && a.name) || '';
+  const bn = (b && b.name) || '';
+  if (!an && !bn) return 0;
+  if (!an) return 1;
+  if (!bn) return -1;
+  return an.localeCompare(bn, undefined, { numeric: true, sensitivity: 'base' });
+};
+
 function TaskDetail() {
   const navigate = useNavigate();
   const { taskId } = useParams();
@@ -356,7 +367,7 @@ function TaskDetail() {
     }
   };
 
-  const rows = task.items.map(item => {
+  const rows = [...task.items].sort(compareByName).map(item => {
     let detail = '';
     let result = '';
 

@@ -5,6 +5,17 @@ import {
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 
+// 2026-10-16 (Hera): line items are listed A → Z by Name (items without a
+// name last) on Creating task, Preview task and the published task page.
+const compareByName = (a, b) => {
+  const an = (a && a.name) || '';
+  const bn = (b && b.name) || '';
+  if (!an && !bn) return 0;
+  if (!an) return 1;
+  if (!bn) return -1;
+  return an.localeCompare(bn, undefined, { numeric: true, sensitivity: 'base' });
+};
+
 function PreviewTask() {
   const navigate = useNavigate();
   const [taskData, setTaskData] = useState(null);
@@ -104,7 +115,7 @@ function PreviewTask() {
     : 'No types';
   const pageTitle = `Preview task — ${typesLabel} | ${taskData.locations.join(', ')}`;
 
-  const rows = taskData.items.map(p => [
+  const rows = [...taskData.items].sort(compareByName).map(p => [
     <Checkbox
       checked={selectedBarcodes.includes(p.barcode)}
       onChange={() => toggleSelectOne(p.barcode)}
