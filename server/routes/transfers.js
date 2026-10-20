@@ -243,6 +243,98 @@ async function mapShipmentLineItems(shipment, items) {
   }
 }
 
+// ── 2026-10-20: "ultimate qty" alignment helpers ─────────────────────────────
+// Rule (Hera): a transfer's qty always follows the latest real number — Qty
+// loaded once the from-location has loaded it, Received qty once the
+// to-location has counted it. Confirm (Pending) and Commit push that number
+// into Shopify's transfer line AND shipment line. Hub never touches
+// inventory (Available/On hand) here — Buyer handles any difference.
+function ultimateQty(item) {
+  if (item.received_quantity != null) return Number(item.received_quantity);
+  if (item.qty_loaded != null) return Number(item.qty_loaded);
+  return Number(item.quantity);
+}
+
+async function setTransferLineQuantities(client, transfer, lines) {
+  if (lines.length === 0) return;
+  const mutation = `
+    mutation inventoryTransferSetItems($input: InventoryTransferSetItemsInput!, $idempotencyKey: String!) {
+      inventoryTransferSetItems(input: $input) @idempotent(key: $idempotencyKey) {
+        inventoryTransfer { id }
+        userErrors { field message }
+      }
+    }
+  `;
+  const data = await graphql(client, mutation, {
+    input: {
+      id: transfer.shopify_transfer_id,
+      lineItems: lines.map(l => ({ inventoryItemId: l.inventory_item_id, quantity: l.target })),
+    },
+    idempotencyKey: crypto.randomUUID(),
+  });
+  const errors = data?.inventoryTransferSetItems?.userErrors || [];
+  if (errors.length > 0) {
+    throw new Error(`Could not update the Shopify transfer quantity: ${errors.map(e => e.message).join('; ')}`);
+  }
+}
+
+// Reads the shipment's REAL line quantities from Shopify (not Hub's copy) and
+// only updates the lines whose quantity differs from the target.
+async function setShipmentLineQuantities(client, shipmentId, lines) {
+  const lookup = `
+    query shipmentLines($id: ID!) {
+      inventoryShipment(id: $id) {
+        lineItems(first: 250) { edges { node { id quantity inventoryItem { id } } } }
+      }
+    }
+  `;
+  const lookupData = await graphql(client, lookup, { id: shipmentId });
+  const edges = lookupData?.inventoryShipment?.lineItems?.edges || [];
+  const byInventoryItemId = new Map(edges.map(({ node }) => [node.inventoryItem.id, node]));
+  const changes = [];
+  for (const l of lines) {
+    const node = byInventoryItemId.get(l.inventory_item_id);
+    if (!node) throw new Error(`Could not find the Shopify shipment line for ${l.sku || l.inventory_item_id}`);
+    if (Number(node.quantity) !== l.target) changes.push({ shipmentLineItemId: node.id, quantity: l.target });
+  }
+  if (changes.length === 0) return;
+  const updateMutation = `
+    mutation inventoryShipmentUpdateItemQuantities($id: ID!, $items: [InventoryShipmentUpdateItemQuantitiesInput!], $idempotencyKey: String!) {
+      inventoryShipmentUpdateItemQuantities(id: $id, items: $items) @idempotent(key: $idempotencyKey) {
+        shipment { id }
+        userErrors { field message }
+      }
+    }
+  `;
+  const data = await graphql(client, updateMutation, { id: shipmentId, items: changes, idempotencyKey: crypto.randomUUID() });
+  const errors = data?.inventoryShipmentUpdateItemQuantities?.userErrors || [];
+  if (errors.length > 0) {
+    throw new Error(`Could not update the Shopify shipment quantity: ${errors.map(e => e.message).join('; ')}`);
+  }
+}
+
+// Aligns Shopify (transfer line + shipment line, when a shipment exists) and
+// Hub's transfer_items.quantity to targetOf(item). Order matters when a
+// shipment exists: raise the transfer line BEFORE raising the shipment, lower
+// the shipment BEFORE lowering the transfer line. Throws (never silent) if
+// Shopify refuses a step. Mutates item.quantity in memory to the new value.
+async function alignTransferQuantities(client, transfer, items, targetOf, shipmentId) {
+  const lines = items.map(i => ({ ref: i, id: i.id, sku: i.sku, inventory_item_id: i.inventory_item_id, quantity: Number(i.quantity), target: Number(targetOf(i)) }));
+  const ups = lines.filter(l => l.target > l.quantity);
+  const downs = lines.filter(l => l.target < l.quantity);
+  if (!shipmentId) {
+    await setTransferLineQuantities(client, transfer, [...ups, ...downs]);
+  } else {
+    await setTransferLineQuantities(client, transfer, ups);
+    await setShipmentLineQuantities(client, shipmentId, lines);
+    await setTransferLineQuantities(client, transfer, downs);
+  }
+  for (const l of [...ups, ...downs]) {
+    await pool.query('UPDATE transfer_items SET quantity = $1 WHERE id = $2', [l.target, l.id]);
+    l.ref.quantity = l.target;
+  }
+}
+
 // ── 2026-09-15 七项改动的共享 helper（见 spec doc 第 11 节）───────────────────
 
 // Line items still on the transfer for Shopify-facing purposes — a Buyer
@@ -766,6 +858,40 @@ router.delete('/tags/:tagId', async (req, res) => {
   }
 });
 
+// ─── Auto Commit switch (BuyerTransferSettings.js, 2026-10-20) ──────────────
+// Whether Hub auto-commits a transfer right after its to-location submits a
+// count where every received qty matches the transfer qty (submit-count).
+// Stored in app_settings under key 'transfer_auto_commit' (JSON true/false);
+// no row = OFF (default: never auto-commit — Buyer commits manually).
+async function isAutoCommitOn() {
+  const r = await pool.query("SELECT value FROM app_settings WHERE key = 'transfer_auto_commit'");
+  return r.rows.length > 0 && r.rows[0].value === true;
+}
+
+router.get('/auto-commit-setting', async (req, res) => {
+  try {
+    res.json({ enabled: await isAutoCommitOn() });
+  } catch (e) {
+    console.error('GET /api/transfers/auto-commit-setting error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.put('/auto-commit-setting', async (req, res) => {
+  try {
+    const enabled = !!(req.body && req.body.enabled);
+    await pool.query(
+      `INSERT INTO app_settings (key, value, updated_at) VALUES ('transfer_auto_commit', $1::jsonb, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+      [JSON.stringify(enabled)]
+    );
+    res.json({ enabled });
+  } catch (e) {
+    console.error('PUT /api/transfers/auto-commit-setting error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ─── Tag of Types (BuyerTransferSettings.js, 2026-10-09) ────────────────────
 // Which product types a Transfer tag stands for — lets Transfers follow the
 // Purchasing user groups. GET → [{ id, tag, types }]. PUT replaces the whole
@@ -1231,7 +1357,7 @@ router.post('/:id/qty-loaded/undo', async (req, res) => {
     const t = await pool.query('SELECT status FROM transfers WHERE id = $1', [req.params.id]);
     if (t.rows.length === 0) return res.status(404).json({ error: 'Transfer not found' });
     if (t.rows[0].status !== 'loading') {
-      return res.status(400).json({ error: 'Loaded qty can only be changed while the transfer is in Loading' });
+      return res.status(400).json({ error: 'Loaded qty can only be changed while the transfer is in Draft' });
     }
     await pool.query(
       'UPDATE transfer_items SET loaded_confirmed = FALSE WHERE id = $1 AND transfer_id = $2',
@@ -1281,12 +1407,11 @@ router.post('/:id/submit-loading', async (req, res) => {
         }
       }
     }
-    // 2026-10-06: a line loaded with MORE than its transfer qty must always go
-    // through Buyer's Pending review (even on Buyer's forced Good to Go) —
-    // otherwise the shipment would carry more units than the Shopify transfer
-    // line and the origin's Available would never be corrected for the extra.
-    const hasOverLoaded = items.some(i => i.qty_loaded != null && i.qty_loaded > i.quantity);
-    const hasMismatch = hasOverLoaded || (!force && items.some(i => i.qty_loaded !== i.quantity));
+    // 2026-10-20: ANY line whose loaded qty differs from its transfer qty (more
+    // OR less) goes to Buyer's Pending — even on Buyer's forced Good to Go —
+    // because Confirm is what aligns the Shopify transfer qty to the loaded
+    // qty (ultimate qty rule). Previously a forced Good to Go skipped Pending.
+    const hasMismatch = items.some(i => i.qty_loaded !== i.quantity);
 
     if (hasMismatch) {
       await pool.query("UPDATE transfers SET status = 'pending', updated_at = NOW() WHERE id = $1", [transfer.id]);
@@ -1345,15 +1470,14 @@ router.post('/:id/submit-loading', async (req, res) => {
 
 // ─── Pending → Confirm (Buyer) ───────────────────────────────────────────────
 
-// POST /api/transfers/:id/confirm — Body: { items: [{ itemId, inventoryItemId,
-// quantity, availableQty }] } — the Pending page's final (possibly
-// stepper-adjusted) quantities plus each item's freshly-refreshed from-
-// location Available qty. Does, in order (spec doc section 4):
-//   A. inventoryTransferSetItems — push the adjusted quantities to Shopify
-//   B. inventoryAdjustQuantities (delta) on each changed line item, so the
-//      from-location's Available is corrected to match reality
-//   C. advance the transfer to Good to go (mark-as-ready-to-ship + shipment,
-//      same as the no-mismatch path in submit-loading)
+// POST /api/transfers/:id/confirm — 2026-10-20 (ultimate qty rule): aligns every
+// line's transfer qty to its loaded qty in Shopify (+ the shipment line, if a
+// shipment exists) and in Hub, then advances to Good to go (mark-as-ready-to-
+// ship + shipment, same as the no-mismatch path in submit-loading). The body's
+// per-line quantities (Pending page steppers) are ignored; inventory is never
+// adjusted. (Earlier versions pushed the stepper qty with inventoryTransferSetItems
+// and delta-corrected the from-location's Available with inventoryAdjustQuantities
+// — see spec doc section 4 — both replaced by alignTransferQuantities().)
 router.post('/:id/confirm', async (req, res) => {
   try {
     const { items: confirmedItems, expectedUpdatedAt } = req.body;
@@ -1369,91 +1493,17 @@ router.post('/:id/confirm', async (req, res) => {
     const shopify = getShopify();
     const client = new shopify.clients.Graphql({ session });
 
-    const changedItems = confirmedItems.filter(ci => {
-      const dbItem = items.find(i => i.id === ci.itemId);
-      return dbItem && Number(ci.quantity) !== dbItem.quantity;
-    });
-
-    // A. Push adjusted quantities to the Shopify transfer.
-    if (changedItems.length > 0) {
-      const setItemsMutation = `
-        mutation inventoryTransferSetItems($input: InventoryTransferSetItemsInput!, $idempotencyKey: String!) {
-          inventoryTransferSetItems(input: $input) @idempotent(key: $idempotencyKey) {
-            inventoryTransfer { id }
-            userErrors { field message }
-          }
-        }
-      `;
-      const setData = await graphql(client, setItemsMutation, {
-        input: {
-          id: transfer.shopify_transfer_id,
-          lineItems: changedItems.map(ci => ({ inventoryItemId: ci.inventoryItemId, quantity: Number(ci.quantity) })),
-        },
-        idempotencyKey: crypto.randomUUID(),
-      });
-      const setErrors = setData?.inventoryTransferSetItems?.userErrors || [];
-      if (setErrors.length > 0) {
-        return res.status(400).json({ error: setErrors.map(e => e.message).join('; ') });
-      }
-
-      // B. Delta-correct the from-location's Available for each changed item
-      // — delta = actual current Available minus what Buyer previously
-      // believed it was (the transfer qty being replaced), per the worked
-      // example in spec doc section 4.
-      const changes = changedItems.map(ci => {
-        const dbItem = items.find(i => i.id === ci.itemId);
-        return {
-          inventoryItemId: ci.inventoryItemId,
-          locationId: transfer.from_location_id,
-          delta: Number(ci.quantity) - dbItem.quantity,
-          // Required as of Shopify API version 2026-04 (compare-and-swap
-          // protection). We already have a freshly-refreshed from-location
-          // Available qty for this item in ci.availableQty (see the route
-          // comment above), so use the real value here instead of opting
-          // out — this actually adds protection against a stale confirm
-          // (e.g. two tabs open) that wasn't possible before this field
-          // existed. Falls back to null (opt-out) if a caller doesn't send it.
-          changeFromQuantity: (ci.availableQty !== undefined && ci.availableQty !== null)
-            ? Number(ci.availableQty)
-            : null,
-        };
-      });
-      // @idempotent(key: ...) required as of API 2026-04 too (separate
-      // breaking change from changeFromQuantity above — see Shopify
-      // changelog "Making idempotency mandatory for inventory adjustments
-      // and refund mutations"). Fresh UUID per call: this is a new
-      // inventory correction each time, not a retry of a prior one.
-      const adjustMutation = `
-        mutation inventoryAdjustQuantities($input: InventoryAdjustQuantitiesInput!, $idempotencyKey: String!) {
-          inventoryAdjustQuantities(input: $input) @idempotent(key: $idempotencyKey) {
-            userErrors { field message }
-          }
-        }
-      `;
-      const adjustData = await graphql(client, adjustMutation, {
-        input: { reason: 'correction', name: 'available', changes },
-        idempotencyKey: crypto.randomUUID(),
-      });
-      const adjustErrors = adjustData?.inventoryAdjustQuantities?.userErrors || [];
-      if (adjustErrors.length > 0) {
-        return res.status(400).json({ error: adjustErrors.map(e => e.message).join('; ') });
-      }
-
-      for (const ci of changedItems) {
-        await pool.query('UPDATE transfer_items SET quantity = $1 WHERE id = $2', [Number(ci.quantity), ci.itemId]);
-      }
-    }
-
-    // 2026-10-06: if Buyer's final transfer qty for a line is BELOW what the
-    // from-location loaded (Buyer declined the extra units, or reduced an
-    // over-stock line below what was loaded), the shipment must not carry
-    // more than the transfer line — cap qty_loaded to the final qty.
-    for (const ci of confirmedItems) {
-      const dbItem = items.find(i => i.id === ci.itemId);
-      if (dbItem && dbItem.qty_loaded != null && dbItem.qty_loaded > Number(ci.quantity)) {
-        await pool.query('UPDATE transfer_items SET qty_loaded = $1 WHERE id = $2', [Number(ci.quantity), ci.itemId]);
-      }
-    }
+    // 2026-10-20 (ultimate qty rule, Hera): Confirm aligns every line's transfer
+    // qty to its loaded qty — in Shopify (transfer line, plus the shipment line
+    // if a shipment already exists) and in Hub. The qty values the page sends
+    // are ignored. Inventory (Available/On hand) is NOT touched — the old
+    // delta-correction via inventoryAdjustQuantities was removed at Hera's
+    // request; Buyer deals with any stock difference themselves.
+    await alignTransferQuantities(
+      client, transfer, items,
+      i => (i.qty_loaded != null ? i.qty_loaded : i.quantity),
+      transfer.shopify_shipment_id || null
+    );
 
     // C. Advance to Good to go. 2026-09-15: skip mark-as-ready-to-ship if a
     // shipment already exists (this transfer was previously Good to go and
@@ -1737,7 +1787,10 @@ router.post('/:id/submit-count', async (req, res) => {
     // leaves the transfer sitting at 'counted' (already committed to the DB
     // above) for Buyer to commit manually instead — it must never turn this
     // Submit click itself into an error for Warehouse/Manager.
-    if (noQtyIssue) {
+    // 2026-10-20: only when Buyer has the Auto Commit switch on (Transfer
+    // Settings; default off) — otherwise the transfer stays at 'counted' and
+    // Buyer commits manually.
+    if (noQtyIssue && await isAutoCommitOn()) {
       try {
         await commitOne(req.params.id, true);
         return res.json({ success: true, status: 'archived', autoCommitted: true });
@@ -1784,13 +1837,11 @@ async function commitOne(id, autoCommitted) {
   let shipmentId = transfer.shopify_shipment_id;
 
   if (!shipmentId) {
-    // 2026-10-06: refuse to create a shipment bigger than its transfer line —
-    // an over-loaded line has to be accepted (or declined) on Buyer's Pending
-    // page first, which also corrects the origin's Available for the extra.
-    const overLoaded = items.filter(i => i.qty_loaded != null && i.qty_loaded > i.quantity);
-    if (overLoaded.length > 0) {
-      throw new Error(`Loaded qty is higher than the transfer qty for ${overLoaded.map(i => i.sku).join(', ')} — review it on the Pending page (Confirm) before committing.`);
-    }
+    // 2026-10-20 (ultimate qty rule): no shipment yet, so align the Shopify
+    // transfer lines to each line's ultimate qty (received, else loaded, else
+    // transfer qty) BEFORE marking ready to ship / creating the shipment.
+    // Replaces the 2026-10-06 "over-loaded -> must go through Pending" guard.
+    await alignTransferQuantities(client, transfer, items, ultimateQty, null);
     if (transfer.status === 'loading' || transfer.status === 'pending') {
       // 2026-09-15 fix: plain `id: ID!` argument, not a wrapped input object —
       // see the comment on this same mutation in POST /:id/submit-loading above.
@@ -1826,26 +1877,11 @@ async function commitOne(id, autoCommitted) {
   }
   // in_transit / receiving / counted: shipment is already in transit — nothing to do above.
 
-  const mismatched = items.filter(i => i.received_quantity != null && i.received_quantity !== i.quantity);
-  if (mismatched.length > 0) {
-    // ⚠️ 2026-09-16 修正：同上——扁平 id/items 参数，不是 wrapped input。
-    // 见 claude/TRANSFER_FEATURE_SPEC.md 第 14 节。
-    const updateMutation = `
-      mutation inventoryShipmentUpdateItemQuantities($id: ID!, $items: [InventoryShipmentUpdateItemQuantitiesInput!], $idempotencyKey: String!) {
-        inventoryShipmentUpdateItemQuantities(id: $id, items: $items) @idempotent(key: $idempotencyKey) {
-          shipment { id }
-          userErrors { field message }
-        }
-      }
-    `;
-    const data = await graphql(client, updateMutation, {
-      id: shipmentId,
-      items: mismatched.map(i => ({ shipmentLineItemId: i.shipment_line_item_id, quantity: i.received_quantity })),
-      idempotencyKey: crypto.randomUUID(),
-    });
-    const errors = data?.inventoryShipmentUpdateItemQuantities?.userErrors || [];
-    if (errors.length > 0) throw new Error(errors.map(e => e.message).join('; '));
-  }
+  // 2026-10-20 (ultimate qty rule): before Receive, make Shopify's shipment
+  // line AND transfer line equal each line's ultimate qty (received, else
+  // loaded, else transfer qty). Compares against the shipment's real Shopify
+  // quantities, not Hub's copy. Hub never adjusts inventory here.
+  await alignTransferQuantities(client, transfer, items, ultimateQty, shipmentId);
 
   const receiveMutation = `
     mutation inventoryShipmentReceive($id: ID!, $bulkReceiveAction: InventoryShipmentReceiveLineItemReason!, $idempotencyKey: String!) {
@@ -1863,9 +1899,6 @@ async function commitOne(id, autoCommitted) {
   const receiveErrors = receiveData?.inventoryShipmentReceive?.userErrors || [];
   if (receiveErrors.length > 0) throw new Error(receiveErrors.map(e => e.message).join('; '));
 
-  for (const item of mismatched) {
-    await pool.query('UPDATE transfer_items SET quantity = $1 WHERE id = $2', [item.received_quantity, item.id]);
-  }
   // 2026-09-15 (改动三): commit's terminal status is 'archived' now, not
   // 'committed' — nothing rests at 'committed' anymore, whether this was a
   // manual Buyer commit or an automatic one out of submit-count.

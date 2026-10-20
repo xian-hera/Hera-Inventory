@@ -11,7 +11,7 @@ function WarehouseTransferDetail() {
       role="warehouse"
       showWigNumber={false}
       backPath="/warehouse"
-      dispatchLabel="Dispatch"
+      dispatchLabel="Mark as In Transit"
       showTags
     />
   );

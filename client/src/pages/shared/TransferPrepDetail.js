@@ -281,7 +281,7 @@ function TransferPrepDetail({ role, showWigNumber, backPath, dispatchLabel, show
   });
   const visibleItems = notProcessedOnly ? sortedItems.filter(i => !i.loaded_confirmed && i.edit_state !== 'removed') : sortedItems;
 
-  const submitButtonLabel = allConfirmed && hasMismatch ? 'Submit to Buyer' : 'Good to go';
+  const submitButtonLabel = allConfirmed && hasMismatch ? 'Submit to Buyer' : 'Ready to Ship';
 
   // 改动五: row background/text treatment for a Buyer-edited line item.
   const rowStyle = (item) => {
@@ -433,7 +433,7 @@ function TransferPrepDetail({ role, showWigNumber, backPath, dispatchLabel, show
                         const matches = confirmed && item.qty_loaded === item.quantity;
                         const removed = item.edit_state === 'removed';
                         return (
-                          <tr key={item.id} style={{ borderBottom: '1px solid #f1f1f1', ...rowStyle(item) }}>
+                          <tr key={item.id} style={{ borderBottom: '1px solid #f1f1f1', ...(confirmed && !removed && !matches ? { background: '#fdeceb' } : {}), ...rowStyle(item) }}>
                             <td style={{ padding: '10px' }}>{item.sku}</td>
                             <td style={{ padding: '10px' }}>{item.name}</td>
                             {showWigNumber && <td style={{ padding: '10px', color: '#6d7175' }}>{item.wig_number || ''}</td>}

@@ -17,9 +17,9 @@
 // pre-migration row (or a stray old reference) still renders instead of
 // falling back to the raw string.
 export const STATUS_LABELS = {
-  loading: 'Loading',
+  loading: 'Draft',
   pending: 'Pending',
-  good_to_go: 'Good to Go',
+  good_to_go: 'Ready to Ship',
   in_transit: 'In transit',
   receiving: 'Receiving',
   counted: 'Counted',

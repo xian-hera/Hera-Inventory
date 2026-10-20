@@ -38,6 +38,39 @@ function BuyerTransferSettings() {
   const [error, setError] = useState('');
   const [newTag, setNewTag] = useState('');
   const [adding, setAdding] = useState(false);
+
+  // Auto Commit switch (2026-10-20, Hera) — saved the moment it is toggled.
+  const [autoCommit, setAutoCommit] = useState(null); // null = still loading
+  const [acSaving, setAcSaving] = useState(false);
+  const [acError, setAcError] = useState('');
+  useEffect(() => {
+    fetch('/api/transfers/auto-commit-setting')
+      .then((r) => r.json())
+      .then((d) => setAutoCommit(!!d.enabled))
+      .catch(() => { setAutoCommit(false); setAcError('Could not load the Auto Commit setting.'); });
+  }, []);
+  const toggleAutoCommit = async () => {
+    if (autoCommit === null || acSaving) return;
+    const next = !autoCommit;
+    setAcSaving(true);
+    setAcError('');
+    setAutoCommit(next);
+    try {
+      const res = await fetch('/api/transfers/auto-commit-setting', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: next }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Save failed');
+      setAutoCommit(!!data.enabled);
+    } catch (e) {
+      setAutoCommit(!next);
+      setAcError(e.message || 'Could not save the Auto Commit setting.');
+    } finally {
+      setAcSaving(false);
+    }
+  };
   const [deletingId, setDeletingId] = useState(null);
 
   const fetchTags = useCallback(async () => {
@@ -393,6 +426,35 @@ function BuyerTransferSettings() {
                     </InlineStack>
                   </>
                 )}
+              </BlockStack>
+            </Card>
+
+            {/* Auto Commit (2026-10-20, Hera) — default off */}
+            <Card>
+              <BlockStack gap="200">
+                <Text variant="headingMd" as="h2">Auto Commit</Text>
+                {acError && <Banner tone="critical" onDismiss={() => setAcError('')}>{acError}</Banner>}
+                <InlineStack gap="300" blockAlign="center" wrap={false}>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={!!autoCommit}
+                    aria-label="Auto Commit"
+                    onClick={toggleAutoCommit}
+                    disabled={autoCommit === null || acSaving}
+                    style={{
+                      flex: '0 0 auto', width: '44px', height: '24px', borderRadius: '999px', border: 'none', padding: 0,
+                      background: autoCommit ? '#008060' : '#c9cccf', position: 'relative',
+                      cursor: autoCommit === null || acSaving ? 'default' : 'pointer', opacity: acSaving ? 0.7 : 1,
+                    }}
+                  >
+                    <span style={{
+                      position: 'absolute', top: '2px', left: autoCommit ? '22px' : '2px',
+                      width: '20px', height: '20px', borderRadius: '50%', background: 'white', transition: 'left 0.15s',
+                    }} />
+                  </button>
+                  <Text as="p">Let Hub automatically commit a Transfer if all quantity matches.</Text>
+                </InlineStack>
               </BlockStack>
             </Card>
           </BlockStack>

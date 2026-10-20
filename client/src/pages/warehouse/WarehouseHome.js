@@ -211,7 +211,7 @@ function WarehouseHome() {
                           loading={dispatching}
                           onClick={dispatchSelected}
                         >
-                          Dispatch selected
+                          Mark selected In Transit
                         </Button>
                         <Button
                           variant="primary"
@@ -219,7 +219,7 @@ function WarehouseHome() {
                           loading={dispatching}
                           onClick={dispatchAllGoodToGo}
                         >
-                          Dispatch all Good to go
+                          Mark all Ready to Ship In Transit
                         </Button>
                       </InlineStack>
                     </InlineStack>

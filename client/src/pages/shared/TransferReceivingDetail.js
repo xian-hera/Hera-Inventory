@@ -567,7 +567,7 @@ function TransferReceivingDetail({ role, backPath, showTags }) {
                           <tr
                             key={item.id}
                             onClick={() => openPopup(item)}
-                            style={{ borderBottom: '1px solid #f1f1f1', cursor: removed || held ? 'default' : 'pointer', ...rowStyle(item) }}
+                            style={{ borderBottom: '1px solid #f1f1f1', cursor: removed || held ? 'default' : 'pointer', ...(!removed && isOffQty(item) ? { background: '#fdeceb' } : {}), ...rowStyle(item) }}
                           >
                             <td style={{ padding: '10px' }}>
                               <div style={{ fontWeight: 500 }}>{item.name || '-'}</div>
