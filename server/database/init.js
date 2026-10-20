@@ -658,6 +658,11 @@ const initDatabase = async () => {
     // which are about when WE processed/committed it, not when the goods were
     // actually invoiced.
     await client.query(`ALTER TABLE po_invoices ADD COLUMN IF NOT EXISTS invoice_date DATE`).catch(() => {});
+    // pb_qty (2026-10-20, Hera): how many pallets or boxes the shipment is,
+    // entered optionally in Card 1 when the Purchase Order is created. One
+    // column holds both parts as "{integer} P" (pallet) or "{integer} B"
+    // (box), e.g. "12 P"; NULL when left blank. Read by the Warehouse side.
+    await client.query(`ALTER TABLE po_invoices ADD COLUMN IF NOT EXISTS pb_qty TEXT`).catch(() => {});
     // sent_to_store_at / store_counted_at: timestamps for the two new
     // mid-flow statuses above — sent_to_store_at is the manager-side
     // "publish date".

@@ -152,6 +152,13 @@ function BuyerPOImportInvoice() {
   // every modern browser; normalizeDateInput() tolerates a bare MMDD typed
   // fallback for anything that renders it as a plain text field.
   const [invoiceDate, setInvoiceDateState] = useState('');
+
+  // PB qty (2026-10-20, Hera) — optional pallet / box count entered in Card 1
+  // when the PO is created. pbMode 'P' = Pallet (default), 'B' = Box; pbQty is
+  // a whole number (digits only) or ''. Saved with the invoice as "{n} P/B";
+  // not shown again after the invoice exists.
+  const [pbMode, setPbMode] = useState('P');
+  const [pbQty, setPbQty] = useState('');
   const [savingDate, setSavingDate] = useState(false);
 
   // Card 2 (supplier / location)
@@ -686,6 +693,8 @@ function BuyerPOImportInvoice() {
           location,
           adjustment: adjustmentSaved,
           invoiceDate: invoiceDate || null,
+          pbMode,
+          pbQty,
           rows: csvRows,
         }),
       });
@@ -821,7 +830,7 @@ function BuyerPOImportInvoice() {
         const createRes = await fetch('/api/po-invoices/pending', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ invoiceNumber, supplierId, location, invoiceDate: invoiceDate || null }),
+          body: JSON.stringify({ invoiceNumber, supplierId, location, invoiceDate: invoiceDate || null, pbMode, pbQty }),
         });
         const createData = await createRes.json();
         if (!createRes.ok) throw new Error(createData.error);
@@ -1243,6 +1252,39 @@ function BuyerPOImportInvoice() {
                           <option key={location} value={location}>{location}</option>
                         )}
                       </select>
+                    </div>
+
+                    {/* PB qty: the label is a switch between Pallet and Box. */}
+                    <div style={{ width: 110 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, minHeight: 20 }}>
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={pbMode === 'B'}
+                          aria-label="Switch between Pallet and Box"
+                          disabled={disabled}
+                          onClick={() => setPbMode(m => (m === 'P' ? 'B' : 'P'))}
+                          style={{
+                            width: 30, height: 16, borderRadius: 8, border: 'none', padding: 0, position: 'relative',
+                            background: pbMode === 'B' ? '#303030' : '#8a8a8a', cursor: disabled ? 'default' : 'pointer', flex: '0 0 auto',
+                          }}
+                        >
+                          <span style={{
+                            position: 'absolute', top: 2, left: pbMode === 'B' ? 16 : 2, width: 12, height: 12,
+                            borderRadius: '50%', background: 'white', transition: 'left 0.15s',
+                          }} />
+                        </button>
+                        <span style={{ fontSize: '13px', color: '#303030', lineHeight: '1.4' }}>{pbMode === 'B' ? 'Box' : 'Pallet'}</span>
+                      </div>
+                      <TextField
+                        label=""
+                        labelHidden
+                        value={pbQty}
+                        onChange={(v) => setPbQty(String(v).replace(/\D/g, ''))}
+                        inputMode="numeric"
+                        autoComplete="off"
+                        disabled={disabled}
+                      />
                     </div>
 
                     <div style={{ minWidth: 180 }}>
