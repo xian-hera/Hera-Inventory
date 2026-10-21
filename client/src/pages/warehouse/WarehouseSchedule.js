@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Page, BlockStack, InlineStack, Text, Button, Banner, Modal, TextField, Select,
 } from '@shopify/polaris';
@@ -77,21 +78,51 @@ const normSlots = (slots) => {
   return JSON.stringify(out);
 };
 
-// Full hover text of a card.
-function hoverText(t) {
-  if (t.kind === 'custom') {
-    return [`Type: ${t.type || 'Custom'}`, `Title: ${t.title}`, t.note ? `Note: ${t.note}` : null].filter(Boolean).join('\n');
-  }
-  if (t.kind === 'po') {
-    return [`${t.number}  ${t.supplier}`, `HQ → ${t.to}`, t.pbCount ? `${t.pbUnit} ${t.pbCount}` : null].filter(Boolean).join('\n');
-  }
-  return [`${t.number}${t.tag ? `  ${t.tag}` : ''}`, `${t.from} → ${t.to}`].join('\n');
+// The location shown ON the card. A store → store transfer is two cards
+// (Hera 2026-10-21): the 'pickup' card shows "➔ {from}" + green "Pickup",
+// the 'deliver' card "➔ {to}". Both count as HQ-style cards for grouping.
+function cardRoute(t) {
+  if (t.kind === 'transfer' && t.leg === 'pickup') return { from: HQ, to: t.from };
+  if (t.kind === 'transfer' && t.leg === 'deliver') return { from: HQ, to: t.to };
+  if (t.kind === 'transfer') return { from: t.from, to: t.to };
+  return { from: HQ, to: t.to };
+}
+
+// Hover box (Hera 2026-10-21): every card shows its full location relation
+// "{from} ➔ {to}" (locations bold); custom cards also Type / Title / Note.
+// Rendered in a portal with fixed position so the calendar's scroll box and
+// the page's centring transform can't clip or shift it.
+function HoverBox({ task, rect }) {
+  if (!rect) return null;
+  const from = task.kind === 'transfer' ? task.from : HQ;
+  const to = task.to;
+  const above = rect.top > 140;
+  return createPortal(
+    <div style={{
+      position: 'fixed', zIndex: 700, left: Math.max(8, Math.min(rect.left, window.innerWidth - 288)),
+      top: above ? rect.top - 6 : rect.bottom + 6, transform: above ? 'translateY(-100%)' : 'none',
+      maxWidth: 280, background: '#fff', color: '#303030', border: '1px solid #c9cccf', borderRadius: 8,
+      boxShadow: '0 6px 18px rgba(0,0,0,0.15)', padding: '8px 10px', fontSize: 13, lineHeight: '18px', pointerEvents: 'none',
+    }}>
+      {task.kind === 'custom' && (
+        <div style={{ marginBottom: 4 }}>
+          <div>Type: {task.type || 'Custom'}</div>
+          <div>Title: {task.title}</div>
+          {task.note && <div style={{ whiteSpace: 'pre-wrap' }}>Note: {task.note}</div>}
+        </div>
+      )}
+      <div><b>{from}</b> ➔ <b>{to}</b></div>
+    </div>,
+    document.body
+  );
 }
 
 // One task card. `compact` = the calendar version (slightly smaller, with
 // the order number in front).
 function TaskCard({ task, selected, onToggle, onOpenNumber, order, compact }) {
   const fs = compact ? 12 : 13;
+  const [hoverRect, setHoverRect] = useState(null);
+  const route = cardRoute(task);
   let first;
   let second;
   if (task.kind === 'po') {
@@ -109,7 +140,12 @@ function TaskCard({ task, selected, onToggle, onOpenNumber, order, compact }) {
         {task.tag && <span style={{ fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{task.tag}</span>}
       </>
     );
-    second = <RoutePills from={task.from} to={task.to} />;
+    second = (
+      <>
+        <RoutePills from={route.from} to={route.to} />
+        {task.leg === 'pickup' && <span style={{ marginLeft: 'auto', color: '#16a34a', fontWeight: 700 }}>Pickup</span>}
+      </>
+    );
   } else {
     first = (
       <>
@@ -124,7 +160,8 @@ function TaskCard({ task, selected, onToggle, onOpenNumber, order, compact }) {
       role="button"
       tabIndex={0}
       aria-pressed={selected}
-      title={hoverText(task)}
+      onMouseEnter={(e) => setHoverRect(e.currentTarget.getBoundingClientRect())}
+      onMouseLeave={() => setHoverRect(null)}
       onClick={() => onToggle(task.id)}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(task.id); } }}
       style={{
@@ -140,6 +177,7 @@ function TaskCard({ task, selected, onToggle, onOpenNumber, order, compact }) {
         {first}
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', minWidth: 0 }}>{second}</div>
+      <HoverBox task={task} rect={hoverRect} />
       {selected && (
         <span aria-hidden="true" style={{
           position: 'absolute', top: -8, right: -8, width: 18, height: 18, borderRadius: '50%', background: PINK,
@@ -406,14 +444,17 @@ function WarehouseSchedule() {
     if (groupBy !== 'location') return list;
     // Group by Location (spec §5): HQ → store (by to) · store → HQ (by from) ·
     // store → store (by from, then to). No titles — the pills show it.
-    const group = (t) => (t.from === HQ ? 0 : t.to === HQ ? 1 : 2);
+    // Uses the location shown on the card: the two cards of a store → store
+    // transfer (Pickup / delivery) sit in group 1 under their own location.
+    const group = (t) => { const r = cardRoute(t); return r.from === HQ ? 0 : r.to === HQ ? 1 : 2; };
     return [...list].sort((a, b) => {
       const ga = group(a); const gb = group(b);
       if (ga !== gb) return ga - gb;
-      const la = ga === 0 ? a.to : a.from;
-      const lb = gb === 0 ? b.to : b.from;
+      const ra = cardRoute(a); const rb = cardRoute(b);
+      const la = ga === 0 ? ra.to : ra.from;
+      const lb = gb === 0 ? rb.to : rb.from;
       return compareLoc(la, lb)
-        || (ga === 2 ? compareLoc(a.to, b.to) : 0)
+        || (ga === 2 ? compareLoc(ra.to, rb.to) : 0)
         || new Date(a.createdAt) - new Date(b.createdAt)
         || a.id - b.id;
     });
@@ -461,6 +502,26 @@ function WarehouseSchedule() {
 
   const save = async () => {
     if (!data) return;
+    // A store → store delivery may not be earlier than its pickup (Hera
+    // 2026-10-21) — checked here first, and again by the server.
+    const rank = {};
+    data.days.forEach((d, i) => { rank[d] = i; });
+    const posOf = (id) => {
+      const w = where[id];
+      if (!w) return null;
+      const [d, h] = w.key.split('|');
+      return [rank[d] ?? -1, h === 'AM' ? 0 : 1, w.index];
+    };
+    const late = [];
+    tasks.filter(t => t.kind === 'transfer' && t.leg === 'deliver').forEach(dv => {
+      const pk = tasks.find(t => t.kind === 'transfer' && t.leg === 'pickup' && t.transferId === dv.transferId);
+      const a = posOf(dv.id); const b = pk && posOf(pk.id);
+      if (a && b && (a[0] - b[0] || a[1] - b[1] || a[2] - b[2]) < 0) late.push(dv.number);
+    });
+    if (late.length > 0) {
+      setError(`Delivery is scheduled before its pickup: ${late.join(', ')}. Move the delivery later or the pickup earlier.`);
+      return;
+    }
     setSaving(true);
     setError('');
     try {
@@ -499,6 +560,7 @@ function WarehouseSchedule() {
     const lines = [`Delete ${n === 1 ? 'this task' : `these ${n} tasks`} from the Schedule?`];
     if (hasSplits) lines.push('Every task split from it will be deleted too, also split tasks that are already on the calendar.');
     if (hasChildTask) lines.push('A split task’s P / B qty goes back to the task it was split from.');
+    if (selTasks.some(t => t.kind === 'transfer' && t.leg)) lines.push('The Pickup card and the delivery card of a store-to-store transfer are deleted together, also if the other one is already on the calendar.');
     lines.push('Deleted tasks do not come back. POs and Transfers themselves are not changed.');
     if (!window.confirm(lines.join('\n\n'))) return;
     setBusy(true);

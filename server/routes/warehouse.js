@@ -296,15 +296,23 @@ router.get('/po/:id', async (req, res) => {
 // Adds a task row for every transfer created after go-live that has none yet.
 // (A transfer whose task WH deleted keeps its row with removed_at, so it is
 // never re-added.)
+// A store → store transfer gets TWO rows: leg 'pickup' and leg 'deliver'
+// (Hera 2026-10-21); every other transfer one row (leg NULL).
 async function ensureTransferTasks(db) {
   const goLive = await getGoLive(db);
   await db.query(
-    `INSERT INTO wh_tasks (kind, transfer_id, to_location)
-     SELECT 'transfer', t.id, t.to_location FROM transfers t
+    `INSERT INTO wh_tasks (kind, transfer_id, to_location, leg)
+     SELECT 'transfer', t.id, t.to_location, l.leg
+     FROM transfers t
+     CROSS JOIN LATERAL (
+       SELECT unnest(CASE WHEN t.from_location <> $2 AND t.to_location <> $2
+                          THEN ARRAY['pickup', 'deliver']::text[] ELSE ARRAY[NULL]::text[] END) AS leg
+     ) l
      WHERE t.created_at >= $1::timestamptz
-       AND NOT EXISTS (SELECT 1 FROM wh_tasks w WHERE w.kind = 'transfer' AND w.transfer_id = t.id)
+       AND NOT EXISTS (SELECT 1 FROM wh_tasks w
+                       WHERE w.kind = 'transfer' AND w.transfer_id = t.id AND COALESCE(w.leg, '') = COALESCE(l.leg, ''))
      ON CONFLICT DO NOTHING`,
-    [goLive]
+    [goLive, HQ]
   );
 }
 
@@ -362,6 +370,7 @@ async function loadSchedule(db) {
       return {
         ...base,
         transferId: w.transfer_id,
+        leg: w.leg || null, // 'pickup' | 'deliver' | null
         number: w.shopify_transfer_name || w.transfer_no || '',
         tag,
         status: w.tr_status,
@@ -438,6 +447,24 @@ router.put('/schedule', async (req, res) => {
          WHERE id = $1 AND removed_at IS NULL`,
         [p.id, p.date, p.half, p.pos]
       );
+    }
+    // A store → store delivery may not be scheduled before its pickup
+    // (Hera 2026-10-21). Compared by day, then Morning < Afternoon, then the
+    // order inside the half-day. A delivery whose pickup is still
+    // unscheduled is allowed.
+    const bad = await client.query(
+      `SELECT COALESCE(tr.shopify_transfer_name, tr.transfer_no) AS number
+       FROM wh_tasks d
+       JOIN wh_tasks p ON p.kind = 'transfer' AND p.transfer_id = d.transfer_id AND p.leg = 'pickup' AND p.removed_at IS NULL
+       JOIN transfers tr ON tr.id = d.transfer_id
+       WHERE d.kind = 'transfer' AND d.leg = 'deliver' AND d.removed_at IS NULL
+         AND d.sched_date IS NOT NULL AND p.sched_date IS NOT NULL
+         AND (d.sched_date, CASE d.sched_half WHEN 'AM' THEN 0 ELSE 1 END, d.sched_pos)
+           < (p.sched_date, CASE p.sched_half WHEN 'AM' THEN 0 ELSE 1 END, p.sched_pos)`
+    );
+    if (bad.rows.length > 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: `Delivery is scheduled before its pickup: ${bad.rows.map(r => r.number).join(', ')}. Move the delivery later or the pickup earlier.` });
     }
     await client.query(
       `INSERT INTO app_settings (key, value, updated_at) VALUES ('wh_schedule_version', $1::jsonb, NOW())
@@ -529,9 +556,11 @@ router.post('/tasks/delete', async (req, res) => {
       if (t.kind === 'custom') {
         await client.query('DELETE FROM wh_tasks WHERE id = $1', [id]);
       } else if (t.kind === 'transfer') {
+        // Both cards of a store → store transfer go together (Hera 2026-10-21).
         await client.query(
-          'UPDATE wh_tasks SET removed_at = NOW(), sched_date = NULL, sched_half = NULL, sched_pos = NULL, updated_at = NOW() WHERE id = $1',
-          [id]
+          `UPDATE wh_tasks SET removed_at = NOW(), sched_date = NULL, sched_half = NULL, sched_pos = NULL, updated_at = NOW()
+           WHERE kind = 'transfer' AND transfer_id = $1 AND removed_at IS NULL`,
+          [t.transfer_id]
         );
       } else {
         // Everything split from it is deleted too (Hera 2026-10-20), also

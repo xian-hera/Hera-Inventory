@@ -1775,7 +1775,13 @@ const initDatabase = async () => {
         updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `);
-    await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_wh_tasks_transfer ON wh_tasks (transfer_id) WHERE kind = 'transfer'`);
+    // leg (2026-10-21, Hera): a store → store transfer is TWO cards — 'pickup'
+    // (WH collects at the from location) and 'deliver' (to the to location),
+    // each scheduled on its own (delivery may not be earlier than pickup).
+    // Every other transfer is one card (leg NULL).
+    await client.query(`ALTER TABLE wh_tasks ADD COLUMN IF NOT EXISTS leg TEXT`).catch(() => {});
+    await client.query(`DROP INDEX IF EXISTS idx_wh_tasks_transfer`);
+    await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_wh_tasks_transfer_leg ON wh_tasks (transfer_id, (COALESCE(leg, ''))) WHERE kind = 'transfer'`);
     await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_wh_tasks_po_root ON wh_tasks (po_invoice_id) WHERE kind = 'po' AND parent_task_id IS NULL`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_wh_tasks_sched ON wh_tasks (sched_date, sched_half, sched_pos)`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_wh_tasks_parent ON wh_tasks (parent_task_id)`);
