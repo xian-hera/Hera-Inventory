@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
 const { pool } = require('../database/init');
-const { activeFilter } = require('../shopify');
+const { activeFilter, searchQuote, gqlStringBody } = require('../shopify');
 // Purchasing user groups (2026-10-09) — see routes/userGroups.js
 const { getGroupFilter, arrayVisibleSql } = require('./userGroups');
 
@@ -1180,7 +1180,7 @@ async function attachPoWigNumbers(items, typesCarrying) {
   try {
     for (let i = 0; i < skus.length; i += CHUNK_SIZE) {
       const chunk = skus.slice(i, i + CHUNK_SIZE);
-      const filter = activeFilter(chunk.map(s => `barcode:${s}`).join(' OR '));
+      const filter = activeFilter(chunk.map(s => `barcode:${searchQuote(s)}`).join(' OR '));
       const query = `
         query wigNumbers($filter: String!) {
           productVariants(first: ${chunk.length}, query: $filter) {
@@ -1276,7 +1276,7 @@ router.get('/manager/receiving/:id', async (req, res) => {
       items.forEach(item => { item.wig_number = ''; });
       const skus = [...new Set(items.map(item => item.sku).filter(Boolean))];
       if (skus.length > 0) {
-        const { getShopify, getSession, activeFilter } = require('../shopify');
+        const { getShopify, getSession, activeFilter, searchQuote, gqlStringBody } = require('../shopify');
         const session = await getSession();
         const shopify = getShopify();
         const client = new shopify.clients.Graphql({ session });
@@ -1296,7 +1296,7 @@ router.get('/manager/receiving/:id', async (req, res) => {
         try {
           for (let i = 0; i < skus.length; i += CHUNK_SIZE) {
             const chunk = skus.slice(i, i + CHUNK_SIZE);
-            const filter = activeFilter(chunk.map(s => `barcode:${s}`).join(' OR '));
+            const filter = activeFilter(chunk.map(s => `barcode:${searchQuote(s)}`).join(' OR '));
             const query = `
               query wigNumbers($filter: String!) {
                 productVariants(first: ${chunk.length}, query: $filter) {
@@ -1375,7 +1375,7 @@ router.get('/manager/receiving/:id/items/:itemId/system-qty', async (req, res) =
       }
     `;
     const response = await shopifyRequest(client, query, {
-      filter: activeFilter(`barcode:${sku}`),
+      filter: activeFilter(`barcode:${searchQuote(sku)}`),
       locationId: shopify_location_id,
     });
     const level = response?.data?.productVariants?.edges?.[0]?.node?.inventoryItem?.inventoryLevel;
@@ -1722,7 +1722,7 @@ async function getVariantSnapshot(client, barcode) {
       }
     }
   `;
-  const response = await shopifyRequest(client, query, { barcode: activeFilter(`barcode:${barcode}`) });
+  const response = await shopifyRequest(client, query, { barcode: activeFilter(`barcode:${searchQuote(barcode)}`) });
   const node = response?.data?.productVariants?.edges?.[0]?.node;
   if (!node) return null;
   const currentQty = (node.inventoryItem.inventoryLevels?.edges || [])
@@ -2334,7 +2334,7 @@ router.get('/:id/export-pdf', async (req, res) => {
         try {
           const query = supplierCarriesWig
             ? `{
-                productVariants(first: 1, query: "${activeFilter(`barcode:${item.sku}`)}") {
+                productVariants(first: 1, query: "${gqlStringBody(activeFilter(`barcode:${searchQuote(item.sku)}`))}") {
                   edges { node {
                     customName: metafield(namespace: "custom", key: "name") { value }
                     product {
@@ -2345,7 +2345,7 @@ router.get('/:id/export-pdf', async (req, res) => {
                 }
               }`
             : `{
-                productVariants(first: 1, query: "${activeFilter(`barcode:${item.sku}`)}") {
+                productVariants(first: 1, query: "${gqlStringBody(activeFilter(`barcode:${searchQuote(item.sku)}`))}") {
                   edges { node {
                     customName: metafield(namespace: "custom", key: "name") { value }
                   } }

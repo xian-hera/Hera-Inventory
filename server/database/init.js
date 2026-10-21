@@ -1695,6 +1695,91 @@ const initDatabase = async () => {
     `);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_publication_scan_items_scan ON publication_scan_items (scan_id, id)`);
 
+
+    // ── Warehouse Scheduler + Receive Shipments (2026-10-21, Hera) —
+    // claude/SCHEDULER_FEATURE_SPEC.md in the project knowledge base.
+    //
+    // Go-live cutoff: only POs / Transfers created AFTER this moment enter
+    // the Warehouse pages (Hera 2026-10-21: "只放上线后新建的"). Written once
+    // on the first boot after deploy (DO NOTHING afterwards), so it never moves.
+    await client.query(`
+      INSERT INTO app_settings (key, value, updated_at)
+      VALUES ('wh_schedule_go_live', to_jsonb(NOW()), NOW())
+      ON CONFLICT (key) DO NOTHING
+    `);
+    // Warehouse Settings → Custom Task → Task Types. Initial list: ["Supply"].
+    // An empty list is allowed (Hera).
+    await client.query(`
+      INSERT INTO app_settings (key, value, updated_at)
+      VALUES ('wh_task_types', '["Supply"]'::jsonb, NOW())
+      ON CONFLICT (key) DO NOTHING
+    `);
+    // Version number of the saved schedule, bumped on every Schedule Save —
+    // a Save sent from an older copy of the page is refused (409) instead of
+    // silently overwriting someone else's changes.
+    await client.query(`
+      INSERT INTO app_settings (key, value, updated_at)
+      VALUES ('wh_schedule_version', '0'::jsonb, NOW())
+      ON CONFLICT (key) DO NOTHING
+    `);
+
+    // po_invoices — Warehouse side of a PO:
+    //   wh_received_at   when WH marked it Received in Receive Shipments
+    //                    (it then leaves that page and becomes a Scheduler task)
+    //   wh_removed_at    when WH deleted it from Receive Shipments (WH never
+    //                    sees it again; the PO itself is untouched for BY/MA)
+    //   pb_qty_wh_set    TRUE once WH entered a PB qty in the Received modal
+    //   pb_qty_received  the value WH entered ("8 P" / "3 B", or NULL = none).
+    //                    BY's own value stays in pb_qty as the reference.
+    //                    Effective PB = pb_qty_wh_set ? pb_qty_received : pb_qty
+    await client.query(`ALTER TABLE po_invoices ADD COLUMN IF NOT EXISTS wh_received_at TIMESTAMPTZ`).catch(() => {});
+    await client.query(`ALTER TABLE po_invoices ADD COLUMN IF NOT EXISTS wh_removed_at TIMESTAMPTZ`).catch(() => {});
+    await client.query(`ALTER TABLE po_invoices ADD COLUMN IF NOT EXISTS pb_qty_wh_set BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
+    await client.query(`ALTER TABLE po_invoices ADD COLUMN IF NOT EXISTS pb_qty_received TEXT`).catch(() => {});
+
+    // wh_tasks — one row per card on the Schedule page.
+    //   kind 'po'       a received PO (po_invoice_id). A split creates more
+    //                   'po' rows with parent_task_id → the task it was split
+    //                   from. split_no = the "-1"/"-2"… suffix (NULL = never
+    //                   split); split_counter (root row only) = last number used.
+    //   kind 'transfer' one row per transfer (transfer_id), created lazily
+    //                   when the Schedule page loads.
+    //   kind 'custom'   created by WH (custom_type / custom_title / custom_note,
+    //                   to_location; always from HQ).
+    //   removed_at      WH deleted the card (PO / transfer rows are kept so the
+    //                   task is never re-created; custom / split rows are
+    //                   deleted for real).
+    //   sched_date / sched_half ('AM'|'PM') / sched_pos — where it sits on the
+    //                   calendar (all NULL = Unscheduled).
+    // BY deleting / cancelling the PO or Transfer deletes the row (CASCADE).
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS wh_tasks (
+        id             SERIAL PRIMARY KEY,
+        kind           TEXT NOT NULL CHECK (kind IN ('po','transfer','custom')),
+        po_invoice_id  INTEGER REFERENCES po_invoices(id) ON DELETE CASCADE,
+        transfer_id    INTEGER REFERENCES transfers(id) ON DELETE CASCADE,
+        parent_task_id INTEGER REFERENCES wh_tasks(id) ON DELETE CASCADE,
+        split_no       INTEGER,
+        split_counter  INTEGER NOT NULL DEFAULT 0,
+        pb_count       INTEGER,
+        pb_unit        TEXT,
+        custom_type    TEXT,
+        custom_title   TEXT,
+        custom_note    TEXT,
+        to_location    TEXT,
+        removed_at     TIMESTAMPTZ,
+        sched_date     DATE,
+        sched_half     TEXT CHECK (sched_half IN ('AM','PM')),
+        sched_pos      INTEGER,
+        created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_wh_tasks_transfer ON wh_tasks (transfer_id) WHERE kind = 'transfer'`);
+    await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_wh_tasks_po_root ON wh_tasks (po_invoice_id) WHERE kind = 'po' AND parent_task_id IS NULL`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_wh_tasks_sched ON wh_tasks (sched_date, sched_half, sched_pos)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_wh_tasks_parent ON wh_tasks (parent_task_id)`);
+
     await client.query('COMMIT');
     console.log('✓ Database initialized successfully');
   } catch (e) {

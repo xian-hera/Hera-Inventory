@@ -104,6 +104,11 @@ const WarehouseTransferDetail = lazyWithReload(() => import(/* webpackChunkName:
 const WarehouseTransferReceivingDetail = lazyWithReload(() => import(/* webpackChunkName: "warehouse" */ './pages/warehouse/WarehouseTransferReceivingDetail'));
 const WarehouseTransferViewDetail = lazyWithReload(() => import(/* webpackChunkName: "warehouse" */ './pages/warehouse/WarehouseTransferViewDetail'));
 const WarehouseBoxPODetail = lazyWithReload(() => import(/* webpackChunkName: "warehouse" */ './pages/warehouse/WarehouseBoxPODetail'));
+// Warehouse tabs + Schedule / Receive Shipments / Settings (2026-10-21, Hera) — claude/SCHEDULER_FEATURE_SPEC.md
+const WarehouseShell = lazyWithReload(() => import(/* webpackChunkName: "warehouse" */ './pages/warehouse/WarehouseShell'));
+const WarehouseSchedule = lazyWithReload(() => import(/* webpackChunkName: "warehouse" */ './pages/warehouse/WarehouseSchedule'));
+const WarehouseReceiveShipments = lazyWithReload(() => import(/* webpackChunkName: "warehouse" */ './pages/warehouse/WarehouseReceiveShipments'));
+const WarehouseSettings = lazyWithReload(() => import(/* webpackChunkName: "warehouse" */ './pages/warehouse/WarehouseSettings'));
 const ManagerTransferHome = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerTransferHome'));
 const ManagerTransferSendingDetail = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerTransferSendingDetail'));
 const ManagerTransferReceivingDetail = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerTransferReceivingDetail'));
@@ -185,8 +190,15 @@ function App() {
           <Route path="/buyer/po-receiving/box-po/:id" element={<BuyerBoxPODetail />} />
           </Route>
 
-          {/* Warehouse */}
-          <Route path="/warehouse" element={<WarehouseHome />} />
+          {/* Warehouse — tabs since 2026-10-21 (WarehouseShell = header + tab bar
+              around each tab page, same pattern as Online). The old single
+              Warehouse Home page is now split into the HQ Transfers and Temp
+              tabs (WarehouseHome with section="hq" / "temp"). */}
+          <Route path="/warehouse" element={<WarehouseShell tab="schedule"><WarehouseSchedule /></WarehouseShell>} />
+          <Route path="/warehouse/receive-shipments" element={<WarehouseShell tab="receive-shipments"><WarehouseReceiveShipments /></WarehouseShell>} />
+          <Route path="/warehouse/hq-transfers" element={<WarehouseShell tab="hq-transfers"><WarehouseHome inTabs section="hq" /></WarehouseShell>} />
+          <Route path="/warehouse/temp" element={<WarehouseShell tab="temp"><WarehouseHome inTabs section="temp" /></WarehouseShell>} />
+          <Route path="/warehouse/settings" element={<WarehouseSettings />} />
           {/* Receiving to HQ (改动二) — fixed "receiving" segment registered
               before the :transferId route so it can't be shadowed. */}
           <Route path="/warehouse/transfer/receiving/:transferId" element={<WarehouseTransferReceivingDetail />} />

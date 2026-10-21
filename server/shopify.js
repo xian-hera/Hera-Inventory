@@ -135,4 +135,15 @@ const getShopify = () => shopify;
 // variant. See Hera Hub project notes for the full incident writeup.
 const activeFilter = (fieldExpr) => `(${fieldExpr}) AND product_status:active`;
 
-module.exports = { setupShopify, getSession, getShopify, activeFilter };
+// Quotes a value for Shopify search syntax (2026-10-21, Hera). An unquoted
+// value stops at its first space: `barcode:JOY Non Piercing NOSE CLIP` is
+// read as barcode "JOY" plus four free-text words, finds nothing, and a PO
+// commit then fails with "inventory item not found in Shopify". Always put a
+// SKU / barcode through this before using it in a `sku:` / `barcode:` filter.
+const searchQuote = (v) => `"${String(v == null ? '' : v).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+
+// Escapes a search expression so it can sit inside a GraphQL string literal
+// ("...") written directly in a query text (not passed as a variable).
+const gqlStringBody = (s) => String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+
+module.exports = { setupShopify, getSession, getShopify, activeFilter, searchQuote, gqlStringBody };

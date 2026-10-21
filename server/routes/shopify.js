@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { getShopify, getSession, activeFilter } = require('../shopify');
+const { getShopify, getSession, activeFilter, searchQuote, gqlStringBody } = require('../shopify');
 // Reliable, ID-based inventory reads for Create New Count (2026-10-06).
 const { requestReliable, readVariantInventory, resolveBarcodes, isRetriable, RequestAbortedError } = require('../services/shopifyInventoryReader');
 
@@ -366,7 +366,7 @@ async function fetchInventoryForBarcode(client, barcode, locationId) {
     }
   `;
 
-  const response = await shopifyRequest(client, variantQuery, { barcode: activeFilter(`barcode:${barcode}`) });
+  const response = await shopifyRequest(client, variantQuery, { barcode: activeFilter(`barcode:${searchQuote(barcode)}`) });
   const variants = response.data.productVariants.edges;
   if (variants.length === 0) return null;
 
@@ -677,7 +677,7 @@ router.get('/search', async (req, res) => {
                 }
               }
             `;
-            const response = await shopifyRequest(client, gqlQuery, { barcode: activeFilter(`barcode:${raw}`) });
+            const response = await shopifyRequest(client, gqlQuery, { barcode: activeFilter(`barcode:${searchQuote(raw)}`) });
             let liveResults = (response.data?.productVariants?.edges || []).map(({ node: v }) => ({
               productId: v.product.id,
               variantId: v.id,
@@ -962,7 +962,7 @@ router.get('/variant-by-sku', async (req, res) => {
     const client = new shopify.clients.Graphql({ session });
 
     const query = `{
-      productVariants(first: 10, query: "${activeFilter(`sku:${sku.replace(/"/g, '')}`)}") {
+      productVariants(first: 10, query: "${gqlStringBody(activeFilter(`sku:${searchQuote(sku.replace(/"/g, ''))}`))}") {
         edges {
           node {
             id title sku price compareAtPrice barcode
@@ -1027,7 +1027,7 @@ router.get('/inventory-by-sku', async (req, res) => {
     const client = new shopify.clients.Graphql({ session });
 
     const query = `{
-      productVariants(first: 1, query: "${activeFilter(`sku:${sku.replace(/"/g, '')}`)}") {
+      productVariants(first: 1, query: "${gqlStringBody(activeFilter(`sku:${searchQuote(sku.replace(/"/g, ''))}`))}") {
         edges {
           node {
             id sku
@@ -1100,7 +1100,7 @@ router.get('/inventory-history/:barcode', async (req, res) => {
       }
     `;
 
-    const variantRes = await shopifyRequest(client, variantQuery, { barcode: activeFilter(`barcode:${barcode}`) });
+    const variantRes = await shopifyRequest(client, variantQuery, { barcode: activeFilter(`barcode:${searchQuote(barcode)}`) });
     const variantEdges = variantRes.data?.productVariants?.edges || [];
     if (variantEdges.length === 0) return res.status(404).json({ error: 'Product not found' });
 

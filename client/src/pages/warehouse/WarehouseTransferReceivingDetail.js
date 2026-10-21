@@ -9,7 +9,8 @@ import TransferReceivingDetail from '../shared/TransferReceivingDetail';
 // still uncounted — Manager's Receiving page keeps the original all-or-
 // nothing Submit gate.
 function WarehouseTransferReceivingDetail() {
-  return <TransferReceivingDetail role="warehouse" backPath="/warehouse" showTags />;
+  // backPath (2026-10-21): the "Receiving to HQ" card now lives in the Temp tab.
+  return <TransferReceivingDetail role="warehouse" backPath="/warehouse/temp" showTags />;
 }
 
 export default WarehouseTransferReceivingDetail;

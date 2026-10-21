@@ -26,6 +26,7 @@ function formatDateOnly(dateStr) {
 // Submit is disabled until every row is counted_confirmed. Buyer-note and
 // Warehouse-note are two fully independent fields (each capped at 1, both
 // can coexist) — this page only ever touches its own (role: 'warehouse').
+// Back / after Submit → Temp tab (2026-10-21): the BOX PO card now lives there.
 function WarehouseBoxPODetail() {
   const navigate = useNavigate();
   const { id } = useParams();
@@ -204,7 +205,7 @@ function WarehouseBoxPODetail() {
       const res = await fetch(`/api/box-po/${id}/submit`, { method: 'POST' });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to submit');
-      navigate('/warehouse');
+      navigate('/warehouse/temp');
     } catch (e) {
       setActionError(e.message);
     } finally {
@@ -214,7 +215,7 @@ function WarehouseBoxPODetail() {
 
   if (loading) {
     return (
-      <Page title="BOX PO" backAction={{ onAction: () => navigate('/warehouse') }}>
+      <Page title="BOX PO" backAction={{ onAction: () => navigate('/warehouse/temp') }}>
         <Layout><Layout.Section><InlineStack align="center"><Spinner /></InlineStack></Layout.Section></Layout>
       </Page>
     );
@@ -222,7 +223,7 @@ function WarehouseBoxPODetail() {
 
   if (loadError || !boxPo) {
     return (
-      <Page title="BOX PO" backAction={{ onAction: () => navigate('/warehouse') }}>
+      <Page title="BOX PO" backAction={{ onAction: () => navigate('/warehouse/temp') }}>
         <Layout><Layout.Section><Banner tone="critical">{loadError || 'Not found.'}</Banner></Layout.Section></Layout>
       </Page>
     );
@@ -232,7 +233,7 @@ function WarehouseBoxPODetail() {
     <Page
       title={boxPo.box_po_number}
       titleMetadata={<StatusBadge status={boxPo.status} />}
-      backAction={{ onAction: () => navigate('/warehouse') }}
+      backAction={{ onAction: () => navigate('/warehouse/temp') }}
     >
       <Layout>
         <Layout.Section>

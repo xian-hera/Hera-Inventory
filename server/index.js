@@ -62,6 +62,7 @@ app.use('/api/po-invoices', require('./routes/poInvoices'));
 app.use('/api/po-settings', require('./routes/poSettings'));
 app.use('/api/transfers', require('./routes/transfers'));
 app.use('/api/box-po', require('./routes/boxPo'));
+app.use('/api/warehouse', require('./routes/warehouse')); // Warehouse Scheduler + Receive Shipments, 2026-10-21
 app.use('/api/manager-history', require('./routes/managerHistory').router);
 app.use('/api/wig-demo', require('./routes/wigDemo'));
 app.use('/api/import-products', require('./routes/importProducts'));

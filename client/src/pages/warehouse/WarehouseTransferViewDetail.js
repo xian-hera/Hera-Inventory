@@ -40,7 +40,8 @@ function WarehouseTransferViewDetail() {
       .finally(() => setLoading(false));
   }, [transferId]);
 
-  const back = () => navigate('/warehouse');
+  // 2026-10-21: the "Pick up from store" card now lives in the Temp tab.
+  const back = () => navigate('/warehouse/temp');
 
   if (loading) {
     return (

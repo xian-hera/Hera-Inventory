@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
 const { pool } = require('../database/init');
-const { getShopify, getSession, activeFilter } = require('../shopify');
+const { getShopify, getSession, activeFilter, searchQuote, gqlStringBody } = require('../shopify');
 // Purchasing user groups (2026-10-09): Buyer Transfer lists follow the tag →
 // types mapping (Tag of Types) and the user's group. See routes/userGroups.js.
 const { getGroupFilter, arrayVisibleSql } = require('./userGroups');
@@ -424,7 +424,7 @@ async function attachWigNumbers(shopifyClient, items) {
   const CHUNK_SIZE = 50;
   for (let i = 0; i < skus.length; i += CHUNK_SIZE) {
     const chunk = skus.slice(i, i + CHUNK_SIZE);
-    const filter = activeFilter(chunk.map(s => `barcode:${s}`).join(' OR '));
+    const filter = activeFilter(chunk.map(s => `barcode:${searchQuote(s)}`).join(' OR '));
     const query = `
       query wigNumbers($filter: String!) {
         productVariants(first: ${chunk.length}, query: $filter) {
@@ -469,7 +469,7 @@ async function refreshQtySnapshots(shopifyClient, transferRow, items) {
     if (!item.sku) continue;
     try {
       const query = `{
-        productVariants(first: 1, query: "${activeFilter(`sku:${item.sku.replace(/"/g, '')}`)}") {
+        productVariants(first: 1, query: "${gqlStringBody(activeFilter(`sku:${searchQuote(item.sku.replace(/"/g, ''))}`))}") {
           edges { node {
             inventoryItem {
               inventoryLevels(first: 20, includeInactive: true) {

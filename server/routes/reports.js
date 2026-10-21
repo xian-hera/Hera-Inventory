@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
 const { pool } = require('../database/init');
-const { getShopify, getSession, activeFilter } = require('../shopify');
+const { getShopify, getSession, activeFilter, searchQuote, gqlStringBody } = require('../shopify');
 // Purchasing user groups (2026-10-09) — see routes/userGroups.js
 const { getGroupFilter, scalarVisibleSql } = require('./userGroups');
 // Purchase-order lock (2026-10): see server/poLock.js
@@ -231,7 +231,7 @@ async function commitReport(id, customAdjustment) {
     // Step 1: fetch inventoryItem id and current on_hand in a single query
     const variantRes = await shopifyRequest(() =>
       client.request(`{
-        productVariants(first: 1, query: "${activeFilter(`barcode:${r.barcode}`)}") {
+        productVariants(first: 1, query: "${gqlStringBody(activeFilter(`barcode:${searchQuote(r.barcode)}`))}") {
           edges {
             node {
               inventoryItem {

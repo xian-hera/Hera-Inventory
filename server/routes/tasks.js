@@ -442,7 +442,7 @@ async function runTaskCommit(id, itemIds, includeLocked = false) {
       [itemIds, id]
     );
 
-    const { getShopify, getSession, activeFilter } = require('../shopify');
+    const { getShopify, getSession, activeFilter, searchQuote, gqlStringBody } = require('../shopify');
     const session = await getSession();
     const shopify = getShopify();
     const client = new shopify.clients.Graphql({ session });
@@ -482,7 +482,7 @@ async function runTaskCommit(id, itemIds, includeLocked = false) {
         // Step 1: fetch inventoryItem id and current on_hand in a single query
         const variantRes = await shopifyRequest(() =>
           client.request(`{
-            productVariants(first: 1, query: "${activeFilter(`barcode:${item.barcode}`)}") {
+            productVariants(first: 1, query: "${gqlStringBody(activeFilter(`barcode:${searchQuote(item.barcode)}`))}") {
               edges {
                 node {
                   inventoryItem {

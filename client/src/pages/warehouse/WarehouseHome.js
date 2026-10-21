@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Page, Layout, Card, Button, BlockStack, InlineStack, Text, Spinner, Banner
+  Page, Layout, Card, Button, BlockStack, InlineStack, Text, Banner
 } from '@shopify/polaris';
+// Spinner no longer imported (2026-10-21): UI rule #1 (claude/UI_RULES_READ_FIRST.md)
+// — loading states in this file now show the text "Loading..." instead.
 import { useNavigate } from 'react-router-dom';
 import { StatusBadge, warehouseStatusLabel, HoldBadge, TagPills } from '../shared/transferStatus';
 import { StatusBadge as BoxPoStatusBadge } from '../shared/boxPoStatus';
@@ -51,7 +53,18 @@ const DATE_CSS = `
 // 2026-10-05 the transfer number is clickable (underlined) into a read-only
 // detail page with no actions (WarehouseTransferViewDetail.js).
 // Spec doc section 5.
-function WarehouseHome() {
+//
+// Warehouse tabs (2026-10-21, Hera — claude/SCHEDULER_FEATURE_SPEC.md §10):
+// this page is now shown inside WarehouseShell as two tabs —
+//   section="hq"   → "HQ Transfers" tab: only the HQ transfers card
+//   section="temp" → "Temp" tab: BOX PO, Receiving to HQ, Pick up from store
+// (no section = all cards, the old standalone page — kept for reference, no
+// route uses it any more). inTabs hides this page's own title / back arrow.
+// Detail pages get { state: { from } } so their back button returns here.
+function WarehouseHome({ inTabs = false, section } = {}) {
+  const showHq = !section || section === 'hq';
+  const showTemp = !section || section === 'temp';
+  const backTo = section === 'hq' ? '/warehouse/hq-transfers' : section === 'temp' ? '/warehouse/temp' : '/warehouse';
   const navigate = useNavigate();
   const [hq, setHq] = useState([]);
   const [pickupFromStore, setPickupFromStore] = useState([]);
@@ -153,21 +166,25 @@ function WarehouseHome() {
   };
 
   return (
-    <Page title="Warehouse" backAction={{ onAction: () => navigate('/') }}>
+    <Page
+      title={inTabs ? undefined : 'Warehouse'}
+      backAction={inTabs ? undefined : { onAction: () => navigate('/') }}
+    >
       <style>{DATE_CSS}</style>
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">
             {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
             {loading ? (
-              <InlineStack align="center"><Spinner /></InlineStack>
+              <InlineStack align="center"><Text tone="subdued">Loading...</Text></InlineStack>
             ) : (
               <>
+                {showTemp && (
                 <Card>
                   <BlockStack gap="300">
                     <Text variant="headingSm">BOX PO</Text>
                     {boxPosLoading ? (
-                      <InlineStack align="center"><Spinner size="small" /></InlineStack>
+                      <InlineStack align="center"><Text tone="subdued">Loading...</Text></InlineStack>
                     ) : boxPos.length === 0 ? (
                       <Text tone="subdued">No BOX PO tasks right now.</Text>
                     ) : (
@@ -186,7 +203,7 @@ function WarehouseHome() {
                               <tr
                                 key={bp.id}
                                 style={{ borderBottom: '1px solid #f1f1f1', cursor: 'pointer' }}
-                                onClick={() => navigate(`/warehouse/box-po/${bp.id}`)}
+                                onClick={() => navigate(`/warehouse/box-po/${bp.id}`, { state: { from: backTo } })}
                               >
                                 <td style={{ padding: '10px', textDecoration: 'underline' }}>{bp.box_po_number}</td>
                                 <td style={{ padding: '10px' }}>{bp.supplier_name}</td>
@@ -200,7 +217,9 @@ function WarehouseHome() {
                     )}
                   </BlockStack>
                 </Card>
+                )}
 
+                {showHq && (
                 <Card>
                   <BlockStack gap="300">
                     <InlineStack align="space-between" blockAlign="center" wrap>
@@ -266,7 +285,7 @@ function WarehouseHome() {
                                 )}
                                 <td
                                   style={{ padding: '10px', cursor: 'pointer' }}
-                                  onClick={() => navigate(`/warehouse/transfer/${tr.id}`)}
+                                  onClick={() => navigate(`/warehouse/transfer/${tr.id}`, { state: { from: backTo } })}
                                 >
                                   <span style={{ textDecoration: 'underline' }}>{tr.shopify_transfer_name || tr.transfer_no}</span>
                                   {(tr.tags || []).length > 0 && <div style={{ marginTop: '4px' }}><TagPills tags={tr.tags} /></div>}
@@ -285,12 +304,14 @@ function WarehouseHome() {
                     )}
                   </BlockStack>
                 </Card>
+                )}
 
+                {showTemp && (
                 <Card>
                   <BlockStack gap="300">
                     <Text variant="headingSm">Receiving to HQ</Text>
                     {receivingLoading ? (
-                      <InlineStack align="center"><Spinner size="small" /></InlineStack>
+                      <InlineStack align="center"><Text tone="subdued">Loading...</Text></InlineStack>
                     ) : receivingToHq.length === 0 ? (
                       <Text tone="subdued">No transfers right now.</Text>
                     ) : (
@@ -310,7 +331,7 @@ function WarehouseHome() {
                               <tr key={tr.id} style={{ borderBottom: '1px solid #f1f1f1' }}>
                                 <td
                                   style={{ padding: '10px', cursor: 'pointer' }}
-                                  onClick={() => navigate(`/warehouse/transfer/receiving/${tr.id}`)}
+                                  onClick={() => navigate(`/warehouse/transfer/receiving/${tr.id}`, { state: { from: backTo } })}
                                 >
                                   <span style={{ textDecoration: 'underline' }}>{tr.shopify_transfer_name || tr.transfer_no}</span>
                                   {(tr.tags || []).length > 0 && <div style={{ marginTop: '4px' }}><TagPills tags={tr.tags} /></div>}
@@ -329,7 +350,9 @@ function WarehouseHome() {
                     )}
                   </BlockStack>
                 </Card>
+                )}
 
+                {showTemp && (
                 <Card>
                   <BlockStack gap="300">
                     <Text variant="headingSm">Pick up from store</Text>
@@ -353,7 +376,7 @@ function WarehouseHome() {
                                 {/* 2026-10-05: now clickable into a read-only detail page */}
                                 <td
                                   style={{ padding: '10px', cursor: 'pointer' }}
-                                  onClick={() => navigate(`/warehouse/transfer/view/${tr.id}`)}
+                                  onClick={() => navigate(`/warehouse/transfer/view/${tr.id}`, { state: { from: backTo } })}
                                 >
                                   <span style={{ textDecoration: 'underline' }}>{tr.shopify_transfer_name || tr.transfer_no}</span>
                                   {(tr.tags || []).length > 0 && <div style={{ marginTop: '4px' }}><TagPills tags={tr.tags} /></div>}
@@ -372,6 +395,7 @@ function WarehouseHome() {
                     )}
                   </BlockStack>
                 </Card>
+                )}
               </>
             )}
           </BlockStack>
