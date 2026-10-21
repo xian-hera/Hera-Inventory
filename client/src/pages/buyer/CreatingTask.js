@@ -10,6 +10,7 @@ import SearchWithFilters from '../../components/SearchWithFilters';
 import InfoTooltip from '../../components/InfoTooltip';
 import { useLocationMap } from '../shared/locationMap';
 import { useGroupContext } from '../../userGroup'; // Purchasing user groups, 2026-10-09
+import { useProductTypes } from '../../productTypes'; // central type list, 2026-10-21
 
 const SCAN_COUNT_TOOLTIP_TEXT =
   'Users scan each item they find on the shelf without manually counting. Each scan is automatically counted, and the final quantity is calculated when the scan is complete. Scans of unlisted items will be ignored.';
@@ -25,7 +26,7 @@ const TYPE_OPTIONS = [
   'Hair & Skin Care',
   'Hera Beauty',
   'Jewelry',
-  'K-Beauty',
+  // 'K-Beauty', // removed 2026-10-21 (no longer a Shopify type)
   'Makeup',
   'Tools & Accessories',
   'Wig',
@@ -74,6 +75,8 @@ function CreatingTask() {
   // User group (2026-10-09): the Types dropdown only offers the current
   // group's types plus the unassigned ones.
   const groupCtx = useGroupContext();
+  // 2026-10-21 (Hera): Types options come from the central list (Settings → Product Types); TYPE_OPTIONS is now only the fallback if it cannot load.
+  const productTypes = useProductTypes(TYPE_OPTIONS);
 
   const [selectedTypes, setSelectedTypes]       = useState([]);
   const [selectedLocations, setSelectedLocations] = useState([]);
@@ -447,7 +450,7 @@ function CreatingTask() {
                   <InlineStack gap="400" wrap align="start">
                     <MultiSelectDropdown
                       label="Types"
-                      options={groupCtx.filterTypes(TYPE_OPTIONS)}
+                      options={groupCtx.filterTypes(productTypes)}
                       selected={selectedTypes}
                       onChange={setSelectedTypes}
                       placeholder="Select types"

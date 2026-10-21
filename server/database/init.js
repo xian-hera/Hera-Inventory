@@ -1027,6 +1027,31 @@ const initDatabase = async () => {
     await client.query('DROP TABLE IF EXISTS box_pos');
     await client.query('DROP TABLE IF EXISTS box_po_number_counter');
 
+    // ── Product Types — central table (2026-10-21, Hera) ──────────────────────
+    // One list for the whole Hub. Filled by Purchasing → Settings → Product Types
+    // → "Sync from Shopify" (and seeded automatically on the first read).
+    //   enabled     false = hidden from every dropdown in the Hub
+    //   in_shopify  false = the type no longer exists in Shopify (set by Sync,
+    //               which also switches it off once; kept for old records)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS product_types (
+        name TEXT PRIMARY KEY,
+        enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        in_shopify BOOLEAN NOT NULL DEFAULT TRUE,
+        synced_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    // One-time: K-BEAUTY no longer exists in Shopify (Hera 2026-10-21) — its
+    // Stock Losses Settings rules are removed. Runs once (flag in app_settings).
+    {
+      const done = await client.query(`SELECT 1 FROM app_settings WHERE key = 'migr_remove_kbeauty_rules'`);
+      if (done.rowCount === 0) {
+        await client.query(`DELETE FROM stock_losses_settings WHERE UPPER(TRIM(type_value)) = 'K-BEAUTY'`);
+        await client.query(`INSERT INTO app_settings (key, value, updated_at) VALUES ('migr_remove_kbeauty_rules', 'true'::jsonb, NOW()) ON CONFLICT (key) DO NOTHING`);
+      }
+    }
+
     // ────────────────────────────────────────────────────────────────────────────
 
     // Manager History (server/routes/managerHistory.js) — a frozen record of
@@ -1726,6 +1751,19 @@ const initDatabase = async () => {
     await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_wh_tasks_po_root ON wh_tasks (po_invoice_id) WHERE kind = 'po' AND parent_task_id IS NULL`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_wh_tasks_sched ON wh_tasks (sched_date, sched_half, sched_pos)`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_wh_tasks_parent ON wh_tasks (parent_task_id)`);
+    // tracked_back (2026-10-21): the task was added to a locked day — a past
+    // day ("Past 7 days" view) or today after Go! — to record work that was
+    // done but never scheduled. Only such tasks can be taken off a locked day.
+    await client.query(`ALTER TABLE wh_tasks ADD COLUMN IF NOT EXISTS tracked_back BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
+    // wh_go_days: days on which WH pressed Go! (trucks left). That day's
+    // schedule is locked from then on; results = the Mark as In Transit outcome.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS wh_go_days (
+        day     DATE PRIMARY KEY,
+        gone_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        results JSONB
+      )
+    `);
 
     await client.query('COMMIT');
     console.log('✓ Database initialized successfully');

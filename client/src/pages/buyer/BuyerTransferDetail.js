@@ -5,6 +5,7 @@ import {
 } from '@shopify/polaris';
 import { useNavigate, useParams } from 'react-router-dom';
 import { StatusBadge, HoldBadge, AutoCommittedBadge } from '../shared/transferStatus';
+import { useDD, transferEntries, DDList } from '../shared/ddPill';
 
 const HQ_LOCATION_NAME = 'HQ';
 
@@ -37,6 +38,7 @@ const TAG_PILL_STYLE = {
 function BuyerTransferDetail() {
   const navigate = useNavigate();
   const { transferId } = useParams();
+  const dd = useDD({ transferIds: transferId ? [transferId] : [] }); // DD pills (2026-10-21)
 
   const [transfer, setTransfer] = useState(null);
   const [items, setItems] = useState([]);
@@ -623,6 +625,10 @@ function BuyerTransferDetail() {
                 ↗
               </Button>
             )}
+            {/* DD (2026-10-21, Hera — claude/SCHEDULER_FEATURE_SPEC.md §7): mini DD
+                after the jump-out button; a store → store transfer has two
+                (pickup, delivery), side by side. */}
+            <DDList entries={transferEntries(dd, transferId)} />
           </InlineStack>
         }
       >

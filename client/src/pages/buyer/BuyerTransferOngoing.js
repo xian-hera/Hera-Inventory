@@ -5,6 +5,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { STATUS_LABELS, StatusBadge, HoldBadge, AutoCommittedBadge } from '../shared/transferStatus';
 import { fetchLocationMap } from '../shared/locationMap';
+import { useDD, transferEntries, splitTransferSides, DDList, useIsPhoneWidth } from '../shared/ddPill';
 
 // Buyer's Ongoing Transfer list — every transfer, all statuses (this page
 // used to exclude 'committed'/'archived' server-side; as of 2026-09-16 the
@@ -119,6 +120,27 @@ function BuyerTransferOngoing() {
   // transfers, same reasoning as From/To using the full location list.
   const [tagPool, setTagPool] = useState([]);
   const [selectedTags, setSelectedTags] = useState([TAG_FILTER_ALL]);
+
+  // DD pills (2026-10-21, Hera — claude/SCHEDULER_FEATURE_SPEC.md §7): mini
+  // DD right after the location it belongs to (HQ → store: To; store → HQ:
+  // From; store → store: one at From (pickup) and one at To (delivery)).
+  // On a phone the DD goes right under the location.
+  const isPhone = useIsPhoneWidth();
+  const dd = useDD({ transferIds: transfers.map(tr => tr.id) });
+  const locationCell = (name, entries) => {
+    if (!entries || entries.length === 0) return name;
+    return isPhone ? (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1 }}>
+        <span>{name}</span>
+        <DDList entries={entries} />
+      </div>
+    ) : (
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>
+        <span>{name}</span>
+        <DDList entries={entries} />
+      </span>
+    );
+  };
 
   const fetchOngoing = useCallback(async () => {
     setLoading(true);
@@ -327,11 +349,14 @@ function BuyerTransferOngoing() {
                         <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Tags</th>
                         <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>From</th>
                         <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>To</th>
-                        <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Status</th>
+                        {/* Status right-aligned (2026-10-21, Hera) — it used to sit left in a wide last column. */}
+                        <th style={{ padding: '8px 10px', textAlign: 'right', color: '#6d7175' }}>Status</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {visibleTransfers.map(tr => (
+                      {visibleTransfers.map(tr => {
+                        const sides = splitTransferSides(transferEntries(dd, tr.id), tr.from_location);
+                        return (
                         <tr key={tr.id} style={{ borderBottom: '1px solid #f1f1f1' }}>
                           <td style={{ padding: '8px 10px' }}>
                             <input
@@ -355,17 +380,18 @@ function BuyerTransferOngoing() {
                               </InlineStack>
                             )}
                           </td>
-                          <td style={{ padding: '10px' }}>{tr.from_location}</td>
-                          <td style={{ padding: '10px' }}>{tr.to_location}</td>
-                          <td style={{ padding: '10px' }}>
-                            <InlineStack gap="150" blockAlign="center">
+                          <td style={{ padding: '10px' }}>{locationCell(tr.from_location, sides.from)}</td>
+                          <td style={{ padding: '10px' }}>{locationCell(tr.to_location, sides.to)}</td>
+                          <td style={{ padding: '10px', textAlign: 'right' }}>
+                            <InlineStack gap="150" blockAlign="center" align="end">
                               <StatusBadge status={tr.status} />
                               {tr.on_hold && <HoldBadge />}
                               {tr.auto_committed && <AutoCommittedBadge />}
                             </InlineStack>
                           </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>

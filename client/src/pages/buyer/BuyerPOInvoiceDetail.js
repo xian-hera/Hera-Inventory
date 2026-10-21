@@ -4,6 +4,7 @@ import {
 } from '@shopify/polaris';
 import { useNavigate, useParams } from 'react-router-dom';
 import InfoTooltip from '../../components/InfoTooltip';
+import { useDD, poEntries, poPb, DDList, PBGreyPill } from '../shared/ddPill';
 
 // 2026-10-16 (Hera): money shown with thousands separators, e.g. 111,791.63.
 const fmtMoney = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -26,6 +27,8 @@ function buildExportFilename(poNumberPart, supplierName, locationVal, dateStr) {
 function BuyerPOInvoiceDetail() {
   const navigate = useNavigate();
   const { invoiceId } = useParams();
+  // DD pills + grey PB pill next to the status pill (2026-10-21, Hera — claude/SCHEDULER_FEATURE_SPEC.md §7).
+  const dd = useDD({ poIds: invoiceId ? [invoiceId] : [] });
 
   const [invoice, setInvoice] = useState(null);
   const [items, setItems] = useState([]);
@@ -219,9 +222,11 @@ function BuyerPOInvoiceDetail() {
     <Page
       title={invoice.po_number || invoice.invoice_number}
       titleMetadata={
-        <InlineStack gap="150">
+        <InlineStack gap="150" blockAlign="center" wrap>
           <Badge tone="success">committed</Badge>
           {invoice.is_promotional && <Badge>Promotional</Badge>}
+          <DDList entries={poEntries(dd, invoiceId)} />
+          <PBGreyPill pb={poPb(dd, invoiceId)} />
         </InlineStack>
       }
       backAction={{ onAction: () => navigate('/buyer/po-receiving/commit-later') }}

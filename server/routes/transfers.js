@@ -2099,3 +2099,5 @@ router.post('/delete-selected', async (req, res) => {
 
 
 module.exports = router;
+// Used by Warehouse › Schedule › Go! (routes/warehouse.js).
+module.exports.dispatchOne = dispatchOne;

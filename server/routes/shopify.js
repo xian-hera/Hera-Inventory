@@ -50,26 +50,102 @@ async function shopifyRequest(client, query, variables = null, retries = 3) {
   }
 }
 
-// GET /api/shopify/product-types
+// ── Product Types — central table (2026-10-21, Hera) ──────────────────────
+// Table product_types (see database/init.js). GET /product-types returns only
+// the ENABLED names, so every dropdown in the Hub uses the same list. The list
+// is refreshed from Shopify only by POST /product-types/sync (Purchasing →
+// Settings → Product Types); an empty table is seeded once on the first read.
+// Was: every call asked Shopify live (productTypes(first: 50)).
+async function fetchShopifyProductTypes() {
+  const session = await getSession();
+  if (!session) throw new Error('No session');
+  const shopify = getShopify();
+  const client = new shopify.clients.Graphql({ session });
+  const response = await shopifyRequest(client, `{
+    productTypes(first: 250) {
+      edges { node }
+    }
+  }`);
+  return response.data.productTypes.edges.map(e => e.node).filter(Boolean);
+}
+
+async function syncProductTypes() {
+  const { pool } = require('../database/init');
+  const live = await fetchShopifyProductTypes();
+  const before = await pool.query('SELECT name FROM product_types');
+  const had = new Set(before.rows.map(r => r.name));
+  let added = 0;
+  for (const name of live) {
+    if (!had.has(name)) added++;
+    await pool.query(
+      `INSERT INTO product_types (name, enabled, in_shopify, synced_at) VALUES ($1, TRUE, TRUE, NOW())
+       ON CONFLICT (name) DO UPDATE SET in_shopify = TRUE, synced_at = NOW()`,
+      [name]
+    );
+  }
+  // Gone from Shopify: marked, and switched off once (a later manual switch-on is kept).
+  const gone = await pool.query(
+    `UPDATE product_types SET in_shopify = FALSE, enabled = FALSE
+     WHERE in_shopify = TRUE AND NOT (name = ANY($1)) RETURNING name`,
+    [live]
+  );
+  return { added, removed: gone.rows.map(r => r.name), total: live.length };
+}
+
+// GET /api/shopify/product-types → ["Braid", "Hair", ...] (enabled only)
 router.get('/product-types', async (req, res) => {
   try {
-    const session = await getSession();
-    if (!session) return res.status(401).json({ error: 'No session' });
-
-    const shopify = getShopify();
-    const client = new shopify.clients.Graphql({ session });
-
-    const query = `{
-      productTypes(first: 50) {
-        edges { node }
+    const { pool } = require('../database/init');
+    let r = await pool.query('SELECT name FROM product_types WHERE enabled = TRUE ORDER BY name');
+    if (r.rowCount === 0) {
+      const any = await pool.query('SELECT 1 FROM product_types LIMIT 1');
+      if (any.rowCount === 0) {
+        await syncProductTypes(); // first read: seed from Shopify
+        r = await pool.query('SELECT name FROM product_types WHERE enabled = TRUE ORDER BY name');
       }
-    }`;
-
-    const response = await shopifyRequest(client, query);
-    const types = response.data.productTypes.edges.map(e => e.node).filter(Boolean);
-    res.json(types);
+    }
+    res.json(r.rows.map(x => x.name));
   } catch (e) {
     console.error('GET /api/shopify/product-types error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/shopify/product-types/all → [{ name, enabled, in_shopify, synced_at }] (Settings page)
+router.get('/product-types/all', async (req, res) => {
+  try {
+    const { pool } = require('../database/init');
+    const any = await pool.query('SELECT 1 FROM product_types LIMIT 1');
+    if (any.rowCount === 0) await syncProductTypes();
+    const r = await pool.query('SELECT name, enabled, in_shopify, synced_at FROM product_types ORDER BY name');
+    res.json(r.rows);
+  } catch (e) {
+    console.error('GET /api/shopify/product-types/all error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/shopify/product-types/sync → { added, removed: [], total }
+router.post('/product-types/sync', async (req, res) => {
+  try {
+    res.json(await syncProductTypes());
+  } catch (e) {
+    console.error('POST /api/shopify/product-types/sync error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PUT /api/shopify/product-types/enabled  body { name, enabled }
+router.put('/product-types/enabled', async (req, res) => {
+  try {
+    const { pool } = require('../database/init');
+    const name = String((req.body && req.body.name) || '');
+    if (!name) return res.status(400).json({ error: 'name is required' });
+    const r = await pool.query('UPDATE product_types SET enabled = $2 WHERE name = $1 RETURNING name', [name, !!req.body.enabled]);
+    if (r.rowCount === 0) return res.status(404).json({ error: 'Unknown type' });
+    res.json({ success: true });
+  } catch (e) {
+    console.error('PUT /api/shopify/product-types/enabled error:', e);
     res.status(500).json({ error: e.message });
   }
 });

@@ -8,6 +8,7 @@ import MultiSelectDropdown from '../../components/MultiSelectDropdown';
 import DateRangeFilter from '../../components/DateRangeFilter';
 import { useLocationMap } from '../shared/locationMap';
 import { useGroupContext } from '../../userGroup'; // Purchasing user groups, 2026-10-09
+import { useProductTypes } from '../../productTypes'; // central type list, 2026-10-21
 
 // Location list: comes from the shared location map (pages/shared/locationMap.js,
 // 2026-09-24). The hardcoded 19-code LOCATIONS constant that used to live here
@@ -16,7 +17,7 @@ import { useGroupContext } from '../../userGroup'; // Purchasing user groups, 20
 // All uppercase, matching Shopify admin product types
 const TYPE_OPTIONS = [
   'BRAID', 'HAIR', 'HAIR & SKIN CARE',
-  'JEWELRY', 'K-BEAUTY', 'MAKEUP', 'TOOLS & ACCESSORIES', 'WIG',
+  'JEWELRY', /* 'K-BEAUTY' removed 2026-10-21, */ 'MAKEUP', 'TOOLS & ACCESSORIES', 'WIG',
 ];
 
 const BUILT_IN_REASONS = [
@@ -89,6 +90,8 @@ function ReasonCell({ reasonKey, reasonDetail, photoUrls, customReasons }) {
 function BuyerStockLosses() {
   const navigate = useNavigate();
   const groupCtx = useGroupContext(); // user group → Types filter options, 2026-10-09
+  // 2026-10-21 (Hera): Types options come from the central list (Settings → Product Types); TYPE_OPTIONS is now only the fallback if it cannot load.
+  const productTypes = useProductTypes(TYPE_OPTIONS, true);
 
   const [entries, setEntries]                   = useState([]);
   const [loading, setLoading]                   = useState(false);
@@ -327,7 +330,7 @@ function BuyerStockLosses() {
               <InlineStack gap="400" wrap>
                 <MultiSelectDropdown
                   label="Types"
-                  options={groupCtx.filterTypes(TYPE_OPTIONS)}
+                  options={groupCtx.filterTypes(productTypes)}
                   selected={selectedTypes}
                   onChange={setSelectedTypes}
                 />

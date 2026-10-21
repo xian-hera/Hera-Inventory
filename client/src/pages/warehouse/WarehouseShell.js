@@ -16,7 +16,6 @@ export const WAREHOUSE_TABS = [
   { id: 'schedule', label: 'Schedule', path: '/warehouse' },
   { id: 'receive-shipments', label: 'Receive Shipments', path: '/warehouse/receive-shipments' },
   { id: 'hq-transfers', label: 'HQ Transfers', path: '/warehouse/hq-transfers' },
-  { id: 'temp', label: 'Temp', path: '/warehouse/temp' },
 ];
 
 const BADGE_BASE = {

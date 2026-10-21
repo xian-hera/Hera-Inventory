@@ -1,16 +1,16 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  Page, BlockStack, InlineStack, Text, Button, Banner, Modal, TextField, Select, Tooltip,
+  Page, BlockStack, InlineStack, Text, Button, Banner, Modal, TextField, Select,
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import { useLocationMap } from '../shared/locationMap';
 import {
   HQ, RoutePills, PbPill, LinkText, PoPopup, TransferPopup, truncate,
-  useLocationOrder, useToast, refreshWarehouseBadges, setScheduleDirty,
+  useLocationOrder, useToast, refreshWarehouseBadges, setScheduleDirty, confirmLeaveSchedule,
 } from './whShared';
 
-// Warehouse › Schedule (2026-10-21, Hera — claude/SCHEDULER_FEATURE_SPEC.md §2–§6).
+// Warehouse › Schedule (2026-10-21, Hera — claude/SCHEDULER_FEATURE_SPEC.md).
 //
 // Cards: received POs (+ their splits), transfers, WH custom tasks. They are
 // placed on Morning / Afternoon of the next 7 business days (today first;
@@ -18,9 +18,16 @@ import {
 // Here" — no drag and drop.
 //
 // Placing / reordering / unscheduling only change a local draft until Save
-// (Discard throws the draft away). Split, Delete and Create task are saved
-// at once and keep the draft as it is.
+// (Discard throws the draft away). Split, Delete, Create task, track back
+// and Go! are saved at once and keep the draft as it is.
 //
+// LOCKED days — every day of the "Past 7 days" view, and today once Go! was
+// pressed: their tasks can't be moved or reordered. The only thing allowed is
+// "track back": adding Unscheduled tasks to the bottom of a half-day (to
+// record work that was done but never scheduled); only tracked-back tasks can
+// be taken off again (Unschedule / Delete).
+//
+// Unscheduled shows transfers only when they are Ready to Ship.
 // Desktop / iPad page: the content is a centred block a bit wider than the
 // normal page (same technique as Online › New Products); title and tab bar
 // stay at normal width.
@@ -78,20 +85,25 @@ const normSlots = (slots) => {
   return JSON.stringify(out);
 };
 
-// The location shown ON the card. A store → store transfer is two cards
-// (Hera 2026-10-21): the 'pickup' card shows "➔ {from}" + green "Pickup",
-// the 'deliver' card "➔ {to}". Both count as HQ-style cards for grouping.
+// The location shown ON the card. A store → store transfer is split into two
+// cards (Hera 2026-10-21, second version): 'pickup' = store → HQ ("MTL01 ➔"),
+// 'deliver' = HQ → store ("➔ MTL02"). They share one colour stripe so they
+// can be found even though grouping puts them in different places.
 function cardRoute(t) {
-  if (t.kind === 'transfer' && t.leg === 'pickup') return { from: HQ, to: t.from };
+  if (t.kind === 'transfer' && t.leg === 'pickup') return { from: t.from, to: HQ };
   if (t.kind === 'transfer' && t.leg === 'deliver') return { from: HQ, to: t.to };
   if (t.kind === 'transfer') return { from: t.from, to: t.to };
   return { from: HQ, to: t.to };
 }
 
-// Hover box (Hera 2026-10-21): every card shows its full location relation
-// "{from} ➔ {to}" (locations bold); custom cards also Type / Title / Note.
-// Rendered in a portal with fixed position so the calendar's scroll box and
-// the page's centring transform can't clip or shift it.
+// One colour per split transfer (stripe on both of its cards).
+const PAIR_COLORS = ['#f59e0b', '#10b981', '#3b82f6', '#ec4899', '#8b5cf6', '#14b8a6', '#ef4444', '#84cc16', '#0ea5e9', '#d946ef'];
+const pairColor = (transferId) => PAIR_COLORS[Math.abs(Number(transferId) || 0) % PAIR_COLORS.length];
+
+// Hover box: every card shows its full location relation "{from} ➔ {to}"
+// (locations bold); custom cards also Type / Title / Note. Rendered in a
+// portal with fixed position so the calendar's scroll box and the page's
+// centring transform can't clip or shift it.
 function HoverBox({ task, rect }) {
   if (!rect) return null;
   const from = task.kind === 'transfer' ? task.from : HQ;
@@ -112,17 +124,26 @@ function HoverBox({ task, rect }) {
         </div>
       )}
       <div><b>{from}</b> ➔ <b>{to}</b></div>
+      {task.kind === 'transfer' && task.leg && (
+        <div style={{ marginTop: 4, color: '#6d7175', fontSize: 12 }}>
+          {task.leg === 'pickup' ? 'Part 1 of 2: pick up, bring to HQ' : 'Part 2 of 2: deliver from HQ'}
+        </div>
+      )}
+      {task.trackedBack && <div style={{ marginTop: 4, color: '#6d7175', fontSize: 12 }}>Tracked back</div>}
     </div>,
     document.body
   );
 }
 
 // One task card. `compact` = the calendar version (slightly smaller, with
-// the order number in front).
-function TaskCard({ task, selected, onToggle, onOpenNumber, order, compact }) {
+// the order number in front). `partnerLit` = the other card of the same
+// split transfer is hovered or selected → this one gets a glow in the pair
+// colour. `locked` = on a locked day and not tracked back → not selectable.
+function TaskCard({ task, selected, onToggle, onOpenNumber, order, compact, locked, partnerLit, onHoverPair }) {
   const fs = compact ? 12 : 13;
   const [hoverRect, setHoverRect] = useState(null);
   const route = cardRoute(task);
+  const pc = task.kind === 'transfer' && task.leg ? pairColor(task.transferId) : null;
   let first;
   let second;
   if (task.kind === 'po') {
@@ -143,7 +164,7 @@ function TaskCard({ task, selected, onToggle, onOpenNumber, order, compact }) {
     second = (
       <>
         <RoutePills from={route.from} to={route.to} />
-        {task.leg === 'pickup' && <span style={{ marginLeft: 'auto', color: '#16a34a', fontWeight: 700 }}>Pickup</span>}
+        {pc && <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: pc }}>{task.leg === 'pickup' ? '1/2' : '2/2'}</span>}
       </>
     );
   } else {
@@ -155,20 +176,25 @@ function TaskCard({ task, selected, onToggle, onOpenNumber, order, compact }) {
     );
     second = <RoutePills from={HQ} to={task.to} />;
   }
+  const borderColor = selected ? PINK : '#c9cccf';
+  const bw = selected ? 2 : 1;
   return (
     <div
       role="button"
       tabIndex={0}
       aria-pressed={selected}
-      onMouseEnter={(e) => setHoverRect(e.currentTarget.getBoundingClientRect())}
-      onMouseLeave={() => setHoverRect(null)}
-      onClick={() => onToggle(task.id)}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(task.id); } }}
+      aria-disabled={locked || undefined}
+      onMouseEnter={(e) => { setHoverRect(e.currentTarget.getBoundingClientRect()); if (pc && onHoverPair) onHoverPair(task.transferId); }}
+      onMouseLeave={() => { setHoverRect(null); if (pc && onHoverPair) onHoverPair(null); }}
+      onClick={() => { if (!locked) onToggle(task.id); }}
+      onKeyDown={(e) => { if (!locked && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onToggle(task.id); } }}
       style={{
-        position: 'relative', boxSizing: 'border-box', cursor: 'pointer', textAlign: 'left',
-        border: `${selected ? 2 : 1}px solid ${selected ? PINK : '#c9cccf'}`,
-        padding: selected ? (compact ? '4px 7px' : '6px 9px') : (compact ? '5px 8px' : '7px 10px'),
-        borderRadius: 10, background: '#fff', fontSize: fs, lineHeight: '18px',
+        position: 'relative', boxSizing: 'border-box', cursor: locked ? 'default' : 'pointer', textAlign: 'left',
+        border: `${bw}px solid ${borderColor}`,
+        borderLeft: pc ? `5px solid ${pc}` : `${bw}px solid ${borderColor}`,
+        boxShadow: partnerLit && pc ? `0 0 0 3px ${pc}55` : 'none',
+        padding: `${compact ? 5 - (bw - 1) : 7 - (bw - 1)}px ${compact ? 8 - (bw - 1) : 10 - (bw - 1)}px`,
+        borderRadius: 10, background: locked ? '#f7f7f7' : '#fff', fontSize: fs, lineHeight: '18px',
         display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0,
       }}
     >
@@ -349,19 +375,31 @@ function SplitModal({ task, onClose, onDone }) {
 
 // ─── Page ────────────────────────────────────────────────────────────────────
 
+// Unscheduled transfers are only shown when Ready to Ship (Hera 2026-10-21);
+// both cards of a split transfer share the transfer's status — it is ONE
+// transfer with ONE status in the system.
+// Exception (Hera 2026-10-21): once a store → store transfer is In Transit
+// (its pickup is done), its part 2 card (deliver, HQ → store) must stay so
+// the delivery can still be scheduled.
+const showInUnscheduled = (t) => t.kind !== 'transfer' || t.status === 'good_to_go'
+  || (t.leg === 'deliver' && t.status === 'in_transit');
+
 function WarehouseSchedule() {
   const compareLoc = useLocationOrder();
-  const [data, setData] = useState(null);          // { today, days, version, tasks }
-  const [saved, setSaved] = useState({});          // saved calendar
-  const [slots, setSlots] = useState({});          // draft calendar
+  const [view, setView] = useState('current');     // 'current' | 'past'
+  const [data, setData] = useState(null);          // { view, today, days, lockedDays, goneToday, version, tasks }
+  const [saved, setSaved] = useState({});          // saved calendar (editable days only)
+  const [slots, setSlots] = useState({});          // draft calendar (editable days only)
   const [sel, setSel] = useState([]);              // selected ids, in click order
   const [expanded, setExpanded] = useState({});
   const [filter, setFilter] = useState('all');
-  const [groupBy, setGroupBy] = useState('location');
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState(null);      // { tone, text } — Go! result
   const [conflict, setConflict] = useState(false);
   const [saving, setSaving] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [going, setGoing] = useState(false);
+  const [hoverPair, setHoverPair] = useState(null); // transferId of a hovered split card
   const [createOpen, setCreateOpen] = useState(false);
   const [splitTask, setSplitTask] = useState(null);
   const [poPopup, setPoPopup] = useState(null);     // { id, number }
@@ -373,22 +411,28 @@ function WarehouseSchedule() {
   dataRef.current = data;
   const savedRef = useRef(saved);
   savedRef.current = saved;
+  const viewRef = useRef(view);
+  viewRef.current = view;
 
-  // keepDraft: after Split / Delete / Create the draft calendar stays as it
-  // is (minus tasks that no longer exist); otherwise it is reset to saved.
-  const load = useCallback(async ({ keepDraft = false } = {}) => {
+  // keepDraft: after Split / Delete / Create / track back the draft calendar
+  // stays as it is (minus tasks that no longer exist); otherwise it is reset
+  // to saved.
+  const load = useCallback(async ({ keepDraft = false, nextView } = {}) => {
+    const v = nextView || viewRef.current;
     try {
-      const r = await fetch('/api/warehouse/schedule');
+      const r = await fetch(`/api/warehouse/schedule${v === 'past' ? '?view=past' : ''}`);
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || 'Failed to load the schedule');
-      const savedSlots = slotsFromTasks(d.tasks, d.days);
+      const locked = new Set(d.lockedDays || []);
+      const editableDays = d.days.filter(x => !locked.has(x));
+      const savedSlots = slotsFromTasks(d.tasks, editableDays);
       const ids = new Set(d.tasks.map(t => t.id));
       const prev = dataRef.current;
-      const draftDirty = prev && normSlots(slotsRef.current) !== normSlots(savedRef.current);
-      if (keepDraft && prev && d.version !== prev.version && draftDirty) {
-        // Someone else saved the schedule meanwhile and this page has its own
-        // unsaved draft: keep the OLD version, so Save gets the 409 "reload"
-        // answer instead of overwriting their work.
+      const draftDirty = prev && prev.view === d.view && normSlots(slotsRef.current) !== normSlots(savedRef.current);
+      if (keepDraft && draftDirty && d.version !== prev.version) {
+        // Someone else saved meanwhile and this page has its own unsaved
+        // draft: keep the OLD version, so Save gets the 409 "reload" answer
+        // instead of overwriting their work.
         setData({ ...d, version: prev.version });
         setError('Someone else saved the schedule in the meantime. Reload the page and make your changes again.');
         setConflict(true);
@@ -404,13 +448,11 @@ function WarehouseSchedule() {
         const next = {};
         Object.entries(slotsRef.current).forEach(([k, list]) => { next[k] = list.filter(id => ids.has(id)); });
         setSlots(next);
-      } else if (keepDraft) {
-        setSlots(savedSlots); // nothing unsaved → just show the latest calendar
       } else {
         setSlots(savedSlots);
-        setExpanded({});
+        if (!keepDraft) setExpanded({});
       }
-      setSel(prev => prev.filter(id => ids.has(id)));
+      setSel(p => p.filter(id => ids.has(id)));
       setConflict(false);
     } catch (e) {
       setError(e.message);
@@ -432,20 +474,31 @@ function WarehouseSchedule() {
 
   const tasks = useMemo(() => (data ? data.tasks : []), [data]);
   const byId = useMemo(() => Object.fromEntries(tasks.map(t => [t.id, t])), [tasks]);
+  const lockedSet = useMemo(() => new Set(data ? data.lockedDays || [] : []), [data]);
+  // Draft positions (editable days).
   const where = useMemo(() => {
     const w = {};
     Object.entries(slots).forEach(([k, list]) => list.forEach((id, i) => { w[id] = { key: k, index: i }; }));
     return w;
   }, [slots]);
+  // Read-only positions on locked days (straight from the server).
+  const lockedSlots = useMemo(() => {
+    if (!data) return {};
+    return slotsFromTasks(tasks, data.days.filter(x => lockedSet.has(x)));
+  }, [data, tasks, lockedSet]);
+  const lockedWhere = useMemo(() => {
+    const w = {};
+    Object.entries(lockedSlots).forEach(([k, list]) => list.forEach((id, i) => { w[id] = { key: k, index: i }; }));
+    return w;
+  }, [lockedSlots]);
 
-  const unscheduled = useMemo(() => tasks.filter(t => !where[t.id]), [tasks, where]);
+  const unscheduledAll = useMemo(() => tasks.filter(t => !where[t.id] && !lockedWhere[t.id]), [tasks, where, lockedWhere]);
+  const unscheduled = useMemo(() => unscheduledAll.filter(showInUnscheduled), [unscheduledAll]);
   const tray = useMemo(() => {
     const list = unscheduled.filter(t => filter === 'all' || t.kind === filter);
-    if (groupBy !== 'location') return list;
-    // Group by Location (spec §5): HQ → store (by to) · store → HQ (by from) ·
-    // store → store (by from, then to). No titles — the pills show it.
-    // Uses the location shown on the card: the two cards of a store → store
-    // transfer (Pickup / delivery) sit in group 1 under their own location.
+    // Always grouped by location (spec §5): HQ → store (by to) · store → HQ
+    // (by from) · store → store (by from, then to) — by the location shown on
+    // the card, so the two halves of a split transfer land in groups 1 and 2.
     const group = (t) => { const r = cardRoute(t); return r.from === HQ ? 0 : r.to === HQ ? 1 : 2; };
     return [...list].sort((a, b) => {
       const ga = group(a); const gb = group(b);
@@ -458,28 +511,60 @@ function WarehouseSchedule() {
         || new Date(a.createdAt) - new Date(b.createdAt)
         || a.id - b.id;
     });
-  }, [unscheduled, filter, groupBy, compareLoc]);
+  }, [unscheduled, filter, compareLoc]);
 
-  // ── selection-dependent state (spec §4: A / B / C) ──
+  // ── selection-dependent state ──
   const selTasks = sel.map(id => byId[id]).filter(Boolean);
-  const selScheduled = selTasks.filter(t => where[t.id]);
-  const allUnscheduled = selTasks.length > 0 && selScheduled.length === 0;   // A
+  const selUn = selTasks.filter(t => !where[t.id] && !lockedWhere[t.id]);
+  const selEdit = selTasks.filter(t => where[t.id]);                       // on an editable day (draft)
+  const selTracked = selTasks.filter(t => lockedWhere[t.id] && t.trackedBack); // tracked back on a locked day
+  const allUnscheduled = selTasks.length > 0 && selUn.length === selTasks.length;
   const single = selTasks.length === 1 ? selTasks[0] : null;
-  const singleScheduled = single && where[single.id] ? where[single.id] : null; // C
+  const singleScheduled = single && where[single.id] ? where[single.id] : null;
   const canSplit = allUnscheduled && single && single.kind === 'po' && (single.pbCount || 0) > 1;
   const slotLen = singleScheduled ? (slots[singleScheduled.key] || []).length : 0;
+  const canDelete = selTasks.length > 0 && selUn.length + selTracked.length === selTasks.length;
+  // Partner highlight: the other card of a split transfer that is hovered / selected.
+  const litPairs = useMemo(() => {
+    const s = new Set(selTasks.filter(t => t.kind === 'transfer' && t.leg).map(t => t.transferId));
+    if (hoverPair != null) s.add(hoverPair);
+    return s;
+  }, [selTasks, hoverPair]);
 
   const toggle = (id) => setSel(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
 
+  // Add Here on an editable half-day: draft move.
   const place = (key, label) => {
     if (sel.length === 0) return;
-    const ids = sel.filter(id => byId[id]);
+    const ids = sel.filter(id => byId[id] && !lockedWhere[id]);
     const next = {};
     Object.entries(slots).forEach(([k, list]) => { next[k] = list.filter(id => !ids.includes(id)); });
     next[key] = [...(next[key] || []), ...ids];
     setSlots(next);
     setSel([]);
     showToast(`${ids.length === 1 ? '1 task' : `${ids.length} tasks`} added to ${label}`);
+  };
+
+  // Add Here on a locked half-day: track back (saved at once).
+  const trackBack = async (date, half, label) => {
+    const ids = selUn.map(t => t.id);
+    if (ids.length === 0) return;
+    setBusy(true);
+    setError('');
+    try {
+      const r = await fetch('/api/warehouse/tasks/track-back', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, date, half }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'Failed to track back');
+      setSel([]);
+      await load({ keepDraft: true });
+      showToast(`${d.added === 1 ? '1 task' : `${d.added} tasks`} tracked back to ${label}`);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
   };
 
   const move = (dir) => {
@@ -491,23 +576,43 @@ function WarehouseSchedule() {
     setSlots({ ...slots, [singleScheduled.key]: list });
   };
 
-  const unschedule = () => {
-    const ids = selScheduled.map(t => t.id);
-    const next = {};
-    Object.entries(slots).forEach(([k, list]) => { next[k] = list.filter(id => !ids.includes(id)); });
-    setSlots(next);
-    // stays selected (spec §4 B / C)
-    showToast(`${ids.length === 1 ? '1 task' : `${ids.length} tasks`} moved back to Unscheduled`);
+  // Draft-unschedule what is on editable days; tracked-back tasks on locked
+  // days are taken off at once (server). They stay selected.
+  const unschedule = async () => {
+    const editIds = selEdit.map(t => t.id);
+    const trackedIds = selTracked.map(t => t.id);
+    if (editIds.length) {
+      const next = {};
+      Object.entries(slots).forEach(([k, list]) => { next[k] = list.filter(id => !editIds.includes(id)); });
+      setSlots(next);
+    }
+    if (trackedIds.length) {
+      setBusy(true);
+      try {
+        const r = await fetch('/api/warehouse/tasks/untrack', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: trackedIds }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || 'Failed to move back');
+        await load({ keepDraft: true });
+      } catch (e) {
+        setError(e.message);
+      } finally {
+        setBusy(false);
+      }
+    }
+    const n = editIds.length + trackedIds.length;
+    showToast(`${n === 1 ? '1 task' : `${n} tasks`} moved back to Unscheduled`);
   };
 
   const save = async () => {
     if (!data) return;
-    // A store → store delivery may not be earlier than its pickup (Hera
-    // 2026-10-21) — checked here first, and again by the server.
+    // A store → store delivery may not be earlier than its pickup — checked
+    // here first, and again by the server.
     const rank = {};
     data.days.forEach((d, i) => { rank[d] = i; });
     const posOf = (id) => {
-      const w = where[id];
+      const w = where[id] || lockedWhere[id];
       if (!w) return null;
       const [d, h] = w.key.split('|');
       return [rank[d] ?? -1, h === 'AM' ? 0 : 1, w.index];
@@ -519,7 +624,7 @@ function WarehouseSchedule() {
       if (a && b && (a[0] - b[0] || a[1] - b[1] || a[2] - b[2]) < 0) late.push(dv.number);
     });
     if (late.length > 0) {
-      setError(`Delivery is scheduled before its pickup: ${late.join(', ')}. Move the delivery later or the pickup earlier.`);
+      setError(`Delivery is scheduled before its pickup: ${late.join(', ')}. Move the delivery (➔ store) later or the pickup (store ➔) earlier.`);
       return;
     }
     setSaving(true);
@@ -532,7 +637,8 @@ function WarehouseSchedule() {
       const d = await r.json();
       if (r.status === 409) { setConflict(true); throw new Error(d.error); }
       if (!r.ok) throw new Error(d.error || 'Failed to save');
-      const savedSlots = slotsFromTasks(d.tasks, d.days);
+      const locked = new Set(d.lockedDays || []);
+      const savedSlots = slotsFromTasks(d.tasks, d.days.filter(x => !locked.has(x)));
       setData(d);
       setSaved(savedSlots);
       setSlots(savedSlots);
@@ -545,35 +651,51 @@ function WarehouseSchedule() {
     }
   };
 
-  // Sync Tasks (Hera 2026-10-21): adds Draft / Pending / Ready to Ship
-  // transfers (incl. ones from before go-live or deleted by mistake) and puts
-  // matching POs into Receive Shipments. Saved at once; the draft stays.
-  const [syncing, setSyncing] = useState(false);
-  const syncTasks = async () => {
-    setSyncing(true);
-    setError('');
-    try {
-      const r = await fetch('/api/warehouse/sync', { method: 'POST' });
-      const d = await r.json();
-      if (!r.ok) throw new Error(d.error || 'Sync failed');
-      await load({ keepDraft: true });
-      refreshWarehouseBadges();
-      const tr = (d.transfersAdded || 0) + (d.transfersRestored || 0);
-      showToast(tr === 0 && !d.posAdded
-        ? 'Everything is already in sync'
-        : `Synced: ${tr} transfer card${tr === 1 ? '' : 's'} added · ${d.posAdded} PO${d.posAdded === 1 ? '' : 's'} added to Receive Shipments`);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setSyncing(false);
-    }
-  };
-
   const discard = () => {
     setSlots(saved);
     setSel([]);
     setExpanded({});
     showToast('Changes discarded');
+  };
+
+  // Past 7 days ⇄ Current 7 days. Unsaved changes would be lost → ask.
+  const switchView = async () => {
+    if (!confirmLeaveSchedule()) return;
+    const next = view === 'past' ? 'current' : 'past';
+    setSel([]);
+    setView(next);
+    setData(null);
+    await load({ nextView: next });
+  };
+
+  // Go! — today's trucks have left: today is locked and today's Ready to
+  // Ship transfers are marked In Transit (server). Once per day.
+  const go = async () => {
+    const todayKeys = [slotKey(data.today, 'AM'), slotKey(data.today, 'PM')];
+    // One transfer = one status: count each transfer once, whichever of its
+    // cards is on today's schedule.
+    const todayTransfers = todayKeys.flatMap(k => saved[k] || []).map(id => byId[id])
+      .filter(t => t && t.kind === 'transfer');
+    const ready = new Set(todayTransfers.filter(t => t.status === 'good_to_go').map(t => t.transferId)).size;
+    if (!window.confirm(`Go! — today's schedule is done and the trucks have left?\n\nToday's schedule will be locked (tasks can still be tracked back to it), and ${ready} Ready to Ship transfer${ready === 1 ? '' : 's'} on today's schedule will be marked In Transit.\n\nThis can be done once per day.`)) return;
+    setGoing(true);
+    setError('');
+    setNotice(null);
+    try {
+      const r = await fetch('/api/warehouse/go', { method: 'POST' });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'Go! failed');
+      const parts = [`${d.inTransit.length} transfer${d.inTransit.length === 1 ? '' : 's'} marked In Transit.`];
+      if (d.skipped.length) parts.push(`Not Ready to Ship, left as is: ${d.skipped.map(x => x.number).join(', ')}.`);
+      if (d.failed.length) parts.push(`Failed: ${d.failed.map(x => `${x.number} (${x.error})`).join('; ')}.`);
+      setNotice({ tone: d.failed.length ? 'warning' : 'success', text: `Go! done. ${parts.join(' ')}` });
+      await load({ keepDraft: true });
+      refreshWarehouseBadges();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setGoing(false);
+    }
   };
 
   const deleteSelected = async () => {
@@ -584,7 +706,7 @@ function WarehouseSchedule() {
     const lines = [`Delete ${n === 1 ? 'this task' : `these ${n} tasks`} from the Schedule?`];
     if (hasSplits) lines.push('Every task split from it will be deleted too, also split tasks that are already on the calendar.');
     if (hasChildTask) lines.push('A split task’s P / B qty goes back to the task it was split from.');
-    if (selTasks.some(t => t.kind === 'transfer' && t.leg)) lines.push('The Pickup card and the delivery card of a store-to-store transfer are deleted together, also if the other one is already on the calendar.');
+    if (selTasks.some(t => t.kind === 'transfer' && t.leg)) lines.push('Both cards of a store-to-store transfer (store ➔ HQ and HQ ➔ store) are deleted together, also if the other one is already on the calendar.');
     lines.push('Deleted tasks do not come back. POs and Transfers themselves are not changed.');
     if (!window.confirm(lines.join('\n\n'))) return;
     setBusy(true);
@@ -618,18 +740,24 @@ function WarehouseSchedule() {
     );
   }
 
+  const past = data.view === 'past';
   const columns = buildColumns(data.days);
   const gridCols = columns.map(c => (c.weekend ? '40px' : 'minmax(0, 1fr)')).join(' ');
-  const scheduledCount = Object.values(slots).reduce((a, l) => a + l.length, 0);
+  const scheduledCount = Object.values(slots).reduce((a, l) => a + l.length, 0)
+    + Object.values(lockedSlots).reduce((a, l) => a + l.length, 0);
   const hasSel = sel.length > 0;
+  const todayIsWorkday = data.days[0] === data.today && !past;
+  const goDisabled = !todayIsWorkday || data.goneToday || dirty || going || saving;
+  const goTitle = data.goneToday ? 'Go! was already pressed today.' : dirty ? 'Save the schedule first.' : !todayIsWorkday ? 'Today is not a business day.' : 'Today’s schedule is done, the trucks have left.';
 
   const smallBtn = (label, onClick, extra = {}) => (
     <button
       type="button"
       onClick={onClick}
+      disabled={busy}
       style={{
         font: 'inherit', fontSize: 13, padding: '5px 12px', minHeight: 32, borderRadius: 8,
-        border: '1px solid #c9cccf', background: '#fff', color: '#303030', cursor: 'pointer', ...extra,
+        border: '1px solid #c9cccf', background: '#fff', color: '#303030', cursor: 'pointer', opacity: busy ? 0.6 : 1, ...extra,
       }}
     >{label}</button>
   );
@@ -647,6 +775,24 @@ function WarehouseSchedule() {
     >{label}</button>
   );
 
+  const renderCard = (id, i, isLockedDay) => {
+    const t = byId[id];
+    return (
+      <TaskCard
+        key={id}
+        task={t}
+        compact
+        order={i + 1}
+        selected={sel.includes(id)}
+        locked={isLockedDay && !t.trackedBack}
+        partnerLit={t.kind === 'transfer' && t.leg && litPairs.has(t.transferId) && !sel.includes(id)}
+        onHoverPair={setHoverPair}
+        onToggle={toggle}
+        onOpenNumber={openNumber}
+      />
+    );
+  };
+
   return (
     <Page>
       <div style={{ position: 'relative', left: '50%', transform: 'translateX(-50%)', width: `min(${CONTENT_W}px, calc(100vw - 32px))` }}>
@@ -656,19 +802,29 @@ function WarehouseSchedule() {
             <BlockStack gap="100">
               <Text variant="headingLg" as="h2">Schedule</Text>
               <Text tone="subdued" as="p">
-                Next 7 business days · {longDay(data.days[0])} – {longDay(data.days[data.days.length - 1])} · {scheduledCount} scheduled · {unscheduled.length} unscheduled
+                {past ? 'Past 7 business days' : 'Next 7 business days'} · {longDay(data.days[0])} – {longDay(data.days[data.days.length - 1])} · {scheduledCount} scheduled · {unscheduled.length} unscheduled
               </Text>
             </BlockStack>
-            <InlineStack gap="200" blockAlign="center">
-              {dirty && (
-                <span style={{ fontSize: 12, fontWeight: 550, padding: '2px 8px', borderRadius: 8, background: '#ffd79d', color: '#5e4200' }}>Unsaved changes</span>
-              )}
-              <Tooltip content="Sync Transfer tasks, and PO tasks to Receive Shipments.">
-                <Button onClick={syncTasks} loading={syncing} disabled={saving}>Sync Tasks</Button>
-              </Tooltip>
-              <Button onClick={discard} disabled={!dirty || saving}>Discard</Button>
-              <Button variant="primary" onClick={save} disabled={!dirty || saving} loading={saving}>Save</Button>
-            </InlineStack>
+            {!past && (
+              <InlineStack gap="200" blockAlign="center">
+                {dirty && (
+                  <span style={{ fontSize: 12, fontWeight: 550, padding: '2px 8px', borderRadius: 8, background: '#ffd79d', color: '#5e4200' }}>Unsaved changes</span>
+                )}
+                <button
+                  type="button"
+                  title={goTitle}
+                  onClick={go}
+                  disabled={goDisabled}
+                  style={{
+                    font: 'inherit', fontSize: 14, fontWeight: 700, padding: '6px 18px', minHeight: 32, borderRadius: 8,
+                    border: 'none', cursor: goDisabled ? 'default' : 'pointer',
+                    background: goDisabled ? '#d4d4d4' : '#16a34a', color: goDisabled ? '#6d7175' : '#fff',
+                  }}
+                >{going ? 'Going...' : 'Go!'}</button>
+                <Button onClick={discard} disabled={!dirty || saving}>Discard</Button>
+                <Button variant="primary" onClick={save} disabled={!dirty || saving} loading={saving}>Save</Button>
+              </InlineStack>
+            )}
           </InlineStack>
 
           {error && (
@@ -677,6 +833,7 @@ function WarehouseSchedule() {
               {error}
             </Banner>
           )}
+          {notice && <Banner tone={notice.tone} onDismiss={() => setNotice(null)}>{notice.text}</Banner>}
 
           {/* Unscheduled — title, filters and buttons outside the card */}
           <InlineStack align="space-between" blockAlign="end" gap="200" wrap>
@@ -688,9 +845,6 @@ function WarehouseSchedule() {
               <InlineStack gap="100">
                 {filterBtn('all', 'All')}{filterBtn('po', 'PO')}{filterBtn('transfer', 'Transfer')}{filterBtn('custom', 'Other')}
               </InlineStack>
-              <div style={{ minWidth: 130 }}>
-                <Select label="Group by" options={[{ label: 'Location', value: 'location' }]} value={groupBy} onChange={setGroupBy} />
-              </div>
               <Button onClick={() => setCreateOpen(true)}>Create task</Button>
             </InlineStack>
           </InlineStack>
@@ -701,37 +855,46 @@ function WarehouseSchedule() {
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 10 }}>
                 {tray.map(t => (
-                  <TaskCard key={t.id} task={t} selected={sel.includes(t.id)} onToggle={toggle} onOpenNumber={openNumber} />
+                  <TaskCard
+                    key={t.id}
+                    task={t}
+                    selected={sel.includes(t.id)}
+                    partnerLit={t.kind === 'transfer' && t.leg && litPairs.has(t.transferId) && !sel.includes(t.id)}
+                    onHoverPair={setHoverPair}
+                    onToggle={toggle}
+                    onOpenNumber={openNumber}
+                  />
                 ))}
               </div>
             )}
           </div>
 
-          {/* Action bar (spec §4) */}
+          {/* Action bar — empty while nothing is selected (Hera 2026-10-21) */}
           <div style={{
             minHeight: 52, boxSizing: 'border-box', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10,
             padding: '8px 14px', borderRadius: 12,
             background: hasSel ? '#e0f2fe' : '#fff', border: `1px solid ${hasSel ? '#a8d1ff' : '#e1e3e5'}`,
           }}>
-            {!hasSel ? (
-              <span style={{ color: '#303030' }}>Select a task to manage it, you can add an unscheduled to calendar, or edit a scheduled one.</span>
-            ) : (
+            {hasSel && (
               <>
                 <span style={{ fontWeight: 700 }}>{sel.length} selected</span>
-                <span>Choose the day and morning or afternoon then click <b>Add Here</b></span>
+                {selTracked.length === 0 && <span>Choose the day and morning or afternoon then click <b>{past ? 'Track back here' : 'Add Here'}</b></span>}
                 <span style={{ flex: 1 }} />
                 {canSplit && smallBtn('Split', () => setSplitTask(single))}
                 {singleScheduled && singleScheduled.index > 0 && smallBtn('↑ Up', () => move(-1))}
                 {singleScheduled && singleScheduled.index < slotLen - 1 && smallBtn('↓ Down', () => move(1))}
-                {selScheduled.length > 0 && smallBtn('Unschedule', unschedule, { color: '#c70a24' })}
-                {allUnscheduled && smallBtn(busy ? 'Deleting...' : 'Delete', deleteSelected, { color: '#c70a24', opacity: busy ? 0.6 : 1 })}
+                {(selEdit.length > 0 || selTracked.length > 0) && smallBtn('Unschedule', unschedule, { color: '#c70a24' })}
+                {canDelete && smallBtn(busy ? 'Working...' : 'Delete', deleteSelected, { color: '#c70a24' })}
                 {smallBtn('Cancel', () => setSel([]), { border: '1px solid transparent', background: 'transparent' })}
               </>
             )}
           </div>
 
-          {/* Calendar */}
-          <div style={{ overflowX: 'auto', paddingTop: 8 }}>
+          {/* Calendar — Past 7 days / Current 7 days toggle at the top left */}
+          <InlineStack>
+            <Button onClick={switchView} disabled={saving || busy}>{past ? 'Current 7 Days' : 'Past 7 Days'}</Button>
+          </InlineStack>
+          <div style={{ overflowX: 'auto' }}>
             <div style={{ minWidth: 980, display: 'grid', gridTemplateColumns: gridCols, gap: 8, alignItems: 'stretch' }}>
               {columns.map(col => {
                 if (col.weekend) {
@@ -742,45 +905,58 @@ function WarehouseSchedule() {
                   );
                 }
                 const p = dateParts(col.date);
+                const isLockedDay = lockedSet.has(col.date);
                 return (
                   <section key={col.key} aria-label={longDay(col.date)} style={{
-                    background: '#fff', borderRadius: 12, border: '1px solid #c9cccf', display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 300,
+                    background: isLockedDay ? '#fafafa' : '#fff', borderRadius: 12, border: '1px solid #c9cccf',
+                    display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 300,
                   }}>
                     <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, padding: '8px 10px 6px', borderBottom: '1px solid #e1e3e5' }}>
                       <span style={{ fontWeight: 700, fontSize: 14 }}>{p.dow}</span>
                       <span style={{ color: '#303030' }}>{mmdd(col.date)}</span>
-                      {col.date === data.today && <span style={{ marginLeft: 'auto', fontSize: 11, color: '#6d7175' }}>Today</span>}
+                      {col.date === data.today && !data.goneToday && <span style={{ marginLeft: 'auto', fontSize: 11, color: '#6d7175' }}>Today</span>}
+                      {col.date === data.today && data.goneToday && <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: '#16a34a' }}>Gone</span>}
                     </div>
                     {HALVES.map((h, hi) => {
                       const key = slotKey(col.date, h.id);
-                      const ids = (slots[key] || []).filter(id => byId[id]);
+                      const source = isLockedDay ? lockedSlots : slots;
+                      const ids = (source[key] || []).filter(id => byId[id]);
                       const exp = !!expanded[key];
                       const vis = exp ? ids : ids.slice(0, CAP);
+                      // Add Here: editable day → draft move (anything except
+                      // tracked-back tasks); locked day → track back
+                      // (Unscheduled tasks only).
+                      const showAdd = hasSel && (isLockedDay ? allUnscheduled : selTracked.length === 0);
+                      const label = `${longDay(col.date)} · ${h.name}`;
                       return (
                         <div key={h.id} style={{
                           display: 'flex', flexDirection: 'column', gap: 6, padding: 8,
                           borderTop: hi === 0 ? 'none' : '1px solid #e1e3e5', flex: hi === 1 ? 1 : '0 0 auto',
-                          background: hasSel ? '#fbfdff' : '#fff',
+                          background: showAdd ? '#fbfdff' : 'transparent',
                         }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#303030' }}>
                             <span>{h.label}</span>
                             {ids.length > 0 && <span style={{ color: '#6d7175' }}>{ids.length}</span>}
                           </div>
-                          {vis.map((id, i) => (
-                            <TaskCard key={id} task={byId[id]} compact order={i + 1} selected={sel.includes(id)} onToggle={toggle} onOpenNumber={openNumber} />
-                          ))}
+                          {vis.map((id, i) => renderCard(id, i, isLockedDay))}
                           {ids.length > CAP && (
                             <button type="button" onClick={() => setExpanded({ ...expanded, [key]: !exp })} style={{
                               font: 'inherit', fontSize: 12, fontWeight: 550, textAlign: 'left', padding: '4px 6px', border: 'none',
                               borderRadius: 8, background: '#f1f1f1', cursor: 'pointer',
                             }}>{exp ? 'Show less' : `Show ${ids.length - CAP} more`}</button>
                           )}
-                          {ids.length === 0 && !hasSel && <span style={{ fontSize: 12, color: '#8a8a8a' }}>No tasks</span>}
-                          {hasSel && (
-                            <button type="button" onClick={() => place(key, `${longDay(col.date)} · ${h.name}`)} style={{
-                              font: 'inherit', fontSize: 13, fontWeight: 650, minHeight: 32, borderRadius: 8,
-                              border: '1.5px dashed #2c6ecb', background: '#eaf4ff', color: '#1f5199', cursor: 'pointer',
-                            }}>Add Here</button>
+                          {ids.length === 0 && !showAdd && <span style={{ fontSize: 12, color: '#8a8a8a' }}>No tasks</span>}
+                          {showAdd && (
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => (isLockedDay ? trackBack(col.date, h.id, label) : place(key, label))}
+                              title={isLockedDay ? 'Track back: record these tasks on this day (added at the bottom)' : undefined}
+                              style={{
+                                font: 'inherit', fontSize: 13, fontWeight: 650, minHeight: 32, borderRadius: 8,
+                                border: '1.5px dashed #2c6ecb', background: '#eaf4ff', color: '#1f5199', cursor: 'pointer',
+                              }}
+                            >{isLockedDay ? 'Track back here' : 'Add Here'}</button>
                           )}
                         </div>
                       );

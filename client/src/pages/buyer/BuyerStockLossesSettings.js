@@ -23,7 +23,8 @@ const BUILT_IN_TYPES = [
   { value: 'MAKEUP',             label: 'MAKEUP',             metafield: null },
   { value: 'TOOLS & ACCESSORIES',label: 'TOOLS & ACCESSORIES',metafield: null },
   { value: 'JEWELRY',            label: 'JEWELRY',            metafield: null },
-  { value: 'K-BEAUTY',           label: 'K-BEAUTY',           metafield: null },
+  // K-BEAUTY removed 2026-10-21 (Hera): no longer a Shopify type; its rules are deleted from the database on startup.
+  // { value: 'K-BEAUTY',           label: 'K-BEAUTY',           metafield: null },
 ];
 
 // ─── Instruction modal ───────────────────────────────────────────────────────

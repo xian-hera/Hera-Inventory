@@ -4,6 +4,7 @@ import {
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import MultiSelectDropdown from '../../components/MultiSelectDropdown';
+import { useDD, poEntries, poPb, DDList, PBGreyPill, useIsPhoneWidth } from '../shared/ddPill';
 
 const STATUS_PILLS = {
   pending: { label: 'Pending', tone: 'attention' },
@@ -48,8 +49,13 @@ function normalizedStatus(inv) {
 // Purchase Order List columns (2026-10-21, Hera): Quantity and Subtotal are no
 // longer shown. Their cells are still built below; remove a name from
 // HIDDEN_COLUMNS to bring a column back.
-const LIST_COLUMNS = ['PO Number', 'Supplier', 'Location', 'Quantity', 'Subtotal', 'Status'];
+// Schedule (2026-10-21, Hera — claude/SCHEDULER_FEATURE_SPEC.md §7): the
+// Warehouse delivery date as a mini DD pill (split PO → several, side by
+// side). On a phone the column is hidden and the DD sits right under the
+// location instead.
+const LIST_COLUMNS = ['PO Number', 'Supplier', 'Location', 'Schedule', 'Quantity', 'Subtotal', 'Status'];
 const HIDDEN_COLUMNS = ['Quantity', 'Subtotal'];
+const HIDDEN_COLUMNS_PHONE = [...HIDDEN_COLUMNS, 'Schedule'];
 
 function BuyerPOCommitLater() {
   const navigate = useNavigate();
@@ -73,6 +79,11 @@ function BuyerPOCommitLater() {
   const [statusFilter, setStatusFilter] = useState(DEFAULT_STATUS_FILTER);
   const [locationFilter, setLocationFilter] = useState([]);
   const [supplierFilter, setSupplierFilter] = useState([]);
+
+  // DD pills + grey PB pill (2026-10-21) — live from the Warehouse Schedule.
+  const isPhone = useIsPhoneWidth();
+  const hiddenColumns = isPhone ? HIDDEN_COLUMNS_PHONE : HIDDEN_COLUMNS;
+  const dd = useDD({ poIds: invoices.map(inv => inv.id) });
 
   // quiet=true skips the full-page loading spinner — used while polling for
   // commit progress so the table doesn't flicker every couple seconds.
@@ -273,8 +284,18 @@ function BuyerPOCommitLater() {
         <Text variant="bodySm" tone="subdued">Ref: {inv.invoice_number}</Text>
       )}
     </BlockStack>,
-    inv.supplier_name,
-    inv.location,
+    // Grey PB pill on a second line under the supplier (2026-10-21).
+    <BlockStack gap="050">
+      <span>{inv.supplier_name}</span>
+      {poPb(dd, inv.id) && <span><PBGreyPill pb={poPb(dd, inv.id)} /></span>}
+    </BlockStack>,
+    isPhone && poEntries(dd, inv.id).length > 0 ? (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1 }}>
+        <span>{inv.location}</span>
+        <DDList entries={poEntries(dd, inv.id)} />
+      </div>
+    ) : inv.location,
+    <DDList entries={poEntries(dd, inv.id)} />,
     inv.quantity,
     (
       <span style={{ whiteSpace: 'nowrap' }}>
@@ -442,7 +463,7 @@ function BuyerPOCommitLater() {
                             onChange={toggleSelectAll}
                           />
                         </th>
-                        {LIST_COLUMNS.filter(h => !HIDDEN_COLUMNS.includes(h)).map((h, i) => (
+                        {LIST_COLUMNS.filter(h => !hiddenColumns.includes(h)).map((h, i) => (
                           <th
                             key={i}
                             style={{
@@ -459,7 +480,7 @@ function BuyerPOCommitLater() {
                     <tbody>
                       {rows.map((row, i) => (
                         <tr key={filteredInvoices[i].id} style={{ borderBottom: '1px solid #f1f1f1' }}>
-                          {row.filter((cell, j) => !HIDDEN_COLUMNS.includes(['', ...LIST_COLUMNS][j])).map((cell, j) => (
+                          {row.filter((cell, j) => !hiddenColumns.includes(['', ...LIST_COLUMNS][j])).map((cell, j) => (
                             <td key={j} style={{ padding: '10px 10px', verticalAlign: 'top' }}>{cell}</td>
                           ))}
                         </tr>

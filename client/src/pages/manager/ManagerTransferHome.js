@@ -8,6 +8,7 @@ import { StatusBadge, HoldBadge } from '../shared/transferStatus';
 // renders by ManagerLocationGate (2026-09-29) — replaces reading
 // localStorage 'managerLocation' directly. See client/src/accountMemory.js.
 import { getManagerLocation } from '../../accountMemory';
+import { useDD, transferEntries, DDList, useIsPhoneWidth } from '../shared/ddPill';
 
 function formatDate(dateStr) {
   if (!dateStr) return '';
@@ -37,6 +38,14 @@ function ManagerTransferHome() {
   const [historyLoading, setHistoryLoading] = useState(true);
 
   const location = getManagerLocation();
+
+  // Full DD pills (2026-10-21, Hera — claude/SCHEDULER_FEATURE_SPEC.md §7),
+  // left of the "from to" line. A store → store transfer is two Schedule
+  // cards; each store only sees its own one (from store: the pickup, to
+  // store: the delivery) — i.e. the entries whose store is this location.
+  const dd = useDD({ transferIds: [...receiving, ...sending].map(tr => tr.id) });
+  const myEntries = (id) => transferEntries(dd, id).filter(e => e.location === location);
+  const isPhone = useIsPhoneWidth();
 
   const fetchHome = useCallback(async () => {
     if (!location) { setLoading(false); return; }
@@ -89,7 +98,31 @@ function ManagerTransferHome() {
     }
   };
 
-  const renderRow = (tr) => (
+  // Phone layout (2026-10-21, Hera): [transfer number over the grey "X to Y"]
+  // · DD · status pill. The status pill is always right-aligned — also when
+  // it doesn't fit and wraps onto its own line (margin-left: auto). Desktop
+  // keeps the layout below unchanged.
+  const renderRowPhone = (tr) => (
+    <div
+      key={tr.id}
+      onClick={() => openTransfer(tr)}
+      style={{ borderBottom: '1px solid #f1f1f1', padding: '12px 4px', cursor: 'pointer' }}
+    >
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', columnGap: 10, rowGap: 6 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+          <Text fontWeight="semibold">{tr.shopify_transfer_name || tr.transfer_no}</Text>
+          <Text tone="subdued" variant="bodySm">{tr.from_location} to {tr.to_location}</Text>
+        </div>
+        <DDList full entries={myEntries(tr.id)} />
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <StatusBadge status={tr.status} />
+          {tr.on_hold && <HoldBadge />}
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderRow = (tr) => isPhone ? renderRowPhone(tr) : (
     <div
       key={tr.id}
       onClick={() => openTransfer(tr)}
@@ -98,6 +131,7 @@ function ManagerTransferHome() {
       <InlineStack align="space-between" blockAlign="center" wrap>
         <InlineStack gap="300" blockAlign="center" wrap>
           <Text fontWeight="semibold">{tr.shopify_transfer_name || tr.transfer_no}</Text>
+          <DDList full entries={myEntries(tr.id)} />
           <Text tone="subdued" variant="bodySm">{tr.from_location} to {tr.to_location}</Text>
         </InlineStack>
         <InlineStack gap="150" blockAlign="center">

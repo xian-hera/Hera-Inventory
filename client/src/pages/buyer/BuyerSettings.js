@@ -162,6 +162,10 @@ function BuyerSettings() {
             <Button size="large" fullWidth onClick={openModal}>
               Set PIN
             </Button>
+            {/* Central product type list (2026-10-21, Hera) */}
+            <Button size="large" fullWidth onClick={() => navigate('/buyer/settings/product-types')}>
+              Product Types
+            </Button>
             {/* Purchasing user groups (2026-10-09, Hera) */}
             <Button size="large" fullWidth onClick={() => navigate('/buyer/settings/user-group')}>
               User Group

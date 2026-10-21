@@ -4,6 +4,8 @@ import {
 } from '@shopify/polaris';
 import { useNavigate, useParams } from 'react-router-dom';
 import { StatusBadge, TagPills } from './transferStatus';
+import { useDD, transferEntries, DDList } from './ddPill';
+import { getManagerLocation } from '../../accountMemory';
 import MobileModalSafeArea from '../../components/MobileModalSafeArea';
 
 // Same keydown-buffer barcode-scanner listening pattern as
@@ -49,6 +51,14 @@ function cleanBarcode(raw) {
 function TransferReceivingDetail({ role, backPath, showTags }) {
   const navigate = useNavigate();
   const { transferId } = useParams();
+  // Store only (2026-10-21, Hera — claude/SCHEDULER_FEATURE_SPEC.md §7):
+  // full DD pill(s) on the line under the transfer number — only the card(s)
+  // of this store (a store → store transfer: from store sees the pickup, to
+  // store the delivery).
+  const ddOn = role === 'manager';
+  const dd = useDD({ transferIds: ddOn && transferId ? [transferId] : [] });
+  const myLocation = ddOn ? getManagerLocation() : null;
+  const myDD = transferEntries(dd, transferId).filter(e => e.location === myLocation);
 
   const [transfer, setTransfer] = useState(null);
   const [items, setItems] = useState([]);
@@ -360,6 +370,7 @@ function TransferReceivingDetail({ role, backPath, showTags }) {
           <Layout>
             <Layout.Section>
               <BlockStack gap="400">
+                {myDD.length > 0 && <div style={{ marginTop: -8 }}><DDList full entries={myDD} /></div>}
                 {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
                 {held && <Text tone="critical" fontWeight="bold">Buyer put this transfer on hold.</Text>}
                 <InlineStack align="space-between" blockAlign="center" wrap>
@@ -482,6 +493,7 @@ function TransferReceivingDetail({ role, backPath, showTags }) {
         <Layout>
           <Layout.Section>
             <BlockStack gap="400">
+              {myDD.length > 0 && <div style={{ marginTop: -8 }}><DDList full entries={myDD} /></div>}
               {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
               {submitError && <Banner tone="critical" onDismiss={() => setSubmitError('')}>{submitError}</Banner>}
               {held && <Text tone="critical" fontWeight="bold">Buyer put this transfer on hold.</Text>}

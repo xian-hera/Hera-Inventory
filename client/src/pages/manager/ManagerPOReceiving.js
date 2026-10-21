@@ -7,6 +7,7 @@ import { useNavigate } from 'react-router-dom';
 // renders by ManagerLocationGate (2026-09-29) — replaces reading
 // localStorage 'managerLocation' directly. See client/src/accountMemory.js.
 import { getManagerLocation } from '../../accountMemory';
+import { useDD, poEntries, DDList } from '../shared/ddPill';
 
 function formatDate(dateStr) {
   if (!dateStr) return '';
@@ -46,6 +47,10 @@ function ManagerPOReceiving() {
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // Full DD pills (2026-10-21, Hera — claude/SCHEDULER_FEATURE_SPEC.md §7),
+  // live from the Warehouse Schedule. Desktop: own column between Date and
+  // Qty (split PO → one per line); phone: a line under Date / Qty.
+  const dd = useDD({ poIds: invoices.map(inv => inv.id) });
 
   // History in past 15 days — a frozen record of invoices this manager
   // already submitted, kept below the live list so they can look back at
@@ -101,6 +106,8 @@ function ManagerPOReceiving() {
         .po-row { display: flex; align-items: center; flex-wrap: nowrap; gap: 12px; }
         .po-col-first { flex: 1 1 160px; min-width: 0; }
         .po-col-date { flex: 0 0 150px; text-align: center; }
+        .po-col-dd { flex: 0 0 220px; display: flex; justify-content: flex-start; }
+        .po-dd-mobile { display: none; }
         .po-col-qty { flex: 0 0 100px; text-align: center; }
         .po-col-ratio { flex: 0 0 70px; text-align: right; }
         .po-col-status { flex: 0 0 110px; text-align: right; }
@@ -113,6 +120,11 @@ function ManagerPOReceiving() {
           .po-col-ratio { flex: 0 0 55px; }
           .po-col-status { flex: 0 0 85px; }
           .po-supplier-desktop, .po-date-desktop { display: none; }
+          .po-col-dd { display: none; }
+          .po-dd-mobile { display: flex; gap: 6px; margin-top: 6px; }
+          .po-dd-mobile .po-col-first { flex: 1 1 90px; }
+          /* same width as Date + Qty + counted (100 + 80 + 55 + 2 gaps), so the DD starts under Date */
+          .po-dd-mobile-pills { flex: 0 0 247px; }
           .po-supplier-mobile { display: inline; font-size: 11px; color: #6d7175; }
           .po-date-mobile { display: inline; }
         }
@@ -167,6 +179,9 @@ function ManagerPOReceiving() {
                             <Text variant="bodySm" tone="subdued" alignment="center">{formatDateCompact(inv.sent_to_store_at)}</Text>
                           </span>
                         </div>
+                        <div className="po-col-dd">
+                          <DDList full entries={poEntries(dd, inv.id)} />
+                        </div>
                         <div className="po-col-qty">
                           <Text variant="bodySm" tone="subdued" alignment="center">Qty: {inv.total_quantity}</Text>
                         </div>
@@ -181,6 +196,13 @@ function ManagerPOReceiving() {
                           </Text>
                         </div>
                       </div>
+                      {/* Phone: the DD line under Date / Qty (row gets taller). */}
+                      {poEntries(dd, inv.id).length > 0 && (
+                        <div className="po-dd-mobile">
+                          <div className="po-col-first" />
+                          <div className="po-dd-mobile-pills"><DDList full entries={poEntries(dd, inv.id)} /></div>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </BlockStack>

@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Page, Layout, Card, Button, BlockStack, InlineStack, Text, Banner
+  Page, Layout, Card, BlockStack, InlineStack, Text, Banner
 } from '@shopify/polaris';
 // Spinner no longer imported (2026-10-21): UI rule #1 (claude/UI_RULES_READ_FIRST.md)
 // — loading states in this file now show the text "Loading..." instead.
 import { useNavigate } from 'react-router-dom';
-import { StatusBadge, warehouseStatusLabel, HoldBadge, TagPills } from '../shared/transferStatus';
+import { StatusBadge, HoldBadge, TagPills } from '../shared/transferStatus';
+import { FilterButtons, FILTER_ALL } from './whShared';
 
 // Date column (2026-10-05, Hera): creation date of the transfer, shown right
 // after the Transfer column on all three transfer cards. YYYY-MM-DD on
@@ -49,27 +50,31 @@ const DATE_CSS = `
 // 2026-10-05 the transfer number is clickable (underlined) into a read-only
 // detail page with no actions (WarehouseTransferViewDetail.js).
 // Spec doc section 5.
+// (2026-10-21, Hera: the checkboxes and both dispatch buttons were removed
+// from the HQ transfers card, which now lists only Draft + Pending — see
+// the hqList comment below.)
 //
 // Warehouse tabs (2026-10-21, Hera — claude/SCHEDULER_FEATURE_SPEC.md §10):
-// this page is now shown inside WarehouseShell as two tabs —
-//   section="hq"   → "HQ Transfers" tab: only the HQ transfers card
-//   section="temp" → "Temp" tab: Receiving to HQ, Pick up from store
+// this page is shown inside WarehouseShell as the "HQ Transfers" tab —
+//   section="hq" → HQ transfers card + Receiving to HQ card.
+// The "Temp" tab and its "Pick up from store" card (and that card's
+// read-only detail page) were removed 2026-10-21 (Hera: WH no longer needs
+// them); "Receiving to HQ" moved from Temp to here because WH receives
+// store → HQ transfers on its detail page.
 // (no section = all cards, the old standalone page — kept for reference, no
 // route uses it any more). inTabs hides this page's own title / back arrow.
 // Detail pages get { state: { from } } so their back button returns here.
 function WarehouseHome({ inTabs = false, section } = {}) {
   const showHq = !section || section === 'hq';
-  const showTemp = !section || section === 'temp';
-  const backTo = section === 'hq' ? '/warehouse/hq-transfers' : section === 'temp' ? '/warehouse/temp' : '/warehouse';
+  const backTo = section === 'hq' ? '/warehouse/hq-transfers' : '/warehouse';
   const navigate = useNavigate();
   const [hq, setHq] = useState([]);
-  const [pickupFromStore, setPickupFromStore] = useState([]);
   const [receivingToHq, setReceivingToHq] = useState([]);
   const [receivingLoading, setReceivingLoading] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [selectedIds, setSelectedIds] = useState([]);
-  const [dispatching, setDispatching] = useState(false);
+  // HQ Transfers tag filter (2026-10-21): All or one tag of the listed transfers.
+  const [tagFilter, setTagFilter] = useState(FILTER_ALL);
 
   const fetchHome = useCallback(async () => {
     setLoading(true);
@@ -79,7 +84,6 @@ function WarehouseHome({ inTabs = false, section } = {}) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       setHq(data.hq || []);
-      setPickupFromStore(data.pickupFromStore || []);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -101,54 +105,15 @@ function WarehouseHome({ inTabs = false, section } = {}) {
       .finally(() => setReceivingLoading(false));
   }, []);
 
-  const goodToGoIds = hq.filter(tr => tr.status === 'good_to_go').map(tr => tr.id);
-  const allGoodToGoSelected = goodToGoIds.length > 0 && goodToGoIds.every(id => selectedIds.includes(id));
-
-  const toggleSelect = (id) => {
-    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
-  };
-  const toggleSelectAll = () => {
-    setSelectedIds(allGoodToGoSelected ? [] : goodToGoIds);
-  };
-
-  const dispatchSelected = async () => {
-    if (selectedIds.length === 0) return;
-    setDispatching(true);
-    setError('');
-    try {
-      const res = await fetch('/api/transfers/warehouse/dispatch-selected', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids: selectedIds }),
-      });
-      const data = await res.json();
-      const failed = (data.results || []).filter(r => !r.success);
-      if (failed.length > 0) setError(`${failed.length} transfer(s) failed to dispatch: ${failed.map(f => f.error).join('; ')}`);
-      setSelectedIds([]);
-      await fetchHome();
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setDispatching(false);
-    }
-  };
-
-  const dispatchAllGoodToGo = async () => {
-    setDispatching(true);
-    setError('');
-    try {
-      const res = await fetch('/api/transfers/warehouse/dispatch-all-good-to-go', { method: 'POST' });
-      const data = await res.json();
-      const failed = (data.results || []).filter(r => !r.success);
-      if (failed.length > 0) setError(`${failed.length} transfer(s) failed to dispatch: ${failed.map(f => f.error).join('; ')}`);
-      setSelectedIds([]);
-      await fetchHome();
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setDispatching(false);
-    }
-  };
+  // HQ Transfers tab (Hera 2026-10-21): only Draft and Pending transfers;
+  // the "Mark selected In Transit" / "Mark all Ready to Ship In Transit"
+  // buttons (and the checkbox column they needed) were removed — transfers
+  // are now marked In Transit by Go! on the Schedule, or on the transfer page.
+  const hqList = hq.filter(tr => tr.status === 'loading' || tr.status === 'pending');
+  const hqTags = [...new Set(hqList.flatMap(tr => (Array.isArray(tr.tags) ? tr.tags.flat(Infinity) : [])).filter(Boolean))]
+    .sort((a, b) => String(a).localeCompare(String(b)));
+  const tagValue = tagFilter !== FILTER_ALL && !hqTags.includes(tagFilter) ? FILTER_ALL : tagFilter;
+  const hqVisible = tagValue === FILTER_ALL ? hqList : hqList.filter(tr => (tr.tags || []).flat(Infinity).includes(tagValue));
 
   return (
     <Page
@@ -167,79 +132,37 @@ function WarehouseHome({ inTabs = false, section } = {}) {
                 {showHq && (
                 <Card>
                   <BlockStack gap="300">
-                    <InlineStack align="space-between" blockAlign="center" wrap>
-                      <Text variant="headingSm">HQ transfers</Text>
-                      <InlineStack gap="200">
-                        <Button
-                          disabled={selectedIds.length === 0}
-                          loading={dispatching}
-                          onClick={dispatchSelected}
-                        >
-                          Mark selected In Transit
-                        </Button>
-                        <Button
-                          variant="primary"
-                          disabled={goodToGoIds.length === 0}
-                          loading={dispatching}
-                          onClick={dispatchAllGoodToGo}
-                        >
-                          Mark all Ready to Ship In Transit
-                        </Button>
-                      </InlineStack>
-                    </InlineStack>
+                    <Text variant="headingSm">HQ transfers</Text>
+                    {hqTags.length > 0 && <FilterButtons values={hqTags} value={tagValue} onChange={setTagFilter} />}
 
-                    {hq.length === 0 ? (
+                    {hqVisible.length === 0 ? (
                       <Text tone="subdued">No transfers right now.</Text>
                     ) : (
                       <div style={{ overflowX: 'auto' }}>
                         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                           <thead>
                             <tr style={{ borderBottom: '2px solid #e1e3e5' }}>
-                              {/* 2026-10-05 indentation fix: this checkbox column used
-                                  to be ALWAYS rendered at a fixed 32px (+20px padding)
-                                  even when no row is Good to go and every cell in it was
-                                  empty — an empty ~50px gutter in front of "Transfer",
-                                  very visible on a phone. Now only rendered when at least
-                                  one row actually has a checkbox, and shrunk to just
-                                  hug the checkbox (width 1%, tighter padding). */}
-                              {goodToGoIds.length > 0 && (
-                                <th style={{ padding: '8px 4px 8px 10px', width: '1%' }}>
-                                  <input type="checkbox" checked={allGoodToGoSelected} onChange={toggleSelectAll} />
-                                </th>
-                              )}
                               <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Transfer</th>
+                              <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Tag</th>
                               <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Date</th>
-                              <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>From</th>
                               <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>To</th>
-                              <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Status</th>
+                              <th style={{ padding: '8px 10px', textAlign: 'right', color: '#6d7175' }}>Status</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {hq.map(tr => (
+                            {hqVisible.map(tr => (
                               <tr key={tr.id} style={{ borderBottom: '1px solid #f1f1f1' }}>
-                                {goodToGoIds.length > 0 && (
-                                  <td style={{ padding: '8px 4px 8px 10px', width: '1%' }}>
-                                    {tr.status === 'good_to_go' && (
-                                      <input
-                                        type="checkbox"
-                                        checked={selectedIds.includes(tr.id)}
-                                        onChange={(e) => { e.stopPropagation(); toggleSelect(tr.id); }}
-                                      />
-                                    )}
-                                  </td>
-                                )}
                                 <td
                                   style={{ padding: '10px', cursor: 'pointer' }}
                                   onClick={() => navigate(`/warehouse/transfer/${tr.id}`, { state: { from: backTo } })}
                                 >
                                   <span style={{ textDecoration: 'underline' }}>{tr.shopify_transfer_name || tr.transfer_no}</span>
-                                  {(tr.tags || []).length > 0 && <div style={{ marginTop: '4px' }}><TagPills tags={tr.tags} /></div>}
                                 </td>
+                                <td style={{ padding: '10px' }}><TagPills tags={tr.tags} /></td>
                                 <td style={{ padding: '10px', whiteSpace: 'nowrap' }}><DateCell value={tr.created_at} /></td>
-                                <td style={{ padding: '10px' }}>{tr.from_location}</td>
                                 <td style={{ padding: '10px' }}>{tr.to_location}</td>
                                 <td style={{ padding: '10px' }}>
-                                  <InlineStack gap="100"><StatusBadge status={tr.status} />{tr.on_hold && <HoldBadge />}</InlineStack>
+                                  <InlineStack gap="100" align="end"><StatusBadge status={tr.status} />{tr.on_hold && <HoldBadge />}</InlineStack>
                                 </td>
                               </tr>
                             ))}
@@ -251,7 +174,7 @@ function WarehouseHome({ inTabs = false, section } = {}) {
                 </Card>
                 )}
 
-                {showTemp && (
+                {showHq && (
                 <Card>
                   <BlockStack gap="300">
                     <Text variant="headingSm">Receiving to HQ</Text>
@@ -286,51 +209,6 @@ function WarehouseHome({ inTabs = false, section } = {}) {
                                 <td style={{ padding: '10px' }}>{tr.to_location}</td>
                                 <td style={{ padding: '10px' }}>
                                   <InlineStack gap="100"><StatusBadge status={tr.status} />{tr.on_hold && <HoldBadge />}</InlineStack>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </BlockStack>
-                </Card>
-                )}
-
-                {showTemp && (
-                <Card>
-                  <BlockStack gap="300">
-                    <Text variant="headingSm">Pick up from store</Text>
-                    {pickupFromStore.length === 0 ? (
-                      <Text tone="subdued">No transfers right now.</Text>
-                    ) : (
-                      <div style={{ overflowX: 'auto' }}>
-                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-                          <thead>
-                            <tr style={{ borderBottom: '2px solid #e1e3e5' }}>
-                              <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Transfer</th>
-                              <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Date</th>
-                              <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>From</th>
-                              <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>To</th>
-                              <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Status</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {pickupFromStore.map(tr => (
-                              <tr key={tr.id} style={{ borderBottom: '1px solid #f1f1f1' }}>
-                                {/* 2026-10-05: now clickable into a read-only detail page */}
-                                <td
-                                  style={{ padding: '10px', cursor: 'pointer' }}
-                                  onClick={() => navigate(`/warehouse/transfer/view/${tr.id}`, { state: { from: backTo } })}
-                                >
-                                  <span style={{ textDecoration: 'underline' }}>{tr.shopify_transfer_name || tr.transfer_no}</span>
-                                  {(tr.tags || []).length > 0 && <div style={{ marginTop: '4px' }}><TagPills tags={tr.tags} /></div>}
-                                </td>
-                                <td style={{ padding: '10px', whiteSpace: 'nowrap' }}><DateCell value={tr.created_at} /></td>
-                                <td style={{ padding: '10px' }}>{tr.from_location}</td>
-                                <td style={{ padding: '10px' }}>{tr.to_location}</td>
-                                <td style={{ padding: '10px' }}>
-                                  <StatusBadge status={tr.status} label={warehouseStatusLabel(tr.status, true)} />
                                 </td>
                               </tr>
                             ))}

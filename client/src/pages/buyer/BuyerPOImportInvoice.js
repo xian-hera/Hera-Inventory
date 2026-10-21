@@ -9,6 +9,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import InfoTooltip from '../../components/InfoTooltip';
 import { useLocationMap } from '../shared/locationMap';
 import { useGroupContext } from '../../userGroup'; // Purchasing user groups, 2026-10-09
+import { useDD, poEntries, poPb, DDList, PBGreyPill } from '../shared/ddPill';
 
 // Location list: comes from the shared location map (pages/shared/locationMap.js,
 // 2026-09-24). The hardcoded 19-code LOCATIONS constant that used to live here
@@ -111,6 +112,8 @@ function BuyerPOImportInvoice() {
 
   const [invoiceId, setInvoiceId] = useState(invoiceIdParam ? Number(invoiceIdParam) : null);
   const [loading, setLoading] = useState(!!invoiceIdParam);
+  // DD pills + grey PB pill next to the status pill (2026-10-21, Hera — claude/SCHEDULER_FEATURE_SPEC.md §7).
+  const dd = useDD({ poIds: invoiceId ? [invoiceId] : [] });
   // Back (top-left), 2026-09-29 Hera: an existing invoice opened from
   // Purchase Order List (URL /pending/:invoiceId) goes back to that list (and so does Discard, 2026-09-29); the
   // "Create New Purchase Order" wizard (/import) still goes back to Purchase
@@ -1163,7 +1166,13 @@ function BuyerPOImportInvoice() {
   return (
     <Page
       title={invoiceId ? (poNumber || invoiceNumber || 'Invoice') : 'Create New Purchase Order'}
-      titleMetadata={invoiceId ? <Badge tone={pill.tone}>{pill.label}</Badge> : undefined}
+      titleMetadata={invoiceId ? (
+        <InlineStack gap="150" blockAlign="center" wrap>
+          <Badge tone={pill.tone}>{pill.label}</Badge>
+          <DDList entries={poEntries(dd, invoiceId)} />
+          <PBGreyPill pb={poPb(dd, invoiceId)} />
+        </InlineStack>
+      ) : undefined}
       backAction={{ onAction: () => navigate(backPath) }}
       secondaryActions={headerActions}
     >

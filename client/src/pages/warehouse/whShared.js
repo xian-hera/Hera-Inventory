@@ -28,7 +28,8 @@ export function truncate(text, n = CARD_TEXT_MAX) {
 export function LocPill({ name }) {
   return (
     <span style={{
-      display: 'inline-block', padding: '1px 8px', borderRadius: 999, background: '#e6deff',
+      // lighter purple, closer to white (Hera 2026-10-21)
+      display: 'inline-block', padding: '1px 8px', borderRadius: 999, background: '#f1edff',
       color: '#2b1a66', fontSize: 12, fontWeight: 650, whiteSpace: 'nowrap', lineHeight: '18px',
     }}>{name}</span>
   );
@@ -40,6 +41,8 @@ const ARROW = <span aria-hidden="true" style={{ fontWeight: 700, fontSize: 13, l
 //   HQ → X   : ➔ [X]
 //   X → HQ   : [X] ➔
 //   X → Y    : [X] ➔ [Y]
+//   HQ → HQ  : ➔ [HQ]   (a PO whose to location is HQ — before 2026-10-21 this
+//                        showed only the arrow, i.e. an "empty" location)
 export function RoutePills({ from, to }) {
   const fromHQ = !from || from === HQ;
   const toHQ = to === HQ;
@@ -47,7 +50,7 @@ export function RoutePills({ from, to }) {
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap', minWidth: 0 }}>
       {!fromHQ && <LocPill name={from} />}
       {ARROW}
-      {!toHQ && to && <LocPill name={to} />}
+      {(!toHQ || fromHQ) && to && <LocPill name={to} />}
     </span>
   );
 }
@@ -248,3 +251,30 @@ export function TransferPopup({ transferId, onClose, returnTo = '/warehouse' }) 
     </Modal>
   );
 }
+
+// Big one-of-many filter buttons (iPad): "All" + one per value. Exactly one
+// is always selected.
+export function FilterButtons({ values, value, onChange, allLabel = 'All' }) {
+  const opts = [{ v: '__all__', label: allLabel }, ...values.map(v => ({ v, label: v }))];
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+      {opts.map(o => {
+        const on = value === o.v;
+        return (
+          <button
+            key={o.v}
+            type="button"
+            aria-pressed={on}
+            onClick={() => onChange(o.v)}
+            style={{
+              font: 'inherit', fontSize: 15, fontWeight: on ? 650 : 500, padding: '10px 18px', minHeight: 44,
+              borderRadius: 10, cursor: 'pointer', border: `1px solid ${on ? '#303030' : '#c9cccf'}`,
+              background: on ? '#303030' : '#fff', color: on ? '#fff' : '#303030',
+            }}
+          >{o.label}</button>
+        );
+      })}
+    </div>
+  );
+}
+export const FILTER_ALL = '__all__';

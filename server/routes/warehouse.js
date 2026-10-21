@@ -45,6 +45,24 @@ function businessWindow(today = torontoToday()) {
   return out;
 }
 
+// The 7 business days BEFORE today ("Past 7 days" view), oldest first.
+function pastWindow(today = torontoToday()) {
+  const [y, m, d] = today.split('-').map(Number);
+  const cur = new Date(Date.UTC(y, m - 1, d, 12));
+  const out = [];
+  while (out.length < WINDOW_DAYS) {
+    cur.setUTCDate(cur.getUTCDate() - 1);
+    const dow = cur.getUTCDay();
+    if (dow !== 0 && dow !== 6) out.unshift(cur.toISOString().slice(0, 10));
+  }
+  return out;
+}
+
+async function isGoneToday(db, today = torontoToday()) {
+  const r = await db.query('SELECT 1 FROM wh_go_days WHERE day = $1::date', [today]);
+  return r.rows.length > 0;
+}
+
 // "8 P" → { count: 8, unit: 'P' }; anything else → null.
 function parsePb(text) {
   const m = /^\s*(\d+)\s*([PB])\s*$/i.exec(String(text || ''));
@@ -86,6 +104,8 @@ async function getTaskTypes(db) {
 const EFFECTIVE_PB_SQL = `CASE WHEN i.pb_qty_wh_set THEN i.pb_qty_received ELSE i.pb_qty END`;
 
 // Creates the root Scheduler task for a just-received PO (inside a tx).
+// A PO whose to location is HQ needs no delivery, so it gets no task
+// (Hera 2026-10-21) — receiving it is all WH does.
 // If WH deleted this PO's task earlier and Sync Tasks brought the PO back
 // into Receive Shipments, the old (soft-removed) row is revived as a fresh,
 // unscheduled, never-split task.
@@ -93,7 +113,7 @@ async function createPoTask(client, invoiceId, effectivePb) {
   const pb = parsePb(effectivePb);
   await client.query(
     `INSERT INTO wh_tasks (kind, po_invoice_id, pb_count, pb_unit, to_location)
-     SELECT 'po', $1, $2, $3, location FROM po_invoices WHERE id = $1
+     SELECT 'po', $1, $2, $3, location FROM po_invoices WHERE id = $1 AND location <> 'HQ'
      ON CONFLICT (po_invoice_id) WHERE kind = 'po' AND parent_task_id IS NULL
      DO UPDATE SET removed_at = NULL, pb_count = EXCLUDED.pb_count, pb_unit = EXCLUDED.pb_unit,
                    to_location = EXCLUDED.to_location, split_no = NULL, split_counter = 0,
@@ -348,9 +368,18 @@ const SYNC_PO_STATUSES = ['pending', 'sent_to_store'];
 
 // Everything the Schedule page shows: unscheduled tasks + tasks placed on
 // today or later. (Tasks placed on past days are history — not shown.)
-async function loadSchedule(db) {
+// view 'current' = the next 7 business days (today first); 'past' = the 7
+// business days before today. lockedDays = days that can only take
+// track-back additions: every past day, and today once Go! was pressed.
+async function loadSchedule(db, view = 'current') {
   const today = torontoToday();
-  const days = businessWindow(today);
+  const past = view === 'past';
+  const days = past ? pastWindow(today) : businessWindow(today);
+  const goneToday = await isGoneToday(db, today);
+  const lockedDays = past ? days : (goneToday && days[0] === today ? [today] : []);
+  const dateFilter = past
+    ? `(w.sched_date IS NULL OR (w.sched_date >= $1::date AND w.sched_date < $2::date))`
+    : `(w.sched_date IS NULL OR w.sched_date >= $1::date)`;
   const [rowsRes, tagRes, versionVal] = await Promise.all([
     db.query(
       `SELECT w.*, to_char(w.sched_date, 'YYYY-MM-DD') AS sched_day,
@@ -362,9 +391,9 @@ async function loadSchedule(db) {
        LEFT JOIN po_invoices i ON i.id = w.po_invoice_id
        LEFT JOIN po_suppliers s ON s.id = i.supplier_id
        LEFT JOIN transfers tr ON tr.id = w.transfer_id
-       WHERE w.removed_at IS NULL AND (w.sched_date IS NULL OR w.sched_date >= $1::date)
+       WHERE w.removed_at IS NULL AND ${dateFilter}
        ORDER BY w.created_at ASC, w.id ASC`,
-      [today]
+      past ? [days[0], today] : [today]
     ),
     db.query('SELECT LOWER(tag) AS tag FROM transfer_tag_types'),
     getSetting(db, 'wh_schedule_version', 0),
@@ -377,6 +406,7 @@ async function loadSchedule(db) {
       date: w.sched_day || null, // text, so the server's time zone can't shift the day
       half: w.sched_half,
       pos: w.sched_pos,
+      trackedBack: !!w.tracked_back,
       createdAt: w.created_at,
     };
     if (w.kind === 'po') {
@@ -418,7 +448,7 @@ async function loadSchedule(db) {
       to: w.to_location || '',
     };
   });
-  return { today, days, version: Number(versionVal) || 0, tasks };
+  return { view: past ? 'past' : 'current', today, days, lockedDays, goneToday, version: Number(versionVal) || 0, tasks };
 }
 
 // POST /api/warehouse/sync → { transfersAdded, transfersRestored, posAdded }
@@ -438,6 +468,7 @@ router.post('/sync', async (req, res) => {
       `UPDATE po_invoices i SET wh_synced_at = NOW(), wh_removed_at = NULL, wh_received_at = NULL
        WHERE i.status = ANY($1)
          AND NOT (${IN_RECEIVE_SHIPMENTS_SQL('i', '$2')})
+         AND NOT (i.location = 'HQ' AND i.wh_received_at IS NOT NULL)
          AND NOT EXISTS (SELECT 1 FROM wh_tasks w
                          WHERE w.kind = 'po' AND w.po_invoice_id = i.id AND w.parent_task_id IS NULL AND w.removed_at IS NULL)`,
       [SYNC_PO_STATUSES, goLive]
@@ -457,7 +488,7 @@ router.post('/sync', async (req, res) => {
 router.get('/schedule', async (req, res) => {
   try {
     await ensureTransferTasks(pool);
-    res.json(await loadSchedule(pool));
+    res.json(await loadSchedule(pool, req.query.view === 'past' ? 'past' : 'current'));
   } catch (e) {
     console.error('GET /api/warehouse/schedule error:', e);
     res.status(500).json({ error: e.message });
@@ -473,7 +504,9 @@ router.put('/schedule', async (req, res) => {
   const { version, slots } = req.body || {};
   if (!slots || typeof slots !== 'object') return res.status(400).json({ error: 'slots missing' });
   const today = torontoToday();
-  const allowed = new Set(businessWindow(today));
+  // Today is not editable any more once Go! was pressed (only track-back).
+  const goneToday = await isGoneToday(pool, today);
+  const allowed = new Set(businessWindow(today).filter(d => !(goneToday && d === today)));
   const placements = []; // { id, date, half, pos }
   const seen = new Set();
   for (const [key, list] of Object.entries(slots)) {
@@ -497,11 +530,12 @@ router.put('/schedule', async (req, res) => {
       return res.status(409).json({ error: 'Someone else saved the schedule in the meantime. Reload the page and make your changes again.' });
     }
     const ids = placements.map(p => p.id);
-    // Unschedule what is no longer on the calendar (today and later only).
+    // Unschedule what is no longer on the calendar — editable days only
+    // (a locked today keeps what it has).
     await client.query(
       `UPDATE wh_tasks SET sched_date = NULL, sched_half = NULL, sched_pos = NULL, updated_at = NOW()
-       WHERE removed_at IS NULL AND sched_date >= $1::date AND NOT (id = ANY($2))`,
-      [today, ids]
+       WHERE removed_at IS NULL AND sched_date = ANY($1::date[]) AND NOT (id = ANY($2))`,
+      [[...allowed], ids]
     );
     for (const p of placements) {
       await client.query(
@@ -541,6 +575,109 @@ router.put('/schedule', async (req, res) => {
     res.status(500).json({ error: e.message });
   } finally {
     client.release();
+  }
+});
+
+// POST /api/warehouse/tasks/track-back { ids, date, half } — "track back"
+// (Hera 2026-10-21): add Unscheduled tasks to a LOCKED day (one of the 7
+// past business days, or today after Go!), at the bottom of that half-day,
+// to record work that was done but never scheduled. Saved immediately.
+router.post('/tasks/track-back', async (req, res) => {
+  const ids = toIdList(req.body && req.body.ids);
+  const { date, half } = req.body || {};
+  if (ids.length === 0) return res.status(400).json({ error: 'Nothing selected' });
+  if (half !== 'AM' && half !== 'PM') return res.status(400).json({ error: 'Bad half-day' });
+  const today = torontoToday();
+  const ok = pastWindow(today).includes(date) || (date === today && await isGoneToday(pool, today));
+  if (!ok) return res.status(400).json({ error: 'Tasks can only be tracked back to the past 7 business days, or to today after Go!.' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const max = await client.query(
+      'SELECT COALESCE(MAX(sched_pos), -1)::int AS m FROM wh_tasks WHERE removed_at IS NULL AND sched_date = $1::date AND sched_half = $2',
+      [date, half]
+    );
+    let pos = max.rows[0].m + 1;
+    let added = 0;
+    for (const id of ids) {
+      const r = await client.query(
+        `UPDATE wh_tasks SET sched_date = $2::date, sched_half = $3, sched_pos = $4, tracked_back = TRUE, updated_at = NOW()
+         WHERE id = $1 AND removed_at IS NULL AND sched_date IS NULL`,
+        [id, date, half, pos]
+      );
+      if (r.rowCount) { pos += 1; added += 1; }
+    }
+    await client.query('COMMIT');
+    res.json({ added });
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('POST /api/warehouse/tasks/track-back error:', e);
+    res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
+  }
+});
+
+// POST /api/warehouse/tasks/untrack { ids } — take tracked-back tasks off
+// their locked day, back to Unscheduled. Other tasks on a locked day can't
+// be moved. Saved immediately.
+router.post('/tasks/untrack', async (req, res) => {
+  const ids = toIdList(req.body && req.body.ids);
+  if (ids.length === 0) return res.status(400).json({ error: 'Nothing selected' });
+  try {
+    const r = await pool.query(
+      `UPDATE wh_tasks SET sched_date = NULL, sched_half = NULL, sched_pos = NULL, tracked_back = FALSE, updated_at = NOW()
+       WHERE id = ANY($1) AND removed_at IS NULL AND tracked_back = TRUE`,
+      [ids]
+    );
+    res.json({ moved: r.rowCount });
+  } catch (e) {
+    console.error('POST /api/warehouse/tasks/untrack error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/warehouse/go — "Go!" (Hera 2026-10-21): today's trucks have left.
+//   1. today's schedule is locked (only track-back from now on);
+//   2. every transfer with a card on today's schedule that is Ready to Ship
+//      gets "Mark as In Transit" — the same action as on the transfer page
+//      (dispatchOne in transfers.js). A store → store transfer is still ONE
+//      transfer with ONE status: it is marked once, whichever of its two
+//      cards is on today (normally part 1, the pickup). Its part 2 card then
+//      stays on the Schedule while In Transit (exception, Hera 2026-10-21).
+// Once per day.
+router.post('/go', async (req, res) => {
+  const today = torontoToday();
+  if (!businessWindow(today).includes(today)) return res.status(400).json({ error: 'Today is not a business day.' });
+  try {
+    const ins = await pool.query('INSERT INTO wh_go_days (day) VALUES ($1::date) ON CONFLICT DO NOTHING RETURNING day', [today]);
+    if (ins.rowCount === 0) return res.status(409).json({ error: 'Go! was already pressed today.' });
+    // Saved schedules from other pages must reload (today changed to locked).
+    await pool.query(
+      `UPDATE app_settings SET value = to_jsonb(COALESCE(value::text::int, 0) + 1), updated_at = NOW() WHERE key = 'wh_schedule_version'`
+    );
+    const rows = (await pool.query(
+      `SELECT DISTINCT tr.id, tr.status, COALESCE(tr.shopify_transfer_name, tr.transfer_no) AS number
+       FROM wh_tasks w JOIN transfers tr ON tr.id = w.transfer_id
+       WHERE w.kind = 'transfer' AND w.removed_at IS NULL AND w.sched_date = $1::date`,
+      [today]
+    )).rows;
+    const results = { inTransit: [], skipped: [], failed: [] };
+    for (const t of rows) {
+      if (t.status !== 'good_to_go') { results.skipped.push({ number: t.number, status: t.status }); continue; }
+      try {
+        const { dispatchOne } = require('./transfers'); // loaded here: transfers.js pulls in the Shopify client
+        await dispatchOne(t.id);
+        results.inTransit.push(t.number);
+      } catch (e) {
+        results.failed.push({ number: t.number, error: e.message });
+      }
+    }
+    await pool.query('UPDATE wh_go_days SET results = $2 WHERE day = $1::date', [today, JSON.stringify(results)]);
+    res.json(results);
+  } catch (e) {
+    console.error('POST /api/warehouse/go error:', e);
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -720,6 +857,141 @@ router.post('/tasks/:id/split', async (req, res) => {
     res.status(500).json({ error: e.message });
   } finally {
     client.release();
+  }
+});
+
+// ─── DD (delivery date) for Purchasing / Store pages ────────────────────────
+//
+// POST /api/warehouse/dd { poIds: [], transferIds: [] } (Hera 2026-10-21,
+// claude/SCHEDULER_FEATURE_SPEC.md §7). Read live from the SAVED schedule.
+// → { today, pos: { [id]: { entries, pb } }, transfers: { [id]: { entries } } }
+// One entry per Schedule card (a split PO / a store → store transfer can have
+// several), sorted: scheduled by date / half / order, then TBD:
+//   { state: 'scheduled' | 'tbd' | 'received', date, half, position,
+//     location, leg, pbCount, pbUnit, past }
+//   scheduled — on the calendar. position = rank of the card's store among
+//               the DIFFERENT stores of that half-day, in schedule order (each
+//               store counted once, at its first card; every kind counts; HQ
+//               never counts).
+//   tbd       — in the Schedule's Unscheduled section (a transfer only while
+//               it is shown there: Ready to Ship, or the deliver card of an In
+//               Transit store → store transfer).
+//   received  — a PO to HQ that WH received (it never gets a Schedule card):
+//               date = the day it was received. Before that: no entry.
+//   No entry at all: PO not received yet, transfer not shown in Unscheduled,
+//   task deleted, or nothing from before go-live.
+// pb (PO only) = { by, whSet, wh } for Purchasing's grey PB pill.
+
+// The store a card goes to (or picks up from) — the "location" of the card.
+const CARD_STORE_SQL = `CASE
+  WHEN w.kind = 'po' THEN i.location
+  WHEN w.kind = 'custom' THEN w.to_location
+  WHEN w.leg = 'pickup' THEN tr.from_location
+  WHEN w.leg = 'deliver' THEN tr.to_location
+  WHEN tr.from_location = 'HQ' THEN tr.to_location
+  ELSE tr.from_location END`;
+
+router.post('/dd', async (req, res) => {
+  const poIds = toIdList(req.body && req.body.poIds);
+  const transferIds = toIdList(req.body && req.body.transferIds);
+  const today = torontoToday();
+  const out = { today, pos: {}, transfers: {} };
+  if (poIds.length === 0 && transferIds.length === 0) return res.json(out);
+  try {
+    if (transferIds.length) await ensureTransferTasks(pool);
+    const [taskRes, poRes] = await Promise.all([
+      pool.query(
+        `SELECT w.id, w.kind, w.po_invoice_id, w.transfer_id, w.leg, w.pb_count, w.pb_unit,
+                w.sched_half, w.sched_pos, to_char(w.sched_date, 'YYYY-MM-DD') AS sched_day,
+                tr.status AS tr_status, ${CARD_STORE_SQL} AS store
+         FROM wh_tasks w
+         LEFT JOIN po_invoices i ON i.id = w.po_invoice_id
+         LEFT JOIN transfers tr ON tr.id = w.transfer_id
+         WHERE w.removed_at IS NULL
+           AND ((w.kind = 'po' AND w.po_invoice_id = ANY($1::int[]))
+             OR (w.kind = 'transfer' AND w.transfer_id = ANY($2::int[])))`,
+        [poIds, transferIds]
+      ),
+      poIds.length ? pool.query(
+        `SELECT id, location, pb_qty, pb_qty_wh_set, pb_qty_received,
+                to_char(wh_received_at AT TIME ZONE '${TZ}', 'YYYY-MM-DD') AS received_day
+         FROM po_invoices WHERE id = ANY($1::int[])`,
+        [poIds]
+      ) : Promise.resolve({ rows: [] }),
+    ]);
+
+    // Positions: every half-day that one of these cards is on.
+    const slotKeys = [...new Set(taskRes.rows.filter(t => t.sched_day && t.sched_half).map(t => `${t.sched_day}|${t.sched_half}`))];
+    const rank = new Map(); // 'day|half' → Map(store → 1-based rank)
+    if (slotKeys.length) {
+      const days = slotKeys.map(k => k.split('|')[0]);
+      const halves = slotKeys.map(k => k.split('|')[1]);
+      const slotRes = await pool.query(
+        `SELECT to_char(w.sched_date, 'YYYY-MM-DD') AS day, w.sched_half AS half, ${CARD_STORE_SQL} AS store
+         FROM wh_tasks w
+         JOIN UNNEST($1::date[], $2::text[]) AS s(day, half) ON s.day = w.sched_date AND s.half = w.sched_half
+         LEFT JOIN po_invoices i ON i.id = w.po_invoice_id
+         LEFT JOIN transfers tr ON tr.id = w.transfer_id
+         WHERE w.removed_at IS NULL
+         ORDER BY w.sched_date, w.sched_half, w.sched_pos NULLS LAST, w.id`,
+        [days, halves]
+      );
+      for (const r of slotRes.rows) {
+        const k = `${r.day}|${r.half}`;
+        if (!rank.has(k)) rank.set(k, new Map());
+        const m = rank.get(k);
+        if (r.store && r.store !== HQ && !m.has(r.store)) m.set(r.store, m.size + 1);
+      }
+    }
+
+    const halfOrder = { AM: 0, PM: 1 };
+    const sortEntries = (list) => list.sort((a, b) => {
+      if (!a.date !== !b.date) return a.date ? -1 : 1;
+      if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+      if (a.half !== b.half) return (halfOrder[a.half] || 0) - (halfOrder[b.half] || 0);
+      return (a.order || 0) - (b.order || 0);
+    });
+
+    for (const t of taskRes.rows) {
+      let entry;
+      if (t.sched_day) {
+        const m = rank.get(`${t.sched_day}|${t.sched_half}`);
+        entry = {
+          state: 'scheduled', date: t.sched_day, half: t.sched_half, order: t.sched_pos,
+          position: m && m.get(t.store) ? m.get(t.store) : null, past: t.sched_day < today,
+        };
+      } else {
+        if (t.kind === 'transfer'
+          && !(t.tr_status === 'good_to_go' || (t.leg === 'deliver' && t.tr_status === 'in_transit'))) continue;
+        entry = { state: 'tbd', date: null, half: null, position: null, past: false };
+      }
+      entry.location = t.store || null;
+      entry.leg = t.leg || null;
+      entry.pbCount = t.kind === 'po' ? t.pb_count : null;
+      entry.pbUnit = t.kind === 'po' ? t.pb_unit : null;
+      const bucket = t.kind === 'po' ? out.pos : out.transfers;
+      const id = t.kind === 'po' ? t.po_invoice_id : t.transfer_id;
+      if (!bucket[id]) bucket[id] = { entries: [] };
+      bucket[id].entries.push(entry);
+    }
+    for (const p of poRes.rows) {
+      if (!out.pos[p.id]) out.pos[p.id] = { entries: [] };
+      out.pos[p.id].pb = { by: p.pb_qty || null, whSet: !!p.pb_qty_wh_set, wh: p.pb_qty_received || null };
+      if (p.location === HQ && p.received_day) {
+        out.pos[p.id].entries = [{
+          state: 'received', date: p.received_day, half: null, position: null,
+          past: p.received_day < today, location: HQ, leg: null, pbCount: null, pbUnit: null,
+        }];
+      }
+    }
+    for (const b of [...Object.values(out.pos), ...Object.values(out.transfers)]) {
+      sortEntries(b.entries);
+      b.entries.forEach(e => { delete e.order; });
+    }
+    res.json(out);
+  } catch (e) {
+    console.error('POST /api/warehouse/dd error:', e);
+    res.status(500).json({ error: e.message });
   }
 });
 

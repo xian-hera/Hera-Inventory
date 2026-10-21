@@ -3,6 +3,7 @@ import {
   Page, Layout, Card, Button, BlockStack, InlineStack, Text, TextField, Banner, Spinner
 } from '@shopify/polaris';
 import { useNavigate, useParams } from 'react-router-dom';
+import { useDD, poEntries, DDList } from '../shared/ddPill';
 
 // Same keydown-buffer barcode-scanner listening pattern used by
 // ManagerTaskDetail.js / ManagerRestockPlan.js — kept as its own local copy
@@ -55,6 +56,7 @@ function TallyBars({ count }) {
 function ManagerPOReceivingDetail() {
   const navigate = useNavigate();
   const { invoiceId } = useParams();
+  const dd = useDD({ poIds: invoiceId ? [invoiceId] : [] }); // DD pills (2026-10-21)
 
   const [invoice, setInvoice] = useState(null);
   const [items, setItems] = useState([]);
@@ -467,6 +469,11 @@ function ManagerPOReceivingDetail() {
         <Layout>
           <Layout.Section>
             <BlockStack gap="400">
+              {/* Full DD pills right under the PO number (2026-10-21, Hera —
+                  claude/SCHEDULER_FEATURE_SPEC.md §7); split PO → one per line. */}
+              {poEntries(dd, invoiceId).length > 0 && (
+                <div style={{ marginTop: -8 }}><DDList full entries={poEntries(dd, invoiceId)} /></div>
+              )}
               {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
 
               <InlineStack gap="300" wrap blockAlign="center">

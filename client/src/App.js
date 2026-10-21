@@ -97,7 +97,6 @@ const BuyerTransferDetail = lazyWithReload(() => import(/* webpackChunkName: "bu
 const WarehouseHome = lazyWithReload(() => import(/* webpackChunkName: "warehouse" */ './pages/warehouse/WarehouseHome'));
 const WarehouseTransferDetail = lazyWithReload(() => import(/* webpackChunkName: "warehouse" */ './pages/warehouse/WarehouseTransferDetail'));
 const WarehouseTransferReceivingDetail = lazyWithReload(() => import(/* webpackChunkName: "warehouse" */ './pages/warehouse/WarehouseTransferReceivingDetail'));
-const WarehouseTransferViewDetail = lazyWithReload(() => import(/* webpackChunkName: "warehouse" */ './pages/warehouse/WarehouseTransferViewDetail'));
 // Warehouse tabs + Schedule / Receive Shipments / Settings (2026-10-21, Hera) — claude/SCHEDULER_FEATURE_SPEC.md
 const WarehouseShell = lazyWithReload(() => import(/* webpackChunkName: "warehouse" */ './pages/warehouse/WarehouseShell'));
 const WarehouseSchedule = lazyWithReload(() => import(/* webpackChunkName: "warehouse" */ './pages/warehouse/WarehouseSchedule'));
@@ -115,6 +114,7 @@ const BuyerNewArrivalSettings = lazyWithReload(() => import(/* webpackChunkName:
 // route (layout route below) and asks for a group when none is on record;
 // Settings → User Group edits the groups. See client/src/userGroup.js.
 const BuyerGroupGate = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './components/BuyerGroupGate'));
+const BuyerProductTypesSettings = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerProductTypesSettings'));
 const BuyerUserGroupSettings = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerUserGroupSettings'));
 
 // Shown while a section file is downloading. Plain "Loading..." text, not a
@@ -140,6 +140,7 @@ function App() {
           <Route element={<BuyerGroupGate />}>
           <Route path="/buyer" element={<BuyerHome />} />
           <Route path="/buyer/settings/user-group" element={<BuyerUserGroupSettings />} />
+          <Route path="/buyer/settings/product-types" element={<BuyerProductTypesSettings />} />
           <Route path="/buyer/inventory-count" element={<BuyerInventoryCount />} />
           <Route path="/buyer/settings" element={<BuyerSettings />} />
           <Route path="/buyer/settings/new-arrival" element={<BuyerNewArrivalSettings />} />
@@ -184,18 +185,16 @@ function App() {
 
           {/* Warehouse — tabs since 2026-10-21 (WarehouseShell = header + tab bar
               around each tab page, same pattern as Online). The old single
-              Warehouse Home page is now split into the HQ Transfers and Temp
-              tabs (WarehouseHome with section="hq" / "temp"). */}
+              Warehouse Home page is now the HQ Transfers tab (WarehouseHome
+              with section="hq"). The Temp tab and the "Pick up from store"
+              read-only page were removed 2026-10-21 (Hera). */}
           <Route path="/warehouse" element={<WarehouseShell tab="schedule"><WarehouseSchedule /></WarehouseShell>} />
           <Route path="/warehouse/receive-shipments" element={<WarehouseShell tab="receive-shipments"><WarehouseReceiveShipments /></WarehouseShell>} />
           <Route path="/warehouse/hq-transfers" element={<WarehouseShell tab="hq-transfers"><WarehouseHome inTabs section="hq" /></WarehouseShell>} />
-          <Route path="/warehouse/temp" element={<WarehouseShell tab="temp"><WarehouseHome inTabs section="temp" /></WarehouseShell>} />
           <Route path="/warehouse/settings" element={<WarehouseSettings />} />
           {/* Receiving to HQ (改动二) — fixed "receiving" segment registered
               before the :transferId route so it can't be shadowed. */}
           <Route path="/warehouse/transfer/receiving/:transferId" element={<WarehouseTransferReceivingDetail />} />
-          {/* Read-only view for "Pick up from store" transfers (2026-10-05) */}
-          <Route path="/warehouse/transfer/view/:transferId" element={<WarehouseTransferViewDetail />} />
           <Route path="/warehouse/transfer/:transferId" element={<WarehouseTransferDetail />} />
 
           {/* Manager */}

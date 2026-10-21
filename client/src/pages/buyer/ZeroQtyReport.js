@@ -8,6 +8,7 @@ import MultiSelectDropdown from '../../components/MultiSelectDropdown';
 import DateRangeFilter from '../../components/DateRangeFilter';
 import { useLocationMap } from '../shared/locationMap';
 import { useGroupContext } from '../../userGroup'; // Purchasing user groups, 2026-10-09
+import { useProductTypes } from '../../productTypes'; // central type list, 2026-10-21
 
 // Location list: comes from the shared location map (pages/shared/locationMap.js,
 // 2026-09-24) with HQ filtered out — this page's hardcoded list never
@@ -18,7 +19,7 @@ import { useGroupContext } from '../../userGroup'; // Purchasing user groups, 20
 // 改动一：9个 Type
 const TYPE_OPTIONS = [
   'Braid', 'Hair', 'Hair & Skin Care', 'Hera Beauty',
-  'Jewelry', 'K-Beauty', 'Makeup', 'Tools & Accessories', 'Wig',
+  'Jewelry', /* 'K-Beauty' removed 2026-10-21, */ 'Makeup', 'Tools & Accessories', 'Wig',
 ];
 
 const TYPE_LABEL_MAP = {
@@ -71,6 +72,8 @@ function formatDate(dateStr) {
 function ZeroQtyReport() {
   const navigate = useNavigate();
   const groupCtx = useGroupContext(); // user group → Types filter options, 2026-10-09
+  // 2026-10-21 (Hera): Types options come from the central list (Settings → Product Types); TYPE_OPTIONS is now only the fallback if it cannot load.
+  const productTypes = useProductTypes(TYPE_OPTIONS);
   const [reports, setReports]                   = useState([]);
   const [loading, setLoading]                   = useState(false);
   const [error, setError]                       = useState('');
@@ -267,7 +270,7 @@ function ZeroQtyReport() {
                 {/* 改动一：Types 多选，替换 Department */}
                 <MultiSelectDropdown
                   label="Types"
-                  options={groupCtx.filterTypes(TYPE_OPTIONS)}
+                  options={groupCtx.filterTypes(productTypes)}
                   selected={selectedTypes}
                   onChange={setSelectedTypes}
                   labelMap={TYPE_LABEL_MAP}

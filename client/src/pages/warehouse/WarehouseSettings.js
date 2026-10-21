@@ -144,6 +144,35 @@ function WarehouseSettings() {
     setItems(prev => prev.filter(i => i.key !== key || i.name)); // drop an unsaved new pill
   };
 
+  // Sync Tasks (moved here from the Schedule 2026-10-21, Hera — "so it can't
+  // be clicked by accident"): adds Draft / Pending / Ready to Ship transfers
+  // as Schedule cards (incl. ones from before go-live or deleted by mistake)
+  // and puts Pending / Sent to store POs into Receive Shipments. Anything
+  // already there is skipped.
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState(null); // { tone, text }
+  const syncTasks = async () => {
+    if (!window.confirm('Sync Transfer tasks to the Schedule, and PO tasks to Receive Shipments?\n\nTasks that are already there are skipped.')) return;
+    setSyncing(true);
+    setSyncMsg(null);
+    try {
+      const r = await fetch('/api/warehouse/sync', { method: 'POST' });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'Sync failed');
+      const tr = (d.transfersAdded || 0) + (d.transfersRestored || 0);
+      setSyncMsg({
+        tone: 'success',
+        text: tr === 0 && !d.posAdded
+          ? 'Everything is already in sync.'
+          : `Synced: ${tr} transfer card${tr === 1 ? '' : 's'} added to the Schedule, ${d.posAdded} PO${d.posAdded === 1 ? '' : 's'} added to Receive Shipments.`,
+      });
+    } catch (e) {
+      setSyncMsg({ tone: 'critical', text: e.message });
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const addType = () => {
     const item = { key: `t${++keySeq}`, name: '' };
     setItems(prev => [...prev, item]);
@@ -185,6 +214,22 @@ function WarehouseSettings() {
                   </InlineStack>
                 )}
               </BlockStack>
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="300">
+              <Text variant="headingMd" as="h2">Sync Tasks</Text>
+              <Text tone="subdued" variant="bodySm">
+                Sync Transfer tasks, and PO tasks to Receive Shipments. Adds Draft / Pending / Ready to Ship transfers to the
+                Schedule and Pending / Sent to store POs to Receive Shipments — including ones from before the Schedule
+                started and ones deleted by mistake. Tasks that are already there are skipped.
+              </Text>
+              {syncMsg && <Banner tone={syncMsg.tone} onDismiss={() => setSyncMsg(null)}>{syncMsg.text}</Banner>}
+              <InlineStack>
+                <Button onClick={syncTasks} loading={syncing}>Sync Tasks</Button>
+              </InlineStack>
             </BlockStack>
           </Card>
         </Layout.Section>
