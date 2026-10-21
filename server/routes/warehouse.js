@@ -86,15 +86,28 @@ async function getTaskTypes(db) {
 const EFFECTIVE_PB_SQL = `CASE WHEN i.pb_qty_wh_set THEN i.pb_qty_received ELSE i.pb_qty END`;
 
 // Creates the root Scheduler task for a just-received PO (inside a tx).
+// If WH deleted this PO's task earlier and Sync Tasks brought the PO back
+// into Receive Shipments, the old (soft-removed) row is revived as a fresh,
+// unscheduled, never-split task.
 async function createPoTask(client, invoiceId, effectivePb) {
   const pb = parsePb(effectivePb);
   await client.query(
     `INSERT INTO wh_tasks (kind, po_invoice_id, pb_count, pb_unit, to_location)
      SELECT 'po', $1, $2, $3, location FROM po_invoices WHERE id = $1
-     ON CONFLICT DO NOTHING`,
+     ON CONFLICT (po_invoice_id) WHERE kind = 'po' AND parent_task_id IS NULL
+     DO UPDATE SET removed_at = NULL, pb_count = EXCLUDED.pb_count, pb_unit = EXCLUDED.pb_unit,
+                   to_location = EXCLUDED.to_location, split_no = NULL, split_counter = 0,
+                   sched_date = NULL, sched_half = NULL, sched_pos = NULL, updated_at = NOW()
+     WHERE wh_tasks.removed_at IS NOT NULL`,
     [invoiceId, pb ? pb.count : null, pb ? pb.unit : null]
   );
 }
+
+// A PO is listed in Receive Shipments when it was created after go-live or
+// put there by Sync Tasks, and WH has neither received nor deleted it.
+const IN_RECEIVE_SHIPMENTS_SQL = (alias, goLiveParam) =>
+  `(${alias}.created_at >= ${goLiveParam}::timestamptz OR ${alias}.wh_synced_at IS NOT NULL)
+   AND ${alias}.wh_received_at IS NULL AND ${alias}.wh_removed_at IS NULL`;
 
 // ─── Badges (tab counts) ────────────────────────────────────────────────────
 
@@ -107,7 +120,7 @@ router.get('/badges', async (req, res) => {
     const [rs, hq] = await Promise.all([
       pool.query(
         `SELECT COUNT(*)::int AS n FROM po_invoices
-         WHERE created_at >= $1::timestamptz AND wh_received_at IS NULL AND wh_removed_at IS NULL`,
+         WHERE ${IN_RECEIVE_SHIPMENTS_SQL('po_invoices', '$1')}`,
         [goLive]
       ),
       pool.query(`SELECT COUNT(*)::int AS n FROM transfers WHERE from_location = $1 AND status = 'loading'`, [HQ]),
@@ -170,7 +183,7 @@ router.get('/receive-shipments', async (req, res) => {
               s.name AS supplier_name
        FROM po_invoices i
        JOIN po_suppliers s ON s.id = i.supplier_id
-       WHERE i.created_at >= $1::timestamptz AND i.wh_received_at IS NULL AND i.wh_removed_at IS NULL
+       WHERE ${IN_RECEIVE_SHIPMENTS_SQL('i', '$1')}
        ORDER BY i.created_at ASC, i.id ASC`,
       [goLive]
     );
@@ -298,9 +311,9 @@ router.get('/po/:id', async (req, res) => {
 // never re-added.)
 // A store → store transfer gets TWO rows: leg 'pickup' and leg 'deliver'
 // (Hera 2026-10-21); every other transfer one row (leg NULL).
-async function ensureTransferTasks(db) {
-  const goLive = await getGoLive(db);
-  await db.query(
+// `where` picks the transfers (alias t); $2 is always 'HQ'.
+async function insertTransferTasks(db, where, params) {
+  const r = await db.query(
     `INSERT INTO wh_tasks (kind, transfer_id, to_location, leg)
      SELECT 'transfer', t.id, t.to_location, l.leg
      FROM transfers t
@@ -308,13 +321,30 @@ async function ensureTransferTasks(db) {
        SELECT unnest(CASE WHEN t.from_location <> $2 AND t.to_location <> $2
                           THEN ARRAY['pickup', 'deliver']::text[] ELSE ARRAY[NULL]::text[] END) AS leg
      ) l
-     WHERE t.created_at >= $1::timestamptz
+     WHERE ${where}
        AND NOT EXISTS (SELECT 1 FROM wh_tasks w
                        WHERE w.kind = 'transfer' AND w.transfer_id = t.id AND COALESCE(w.leg, '') = COALESCE(l.leg, ''))
      ON CONFLICT DO NOTHING`,
-    [goLive, HQ]
+    params
   );
+  return r.rowCount;
 }
+
+async function ensureTransferTasks(db) {
+  const goLive = await getGoLive(db);
+  await insertTransferTasks(db, 't.created_at >= $1::timestamptz', [goLive, HQ]);
+}
+
+// Schedule › "Sync Tasks" (Hera 2026-10-21): brings in work from before
+// go-live and puts back tasks WH deleted by mistake. Anything already there
+// is skipped.
+//   Transfers in Draft / Pending / Ready to Ship → task card(s) added; a
+//     deleted card of such a transfer comes back (unscheduled).
+//   POs that are not Store counted / Committed / Archived (i.e. pending or
+//     sent to store) → into Receive Shipments, unless already listed there
+//     or already a live task on the Schedule.
+const SYNC_TRANSFER_STATUSES = ['loading', 'pending', 'good_to_go'];
+const SYNC_PO_STATUSES = ['pending', 'sent_to_store'];
 
 // Everything the Schedule page shows: unscheduled tasks + tasks placed on
 // today or later. (Tasks placed on past days are history — not shown.)
@@ -390,6 +420,38 @@ async function loadSchedule(db) {
   });
   return { today, days, version: Number(versionVal) || 0, tasks };
 }
+
+// POST /api/warehouse/sync → { transfersAdded, transfersRestored, posAdded }
+router.post('/sync', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const transfersAdded = await insertTransferTasks(client, 't.status = ANY($1)', [SYNC_TRANSFER_STATUSES, HQ]);
+    const restored = await client.query(
+      `UPDATE wh_tasks w SET removed_at = NULL, sched_date = NULL, sched_half = NULL, sched_pos = NULL, updated_at = NOW()
+       FROM transfers t
+       WHERE w.kind = 'transfer' AND w.transfer_id = t.id AND w.removed_at IS NOT NULL AND t.status = ANY($1)`,
+      [SYNC_TRANSFER_STATUSES]
+    );
+    const goLive = await getGoLive(client);
+    const pos = await client.query(
+      `UPDATE po_invoices i SET wh_synced_at = NOW(), wh_removed_at = NULL, wh_received_at = NULL
+       WHERE i.status = ANY($1)
+         AND NOT (${IN_RECEIVE_SHIPMENTS_SQL('i', '$2')})
+         AND NOT EXISTS (SELECT 1 FROM wh_tasks w
+                         WHERE w.kind = 'po' AND w.po_invoice_id = i.id AND w.parent_task_id IS NULL AND w.removed_at IS NULL)`,
+      [SYNC_PO_STATUSES, goLive]
+    );
+    await client.query('COMMIT');
+    res.json({ transfersAdded, transfersRestored: restored.rowCount, posAdded: pos.rowCount });
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('POST /api/warehouse/sync error:', e);
+    res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
+  }
+});
 
 // GET /api/warehouse/schedule
 router.get('/schedule', async (req, res) => {

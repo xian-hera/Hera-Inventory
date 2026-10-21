@@ -59,8 +59,8 @@ const MISSING_COST_TOOLTIP = `This line item has no cost — it was left blank i
 // 2026-10-16 (Hera): money shown with thousands separators, e.g. 111,791.63.
 const fmtMoney = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-const EFFECTIVE_COST_TOOLTIP_USD = `effective cost = invoice cost + adjustment + unit discount + converted to CAD`;
-const EFFECTIVE_COST_TOOLTIP_CAD = `effective cost = invoice cost + adjustment + unit discount`;
+const EFFECTIVE_COST_TOOLTIP_USD = `actual cost = invoice cost + adjustment + unit discount + converted to CAD`;
+const EFFECTIVE_COST_TOOLTIP_CAD = `actual cost = invoice cost + adjustment + unit discount`;
 
 const STATUS_PILLS = {
   pending: { label: 'Pending', tone: 'attention' },
@@ -1624,10 +1624,10 @@ function BuyerPOImportInvoice() {
                               <input type="checkbox" checked={items.length > 0 && selectedIds.size === items.length} onChange={toggleSelectAll} />
                             </th>
                           )}
-                          {/* Column order: Name before Product ID (wording pass — labels
-                              capitalized, "code" renamed to "Product ID", "quantity" to
-                              "Qty", and Name/Product ID swapped per Hera's request). */}
-                          {['SKU', 'Name', 'Product ID', 'Qty'].map(h => (
+                          {/* Column order (2026-10-21, Hera): SKU, Name, Supplier ID (was
+                              Product ID), Invoice Cost, [Unit Discount], Actual Cost (was
+                              Effective Cost), List Cost (was Supplier Cost), Qty, Store Count. */}
+                          {['SKU', 'Name', 'Supplier ID'].map(h => (
                             <th key={h} style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>{h}</th>
                           ))}
                           <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Invoice Cost</th>
@@ -1636,12 +1636,13 @@ function BuyerPOImportInvoice() {
                           )}
                           <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>
                             <InfoTooltip text={isUsdSupplier ? EFFECTIVE_COST_TOOLTIP_USD : EFFECTIVE_COST_TOOLTIP_CAD}>
-                              Effective Cost
+                              Actual Cost
                             </InfoTooltip>
                           </th>
-                          <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Supplier Cost</th>
+                          <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>List Cost</th>
+                          <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Qty</th>
                           {showStoreCountColumn && (
-                            <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Store count</th>
+                            <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Store Count</th>
                           )}
                         </tr>
                       </thead>
@@ -1689,60 +1690,6 @@ function BuyerPOImportInvoice() {
                                   swapped header order above. */}
                               <td style={{ padding: '10px' }}>{it.name}</td>
                               <td style={{ padding: '10px' }}>{it.code}</td>
-                              <td style={{ padding: '10px' }}>
-                                {isEditingQty ? (
-                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', whiteSpace: 'nowrap' }}>
-                                    <input
-                                      type="number"
-                                      value={editQtyDraft}
-                                      onChange={(e) => setEditQtyDraft(e.target.value)}
-                                      autoFocus
-                                      style={{
-                                        width: '3.5em', padding: '4px 6px', fontSize: '13px',
-                                        border: '1px solid #c9cccf', borderRadius: '6px', boxSizing: 'content-box',
-                                      }}
-                                    />
-                                    <button
-                                      onClick={() => saveEditItem(it.id, 'quantity')}
-                                      disabled={savingItemEdit}
-                                      title="Save"
-                                      style={{
-                                        width: '22px', height: '22px', padding: 0, lineHeight: 1,
-                                        border: '1px solid #008060', borderRadius: '4px', background: '#e3f1df',
-                                        color: '#008060', cursor: savingItemEdit ? 'default' : 'pointer', fontWeight: 700,
-                                      }}
-                                    >✓</button>
-                                    <button
-                                      onClick={cancelEditItem}
-                                      disabled={savingItemEdit}
-                                      title="Cancel"
-                                      style={{
-                                        width: '22px', height: '22px', padding: 0, lineHeight: 1,
-                                        border: '1px solid #c9cccf', borderRadius: '4px', background: 'white',
-                                        color: '#6d7175', cursor: savingItemEdit ? 'default' : 'pointer', fontWeight: 700,
-                                      }}
-                                    >✕</button>
-                                  </span>
-                                ) : itemsEditable ? (
-                                  <span style={{ cursor: 'pointer' }} onClick={() => startEditQty(it)}>
-                                    {qtyEdited && (
-                                      <span style={{ textDecoration: 'line-through', color: '#8c9196', fontSize: '11px', marginRight: '6px' }}>
-                                        {it.quantity_original}
-                                      </span>
-                                    )}
-                                    {it.quantity}
-                                  </span>
-                                ) : (
-                                  <>
-                                    {qtyEdited && (
-                                      <span style={{ textDecoration: 'line-through', color: '#8c9196', fontSize: '11px', marginRight: '6px' }}>
-                                        {it.quantity_original}
-                                      </span>
-                                    )}
-                                    {it.quantity}
-                                  </>
-                                )}
-                              </td>
                               <td style={{ padding: '10px', fontWeight: highlighted && compareMode === 'invoice_cost' ? 'bold' : undefined }}>
                                 {isEditingCost ? (
                                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', whiteSpace: 'nowrap' }}>
@@ -1817,6 +1764,60 @@ function BuyerPOImportInvoice() {
                               </td>
                               <td style={{ padding: '10px', fontWeight: highlighted ? 'bold' : undefined }}>
                                 {it.supplier_cost_raw !== null && it.supplier_cost_raw !== undefined ? Number(it.supplier_cost_raw).toFixed(2) : '—'}
+                              </td>
+                              <td style={{ padding: '10px' }}>
+                                {isEditingQty ? (
+                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', whiteSpace: 'nowrap' }}>
+                                    <input
+                                      type="number"
+                                      value={editQtyDraft}
+                                      onChange={(e) => setEditQtyDraft(e.target.value)}
+                                      autoFocus
+                                      style={{
+                                        width: '3.5em', padding: '4px 6px', fontSize: '13px',
+                                        border: '1px solid #c9cccf', borderRadius: '6px', boxSizing: 'content-box',
+                                      }}
+                                    />
+                                    <button
+                                      onClick={() => saveEditItem(it.id, 'quantity')}
+                                      disabled={savingItemEdit}
+                                      title="Save"
+                                      style={{
+                                        width: '22px', height: '22px', padding: 0, lineHeight: 1,
+                                        border: '1px solid #008060', borderRadius: '4px', background: '#e3f1df',
+                                        color: '#008060', cursor: savingItemEdit ? 'default' : 'pointer', fontWeight: 700,
+                                      }}
+                                    >✓</button>
+                                    <button
+                                      onClick={cancelEditItem}
+                                      disabled={savingItemEdit}
+                                      title="Cancel"
+                                      style={{
+                                        width: '22px', height: '22px', padding: 0, lineHeight: 1,
+                                        border: '1px solid #c9cccf', borderRadius: '4px', background: 'white',
+                                        color: '#6d7175', cursor: savingItemEdit ? 'default' : 'pointer', fontWeight: 700,
+                                      }}
+                                    >✕</button>
+                                  </span>
+                                ) : itemsEditable ? (
+                                  <span style={{ cursor: 'pointer' }} onClick={() => startEditQty(it)}>
+                                    {qtyEdited && (
+                                      <span style={{ textDecoration: 'line-through', color: '#8c9196', fontSize: '11px', marginRight: '6px' }}>
+                                        {it.quantity_original}
+                                      </span>
+                                    )}
+                                    {it.quantity}
+                                  </span>
+                                ) : (
+                                  <>
+                                    {qtyEdited && (
+                                      <span style={{ textDecoration: 'line-through', color: '#8c9196', fontSize: '11px', marginRight: '6px' }}>
+                                        {it.quantity_original}
+                                      </span>
+                                    )}
+                                    {it.quantity}
+                                  </>
+                                )}
                               </td>
                               {showStoreCountColumn && (
                                 <td style={{ padding: '10px' }}>

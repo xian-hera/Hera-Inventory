@@ -94,16 +94,10 @@ const BuyerTransferCreate = lazyWithReload(() => import(/* webpackChunkName: "bu
 const BuyerTransferOngoing = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerTransferOngoing'));
 const BuyerTransferSettings = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerTransferSettings'));
 const BuyerTransferDetail = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerTransferDetail'));
-const BuyerBoxPO = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerBoxPO'));
-const BuyerBoxPOCreate = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerBoxPOCreate'));
-const BuyerBoxPOOngoing = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerBoxPOOngoing'));
-const BuyerBoxPOPast = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerBoxPOPast'));
-const BuyerBoxPODetail = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerBoxPODetail'));
 const WarehouseHome = lazyWithReload(() => import(/* webpackChunkName: "warehouse" */ './pages/warehouse/WarehouseHome'));
 const WarehouseTransferDetail = lazyWithReload(() => import(/* webpackChunkName: "warehouse" */ './pages/warehouse/WarehouseTransferDetail'));
 const WarehouseTransferReceivingDetail = lazyWithReload(() => import(/* webpackChunkName: "warehouse" */ './pages/warehouse/WarehouseTransferReceivingDetail'));
 const WarehouseTransferViewDetail = lazyWithReload(() => import(/* webpackChunkName: "warehouse" */ './pages/warehouse/WarehouseTransferViewDetail'));
-const WarehouseBoxPODetail = lazyWithReload(() => import(/* webpackChunkName: "warehouse" */ './pages/warehouse/WarehouseBoxPODetail'));
 // Warehouse tabs + Schedule / Receive Shipments / Settings (2026-10-21, Hera) — claude/SCHEDULER_FEATURE_SPEC.md
 const WarehouseShell = lazyWithReload(() => import(/* webpackChunkName: "warehouse" */ './pages/warehouse/WarehouseShell'));
 const WarehouseSchedule = lazyWithReload(() => import(/* webpackChunkName: "warehouse" */ './pages/warehouse/WarehouseSchedule'));
@@ -163,7 +157,11 @@ function App() {
           <Route path="/buyer/price-change/create" element={<BuyerPriceChangeCreate />} />
           <Route path="/buyer/price-change/settings" element={<BuyerPriceChangeSettings />} />
           <Route path="/buyer/product-database" element={<ProductDatabaseSettings />} />
-          <Route path="/buyer/po-receiving" element={<BuyerPOReceiving />} />
+          {/* 2026-10-21 (Hera): the Purchase Orders home is now the Purchase Order
+              List itself (Create PO / Supplier / Settings sit in its top right).
+              The old three-button menu page is kept at /menu, not linked anywhere. */}
+          <Route path="/buyer/po-receiving" element={<BuyerPOCommitLater />} />
+          <Route path="/buyer/po-receiving/menu" element={<BuyerPOReceiving />} />
           <Route path="/buyer/po-receiving/import" element={<BuyerPOImportInvoice />} />
           <Route path="/buyer/po-receiving/pending/:invoiceId" element={<BuyerPOImportInvoice />} />
           <Route path="/buyer/po-receiving/committed/:invoiceId" element={<BuyerPOInvoiceDetail />} />
@@ -174,20 +172,14 @@ function App() {
           <Route path="/buyer/import-products" element={<BuyerImportProducts />} />
           <Route path="/buyer/import-products/settings" element={<BuyerImportProductsSettings />} />
           <Route path="/buyer/po-receiving/settings" element={<BuyerPOSettings />} />
-          <Route path="/buyer/transfer" element={<BuyerTransfer />} />
+          {/* 2026-10-21 (Hera): Transfers home = Transfer List; the old two-button menu page is kept at /menu (not linked). */}
+          <Route path="/buyer/transfer" element={<BuyerTransferOngoing />} />
+          <Route path="/buyer/transfer/menu" element={<BuyerTransfer />} />
           <Route path="/buyer/transfer/history" element={<BuyerTransferHistory />} />
           <Route path="/buyer/transfer/create" element={<BuyerTransferCreate />} />
           <Route path="/buyer/transfer/ongoing" element={<BuyerTransferOngoing />} />
           <Route path="/buyer/transfer/settings" element={<BuyerTransferSettings />} />
           <Route path="/buyer/transfer/:transferId" element={<BuyerTransferDetail />} />
-          {/* BOX PO — fixed-path routes registered before the :id route so
-              react-router's ordering can't shadow "create"/"ongoing"/"past"
-              as an :id value (same lesson learned server-side in boxPo.js). */}
-          <Route path="/buyer/po-receiving/box-po" element={<BuyerBoxPO />} />
-          <Route path="/buyer/po-receiving/box-po/create" element={<BuyerBoxPOCreate />} />
-          <Route path="/buyer/po-receiving/box-po/ongoing" element={<BuyerBoxPOOngoing />} />
-          <Route path="/buyer/po-receiving/box-po/past" element={<BuyerBoxPOPast />} />
-          <Route path="/buyer/po-receiving/box-po/:id" element={<BuyerBoxPODetail />} />
           </Route>
 
           {/* Warehouse — tabs since 2026-10-21 (WarehouseShell = header + tab bar
@@ -205,7 +197,6 @@ function App() {
           {/* Read-only view for "Pick up from store" transfers (2026-10-05) */}
           <Route path="/warehouse/transfer/view/:transferId" element={<WarehouseTransferViewDetail />} />
           <Route path="/warehouse/transfer/:transferId" element={<WarehouseTransferDetail />} />
-          <Route path="/warehouse/box-po/:id" element={<WarehouseBoxPODetail />} />
 
           {/* Manager */}
           <Route path="/manager" element={<ManagerLocationGate><ManagerHome /></ManagerLocationGate>} />

@@ -8,8 +8,8 @@ import InfoTooltip from '../../components/InfoTooltip';
 // 2026-10-16 (Hera): money shown with thousands separators, e.g. 111,791.63.
 const fmtMoney = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-const EFFECTIVE_COST_TOOLTIP_USD = `effective cost = invoice cost + adjustment + unit discount + converted to CAD`;
-const EFFECTIVE_COST_TOOLTIP_CAD = `effective cost = invoice cost + adjustment + unit discount`;
+const EFFECTIVE_COST_TOOLTIP_USD = `actual cost = invoice cost + adjustment + unit discount + converted to CAD`;
+const EFFECTIVE_COST_TOOLTIP_CAD = `actual cost = invoice cost + adjustment + unit discount`;
 
 // Filename for Export PDF downloads (item 4): {PO number}_{supplier}_
 // {receiving location}_{date}.pdf — supplier's spaces become "-", and date
@@ -288,23 +288,25 @@ function BuyerPOInvoiceDetail() {
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                     <thead>
                       <tr style={{ borderBottom: '2px solid #e1e3e5' }}>
-                        {/* Column order: Name before Product ID (wording pass — labels
-                            capitalized, "code" renamed to "Product ID", and Name/Product
-                            ID swapped, matching the pending-invoice page). */}
-                        {['SKU', 'Name', 'Product ID', 'Qty'].map(h => (
+                        {/* Column order (2026-10-21, Hera), same as the pending-invoice
+                            page: SKU, Name, Supplier ID (was Product ID), Invoice Cost,
+                            [Unit Discount], Actual Cost (was Effective Cost), List Cost
+                            (was Supplier Cost), Qty, then Committed qty. */}
+                        {['SKU', 'Name', 'Supplier ID'].map(h => (
                           <th key={h} style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>{h}</th>
                         ))}
-                        <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Committed qty</th>
                         <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Invoice Cost</th>
                         {showUnitDiscount && (
                           <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Unit Discount</th>
                         )}
                         <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>
                           <InfoTooltip text={isUsdSupplier ? EFFECTIVE_COST_TOOLTIP_USD : EFFECTIVE_COST_TOOLTIP_CAD}>
-                            Effective Cost
+                            Actual Cost
                           </InfoTooltip>
                         </th>
-                        <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Supplier Cost</th>
+                        <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>List Cost</th>
+                        <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Qty</th>
+                        <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Committed qty</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -326,14 +328,6 @@ function BuyerPOInvoiceDetail() {
                             <td style={{ padding: '10px' }}>{it.sku}</td>
                             <td style={{ padding: '10px' }}>{it.name}</td>
                             <td style={{ padding: '10px' }}>{it.code}</td>
-                            <td style={{ padding: '10px' }}>{it.quantity}</td>
-                            <td style={{
-                              padding: '10px',
-                              color: qtyMismatch ? '#d72c0d' : undefined,
-                              fontWeight: qtyMismatch ? 700 : undefined,
-                            }}>
-                              {committedQty(it)}
-                            </td>
                             <td style={{ padding: '10px', fontWeight: highlighted && compareMode === 'invoice_cost' ? 'bold' : undefined }}>
                               {hasRawCost ? Number(it.raw_cost).toFixed(2) : '—'}
                             </td>
@@ -356,6 +350,14 @@ function BuyerPOInvoiceDetail() {
                             </td>
                             <td style={{ padding: '10px', fontWeight: highlighted ? 'bold' : undefined }}>
                               {it.supplier_cost_raw !== null && it.supplier_cost_raw !== undefined ? Number(it.supplier_cost_raw).toFixed(2) : '—'}
+                            </td>
+                            <td style={{ padding: '10px' }}>{it.quantity}</td>
+                            <td style={{
+                              padding: '10px',
+                              color: qtyMismatch ? '#d72c0d' : undefined,
+                              fontWeight: qtyMismatch ? 700 : undefined,
+                            }}>
+                              {committedQty(it)}
                             </td>
                           </tr>
                         );

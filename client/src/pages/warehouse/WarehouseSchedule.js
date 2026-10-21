@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  Page, BlockStack, InlineStack, Text, Button, Banner, Modal, TextField, Select,
+  Page, BlockStack, InlineStack, Text, Button, Banner, Modal, TextField, Select, Tooltip,
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import { useLocationMap } from '../shared/locationMap';
@@ -545,6 +545,30 @@ function WarehouseSchedule() {
     }
   };
 
+  // Sync Tasks (Hera 2026-10-21): adds Draft / Pending / Ready to Ship
+  // transfers (incl. ones from before go-live or deleted by mistake) and puts
+  // matching POs into Receive Shipments. Saved at once; the draft stays.
+  const [syncing, setSyncing] = useState(false);
+  const syncTasks = async () => {
+    setSyncing(true);
+    setError('');
+    try {
+      const r = await fetch('/api/warehouse/sync', { method: 'POST' });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'Sync failed');
+      await load({ keepDraft: true });
+      refreshWarehouseBadges();
+      const tr = (d.transfersAdded || 0) + (d.transfersRestored || 0);
+      showToast(tr === 0 && !d.posAdded
+        ? 'Everything is already in sync'
+        : `Synced: ${tr} transfer card${tr === 1 ? '' : 's'} added · ${d.posAdded} PO${d.posAdded === 1 ? '' : 's'} added to Receive Shipments`);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const discard = () => {
     setSlots(saved);
     setSel([]);
@@ -639,6 +663,9 @@ function WarehouseSchedule() {
               {dirty && (
                 <span style={{ fontSize: 12, fontWeight: 550, padding: '2px 8px', borderRadius: 8, background: '#ffd79d', color: '#5e4200' }}>Unsaved changes</span>
               )}
+              <Tooltip content="Sync Transfer tasks, and PO tasks to Receive Shipments.">
+                <Button onClick={syncTasks} loading={syncing} disabled={saving}>Sync Tasks</Button>
+              </Tooltip>
               <Button onClick={discard} disabled={!dirty || saving}>Discard</Button>
               <Button variant="primary" onClick={save} disabled={!dirty || saving} loading={saving}>Save</Button>
             </InlineStack>

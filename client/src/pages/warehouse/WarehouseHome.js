@@ -6,7 +6,6 @@ import {
 // — loading states in this file now show the text "Loading..." instead.
 import { useNavigate } from 'react-router-dom';
 import { StatusBadge, warehouseStatusLabel, HoldBadge, TagPills } from '../shared/transferStatus';
-import { StatusBadge as BoxPoStatusBadge } from '../shared/boxPoStatus';
 
 // Date column (2026-10-05, Hera): creation date of the transfer, shown right
 // after the Transfer column on all three transfer cards. YYYY-MM-DD on
@@ -40,12 +39,9 @@ const DATE_CSS = `
 }
 `;
 
-// Warehouse Home — a new "BOX PO" section at the very top (see
-// claude/BOX_PO_FEATURE_SPEC.md section 9), showing only status='incoming'
-// tasks — once a task becomes Received it disappears from here entirely.
-// Uses the SAME Card-internal-heading style as the sections below
-// (<Text variant="headingSm">), confirmed with Hera — not a divider style.
-// Then Card 1: HQ-origin transfers (Loading/Pending/Good to go/
+// Warehouse Home. (The "BOX PO" section that used to be at the very top was
+// removed together with the whole BOX PO feature, 2026-10-21, Hera.)
+// Card 1: HQ-origin transfers (Loading/Pending/Good to go/
 // In transit), clickable, checkbox only on Good to go rows (for batch
 // dispatch), header select-all + "Dispatch selected" / "Dispatch all Good
 // to go" buttons. Card 2: "Pick up from store" transfers (neither from nor to
@@ -57,7 +53,7 @@ const DATE_CSS = `
 // Warehouse tabs (2026-10-21, Hera — claude/SCHEDULER_FEATURE_SPEC.md §10):
 // this page is now shown inside WarehouseShell as two tabs —
 //   section="hq"   → "HQ Transfers" tab: only the HQ transfers card
-//   section="temp" → "Temp" tab: BOX PO, Receiving to HQ, Pick up from store
+//   section="temp" → "Temp" tab: Receiving to HQ, Pick up from store
 // (no section = all cards, the old standalone page — kept for reference, no
 // route uses it any more). inTabs hides this page's own title / back arrow.
 // Detail pages get { state: { from } } so their back button returns here.
@@ -74,17 +70,6 @@ function WarehouseHome({ inTabs = false, section } = {}) {
   const [error, setError] = useState('');
   const [selectedIds, setSelectedIds] = useState([]);
   const [dispatching, setDispatching] = useState(false);
-
-  const [boxPos, setBoxPos] = useState([]);
-  const [boxPosLoading, setBoxPosLoading] = useState(true);
-
-  useEffect(() => {
-    fetch('/api/box-po/warehouse/home')
-      .then(r => r.json())
-      .then(data => setBoxPos(Array.isArray(data) ? data : []))
-      .catch(() => setBoxPos([]))
-      .finally(() => setBoxPosLoading(false));
-  }, []);
 
   const fetchHome = useCallback(async () => {
     setLoading(true);
@@ -179,46 +164,6 @@ function WarehouseHome({ inTabs = false, section } = {}) {
               <InlineStack align="center"><Text tone="subdued">Loading...</Text></InlineStack>
             ) : (
               <>
-                {showTemp && (
-                <Card>
-                  <BlockStack gap="300">
-                    <Text variant="headingSm">BOX PO</Text>
-                    {boxPosLoading ? (
-                      <InlineStack align="center"><Text tone="subdued">Loading...</Text></InlineStack>
-                    ) : boxPos.length === 0 ? (
-                      <Text tone="subdued">No BOX PO tasks right now.</Text>
-                    ) : (
-                      <div style={{ overflowX: 'auto' }}>
-                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-                          <thead>
-                            <tr style={{ borderBottom: '2px solid #e1e3e5' }}>
-                              <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>BOX PO number</th>
-                              <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Supplier</th>
-                              <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Total Boxes</th>
-                              <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Status</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {boxPos.map(bp => (
-                              <tr
-                                key={bp.id}
-                                style={{ borderBottom: '1px solid #f1f1f1', cursor: 'pointer' }}
-                                onClick={() => navigate(`/warehouse/box-po/${bp.id}`, { state: { from: backTo } })}
-                              >
-                                <td style={{ padding: '10px', textDecoration: 'underline' }}>{bp.box_po_number}</td>
-                                <td style={{ padding: '10px' }}>{bp.supplier_name}</td>
-                                <td style={{ padding: '10px' }}>{bp.total_boxes}</td>
-                                <td style={{ padding: '10px' }}><BoxPoStatusBadge status={bp.status} /></td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </BlockStack>
-                </Card>
-                )}
-
                 {showHq && (
                 <Card>
                   <BlockStack gap="300">

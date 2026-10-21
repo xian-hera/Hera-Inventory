@@ -245,7 +245,13 @@ function BuyerTransferOngoing() {
   const locationOptions = locationNames.map(n => ({ value: n, label: n }));
 
   return (
-    <Page title="Transfer List" backAction={{ onAction: () => navigate('/buyer/transfer') }}>
+    // 2026-10-21 (Hera): this list is now the Transfers home. Was: backAction → '/buyer/transfer' (the old two-button menu).
+    <Page
+      title="Transfer List"
+      backAction={{ onAction: () => navigate('/buyer') }}
+      primaryAction={{ content: 'Create New Transfer', onAction: () => navigate('/buyer/transfer/create') }}
+      secondaryActions={[{ content: 'Settings', onAction: () => navigate('/buyer/transfer/settings') }]}
+    >
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">

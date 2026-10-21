@@ -256,7 +256,7 @@ function ZeroQtyReport() {
   }
 
   return (
-    <Page title="Manual Inventory Count" backAction={{ onAction: () => navigate('/buyer/inventory-count') }}>
+    <Page title="Manual Inventory Count" backAction={{ onAction: () => navigate('/buyer') }}>
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">

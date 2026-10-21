@@ -1020,23 +1020,12 @@ const initDatabase = async () => {
 
     // ────────────────────────────────────────────────────────────────────────────
 
-    // BOX PO feature (Buyer creates, Warehouse counts/submits, Buyer confirms —
-    // see claude/BOX_PO_FEATURE_SPEC.md in the project's Claude knowledge base
-    // for the full narrated spec). Purely internal — no Shopify API calls
-    // anywhere in this feature. Numbering scheme mirrors transfer_number_counter
-    // (letter-carry, but format is BOX_A0001 — underscore, not hyphen).
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS box_po_number_counter (
-        id          INTEGER PRIMARY KEY DEFAULT 1,
-        last_number INTEGER NOT NULL DEFAULT 0,
-        last_letter CHAR(1) NOT NULL DEFAULT 'A'
-      )
-    `);
-    await client.query(`
-      INSERT INTO box_po_number_counter (id, last_number, last_letter)
-      VALUES (1, 0, 'A')
-      ON CONFLICT (id) DO NOTHING
-    `);
+    // BOX PO feature removed (2026-10-21, Hera): its tables are dropped here,
+    // data included. (It used to be: Buyer creates, Warehouse counts/submits,
+    // Buyer confirms; box_pos / box_po_items / box_po_number_counter.)
+    await client.query('DROP TABLE IF EXISTS box_po_items');
+    await client.query('DROP TABLE IF EXISTS box_pos');
+    await client.query('DROP TABLE IF EXISTS box_po_number_counter');
 
     // ────────────────────────────────────────────────────────────────────────────
 
@@ -1070,58 +1059,6 @@ const initDatabase = async () => {
     `);
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_manager_history_lookup ON manager_history (kind, location, created_at DESC)
-    `);
-
-    // 3 statuses: incoming (just created, Warehouse can see/count it) →
-    // received (Warehouse submitted its count, Warehouse can no longer see
-    // it, Buyer sees Box received column + Confirm button) → confirmed
-    // (Buyer confirmed, read-only, kept for 90 days from confirmed_at then
-    // lazily deleted — see box-po routes). buyer_note/warehouse_note are two
-    // independent single-note fields (unlike Transfer's single shared note) —
-    // each role can have at most 1 of their own, both can exist at once.
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS box_pos (
-        id             SERIAL PRIMARY KEY,
-        box_po_number  TEXT UNIQUE NOT NULL,
-        supplier_id    INTEGER REFERENCES po_suppliers(id),
-        supplier_name  TEXT NOT NULL,
-        total_boxes    INTEGER NOT NULL,
-        box_date       DATE,
-        buyer_note     TEXT,
-        warehouse_note TEXT,
-        status         TEXT NOT NULL DEFAULT 'incoming'
-                        CHECK (status IN ('incoming','received','confirmed')),
-        created_at     TIMESTAMPTZ DEFAULT NOW(),
-        received_at    TIMESTAMPTZ,
-        confirmed_at   TIMESTAMPTZ
-      )
-    `);
-
-    // Location is stored as plain text (the location name from
-    // /api/shopify/locations) since nothing here ever calls Shopify — no
-    // need for the location GID. box_received is null until Warehouse
-    // confirms that row; counted_confirmed tracks whether it's gone through
-    // the check-button yet (same pattern as transfer_items.loaded_confirmed).
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS box_po_items (
-        id                SERIAL PRIMARY KEY,
-        box_po_id         INTEGER NOT NULL REFERENCES box_pos(id) ON DELETE CASCADE,
-        location          TEXT NOT NULL,
-        box_qty           INTEGER NOT NULL,
-        box_received      INTEGER,
-        counted_confirmed BOOLEAN NOT NULL DEFAULT FALSE,
-        created_at        TIMESTAMPTZ DEFAULT NOW()
-      )
-    `);
-    await client.query(`
-      CREATE INDEX IF NOT EXISTS idx_box_po_items_box_po_id ON box_po_items (box_po_id)
-    `);
-    // 2026-10-05 (Hera): per-line-item note on a BOX PO row (Warehouse and
-    // Buyer can both add/edit/delete it on an incoming task; read-only after).
-    // Independent of counted_confirmed — a row can be noted whether or not it
-    // has been checked.
-    await client.query(`
-      ALTER TABLE box_po_items ADD COLUMN IF NOT EXISTS note TEXT
     `);
 
     // ─── Wig Demo ────────────────────────────────────────────────────────────────
@@ -1736,6 +1673,10 @@ const initDatabase = async () => {
     await client.query(`ALTER TABLE po_invoices ADD COLUMN IF NOT EXISTS wh_removed_at TIMESTAMPTZ`).catch(() => {});
     await client.query(`ALTER TABLE po_invoices ADD COLUMN IF NOT EXISTS pb_qty_wh_set BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
     await client.query(`ALTER TABLE po_invoices ADD COLUMN IF NOT EXISTS pb_qty_received TEXT`).catch(() => {});
+    // wh_synced_at (2026-10-21): set by Schedule › "Sync Tasks" — a PO created
+    // before go-live (or deleted by WH earlier) that Sync put (back) into
+    // Receive Shipments. Such a PO is listed even though it is older than go-live.
+    await client.query(`ALTER TABLE po_invoices ADD COLUMN IF NOT EXISTS wh_synced_at TIMESTAMPTZ`).catch(() => {});
 
     // wh_tasks — one row per card on the Schedule page.
     //   kind 'po'       a received PO (po_invoice_id). A split creates more

@@ -1661,8 +1661,20 @@ router.delete('/pending', async (req, res) => {
   try {
     const { ids } = req.body;
     if (!ids || ids.length === 0) return res.status(400).json({ error: 'No ids provided' });
-    await pool.query(`DELETE FROM po_invoices WHERE id = ANY($1) AND status IN ('pending', 'store_counted')`, [ids]);
-    res.json({ success: true });
+    // 2026-10-21 (Hera): say which ones were NOT deleted (and why) instead of
+    // answering plain "success" — the list page shows it to the user.
+    const del = await pool.query(
+      `DELETE FROM po_invoices WHERE id = ANY($1) AND status IN ('pending', 'store_counted') RETURNING id`, [ids]
+    );
+    const deleted = del.rows.map(r => r.id);
+    const left = await pool.query(
+      `SELECT id, po_number, invoice_number, status FROM po_invoices WHERE id = ANY($1)`, [ids]
+    );
+    res.json({
+      success: true,
+      deleted,
+      skipped: left.rows.map(r => ({ id: r.id, po_number: r.po_number || r.invoice_number, status: r.status })),
+    });
   } catch (e) {
     console.error('DELETE /api/po-invoices/pending error:', e);
     res.status(500).json({ error: e.message });

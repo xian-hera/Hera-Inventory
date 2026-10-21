@@ -8,6 +8,7 @@ import {
   Modal, List,
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
+import AddNewArrivalModal from './AddNewArrivalModal';
 import MultiSelectDropdown from '../../components/MultiSelectDropdown';
 import { useLocationMap } from '../shared/locationMap';
 import ImportTable from './importProducts/ImportTable';
@@ -99,6 +100,7 @@ function ResultIcon({ result }) {
 
 function BuyerImportProducts() {
   const navigate = useNavigate();
+  const [addArrivalOpen, setAddArrivalOpen] = useState(false); // Add New Arrival modal (2026-10-21, moved from Buyer home)
   const fileRef = useRef(null);
   const { names: locationNames } = useLocationMap();
 
@@ -498,10 +500,12 @@ function BuyerImportProducts() {
     // Fixed-width page like Buyer Home; only the pre-import table breaks out
     // to full width (FullBleed) — Hera 2026-09-24.
     <Page
-      title="Import Products"
+      title="New Products"
       backAction={stage === 'importing' ? undefined : { onAction: () => navigate('/buyer') }}
       secondaryActions={stage === 'importing' ? [] : [{ content: 'Settings', onAction: () => navigate('/buyer/import-products/settings') }]}
+      primaryAction={stage === 'importing' ? undefined : { content: 'Add New Arrival', onAction: () => setAddArrivalOpen(true) }}
     >
+      <AddNewArrivalModal open={addArrivalOpen} onClose={() => setAddArrivalOpen(false)} />
       <HeaderRuleModal open={showHeaderRule} onClose={() => setShowHeaderRule(false)} />
       <BlockStack gap="400">
         <div style={NARROW}>

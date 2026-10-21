@@ -164,7 +164,7 @@ function CountingTasksList() {
   return (
     <Page
       title="Weekly Inventory Count"
-      backAction={{ onAction: () => navigate('/buyer/inventory-count') }}
+      backAction={{ onAction: () => navigate('/buyer') }}
       primaryAction={{ content: 'Create New Count', onAction: () => navigate('/buyer/counting-tasks/new') }}
     >
       <Layout>

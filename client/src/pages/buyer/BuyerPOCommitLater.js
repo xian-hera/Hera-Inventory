@@ -45,12 +45,20 @@ function normalizedStatus(inv) {
   return s === 'committed' ? 'archived' : s;
 }
 
+// Purchase Order List columns (2026-10-21, Hera): Quantity and Subtotal are no
+// longer shown. Their cells are still built below; remove a name from
+// HIDDEN_COLUMNS to bring a column back.
+const LIST_COLUMNS = ['PO Number', 'Supplier', 'Location', 'Quantity', 'Subtotal', 'Status'];
+const HIDDEN_COLUMNS = ['Quantity', 'Subtotal'];
+
 function BuyerPOCommitLater() {
   const navigate = useNavigate();
 
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // Shown when Delete Selected leaves some invoices undeleted (2026-10-21, Hera).
+  const [deleteNotice, setDeleteNotice] = useState(null); // { sentToStore: [po], other: [po] }
   const [committing, setCommitting] = useState(false);
   const [sendingToStore, setSendingToStore] = useState(false);
   const [selectedIds, setSelectedIds] = useState([]);
@@ -226,6 +234,17 @@ function BuyerPOCommitLater() {
         body: JSON.stringify({ ids: selectedIds }),
       });
       if (!res.ok) throw new Error('Delete failed');
+      let data = {};
+      try { data = await res.json(); } catch (e) { /* older server answer: plain success */ }
+      const skipped = Array.isArray(data.skipped) ? data.skipped : [];
+      if (skipped.length > 0) {
+        setDeleteNotice({
+          sentToStore: skipped.filter(x => x.status === 'sent_to_store').map(x => x.po_number),
+          other: skipped.filter(x => x.status !== 'sent_to_store').map(x => x.po_number),
+        });
+      } else {
+        setDeleteNotice(null);
+      }
       setSelectedIds([]);
       fetchInvoices(search);
     } catch (e) {
@@ -284,18 +303,37 @@ function BuyerPOCommitLater() {
 
   return (
     <Page
-      title="Purchase Order List"
-      backAction={{ onAction: () => navigate('/buyer/po-receiving') }}
+      title="Purchase Orders"
+      backAction={{ onAction: () => navigate('/buyer') }}
+      // 2026-10-21 (Hera): this list is the Purchase Orders home. Top right:
+      // Settings, Supplier, Create PO (BOX PO was removed 2026-10-21). The bulk actions (Delete / Send / Commit Selected) that
+      // used to be here are now a button row under the filter card.
       secondaryActions={[
-        { content: 'Delete Selected', destructive: true, disabled: selectedIds.length === 0, onAction: handleDelete },
-        { content: 'Send Selected to Store', disabled: selectedIds.length === 0 || sendingToStore, onAction: () => handleSendToStore(selectedIds) },
-        { content: 'Commit Selected', disabled: selectedIds.length === 0 || committing, onAction: () => handleCommit(selectedIds) },
+        { content: 'Settings', onAction: () => navigate('/buyer/po-receiving/settings') },
+        { content: 'Supplier', onAction: () => navigate('/buyer/po-receiving/suppliers') },
       ]}
+      primaryAction={{ content: 'Create PO', onAction: () => navigate('/buyer/po-receiving/import') }}
     >
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">
             {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
+            {deleteNotice && (
+              <Banner tone="warning" onDismiss={() => setDeleteNotice(null)}>
+                <BlockStack gap="100">
+                  {deleteNotice.sentToStore.length > 0 && (
+                    <Text>
+                      {deleteNotice.sentToStore.join(', ')} {deleteNotice.sentToStore.length === 1 ? 'was' : 'were'} not deleted: {deleteNotice.sentToStore.length === 1 ? 'it is' : 'they are'} Sent to store, and the store may be counting {deleteNotice.sentToStore.length === 1 ? 'it' : 'them'}. To delete, open the PO and click Cancel Store Task first, then delete it here.
+                    </Text>
+                  )}
+                  {deleteNotice.other.length > 0 && (
+                    <Text>
+                      {deleteNotice.other.join(', ')} {deleteNotice.other.length === 1 ? 'was' : 'were'} not deleted: committed or archived purchase orders can't be deleted.
+                    </Text>
+                  )}
+                </BlockStack>
+              </Banner>
+            )}
             {anyCommitting && <Text variant="bodySm" tone="subdued">It is OK to leave this page</Text>}
 
             {failedInvoices.length > 0 && (
@@ -379,6 +417,12 @@ function BuyerPOCommitLater() {
               </BlockStack>
             </Card>
 
+            <InlineStack gap="200" align="end">
+              <Button tone="critical" disabled={selectedIds.length === 0} onClick={handleDelete}>Delete Selected</Button>
+              <Button disabled={selectedIds.length === 0 || sendingToStore} onClick={() => handleSendToStore(selectedIds)}>Send Selected to Store</Button>
+              <Button disabled={selectedIds.length === 0 || committing} onClick={() => handleCommit(selectedIds)}>Commit Selected</Button>
+            </InlineStack>
+
             <Card>
               {loading ? (
                 <InlineStack align="center"><Spinner /></InlineStack>
@@ -398,7 +442,7 @@ function BuyerPOCommitLater() {
                             onChange={toggleSelectAll}
                           />
                         </th>
-                        {['PO Number', 'Supplier', 'Location', 'Quantity', 'Subtotal', 'Status'].map((h, i) => (
+                        {LIST_COLUMNS.filter(h => !HIDDEN_COLUMNS.includes(h)).map((h, i) => (
                           <th
                             key={i}
                             style={{
@@ -415,7 +459,7 @@ function BuyerPOCommitLater() {
                     <tbody>
                       {rows.map((row, i) => (
                         <tr key={filteredInvoices[i].id} style={{ borderBottom: '1px solid #f1f1f1' }}>
-                          {row.map((cell, j) => (
+                          {row.filter((cell, j) => !HIDDEN_COLUMNS.includes(['', ...LIST_COLUMNS][j])).map((cell, j) => (
                             <td key={j} style={{ padding: '10px 10px', verticalAlign: 'top' }}>{cell}</td>
                           ))}
                         </tr>
