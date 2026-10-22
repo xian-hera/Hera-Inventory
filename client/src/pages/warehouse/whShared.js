@@ -24,13 +24,55 @@ export function truncate(text, n = CARD_TEXT_MAX) {
   return s.length > n ? `${s.slice(0, n)}…` : s;
 }
 
-// Purple location pill (task-card style).
+// Location colours (2026-10-22, Hera — Warehouse › Settings › Location
+// Color): each location's pill gets the colour set there; a location with no
+// colour is light grey (before: every pill was light purple #f1edff). Loaded
+// once per app load and shared by every pill; Settings updates the cache on
+// Save.
+export const LOC_PILL_DEFAULT = '#e4e5e7';
+let locColors = null;          // { name: '#RRGGBB' } once loaded
+let locColorsPromise = null;
+const locColorListeners = new Set();
+export function loadLocationColors() {
+  if (!locColorsPromise) {
+    locColorsPromise = fetch('/api/warehouse/location-colors')
+      .then(r => r.json())
+      .then(d => { setLocationColorsCache((d && d.colors) || {}); return locColors; })
+      .catch(() => { locColorsPromise = null; return {}; });
+  }
+  return locColorsPromise;
+}
+export function setLocationColorsCache(colors) {
+  locColors = { ...(colors || {}) };
+  locColorListeners.forEach(fn => fn(locColors));
+}
+export function useLocationColors() {
+  const [colors, setColors] = useState(locColors || {});
+  useEffect(() => {
+    locColorListeners.add(setColors);
+    if (locColors) setColors(locColors); else loadLocationColors();
+    return () => { locColorListeners.delete(setColors); };
+  }, []);
+  return colors;
+}
+// Dark text on light colours, white text on dark ones.
+export function pillTextColor(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || ''));
+  if (!m) return '#303030';
+  const n = parseInt(m[1], 16);
+  const lin = (c) => { const v = c / 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+  const L = 0.2126 * lin((n >> 16) & 255) + 0.7152 * lin((n >> 8) & 255) + 0.0722 * lin(n & 255);
+  return L > 0.35 ? '#303030' : '#ffffff';
+}
+
+// Location pill (task-card style), in the location's colour.
 export function LocPill({ name }) {
+  const colors = useLocationColors();
+  const bg = colors[name] || LOC_PILL_DEFAULT;
   return (
     <span style={{
-      // lighter purple, closer to white (Hera 2026-10-21)
-      display: 'inline-block', padding: '1px 8px', borderRadius: 999, background: '#f1edff',
-      color: '#2b1a66', fontSize: 12, fontWeight: 650, whiteSpace: 'nowrap', lineHeight: '18px',
+      display: 'inline-block', padding: '1px 8px', borderRadius: 999, background: bg,
+      color: pillTextColor(bg), fontSize: 12, fontWeight: 650, whiteSpace: 'nowrap', lineHeight: '18px',
     }}>{name}</span>
   );
 }

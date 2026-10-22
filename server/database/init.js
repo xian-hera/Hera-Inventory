@@ -1777,6 +1777,11 @@ const initDatabase = async () => {
     await client.query(`ALTER TABLE task_items ADD COLUMN IF NOT EXISTS line_note TEXT`).catch(() => {});
     await client.query(`ALTER TABLE task_items ADD COLUMN IF NOT EXISTS line_note_at TIMESTAMPTZ`).catch(() => {});
 
+    // Location colours (2026-10-22, Hera — Warehouse › Settings › Location
+    // Color): { "MTL01": "#E32A69", ... } — the location pills on the
+    // Warehouse pages use these; a location without a colour is light grey.
+    await client.query(`INSERT INTO app_settings (key, value) VALUES ('wh_location_colors', '{}'::jsonb) ON CONFLICT (key) DO NOTHING`).catch(() => {});
+
     // Ship to HQ (2026-10-22, Hera — Purchasing › Settings › Ship to HQ):
     // FALSE = this PO goes straight to the store, so it never enters WH ›
     // Receive Shipments. NULL / TRUE = normal. Decided once, when the PO is

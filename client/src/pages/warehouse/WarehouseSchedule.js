@@ -33,7 +33,13 @@ import {
 // stay at normal width.
 
 const CONTENT_W = 1280; // to be tuned by eye (Hera 2026-10-21)
-const CAP = 6;          // rows shown per half-day before "Show N more"
+// (2026-10-22, Hera) Half-days are never folded any more — every card is
+// shown and the page simply gets longer. The "Show N more" button and its
+// 6-card limit (CAP) were removed.
+const HALF_PILL = {
+  display: 'inline-block', padding: '2px 10px', borderRadius: 999, background: '#ebebeb',
+  color: '#303030', fontSize: 14, fontWeight: 700, lineHeight: '20px', whiteSpace: 'nowrap',
+};
 const HALVES = [{ id: 'AM', label: 'Morning', name: 'Morning' }, { id: 'PM', label: 'Afternoon', name: 'Afternoon' }];
 const PINK = '#e0336f';
 
@@ -391,7 +397,6 @@ function WarehouseSchedule() {
   const [saved, setSaved] = useState({});          // saved calendar (editable days only)
   const [slots, setSlots] = useState({});          // draft calendar (editable days only)
   const [sel, setSel] = useState([]);              // selected ids, in click order
-  const [expanded, setExpanded] = useState({});
   const [filter, setFilter] = useState('all');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState(null);      // { tone, text } — Go! result
@@ -450,7 +455,6 @@ function WarehouseSchedule() {
         setSlots(next);
       } else {
         setSlots(savedSlots);
-        if (!keepDraft) setExpanded({});
       }
       setSel(p => p.filter(id => ids.has(id)));
       setConflict(false);
@@ -654,7 +658,6 @@ function WarehouseSchedule() {
   const discard = () => {
     setSlots(saved);
     setSel([]);
-    setExpanded({});
     showToast('Changes discarded');
   };
 
@@ -921,8 +924,7 @@ function WarehouseSchedule() {
                       const key = slotKey(col.date, h.id);
                       const source = isLockedDay ? lockedSlots : slots;
                       const ids = (source[key] || []).filter(id => byId[id]);
-                      const exp = !!expanded[key];
-                      const vis = exp ? ids : ids.slice(0, CAP);
+                      const vis = ids; // never folded (2026-10-22)
                       // Add Here: editable day → draft move (anything except
                       // tracked-back tasks); locked day → track back
                       // (Unscheduled tasks only).
@@ -931,20 +933,17 @@ function WarehouseSchedule() {
                       return (
                         <div key={h.id} style={{
                           display: 'flex', flexDirection: 'column', gap: 6, padding: 8,
-                          borderTop: hi === 0 ? 'none' : '1px solid #e1e3e5', flex: hi === 1 ? 1 : '0 0 auto',
+                          // black line between Morning and Afternoon (2026-10-22)
+                          borderTop: hi === 0 ? 'none' : '1px solid #000', flex: hi === 1 ? 1 : '0 0 auto',
                           background: showAdd ? '#fbfdff' : 'transparent',
                         }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#303030' }}>
-                            <span>{h.label}</span>
-                            {ids.length > 0 && <span style={{ color: '#6d7175' }}>{ids.length}</span>}
+                          {/* Morning / Afternoon and the task count: same size as
+                              the weekday, in light grey pills (2026-10-22). */}
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={HALF_PILL}>{h.label}</span>
+                            {ids.length > 0 && <span style={HALF_PILL}>{ids.length}</span>}
                           </div>
                           {vis.map((id, i) => renderCard(id, i, isLockedDay))}
-                          {ids.length > CAP && (
-                            <button type="button" onClick={() => setExpanded({ ...expanded, [key]: !exp })} style={{
-                              font: 'inherit', fontSize: 12, fontWeight: 550, textAlign: 'left', padding: '4px 6px', border: 'none',
-                              borderRadius: 8, background: '#f1f1f1', cursor: 'pointer',
-                            }}>{exp ? 'Show less' : `Show ${ids.length - CAP} more`}</button>
-                          )}
                           {ids.length === 0 && !showAdd && <span style={{ fontSize: 12, color: '#8a8a8a' }}>No tasks</span>}
                           {showAdd && (
                             <button

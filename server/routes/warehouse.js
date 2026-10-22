@@ -155,6 +155,45 @@ router.get('/badges', async (req, res) => {
 
 // ─── Settings: custom task types ────────────────────────────────────────────
 
+// GET /api/warehouse/location-colors → { colors: { name: '#RRGGBB' } }
+// PUT { colors } (2026-10-22, Hera — Warehouse › Settings › Location Color).
+// The whole map is saved at once; empty / missing = no colour (light grey).
+router.get('/location-colors', async (req, res) => {
+  try {
+    const v = await getSetting(pool, 'wh_location_colors', {});
+    res.json({ colors: v && typeof v === 'object' && !Array.isArray(v) ? v : {} });
+  } catch (e) {
+    console.error('GET /api/warehouse/location-colors error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.put('/location-colors', async (req, res) => {
+  const raw = req.body && req.body.colors;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return res.status(400).json({ error: 'colors must be an object' });
+  const colors = {};
+  for (const [name, value] of Object.entries(raw)) {
+    const n = String(name || '').trim();
+    let c = String(value || '').trim();
+    if (!n || !c) continue;
+    if (!c.startsWith('#')) c = `#${c}`;
+    if (/^#[0-9a-f]{3}$/i.test(c)) c = `#${c[1]}${c[1]}${c[2]}${c[2]}${c[3]}${c[3]}`;
+    if (!/^#[0-9a-f]{6}$/i.test(c)) return res.status(400).json({ error: `${n}: "${value}" is not a colour like #E32A69.` });
+    colors[n] = c.toUpperCase();
+  }
+  try {
+    await pool.query(
+      `INSERT INTO app_settings (key, value, updated_at) VALUES ('wh_location_colors', $1::jsonb, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = $1::jsonb, updated_at = NOW()`,
+      [JSON.stringify(colors)]
+    );
+    res.json({ colors });
+  } catch (e) {
+    console.error('PUT /api/warehouse/location-colors error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 router.get('/task-types', async (req, res) => {
   try {
     res.json({ types: await getTaskTypes(pool) });

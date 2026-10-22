@@ -1,8 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Page, Layout, Card, BlockStack, InlineStack, Text, Button, Banner } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
+import { useLocationMap } from '../shared/locationMap';
+import { LOC_PILL_DEFAULT, pillTextColor, setLocationColorsCache } from './whShared';
 
 // Warehouse Settings (2026-10-21, Hera — claude/SCHEDULER_FEATURE_SPEC.md §10a).
+// (Cards since: Sync Tasks, and Location Color 2026-10-22 — see LocationColorCard.)
 // One card for now: "Custom Task" → Task Types, the options of the Type
 // dropdown in Schedule › Create task.
 //   • every type is a pill with × (delete)
@@ -14,6 +17,137 @@ import { useNavigate } from 'react-router-dom';
 //   • zero types is allowed
 // Every change is saved at once (PUT /api/warehouse/task-types). Existing
 // custom tasks keep the type text they were created with.
+
+// ─── Location Color card (2026-10-22, Hera) ─────────────────────────────────
+// One colour (HTML hex, e.g. #E32A69) per location from the shared location
+// list; the Warehouse location pills use it (no colour → light grey). Type a
+// hex, use the colour picker, or pick a preset. Saved with the card's Save
+// (PUT /api/warehouse/location-colors).
+const PRESETS = [
+  ['Soft Pink', '#F6C9D5'], ['Peach', '#F7D4BC'], ['Apricot', '#F9DDAE'], ['Butter Yellow', '#F6E9A6'],
+  ['Lime', '#E4EEB4'], ['Mint Green', '#C5EBD4'], ['Sage Green', '#C9DCC2'], ['Seafoam', '#BFE5DE'],
+  ['Pale Cyan', '#C4E9F1'], ['Sky Blue', '#C9DDF5'], ['Periwinkle', '#D1D7F4'], ['Lavender', '#E1D2F4'],
+  ['Lilac Pink', '#EBCFF0'], ['Dusty Rose', '#E8C7CE'], ['Sand', '#E9DDC9'], ['Warm Gray', '#DFDAD5'],
+  ['Cool Gray', '#D7E0E6'], ['Pale Teal', '#BFDCD8'], ['Mauve', '#DCC9DF'],
+];
+const HEX_RE = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i;
+function normHex(v) {
+  const t = String(v || '').trim();
+  if (!t) return '';
+  if (!HEX_RE.test(t)) return null;
+  let h = t.replace('#', '');
+  if (h.length === 3) h = h.split('').map(c => c + c).join('');
+  return `#${h.toUpperCase()}`;
+}
+
+function LocationColorCard() {
+  const { names } = useLocationMap();
+  const [saved, setSaved] = useState({});
+  const [draft, setDraft] = useState({});   // name → text as typed
+  const [openFor, setOpenFor] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState(null);     // { tone, text }
+
+  useEffect(() => {
+    fetch('/api/warehouse/location-colors')
+      .then(r => r.json())
+      .then(d => { const c = (d && d.colors) || {}; setSaved(c); setDraft(c); })
+      .catch(e => setMsg({ tone: 'critical', text: e.message }))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const bad = names.filter(n => normHex(draft[n]) === null);
+  const cleaned = {};
+  names.forEach(n => { const h = normHex(draft[n]); if (h) cleaned[n] = h; });
+  // keep colours of locations no longer in the list untouched
+  Object.keys(saved).forEach(n => { if (!names.includes(n)) cleaned[n] = saved[n]; });
+  const dirty = JSON.stringify(Object.entries(cleaned).sort()) !== JSON.stringify(Object.entries(saved).sort());
+
+  const save = async () => {
+    if (bad.length) { setMsg({ tone: 'critical', text: `Not a colour like #E32A69: ${bad.join(', ')}` }); return; }
+    setSaving(true); setMsg(null);
+    try {
+      const r = await fetch('/api/warehouse/location-colors', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ colors: cleaned }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'Save failed');
+      setSaved(d.colors); setDraft(d.colors); setLocationColorsCache(d.colors);
+      setMsg({ tone: 'success', text: 'Saved.' });
+    } catch (e) {
+      setMsg({ tone: 'critical', text: e.message });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card>
+      <BlockStack gap="300">
+        <Text variant="headingMd" as="h2">Location Color</Text>
+        <Text tone="subdued" variant="bodySm">
+          Colour of each location's pill on the Warehouse pages (HTML colour code, e.g. #E32A69). A location without a colour is light grey.
+        </Text>
+        {msg && <Banner tone={msg.tone} onDismiss={() => setMsg(null)}>{msg.text}</Banner>}
+        {loading ? <Text tone="subdued">Loading...</Text> : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '8px 24px' }}>
+            {names.map(n => {
+              const h = normHex(draft[n]);
+              const bg = h || LOC_PILL_DEFAULT;
+              const invalid = h === null;
+              return (
+                <div key={n} style={{ display: 'flex', alignItems: 'center', gap: 8, position: 'relative' }}>
+                  <span style={{
+                    display: 'inline-block', minWidth: 64, textAlign: 'center', padding: '2px 10px', borderRadius: 999,
+                    background: invalid ? LOC_PILL_DEFAULT : bg, color: pillTextColor(invalid ? LOC_PILL_DEFAULT : bg),
+                    fontSize: 13, fontWeight: 650, whiteSpace: 'nowrap',
+                  }}>{n}</span>
+                  <input
+                    value={draft[n] || ''}
+                    onChange={e => { setMsg(null); setDraft(prev => ({ ...prev, [n]: e.target.value })); }}
+                    placeholder="#E32A69"
+                    aria-label={`${n} colour`}
+                    style={{
+                      width: 96, padding: '6px 8px', fontSize: 14, borderRadius: 8, fontFamily: 'monospace',
+                      border: `1px solid ${invalid ? '#d72c0d' : '#c9cccf'}`,
+                    }}
+                  />
+                  <input
+                    type="color"
+                    value={h || '#E4E5E7'}
+                    onChange={e => { setMsg(null); setDraft(prev => ({ ...prev, [n]: e.target.value.toUpperCase() })); }}
+                    aria-label={`${n} colour picker`}
+                    style={{ width: 32, height: 32, padding: 0, border: 'none', background: 'none', cursor: 'pointer' }}
+                  />
+                  <Button size="slim" onClick={() => setOpenFor(openFor === n ? null : n)}>Presets</Button>
+                  {draft[n] && <Button size="slim" variant="plain" onClick={() => setDraft(prev => ({ ...prev, [n]: '' }))}>Clear</Button>}
+                  {openFor === n && (
+                    <div style={{
+                      position: 'absolute', zIndex: 20, top: 38, left: 0, background: '#fff', border: '1px solid #c9cccf',
+                      borderRadius: 10, boxShadow: '0 6px 18px rgba(0,0,0,0.15)', padding: 10,
+                      display: 'grid', gridTemplateColumns: 'repeat(5, 28px)', gap: 8,
+                    }}>
+                      {PRESETS.map(([label, hex]) => (
+                        <button key={hex} type="button" title={`${label} ${hex}`}
+                          onClick={() => { setDraft(prev => ({ ...prev, [n]: hex })); setOpenFor(null); setMsg(null); }}
+                          style={{ width: 28, height: 28, borderRadius: '50%', border: '1px solid #c9cccf', background: hex, cursor: 'pointer' }} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <InlineStack align="end" gap="300" blockAlign="center">
+          {dirty && <Text tone="subdued" variant="bodySm">Unsaved changes</Text>}
+          <Button variant="primary" onClick={save} loading={saving} disabled={!dirty}>Save</Button>
+        </InlineStack>
+      </BlockStack>
+    </Card>
+  );
+}
 
 let keySeq = 0;
 const withKeys = (list) => list.map(name => ({ key: `t${++keySeq}`, name }));
@@ -232,6 +366,9 @@ function WarehouseSettings() {
               </InlineStack>
             </BlockStack>
           </Card>
+        </Layout.Section>
+        <Layout.Section>
+          <LocationColorCard />
         </Layout.Section>
       </Layout>
     </Page>
