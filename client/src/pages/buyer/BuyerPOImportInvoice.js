@@ -177,6 +177,25 @@ function BuyerPOImportInvoice() {
   const { names: locationNames } = useLocationMap();
   const [confirmed, setConfirmed] = useState(false);
 
+  // Ship to HQ (2026-10-22, Hera): rules from Purchasing › Settings › Ship to
+  // HQ. When the chosen supplier + location match a rule, Card 1 shows the
+  // switch ("NOT shipping to HQ" / "Shipping to HQ") with the rule's value as
+  // default; it is sent once when the PO is created (a PO NOT shipping to HQ
+  // never enters WH › Receive Shipments). No match → no switch, normal PO.
+  const [hqShipRules, setHqShipRules] = useState([]);
+  const [shipToHq, setShipToHq] = useState(true);
+  useEffect(() => {
+    fetch('/api/po-settings/hq-ship-rules')
+      .then(r => r.json())
+      .then(d => setHqShipRules(Array.isArray(d && d.rules) ? d.rules : []))
+      .catch(() => setHqShipRules([]));
+  }, []);
+  const hqShipRule = supplierId && location
+    ? hqShipRules.find(r => Number(r.supplierId) === Number(supplierId) && (r.locations || []).includes(location))
+    : null;
+  useEffect(() => { setShipToHq(hqShipRule ? !!hqShipRule.shipToHq : true); }, [hqShipRule]);
+  const shipToHqParam = hqShipRule ? shipToHq : undefined;
+
   const [editingFxRate, setEditingFxRate] = useState(false);
   const [fxRateInput, setFxRateInput] = useState('');
 
@@ -699,6 +718,7 @@ function BuyerPOImportInvoice() {
           invoiceDate: invoiceDate || null,
           pbMode,
           pbQty,
+          shipToHq: shipToHqParam,
           rows: csvRows,
         }),
       });
@@ -834,7 +854,7 @@ function BuyerPOImportInvoice() {
         const createRes = await fetch('/api/po-invoices/pending', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ invoiceNumber, supplierId, location, invoiceDate: invoiceDate || null, pbMode, pbQty }),
+          body: JSON.stringify({ invoiceNumber, supplierId, location, invoiceDate: invoiceDate || null, pbMode, pbQty, shipToHq: shipToHqParam }),
         });
         const createData = await createRes.json();
         if (!createRes.ok) throw new Error(createData.error);
@@ -1320,11 +1340,42 @@ function BuyerPOImportInvoice() {
                       />
                     </div>
 
-                    <div style={{ paddingTop: '22px' }}>
-                      <Button variant="primary" onClick={handleConfirm} disabled={disabled || !supplierId || !location}>
-                        Confirm
-                      </Button>
+                  </InlineStack>
+
+                  {/* Bottom row (2026-10-22, Hera): Ship to HQ switch on the left
+                      (only when a rule matches), Confirm on the right — main
+                      action buttons always sit on the right. Confirm used to be
+                      the last item of the row above. */}
+                  <InlineStack align="space-between" blockAlign="center" wrap>
+                    <div>
+                      {hqShipRule && (
+                        <InlineStack gap="200" blockAlign="center">
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={shipToHq}
+                            aria-label="Shipping to HQ"
+                            disabled={disabled}
+                            onClick={() => setShipToHq(v => !v)}
+                            style={{
+                              width: 40, height: 22, borderRadius: 11, border: '2px solid #c9cccf', padding: 0, position: 'relative',
+                              background: shipToHq ? '#303030' : '#f1f1f1', cursor: disabled ? 'default' : 'pointer', flex: '0 0 auto',
+                            }}
+                          >
+                            <span style={{
+                              position: 'absolute', top: 2, left: shipToHq ? 20 : 2, width: 14, height: 14,
+                              borderRadius: '50%', background: shipToHq ? 'white' : '#303030', transition: 'left 0.15s',
+                            }} />
+                          </button>
+                          <span style={{ fontSize: '13px', fontWeight: 600, color: '#303030' }}>
+                            {shipToHq ? 'Shipping to HQ' : 'NOT shipping to HQ'}
+                          </span>
+                        </InlineStack>
+                      )}
                     </div>
+                    <Button variant="primary" onClick={handleConfirm} disabled={disabled || !supplierId || !location}>
+                      Confirm
+                    </Button>
                   </InlineStack>
 
                   {supplierQuery && filteredSuppliers.length === 0 && !supplierId && (

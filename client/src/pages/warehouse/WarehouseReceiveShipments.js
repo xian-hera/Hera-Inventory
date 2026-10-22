@@ -36,7 +36,7 @@ function ReceivedButton({ onClick, disabled, children = 'Receive' }) {
   );
 }
 
-// Row button (2026-10-21): label "Receive", grey, bold black text.
+// Row button (2026-10-21): label "Receive", grey, black text (2026-10-22: no outline, not bold).
 function ReceiveRowButton({ onClick, disabled }) {
   return (
     <button
@@ -44,8 +44,9 @@ function ReceiveRowButton({ onClick, disabled }) {
       onClick={onClick}
       disabled={disabled}
       style={{
-        border: '1px solid #c9cccf', borderRadius: 999, background: disabled ? '#f1f1f1' : '#e3e3e3', color: '#000',
-        padding: '8px 18px', fontSize: 14, fontWeight: 700, cursor: disabled ? 'default' : 'pointer', whiteSpace: 'nowrap',
+        // no outline, regular weight (2026-10-22, Hera)
+        border: 'none', borderRadius: 999, background: disabled ? '#f1f1f1' : '#e3e3e3', color: '#000',
+        padding: '8px 18px', fontSize: 14, fontWeight: 400, cursor: disabled ? 'default' : 'pointer', whiteSpace: 'nowrap',
       }}
     >Receive</button>
   );

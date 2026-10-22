@@ -4,6 +4,170 @@ import {
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import MultiSelectDropdown from '../../components/MultiSelectDropdown';
+import { useLocationMap } from '../shared/locationMap';
+
+// ─── Ship to HQ rules card (2026-10-22, Hera) ───────────────────────────────
+// Rules for POs that are NOT added to WH › Receive Shipments. Each rule:
+// Supplier + Locations + "Receiving in HQ" switch (the default of the
+// "Shipping to HQ" switch shown in Create New Purchase Order when a new PO's
+// supplier + location match the rule). A supplier + location pair may be in
+// one rule only. Add / Edit / Delete only change this card's draft; nothing
+// is stored until the card's Save. Server: /api/po-settings/hq-ship-rules.
+function HqSwitch({ on, onChange }) {
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={on}
+        onClick={() => onChange(!on)}
+        style={{
+          width: 40, height: 22, borderRadius: 11, border: '2px solid #c9cccf', padding: 0, position: 'relative',
+          background: on ? '#303030' : '#f1f1f1', cursor: 'pointer', flex: '0 0 auto',
+        }}
+      >
+        <span style={{
+          position: 'absolute', top: 2, left: on ? 20 : 2, width: 14, height: 14,
+          borderRadius: '50%', background: on ? 'white' : '#303030', transition: 'left 0.15s',
+        }} />
+      </button>
+      <span style={{ fontSize: 14, fontWeight: 600 }}>{on ? 'YES' : 'NO'}</span>
+    </span>
+  );
+}
+
+const SMALL_LABEL = { fontSize: 13, color: '#6d7175', marginBottom: 4, lineHeight: '1.4' };
+const LINK_BTN = { border: 'none', background: 'none', padding: 0, cursor: 'pointer', fontSize: 14 };
+
+function ShipToHqCard() {
+  const { names: locationNames } = useLocationMap();
+  const [suppliers, setSuppliers] = useState([]);
+  const [saved, setSaved] = useState([]);   // rules as stored
+  const [rows, setRows] = useState([]);     // draft: { key, supplierId, locations, shipToHq, editing }
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const keySeq = useRef(0);
+  const toRows = (rules) => rules.map(r => ({ ...r, key: ++keySeq.current, editing: false }));
+
+  useEffect(() => {
+    Promise.all([
+      fetch('/api/po-settings/hq-ship-rules').then(r => r.json()),
+      fetch('/api/po-suppliers').then(r => r.json()),
+    ]).then(([d, sup]) => {
+      const rules = Array.isArray(d && d.rules) ? d.rules : [];
+      setSaved(rules);
+      setRows(toRows(rules));
+      setSuppliers((Array.isArray(sup) ? sup : []).slice().sort((a, b) => String(a.name).localeCompare(String(b.name))));
+    }).catch(e => setError(e.message)).finally(() => setLoading(false));
+  }, []);
+
+  const supplierName = (id) => (suppliers.find(s => Number(s.id) === Number(id)) || {}).name || `#${id}`;
+  const clean = (list) => list.map(({ supplierId, locations, shipToHq }) => ({ supplierId: Number(supplierId), locations, shipToHq: !!shipToHq }));
+  const dirty = JSON.stringify(clean(rows)) !== JSON.stringify(clean(saved)) || rows.some(r => r.editing);
+
+  const update = (key, patch) => setRows(prev => prev.map(r => (r.key === key ? { ...r, ...patch } : r)));
+  // Confirm a row: supplier + at least one location, and no pair already in another rule.
+  const confirmRow = (row) => {
+    setNotice('');
+    if (!row.supplierId) { setError('Choose a supplier.'); return; }
+    if (!row.locations.length) { setError('Choose at least one location.'); return; }
+    const clash = rows.find(o => o.key !== row.key && Number(o.supplierId) === Number(row.supplierId)
+      && o.locations.some(l => row.locations.includes(l)));
+    if (clash) {
+      const l = clash.locations.find(x => row.locations.includes(x));
+      setError(`${supplierName(row.supplierId)} + ${l} is already in Rule #${rows.indexOf(clash) + 1}.`);
+      return;
+    }
+    setError('');
+    update(row.key, { editing: false });
+  };
+  const save = async () => {
+    if (rows.some(r => r.editing)) { setError('Confirm or delete the rule you are editing first.'); return; }
+    setSaving(true); setError(''); setNotice('');
+    try {
+      const res = await fetch('/api/po-settings/hq-ship-rules', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rules: clean(rows) }),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || 'Save failed');
+      setSaved(d.rules);
+      setRows(toRows(d.rules));
+      setNotice('Saved.');
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const supplierOptions = [{ label: 'Choose supplier', value: '' }, ...suppliers.map(s => ({ label: s.name, value: String(s.id) }))];
+
+  return (
+    <Card>
+      <BlockStack gap="300">
+        {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
+        {loading ? <Text tone="subdued">Loading...</Text> : (
+          <>
+            {rows.length === 0 && <Text tone="subdued">No rules yet.</Text>}
+            {rows.map((r, i) => (
+              <div key={r.key} style={{ display: 'flex', alignItems: 'flex-end', gap: 20, flexWrap: 'wrap', padding: '10px 0', borderBottom: '1px solid #e1e3e5' }}>
+                <div style={{ width: 70, fontWeight: 700, paddingBottom: 8 }}>Rule #{i + 1}</div>
+                <div style={{ width: 200 }}>
+                  <div style={SMALL_LABEL}>Supplier</div>
+                  {r.editing ? (
+                    <Select label="" labelHidden options={supplierOptions} value={r.supplierId ? String(r.supplierId) : ''}
+                      onChange={(v) => update(r.key, { supplierId: v ? Number(v) : null })} />
+                  ) : <div style={{ fontSize: 15, paddingBottom: 6 }}>{supplierName(r.supplierId)}</div>}
+                </div>
+                <div style={{ flex: '0 1 280px', minWidth: 180 }}>
+                  {r.editing ? (
+                    <MultiSelectDropdown label="Locations" options={locationNames} selected={r.locations}
+                      onChange={(v) => update(r.key, { locations: v })} placeholder="Choose locations" />
+                  ) : (
+                    <>
+                      <div style={SMALL_LABEL}>Locations</div>
+                      <div style={{ fontSize: 15, paddingBottom: 6 }}>{r.locations.join(', ')}</div>
+                    </>
+                  )}
+                </div>
+                <div style={{ width: 140 }}>
+                  <div style={SMALL_LABEL}>Receiving in HQ</div>
+                  {r.editing ? (
+                    <div style={{ paddingBottom: 6 }}><HqSwitch on={!!r.shipToHq} onChange={(v) => update(r.key, { shipToHq: v })} /></div>
+                  ) : <div style={{ fontSize: 15, paddingBottom: 6 }}>{r.shipToHq ? 'Ship to HQ' : 'NOT ship to HQ'}</div>}
+                </div>
+                <div style={{ paddingBottom: 8 }}>
+                  {r.editing
+                    ? <button type="button" style={{ ...LINK_BTN, color: '#005bd3' }} onClick={() => confirmRow(r)}>Confirm</button>
+                    : <button type="button" style={{ ...LINK_BTN, color: '#005bd3' }} onClick={() => { setNotice(''); update(r.key, { editing: true }); }}>Edit</button>}
+                </div>
+                <div style={{ marginLeft: 'auto', paddingBottom: 8 }}>
+                  <button type="button" style={{ ...LINK_BTN, color: '#d72c0d' }}
+                    onClick={() => { setNotice(''); setRows(prev => prev.filter(x => x.key !== r.key)); }}>Delete rule</button>
+                </div>
+              </div>
+            ))}
+            <InlineStack align="space-between" blockAlign="center">
+              <button type="button" style={{ ...LINK_BTN, fontSize: 15 }}
+                onClick={() => { setNotice(''); setRows(prev => [...prev, { key: ++keySeq.current, supplierId: null, locations: [], shipToHq: false, editing: true }]); }}>
+                +Add rule
+              </button>
+              <InlineStack gap="300" blockAlign="center">
+                {notice && <Text tone="success">{notice}</Text>}
+                {dirty && !notice && <Text tone="subdued" variant="bodySm">Unsaved changes</Text>}
+                <Button variant="primary" onClick={save} loading={saving} disabled={!dirty}>Save</Button>
+              </InlineStack>
+            </InlineStack>
+          </>
+        )}
+      </BlockStack>
+    </Card>
+  );
+}
 
 const METAFIELD_TYPE_OPTIONS = [{ label: 'Product', value: 'product' }, { label: 'Variant', value: 'variant' }];
 
@@ -360,6 +524,13 @@ function BuyerPOSettings() {
                 </div>
               </InlineStack>
             </Card>
+
+            <BlockStack gap="200">
+              <Text variant="headingMd">Ship to HQ</Text>
+              <Text tone="subdued">Rules for PO that not added to Warehouse Receive Shipments.</Text>
+            </BlockStack>
+
+            <ShipToHqCard />
 
             <BlockStack gap="200">
               <Text variant="headingMd">PO lock</Text>

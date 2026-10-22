@@ -127,7 +127,8 @@ async function createPoTask(client, invoiceId, effectivePb) {
 // put there by Sync Tasks, and WH has neither received nor deleted it.
 const IN_RECEIVE_SHIPMENTS_SQL = (alias, goLiveParam) =>
   `(${alias}.created_at >= ${goLiveParam}::timestamptz OR ${alias}.wh_synced_at IS NOT NULL)
-   AND ${alias}.wh_received_at IS NULL AND ${alias}.wh_removed_at IS NULL`;
+   AND ${alias}.wh_received_at IS NULL AND ${alias}.wh_removed_at IS NULL
+   AND ${alias}.wh_ship_to_hq IS NOT FALSE`; // NOT shipping to HQ (2026-10-22, Purchasing › Settings › Ship to HQ)
 
 // ─── Badges (tab counts) ────────────────────────────────────────────────────
 
@@ -469,6 +470,7 @@ router.post('/sync', async (req, res) => {
        WHERE i.status = ANY($1)
          AND NOT (${IN_RECEIVE_SHIPMENTS_SQL('i', '$2')})
          AND NOT (i.location = 'HQ' AND i.wh_received_at IS NOT NULL)
+         AND i.wh_ship_to_hq IS NOT FALSE
          AND NOT EXISTS (SELECT 1 FROM wh_tasks w
                          WHERE w.kind = 'po' AND w.po_invoice_id = i.id AND w.parent_task_id IS NULL AND w.removed_at IS NULL)`,
       [SYNC_PO_STATUSES, goLive]
@@ -914,7 +916,7 @@ async function computeDD({ poIds = [], transferIds = [], customIds = [] }) {
         [poIds, transferIds, customIds]
       ),
       poIds.length ? pool.query(
-        `SELECT id, location, pb_qty, pb_qty_wh_set, pb_qty_received,
+        `SELECT id, location, pb_qty, pb_qty_wh_set, pb_qty_received, wh_received_at IS NOT NULL AS wh_received,
                 to_char(wh_received_at AT TIME ZONE '${TZ}', 'YYYY-MM-DD') AS received_day
          FROM po_invoices WHERE id = ANY($1::int[])`,
         [poIds]
@@ -977,7 +979,8 @@ async function computeDD({ poIds = [], transferIds = [], customIds = [] }) {
     }
     for (const p of poRes.rows) {
       if (!out.pos[p.id]) out.pos[p.id] = { entries: [] };
-      out.pos[p.id].pb = { by: p.pb_qty || null, whSet: !!p.pb_qty_wh_set, wh: p.pb_qty_received || null };
+      // received (2026-10-22): WH received it → Purchasing's PB pill turns green / red.
+      out.pos[p.id].pb = { by: p.pb_qty || null, whSet: !!p.pb_qty_wh_set, wh: p.pb_qty_received || null, received: !!p.wh_received };
       if (p.location === HQ && p.received_day) {
         out.pos[p.id].entries = [{
           state: 'received', date: p.received_day, half: null, position: null,

@@ -75,6 +75,15 @@ function formatPbQty(mode, qty) {
   return `${parseInt(q, 10)} ${String(mode).toUpperCase() === 'B' ? 'B' : 'P'}`;
 }
 
+// Ship to HQ switch (2026-10-22, Hera): only sent when a Purchasing ›
+// Settings › Ship to HQ rule matched the supplier + location. false → the PO
+// never enters WH › Receive Shipments; anything else → normal (NULL).
+function shipToHqValue(v) {
+  if (v === false || v === 'false') return false;
+  if (v === true || v === 'true') return true;
+  return null;
+}
+
 // Parses a discount cell such as "10%", "-2", "2", "" or null.
 // Returns { isPercent, value } where value is the raw number (no sign flip applied).
 function parseDiscountCell(raw) {
@@ -287,7 +296,7 @@ router.get('/check-number', async (req, res) => {
 router.post('/process', async (req, res) => {
   const client = await pool.connect();
   try {
-    const { invoiceId, invoiceNumber, supplierId, location, invoiceDate, adjustment: adjustmentRaw, rows, pbMode, pbQty } = req.body;
+    const { invoiceId, invoiceNumber, supplierId, location, invoiceDate, adjustment: adjustmentRaw, rows, pbMode, pbQty, shipToHq } = req.body;
 
     if (!supplierId || !location || !rows?.length) {
       return res.status(400).json({ error: 'Missing required fields' });
@@ -545,12 +554,12 @@ router.post('/process', async (req, res) => {
       const inserted = await client.query(
         `INSERT INTO po_invoices
            (invoice_number, supplier_id, location, shopify_location_id,
-            adjustment_type, adjustment_value, has_missing_sku, has_sku_collision, has_missing_cost, po_number, invoice_date, status, updated_at, pb_qty)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'pending',NOW(),$12) RETURNING *`,
+            adjustment_type, adjustment_value, has_missing_sku, has_sku_collision, has_missing_cost, po_number, invoice_date, status, updated_at, pb_qty, wh_ship_to_hq)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'pending',NOW(),$12,$13) RETURNING *`,
         [
           invoiceNumber || null, supplierId, location, shopifyLocationId,
           adjustment?.type || null, adjustment?.value ?? null, hasMissing, hasCollision, hasMissingCost, poNumber,
-          invoiceDate || null, formatPbQty(pbMode, pbQty),
+          invoiceDate || null, formatPbQty(pbMode, pbQty), shipToHqValue(shipToHq),
         ]
       );
       invoiceRow = inserted.rows[0];
@@ -629,7 +638,7 @@ router.post('/process', async (req, res) => {
 router.post('/pending', async (req, res) => {
   const client = await pool.connect();
   try {
-    const { invoiceNumber, supplierId, location, invoiceDate, pbMode, pbQty } = req.body;
+    const { invoiceNumber, supplierId, location, invoiceDate, pbMode, pbQty, shipToHq } = req.body;
     if (!supplierId || !location) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
@@ -646,9 +655,9 @@ router.post('/pending', async (req, res) => {
     const inserted = await client.query(
       `INSERT INTO po_invoices
          (invoice_number, supplier_id, location, shopify_location_id,
-          has_missing_sku, has_sku_collision, has_missing_cost, po_number, invoice_date, status, updated_at, pb_qty)
-       VALUES ($1,$2,$3,$4,FALSE,FALSE,FALSE,$5,$6,'pending',NOW(),$7) RETURNING *`,
-      [invoiceNumber || null, supplierId, location, shopifyLocationId, poNumber, invoiceDate || null, formatPbQty(pbMode, pbQty)]
+          has_missing_sku, has_sku_collision, has_missing_cost, po_number, invoice_date, status, updated_at, pb_qty, wh_ship_to_hq)
+       VALUES ($1,$2,$3,$4,FALSE,FALSE,FALSE,$5,$6,'pending',NOW(),$7,$8) RETURNING *`,
+      [invoiceNumber || null, supplierId, location, shopifyLocationId, poNumber, invoiceDate || null, formatPbQty(pbMode, pbQty), shipToHqValue(shipToHq)]
     );
     await client.query('COMMIT');
 

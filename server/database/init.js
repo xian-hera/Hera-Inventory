@@ -1777,6 +1777,14 @@ const initDatabase = async () => {
     await client.query(`ALTER TABLE task_items ADD COLUMN IF NOT EXISTS line_note TEXT`).catch(() => {});
     await client.query(`ALTER TABLE task_items ADD COLUMN IF NOT EXISTS line_note_at TIMESTAMPTZ`).catch(() => {});
 
+    // Ship to HQ (2026-10-22, Hera — Purchasing › Settings › Ship to HQ):
+    // FALSE = this PO goes straight to the store, so it never enters WH ›
+    // Receive Shipments. NULL / TRUE = normal. Decided once, when the PO is
+    // created (switch in Create New Purchase Order › Card 1, default from the
+    // matching rule in app_settings 'po_hq_ship_rules').
+    await client.query(`ALTER TABLE po_invoices ADD COLUMN IF NOT EXISTS wh_ship_to_hq BOOLEAN`).catch(() => {});
+    await client.query(`INSERT INTO app_settings (key, value) VALUES ('po_hq_ship_rules', '[]'::jsonb) ON CONFLICT (key) DO NOTHING`).catch(() => {});
+
     // Store › PO Receiving › History (2026-10-22, Hera): a submitted PO shows
     // "Committed" (green) once Purchasing committed it. New commits / undos
     // update the label in poInvoices.js; this one-time catch-up fixes the

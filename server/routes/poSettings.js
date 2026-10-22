@@ -175,6 +175,58 @@ router.put('/po-lock', async (req, res) => {
   }
 });
 
+// ─── Ship to HQ rules (2026-10-22, Hera) ────────────────────────────────────
+// Purchasing › Settings › Ship to HQ: rules for POs that are NOT added to WH ›
+// Receive Shipments. app_settings 'po_hq_ship_rules' = [{ supplierId,
+// locations: [name], shipToHq: boolean }]. When a new PO's supplier +
+// location match a rule, Create New Purchase Order shows the "Shipping to
+// HQ" switch with the rule's value as default. One supplier + location pair
+// may be in only ONE rule. The whole list is saved at once (card's Save).
+// GET → { rules }   PUT { rules } → { rules }
+function cleanHqShipRules(raw) {
+  if (!Array.isArray(raw)) throw Object.assign(new Error('rules must be a list'), { status: 400 });
+  const seen = new Map(); // 'supplierId|location' → rule number
+  return raw.map((r, i) => {
+    const supplierId = parseInt(r && r.supplierId, 10);
+    const locations = [...new Set((Array.isArray(r && r.locations) ? r.locations : []).map(l => String(l || '').trim()).filter(Boolean))];
+    if (!Number.isInteger(supplierId) || supplierId <= 0) throw Object.assign(new Error(`Rule #${i + 1}: choose a supplier.`), { status: 400 });
+    if (locations.length === 0) throw Object.assign(new Error(`Rule #${i + 1}: choose at least one location.`), { status: 400 });
+    for (const l of locations) {
+      const k = `${supplierId}|${l}`;
+      if (seen.has(k)) throw Object.assign(new Error(`Rule #${i + 1}: ${l} is already in Rule #${seen.get(k)} for this supplier.`), { status: 400 });
+      seen.set(k, i + 1);
+    }
+    return { supplierId, locations, shipToHq: !!(r && r.shipToHq) };
+  });
+}
+
+router.get('/hq-ship-rules', async (req, res) => {
+  try {
+    const r = await pool.query(`SELECT value FROM app_settings WHERE key = 'po_hq_ship_rules'`);
+    const rules = r.rows.length && Array.isArray(r.rows[0].value) ? r.rows[0].value : [];
+    res.json({ rules });
+  } catch (e) {
+    console.error('GET /api/po-settings/hq-ship-rules error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.put('/hq-ship-rules', async (req, res) => {
+  try {
+    const rules = cleanHqShipRules(req.body && req.body.rules);
+    await pool.query(
+      `INSERT INTO app_settings (key, value, updated_at) VALUES ('po_hq_ship_rules', $1::jsonb, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = $1::jsonb, updated_at = NOW()`,
+      [JSON.stringify(rules)]
+    );
+    res.json({ rules });
+  } catch (e) {
+    if (e.status) return res.status(e.status).json({ error: e.message });
+    console.error('PUT /api/po-settings/hq-ship-rules error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // GET /api/po-settings/type-update-history
 router.get('/type-update-history', async (req, res) => {
   try {
