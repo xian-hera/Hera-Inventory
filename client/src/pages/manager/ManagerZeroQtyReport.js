@@ -369,7 +369,7 @@ function ManagerZeroQtyReport() {
   };
 
   return (
-    <Page title="Manual Inventory Count" backAction={{ onAction: () => navigate('/manager/inventory-count') }}>
+    <Page title="Manual Inventory Count" backAction={{ onAction: () => navigate('/manager') /* was the Inventory Count sub-menu (2026-10-22) */ }}>
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">
@@ -380,7 +380,7 @@ function ManagerZeroQtyReport() {
               </Banner>
             )}
             <Text variant="bodySm" tone="subdued">
-              Scan to add items · saved for 15 days · shared across this location
+              Scan to add items · saved for 15 days
             </Text>
             <Card>
               <BlockStack gap="300">
@@ -409,7 +409,7 @@ function ManagerZeroQtyReport() {
                       color: selectedIds.length === 0 ? '#8c9196' : '#d72c0d',
                       cursor: selectedIds.length === 0 ? 'not-allowed' : 'pointer',
                       fontSize: '13px', fontWeight: '500' }}>
-                    Delete selected
+                    Delete Selected
                   </button>
                   <button disabled={items.length === 0 || submitting} onClick={handleDeleteAll}
                     style={{ flex: '1 1 auto', padding: '8px 12px', borderRadius: '8px',
@@ -418,7 +418,7 @@ function ManagerZeroQtyReport() {
                       color: items.length === 0 ? '#8c9196' : 'white',
                       cursor: items.length === 0 ? 'not-allowed' : 'pointer',
                       fontSize: '13px', fontWeight: '500' }}>
-                    Delete all
+                    Delete All
                   </button>
                   <button disabled={selectedIds.length === 0 || submitting}
                     onClick={() => handleSubmitItems(selectedIds)}
@@ -428,7 +428,7 @@ function ManagerZeroQtyReport() {
                       color: selectedIds.length === 0 ? '#8c9196' : '#202223',
                       cursor: selectedIds.length === 0 ? 'not-allowed' : 'pointer',
                       fontSize: '13px', fontWeight: '500' }}>
-                    Submit selected
+                    Submit Selected
                   </button>
                   <button disabled={items.length === 0 || submitting}
                     onClick={() => handleSubmitItems(items.map(i => i.id))}
@@ -438,7 +438,7 @@ function ManagerZeroQtyReport() {
                       color: items.length === 0 ? '#8c9196' : 'white',
                       cursor: items.length === 0 ? 'not-allowed' : 'pointer',
                       fontSize: '13px', fontWeight: '500' }}>
-                    Submit all
+                    Submit All
                   </button>
                 </div>
 

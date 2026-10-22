@@ -294,18 +294,21 @@ function BuyerPOCommitLater() {
         <Text variant="bodySm" tone="subdued">Ref: {inv.invoice_number}</Text>
       )}
     </BlockStack>,
-    // Grey PB pill on a second line under the supplier (2026-10-21).
-    <BlockStack gap="050">
-      <span>{inv.supplier_name}</span>
-      {poPb(dd, inv.id) && <span><PBGreyPill pb={poPb(dd, inv.id)} /></span>}
-    </BlockStack>,
-    isPhone && poEntries(dd, inv.id).length > 0 ? (
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1 }}>
+    // PB pill (2026-10-21 under the supplier) moved under the DD pill in
+    // the Schedule column on 2026-10-22 (Hera) — on its first line when the
+    // PO has no DD pill.
+    inv.supplier_name,
+    isPhone && (poEntries(dd, inv.id).length > 0 || poPb(dd, inv.id)) ? (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
         <span>{inv.location}</span>
         <DDList entries={poEntries(dd, inv.id)} />
+        <PBGreyPill pb={poPb(dd, inv.id)} />
       </div>
     ) : inv.location,
-    <DDList entries={poEntries(dd, inv.id)} />,
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
+      <DDList entries={poEntries(dd, inv.id)} />
+      <PBGreyPill pb={poPb(dd, inv.id)} />
+    </div>,
     inv.quantity,
     (
       <span style={{ whiteSpace: 'nowrap' }}>

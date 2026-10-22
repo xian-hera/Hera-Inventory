@@ -1,20 +1,17 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Page, Layout, Card, BlockStack, InlineStack,
+  Page, Layout, Card, BlockStack,
   Text, DataTable, Banner, Spinner, Button
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
-import MultiSelectDropdown from '../../components/MultiSelectDropdown';
 // Store location: remembered per Shopify account, loaded before this page
 // renders by ManagerLocationGate (2026-09-29) — replaces reading
 // localStorage 'managerLocation' directly. See client/src/accountMemory.js.
 import { getManagerLocation } from '../../accountMemory';
 
-// 改动一：9个 Type
-const TYPE_OPTIONS = [
-  'Braid', 'Hair', 'Hair & Skin Care', 'Hera Beauty',
-  'Jewelry', 'K-Beauty', 'Makeup', 'Tools & Accessories', 'Wig',
-];
+// (2026-10-22, Hera) The Types / Date filter card was removed — the list
+// always shows every counting task of this location. Its 9-type option list
+// and the filter state went with it.
 
 const TYPE_LABEL_MAP = {
   'Hair & Skin Care': 'Care',
@@ -36,8 +33,6 @@ function ManagerCountingTasksList() {
   const [tasks, setTasks]                 = useState([]);
   const [loading, setLoading]             = useState(false);
   const [error, setError]                 = useState('');
-  const [selectedTypes, setSelectedTypes] = useState([]);
-  const [date, setDate]                   = useState('ALL');
 
   // History in past 15 days — a frozen record of tasks this manager already
   // submitted, kept below the live table so they can look back at what was
@@ -57,8 +52,6 @@ function ManagerCountingTasksList() {
       const params = new URLSearchParams();
       params.append('status', 'counting');
       params.append('location', location);
-      if (selectedTypes.length > 0) params.append('types', selectedTypes.join(','));
-      if (date !== 'ALL') params.append('date', date);
 
       const res = await fetch(`/api/tasks?${params.toString()}`);
       const data = await res.json();
@@ -69,7 +62,7 @@ function ManagerCountingTasksList() {
     } finally {
       setLoading(false);
     }
-  }, [location, selectedTypes, date]);
+  }, [location]);
 
   useEffect(() => { fetchTasks(); }, [fetchTasks]);
 
@@ -117,9 +110,11 @@ function ManagerCountingTasksList() {
       </Button>,
       <div style={{ whiteSpace: 'normal', wordBreak: 'break-word', maxWidth: '160px' }}>{typesDisplay}</div>,
       formatDate(h.created_at),
+      // "Committed" in light green (2026-10-22, Hera; was "Committed by buyer").
       <span style={{
         display: 'inline-block', padding: '4px 12px', borderRadius: '999px',
-        background: '#E1E3E5', color: '#3F4448', fontSize: '13px', fontWeight: 600, whiteSpace: 'nowrap',
+        background: h.label === 'Committed' ? '#CDFEE1' : '#E1E3E5',
+        color: h.label === 'Committed' ? '#0C5132' : '#3F4448', fontSize: '13px', fontWeight: 600, whiteSpace: 'nowrap',
       }}>
         {h.label}
       </span>,
@@ -129,38 +124,13 @@ function ManagerCountingTasksList() {
   return (
     <Page
       title="Weekly Inventory Count"
-      backAction={{ onAction: () => navigate('/manager/inventory-count') }}
+      backAction={{ onAction: () => navigate('/manager') /* was the Inventory Count sub-menu (2026-10-22) */ }}
     >
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">
             {error && <Banner tone="critical">{error}</Banner>}
 
-            <Card>
-              <InlineStack gap="400" wrap>
-                {/* 改动一：Types 多选，替换 Department */}
-                <MultiSelectDropdown
-                  label="Types"
-                  options={TYPE_OPTIONS}
-                  selected={selectedTypes}
-                  onChange={setSelectedTypes}
-                  labelMap={TYPE_LABEL_MAP}
-                />
-                <BlockStack gap="100">
-                  <Text variant="bodySm" tone="subdued">Date</Text>
-                  <select
-                    value={date}
-                    onChange={e => setDate(e.target.value)}
-                    style={{ padding: '6px 10px', border: '1px solid #c9cccf', borderRadius: '6px', fontSize: '14px' }}
-                  >
-                    <option value="ALL">ALL</option>
-                    <option value="today">Today</option>
-                    <option value="7days">7 days</option>
-                    <option value="30days">30 days</option>
-                  </select>
-                </BlockStack>
-              </InlineStack>
-            </Card>
 
             <Card>
               {loading ? <Spinner /> : (

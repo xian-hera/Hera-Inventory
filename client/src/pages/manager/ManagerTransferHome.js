@@ -3,7 +3,7 @@ import {
   Page, Layout, Card, BlockStack, InlineStack, Text, Spinner, Banner
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
-import { StatusBadge, HoldBadge } from '../shared/transferStatus';
+import { StatusBadge, HoldBadge, TagPills } from '../shared/transferStatus';
 // Store location: remembered per Shopify account, loaded before this page
 // renders by ManagerLocationGate (2026-09-29) — replaces reading
 // localStorage 'managerLocation' directly. See client/src/accountMemory.js.
@@ -109,8 +109,12 @@ function ManagerTransferHome() {
       style={{ borderBottom: '1px solid #f1f1f1', padding: '12px 4px', cursor: 'pointer' }}
     >
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', columnGap: 10, rowGap: 6 }}>
-        <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-          <Text fontWeight="semibold">{tr.shopify_transfer_name || tr.transfer_no}</Text>
+        <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, gap: 2 }}>
+          {/* tags right after the number (2026-10-22) */}
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            <Text fontWeight="semibold">{tr.shopify_transfer_name || tr.transfer_no}</Text>
+            <TagPills tags={tr.tags} />
+          </span>
           <Text tone="subdued" variant="bodySm">{tr.from_location} to {tr.to_location}</Text>
         </div>
         <DDList full entries={myEntries(tr.id)} />
@@ -129,10 +133,13 @@ function ManagerTransferHome() {
       style={{ borderBottom: '1px solid #f1f1f1', padding: '12px 4px', cursor: 'pointer' }}
     >
       <InlineStack align="space-between" blockAlign="center" wrap>
+        {/* 2026-10-22 (Hera): number · tags · locations · DD (the DD used to
+            come before the locations). */}
         <InlineStack gap="300" blockAlign="center" wrap>
           <Text fontWeight="semibold">{tr.shopify_transfer_name || tr.transfer_no}</Text>
-          <DDList full entries={myEntries(tr.id)} />
+          <TagPills tags={tr.tags} />
           <Text tone="subdued" variant="bodySm">{tr.from_location} to {tr.to_location}</Text>
+          <DDList full entries={myEntries(tr.id)} />
         </InlineStack>
         <InlineStack gap="150" blockAlign="center">
           <StatusBadge status={tr.status} />
@@ -152,25 +159,26 @@ function ManagerTransferHome() {
         borderTop: idx > 0 ? '1px solid #f1f1f1' : undefined,
       }}
     >
-      <InlineStack gap="200" blockAlign="center" wrap>
-        <span style={{
-          fontWeight: 700,
-          color: h.kind === 'transfer_receiving' ? '#008060' : '#1F3D7A',
-        }}>
-          {h.kind === 'transfer_receiving' ? '[Received]' : '[Sent]'}
-        </span>
-        {h.kind === 'transfer_receiving' && (
-          <Text tone="subdued" variant="bodySm">{h.summary?.from_location}</Text>
-        )}
-        <span style={{ fontWeight: 600, textDecoration: 'underline' }}>{h.ref_no}</span>
+      {/* 2026-10-22 (Hera): Shopify transfer number (never the Hub-internal
+          number), tags, date, and the transfer's CURRENT status pill on the
+          right. The "[Received]" / "[Sent]" prefix (and the from-location
+          after it) were removed — the list rows don't carry their kind, so
+          it always read "[Sent]". */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', columnGap: 8, rowGap: 6 }}>
+        <span style={{ fontWeight: 600, textDecoration: 'underline' }}>{h.shopify_transfer_name || '—'}</span>
+        <TagPills tags={h.transfer_tags} />
         <Text tone="subdued" variant="bodySm">{formatDate(h.created_at)}</Text>
-      </InlineStack>
+        <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          {h.transfer_status && <StatusBadge status={h.transfer_status} />}
+          {h.transfer_on_hold && <HoldBadge />}
+        </span>
+      </div>
     </div>
   );
 
   if (!location) {
     return (
-      <Page title="Transfer" backAction={{ onAction: () => navigate('/manager') }}>
+      <Page title="Transfers" backAction={{ onAction: () => navigate('/manager') }}>
         <Layout>
           <Layout.Section>
             <Banner tone="warning">Please select a location on Manager Home first.</Banner>
@@ -181,7 +189,7 @@ function ManagerTransferHome() {
   }
 
   return (
-    <Page title="Transfer" backAction={{ onAction: () => navigate('/manager') }}>
+    <Page title="Transfers" backAction={{ onAction: () => navigate('/manager') }}>
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">

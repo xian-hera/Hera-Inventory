@@ -219,44 +219,52 @@ function ManagerHome() {
 
             {tab === 'tasks' && (
             <BlockStack gap="400">
-            <Button size="large" fullWidth onClick={() => handleNavigate('/manager/inventory-count')}>
+            {/* Tasks menu (2026-10-22, Hera): Weekly / Manual Inventory Count are
+                their own buttons now (the "Inventory Count" sub-menu page is no longer
+                linked); PO Receiving → Purchase Orders, Transfer → Transfers,
+                Label Print → Price Change; new order below. */}
+            <Button size="large" fullWidth onClick={() => handleNavigate('/manager/counting-tasks')}>
               <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                Inventory Count
+                Weekly Inventory Count
                 <Badge count={badges.inventoryCount} />
               </span>
             </Button>
 
-            <Button size="large" fullWidth onClick={() => handleNavigate('/manager/wig-demo')}>
-              Demo Wig
+            <Button size="large" fullWidth onClick={() => handleNavigate('/manager/zero-qty-report')}>
+              Manual Inventory Count
             </Button>
 
             <Button size="large" fullWidth onClick={() => handleNavigate('/manager/stock-losses')}>
               Stock Loss
             </Button>
 
-            <Button size="large" fullWidth onClick={() => handleNavigate('/manager/restock-plan')}>
-              Restock
-            </Button>
-
             <Button size="large" fullWidth onClick={() => handleNavigate('/manager/po-receiving')}>
               <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                PO Receiving
+                Purchase Orders
                 <Badge count={badges.poReceiving} />
               </span>
             </Button>
 
             <Button size="large" fullWidth onClick={() => handleNavigate('/manager/transfer')}>
               <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                Transfer
+                Transfers
                 <Badge count={badges.transfer} />
               </span>
             </Button>
 
             <Button size="large" fullWidth onClick={() => handleNavigate('/manager/label-print')}>
               <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                Label Print
+                Price Change
                 <Badge count={badges.labelPrint} />
               </span>
+            </Button>
+
+            <Button size="large" fullWidth onClick={() => handleNavigate('/manager/restock-plan')}>
+              Restock
+            </Button>
+
+            <Button size="large" fullWidth onClick={() => handleNavigate('/manager/wig-demo')}>
+              Demo Wig
             </Button>
 
             <Button size="large" fullWidth onClick={() => handleNavigate('/manager/employee-cap')}>

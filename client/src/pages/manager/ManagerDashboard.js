@@ -1,14 +1,14 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Card, BlockStack, Text, Button } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
-import { StatusBadge, HoldBadge } from '../shared/transferStatus';
+import { StatusBadge, HoldBadge, TagPills } from '../shared/transferStatus';
 import { TaskTypeLabel } from '../shared/priceChangeShared';
 import { DDList, DDFull } from '../shared/ddPill';
 
 // Store › Dashboard (2026-10-22, Hera — claude/STORE_DASHBOARD_AND_LINE_NOTES.md).
 // Everything the store has to deal with today, in four cards (a card with
 // nothing in it is not shown):
-//   Incoming Delivery — POs sent to store that have a DD pill (until the
+//   Incoming Deliveries — POs sent to store that have a DD pill (until the
 //     store submits its count), transfers TO this store that are In transit /
 //     Receiving and have a DD pill, and WH custom tasks to this store (TBD or
 //     DD today or later).
@@ -123,8 +123,13 @@ function TransferRow({ tr, index, onOpen }) {
     <div style={{ ...firstRow(index), cursor: 'pointer' }} onClick={onOpen}>
       <div className="sd-row">
         <div className="sd-first">
-          <span style={linkText}>{tr.shopify_transfer_name || tr.transfer_no}</span>
-          <Text tone="subdued" variant="bodySm">{tr.from_location} to {tr.to_location}</Text>
+          {/* tags right after the number, same as the Transfers page (2026-10-22) */}
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            <span style={linkText}>{tr.shopify_transfer_name || tr.transfer_no}</span>
+            <TagPills tags={tr.tags} />
+          </span>
+          {/* Same size as the number, locations bold, "→" instead of "to" (2026-10-22). */}
+          <span style={{ fontSize: 14, color: '#303030' }}><b>{tr.from_location}</b> → <b>{tr.to_location}</b></span>
         </div>
         <div className="sd-mid"><DDList full entries={tr.dd} /></div>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -202,10 +207,6 @@ function ManagerDashboard({ location, dashboard }) {
         .sd-row { display: flex; flex-wrap: wrap; align-items: center; column-gap: 12px; row-gap: 6px; }
         .sd-first { flex: 0 0 34%; min-width: 0; display: flex; flex-direction: column; }
         .sd-mid { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
-        .sd-po-date { flex: 0 0 auto; min-width: 150px; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
-        .sd-po-qty { flex: 1 1 60px; text-align: center; }
-        .sd-po-ratio { flex: 0 0 60px; text-align: right; }
-        .sd-po-dd-mobile { display: none; }
         .sd-date-mobile { display: none; }
         .sd-table { width: 100%; border-collapse: collapse; font-size: 13px; }
         .sd-table td { padding: 10px 6px; vertical-align: middle; border-top: 1px solid #f1f1f1; }
@@ -214,22 +215,15 @@ function ManagerDashboard({ location, dashboard }) {
         @media (max-width: 767px) {
           .sd-title { padding-left: 16px; }
           .sd-first { flex: 0 1 auto; }
-          .sd-row.sd-po { flex-wrap: nowrap; column-gap: 6px; }
-          .sd-po .sd-first { flex: 1 1 90px; }
-          .sd-po-date { min-width: 0; flex: 0 0 auto; }
-          .sd-po-date .sd-dd-desktop { display: none; }
           .sd-date-desktop { display: none; }
           .sd-date-mobile { display: inline; }
-          .sd-po-qty { flex: 0 0 auto; }
-          .sd-po-ratio { flex: 0 0 40px; }
-          .sd-po-dd-mobile { display: flex; justify-content: flex-start; margin-top: 6px; }
           .sd-table td { padding: 10px 4px; }
         }
       `}</style>
       {doneError && <Text tone="critical">{doneError}</Text>}
 
       {incomingCount > 0 && (
-        <Section title="Incoming Delivery">
+        <Section title="Incoming Deliveries">
           {data.pos.map(inv => (
             <div key={`po-${inv.id}`} style={{ ...firstRow(incomingIdx++), cursor: 'pointer' }}
               onClick={() => open(`/manager/po-receiving/${inv.id}`)}>
@@ -238,23 +232,10 @@ function ManagerDashboard({ location, dashboard }) {
                   <span style={{ ...linkText, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{inv.po_number || inv.invoice_number}</span>
                   <Text tone="subdued" variant="bodySm" truncate>{inv.supplier_name}</Text>
                 </div>
-                <div className="sd-po-date">
-                  <Text variant="bodySm" tone="subdued">
-                    <span className="sd-date-desktop">{formatDate(inv.sent_to_store_at)}</span>
-                    <span className="sd-date-mobile">{formatDateCompact(inv.sent_to_store_at)}</span>
-                  </Text>
-                  <div className="sd-dd-desktop"><DDList full entries={inv.dd} /></div>
-                </div>
-                <div className="sd-po-qty"><Text variant="bodySm" tone="subdued">Qty: {inv.total_quantity}</Text></div>
-                <div className="sd-po-ratio">
-                  <Text variant="bodySm" fontWeight="medium" alignment="end"
-                    tone={Number(inv.counted_lineitems) >= Number(inv.total_lineitems) ? 'success' : 'subdued'}>
-                    {inv.counted_lineitems}/{inv.total_lineitems}
-                  </Text>
-                </div>
+                {/* Two columns only (2026-10-22, Hera): PO number + supplier | DD.
+                    The date, Qty and progress columns were removed. */}
+                <div className="sd-mid"><DDList full entries={inv.dd} /></div>
               </div>
-              {/* Phone: the DD on its own line under the row. */}
-              <div className="sd-po-dd-mobile"><DDList full entries={inv.dd} /></div>
             </div>
           ))}
           {data.incoming.map(tr => (

@@ -94,7 +94,7 @@ function ManagerPOReceiving() {
   useEffect(() => { loadHistory(); }, [loadHistory]);
 
   return (
-    <Page title="PO Receiving" backAction={{ onAction: () => navigate('/manager') }}>
+    <Page title="Purchase Orders" backAction={{ onAction: () => navigate('/manager') }}>
       {/* Same technique as the top-level Hub Home page: layout switches
           purely on viewport width (768px breakpoint) via a media query, not
           JS/resize-listener logic. Both the desktop and mobile version of
@@ -106,6 +106,7 @@ function ManagerPOReceiving() {
         .po-row { display: flex; align-items: center; flex-wrap: nowrap; gap: 12px; }
         .po-col-first { flex: 1 1 160px; min-width: 0; }
         .po-col-date { flex: 0 0 150px; text-align: center; }
+        .po-col-supplier { flex: 1 1 160px; min-width: 0; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .po-col-dd { flex: 0 0 220px; display: flex; justify-content: flex-start; }
         .po-dd-mobile { display: none; }
         .po-col-qty { flex: 0 0 100px; text-align: center; }
@@ -116,6 +117,7 @@ function ManagerPOReceiving() {
           .po-row { gap: 6px; }
           .po-col-first { flex: 1 1 90px; }
           .po-col-date { flex: 0 0 100px; }
+          .po-col-supplier { flex: 1 1 90px; }
           .po-col-qty { flex: 0 0 80px; }
           .po-col-ratio { flex: 0 0 55px; }
           .po-col-status { flex: 0 0 85px; }
@@ -123,8 +125,8 @@ function ManagerPOReceiving() {
           .po-col-dd { display: none; }
           .po-dd-mobile { display: flex; gap: 6px; margin-top: 6px; }
           .po-dd-mobile .po-col-first { flex: 1 1 90px; }
-          /* same width as Date + Qty + counted (100 + 80 + 55 + 2 gaps), so the DD starts under Date */
-          .po-dd-mobile-pills { flex: 0 0 247px; }
+          /* DD starts under the Supplier column (2026-10-22: was under Date) */
+          .po-dd-mobile-pills { flex: 1 1 auto; }
           .po-supplier-mobile { display: inline; font-size: 11px; color: #6d7175; }
           .po-date-mobile { display: inline; }
         }
@@ -161,24 +163,14 @@ function ManagerPOReceiving() {
                           distributed space based on each row's own content
                           width, so a shorter PO/supplier block on one row
                           shifted every column after it left, row by row. */}
+                      {/* 2026-10-22 (Hera): the date column is no longer shown
+                          here, and the supplier has its own column (bold)
+                          instead of sitting under the PO number. */}
                       <div className="po-row">
                         <div className="po-col-first">
-                          <BlockStack gap="0">
-                            <Text fontWeight="semibold" truncate>{inv.po_number || inv.invoice_number}</Text>
-                            <span className="po-supplier-desktop">
-                              <Text variant="bodySm" tone="subdued" truncate>{inv.supplier_name}</Text>
-                            </span>
-                            <span className="po-supplier-mobile">{truncateSupplier(inv.supplier_name)}</span>
-                          </BlockStack>
+                          <Text fontWeight="semibold" truncate>{inv.po_number || inv.invoice_number}</Text>
                         </div>
-                        <div className="po-col-date">
-                          <span className="po-date-desktop">
-                            <Text variant="bodySm" tone="subdued" alignment="center">{formatDate(inv.sent_to_store_at)}</Text>
-                          </span>
-                          <span className="po-date-mobile">
-                            <Text variant="bodySm" tone="subdued" alignment="center">{formatDateCompact(inv.sent_to_store_at)}</Text>
-                          </span>
-                        </div>
+                        <div className="po-col-supplier">{inv.supplier_name}</div>
                         <div className="po-col-dd">
                           <DDList full entries={poEntries(dd, inv.id)} />
                         </div>
@@ -196,7 +188,7 @@ function ManagerPOReceiving() {
                           </Text>
                         </div>
                       </div>
-                      {/* Phone: the DD line under Date / Qty (row gets taller). */}
+                      {/* Phone: the DD line under Supplier / Qty (row gets taller). */}
                       {poEntries(dd, inv.id).length > 0 && (
                         <div className="po-dd-mobile">
                           <div className="po-col-first" />
@@ -213,7 +205,7 @@ function ManagerPOReceiving() {
                 already submitted; see comment on the `history` state above. */}
             <Card>
               <BlockStack gap="200">
-                <Text variant="headingSm">History in past 15 days</Text>
+                {/* No card title any more (2026-10-22, Hera; was "History in past 15 days"). */}
                 {historyLoading ? (
                   <InlineStack align="center"><Spinner /></InlineStack>
                 ) : history.length === 0 ? (

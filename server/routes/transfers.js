@@ -777,14 +777,15 @@ router.get('/manager/home', async (req, res) => {
     if (!location) return res.status(400).json({ error: 'Missing location' });
 
     const receiving = await pool.query(
-      `SELECT id, transfer_no, shopify_transfer_name, from_location, to_location, status, on_hold
+      // tags: shown on Store › Transfers rows (2026-10-22)
+      `SELECT id, transfer_no, shopify_transfer_name, from_location, to_location, status, on_hold, tags
        FROM transfers
        WHERE to_location = $1 AND status IN ('in_transit','receiving')
        ORDER BY created_at ASC`,
       [location]
     );
     const sending = await pool.query(
-      `SELECT id, transfer_no, shopify_transfer_name, from_location, to_location, status, on_hold
+      `SELECT id, transfer_no, shopify_transfer_name, from_location, to_location, status, on_hold, tags
        FROM transfers
        WHERE from_location = $1 AND status IN ('loading','good_to_go','pending')
        ORDER BY created_at ASC`,
@@ -1677,6 +1678,7 @@ async function dispatchOne(id, asBuyer) {
         summary: {},
         detail: {
           transfer_no: transfer.transfer_no,
+          shopify_transfer_name: transfer.shopify_transfer_name || null, // shown instead of transfer_no (2026-10-22)
           from_location: transfer.from_location,
           to_location: transfer.to_location,
           items,
@@ -1804,6 +1806,7 @@ router.post('/:id/submit-count', async (req, res) => {
         summary: { from_location: transfer.from_location },
         detail: {
           transfer_no: transfer.transfer_no,
+          shopify_transfer_name: transfer.shopify_transfer_name || null, // shown instead of transfer_no (2026-10-22)
           from_location: transfer.from_location,
           to_location: transfer.to_location,
           items,

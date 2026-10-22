@@ -32,8 +32,13 @@ function cleanBarcode(raw) {
   return raw.replace(/^[^0-9]+/, '');
 }
 
-function ManagerLabelPrintTaskDetail() {
-  const { taskId } = useParams();
+// embedded (2026-10-22, Hera): Store › Price Change shows this page's scan
+// list directly under the Price Change Tasks card (one list per location,
+// no more separate print tasks) — then taskId comes from the prop and the
+// content is rendered without its own Page / title / back arrow.
+function ManagerLabelPrintTaskDetail({ taskId: taskIdProp, embedded = false } = {}) {
+  const params = useParams();
+  const taskId = taskIdProp || params.taskId;
   const navigate = useNavigate();
 
   const [task, setTask]         = useState(null);
@@ -592,12 +597,14 @@ ${barcodeScript}</head><body>${allLabels}</body></html>`;
     return str;
   }
 
+  if (loading && embedded) return <Text tone="subdued">Loading...</Text>;
   if (loading) return (
     <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '60vh' }}>
       <Spinner />
     </div>
   );
 
+  if (error && embedded) return <Banner tone="critical">{error}</Banner>;
   if (error) return (
     <Page title="Error" backAction={{ onAction: () => navigate('/manager/label-print') }}>
       <Banner tone="critical">{error}</Banner>
@@ -609,11 +616,8 @@ ${barcodeScript}</head><body>${allLabels}</body></html>`;
     value: String(t.id),
   }));
 
-  return (
-    <Page
-      title={task?.name || 'Print task'}
-      backAction={{ onAction: () => navigate('/manager/label-print') }}
-    >
+  const content = (
+    <>
       <Layout>
         <Layout.Section>
           <Card>
@@ -856,6 +860,15 @@ ${barcodeScript}</head><body>${allLabels}</body></html>`;
       <div style={{ height: 'var(--shopify-safe-area-inset-bottom, 80px)' }} aria-hidden="true" />
       {/* Lift Polaris modals above Shopify's Android bottom buttons (2026-09-24) */}
       <MobileModalSafeArea />
+    </>
+  );
+  if (embedded) return content;
+  return (
+    <Page
+      title={task?.name || 'Print task'}
+      backAction={{ onAction: () => navigate('/manager/label-print') }}
+    >
+      {content}
     </Page>
   );
 }

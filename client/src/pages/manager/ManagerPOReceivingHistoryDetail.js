@@ -107,8 +107,8 @@ function ManagerPOReceivingHistoryDetail() {
 
   const ITEM_FILTERS = [
     { key: 'all', label: 'All', count: totalCount },
-    { key: 'not_counted', label: 'Not counted', count: notCountedCount },
-    { key: 'off_qty', label: 'Off qty', count: offQtyCount },
+    { key: 'not_counted', label: 'Not Counted', count: notCountedCount }, // wording 2026-10-22
+    { key: 'off_qty', label: 'Wrong Qty', count: offQtyCount }, // was "Off qty" (2026-10-22)
   ];
 
   const filteredItems = items.filter(item => {

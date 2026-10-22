@@ -79,7 +79,8 @@ function ManagerTaskDetail() {
   const [loading, setLoading]         = useState(true);
   const [error, setError]             = useState('');
   const [filter, setFilter]           = useState('all');
-  const [sortAZ, setSortAZ]           = useState(false);
+  // Always sorted A→Z (2026-10-22, Hera) — the Sort button was removed.
+  const sortAZ = true;
   const [notes, setNotes]             = useState([]);
   const [noteInput, setNoteInput]     = useState('');
   const [showNoteInput, setShowNoteInput] = useState(false);
@@ -760,8 +761,8 @@ function ManagerTaskDetail() {
                           {f === 'all'
                             ? `All (${totalCount})`
                             : f === 'not_scanned'
-                              ? `Not scanned (${unprocessedCount})`
-                              : `Qty off (${qtyOffCount})`}
+                              ? `Not Scanned (${unprocessedCount})`
+                              : `Wrong Qty (${qtyOffCount})`}
                         </button>
                       ))}
                 </InlineStack>
@@ -788,20 +789,7 @@ function ManagerTaskDetail() {
                       Complete Scan & Submit
                     </button>
                   </InlineStack>
-                ) : (
-                  <button
-                    onClick={() => setSortAZ(v => !v)}
-                    style={{
-                      padding: '6px 14px', borderRadius: '20px', border: '1px solid #c9cccf',
-                      background: sortAZ ? '#1a1a1a' : 'white',
-                      color: sortAZ ? 'white' : '#202223',
-                      cursor: 'pointer', fontSize: '13px',
-                      fontWeight: sortAZ ? '600' : '400', whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {sortAZ ? 'Sort A→Z ✓' : 'Sort'}
-                  </button>
-                )}
+                ) : null /* Sort button removed 2026-10-22 — always A→Z */}
               </InlineStack>
 
               <Card>

@@ -417,7 +417,8 @@ function TransferReceivingDetail({ role, backPath, showTags }) {
                           <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>SKU</th>
                           <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Name</th>
                           <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Wig Number</th>
-                          <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Transfer qty</th>
+                          {/* Store: "Qty" (2026-10-22, Hera); Warehouse keeps "Transfer qty". */}
+                          <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>{role === 'manager' ? 'Qty' : 'Transfer qty'}</th>
                         </tr>
                       </thead>
                       <tbody>

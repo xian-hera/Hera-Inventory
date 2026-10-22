@@ -66,11 +66,24 @@ router.get('/', async (req, res) => {
     const { kind, location } = req.query;
     if (!kind || !location) return res.status(400).json({ error: 'kind and location are required' });
     await pruneExpired();
+    // Transfer rows (2026-10-22, Hera): also the transfer's Shopify number,
+    // tags and CURRENT status (Store › Transfers › History shows them; the
+    // Hub-internal transfer_no in ref_no is never shown). Matched by
+    // transfer_no; a transfer deleted since keeps only what the snapshot has.
+    const isTransfer = String(kind).startsWith('transfer_');
     const result = await pool.query(
-      `SELECT id, ref_no, label, summary, created_at
-       FROM manager_history
-       WHERE kind = $1 AND location = $2
-       ORDER BY created_at DESC`,
+      isTransfer
+        ? `SELECT h.id, h.ref_no, h.label, h.summary, h.created_at,
+                  t.id AS transfer_id, COALESCE(t.shopify_transfer_name, h.detail->>'shopify_transfer_name') AS shopify_transfer_name,
+                  t.status AS transfer_status, t.on_hold AS transfer_on_hold, t.tags AS transfer_tags
+           FROM manager_history h
+           LEFT JOIN transfers t ON t.transfer_no = h.ref_no
+           WHERE h.kind = $1 AND h.location = $2
+           ORDER BY h.created_at DESC`
+        : `SELECT id, ref_no, label, summary, created_at
+           FROM manager_history
+           WHERE kind = $1 AND location = $2
+           ORDER BY created_at DESC`,
       [kind, location]
     );
     res.json(result.rows);
@@ -86,7 +99,13 @@ router.get('/', async (req, res) => {
 // can branch on it.
 router.get('/:id', async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM manager_history WHERE id = $1', [req.params.id]);
+    const result = await pool.query(
+      `SELECT h.*, CASE WHEN h.kind LIKE 'transfer_%'
+                    THEN COALESCE((SELECT t.shopify_transfer_name FROM transfers t WHERE t.transfer_no = h.ref_no LIMIT 1),
+                                  h.detail->>'shopify_transfer_name') END AS shopify_transfer_name
+       FROM manager_history h WHERE h.id = $1`,
+      [req.params.id]
+    );
     if (result.rows.length === 0) return res.status(404).json({ error: 'History entry not found' });
     res.json(result.rows[0]);
   } catch (e) {

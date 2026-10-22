@@ -1777,6 +1777,11 @@ const initDatabase = async () => {
     await client.query(`ALTER TABLE task_items ADD COLUMN IF NOT EXISTS line_note TEXT`).catch(() => {});
     await client.query(`ALTER TABLE task_items ADD COLUMN IF NOT EXISTS line_note_at TIMESTAMPTZ`).catch(() => {});
 
+    // Store › Weekly Inventory Count › History (2026-10-22, Hera): the label
+    // "Committed by buyer" is now just "Committed" (routes/tasks.js
+    // HISTORY_LABELS); existing rows renamed once (idempotent).
+    await client.query(`UPDATE manager_history SET label = 'Committed' WHERE kind = 'task' AND label = 'Committed by buyer'`).catch(() => {});
+
     // Location colours (2026-10-22, Hera — Warehouse › Settings › Location
     // Color): { "MTL01": "#E32A69", ... } — the location pills on the
     // Warehouse pages use these; a location without a colour is light grey.

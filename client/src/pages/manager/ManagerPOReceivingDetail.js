@@ -432,8 +432,8 @@ function ManagerPOReceivingDetail() {
 
   const ITEM_FILTERS = [
     { key: 'all', label: 'All', count: totalCount },
-    { key: 'not_counted', label: 'Not counted', count: notCountedCount },
-    { key: 'off_qty', label: 'Off qty', count: offQtyCount },
+    { key: 'not_counted', label: 'Not Counted', count: notCountedCount }, // wording 2026-10-22
+    { key: 'off_qty', label: 'Wrong Qty', count: offQtyCount }, // was "Off qty" (2026-10-22)
   ];
 
   const filteredItems = items.filter(item => {
@@ -568,10 +568,10 @@ function ManagerPOReceivingDetail() {
                   checkbox in the table header below. */}
               <div className="po-bulk-actions" style={{ justifyContent: 'flex-end', gap: '8px' }}>
                 <Button onClick={handleMarkAllCorrect} loading={markingCorrect} disabled={markingCorrect || filteredItems.length === 0}>
-                  Mark all Correct
+                  Mark All Correct
                 </Button>
                 <Button onClick={handleMarkSelectedCorrect} loading={markingCorrect} disabled={markingCorrect || selectedIds.size === 0}>
-                  Mark selected Correct
+                  Mark Selected Correct
                 </Button>
               </div>
 

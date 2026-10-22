@@ -86,7 +86,7 @@ function ManagerTransferHistoryDetail() {
   return (
     <div style={{ maxWidth: '100vw', overflowX: 'hidden' }}>
       <Page
-        title={detail.transfer_no || entry.ref_no}
+        title={entry.shopify_transfer_name || detail.shopify_transfer_name || '—'} // Shopify number only (2026-10-22)
         backAction={{ onAction: () => navigate('/manager/transfer') }}
         titleMetadata={headerTag}
       >
@@ -154,8 +154,9 @@ function ManagerTransferHistoryDetail() {
                           <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>SKU</th>
                           <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Name</th>
                           <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Wig Number</th>
-                          <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Transfer qty</th>
-                          <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Qty loaded</th>
+                          {/* same headers as the live sending page (2026-10-22): was "Transfer qty" / "Qty loaded" */}
+                          <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Qty Requested</th>
+                          <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Qty Sent</th>
                         </tr>
                       </thead>
                       <tbody>

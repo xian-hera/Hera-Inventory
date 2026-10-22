@@ -438,8 +438,9 @@ function TransferPrepDetail({ role, showWigNumber, backPath, dispatchLabel, show
                         {showFromQtyColumn && (
                           <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>{transfer.from_location} qty</th>
                         )}
-                        <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Transfer qty</th>
-                        <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>Qty loaded</th>
+                        {/* Store (sending side): "Qty Requested" / "Qty Sent" (2026-10-22, Hera); Warehouse keeps the old headers. */}
+                        <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>{role === 'manager' ? 'Qty Requested' : 'Transfer qty'}</th>
+                        <th style={{ padding: '8px 10px', textAlign: 'left', color: '#6d7175' }}>{role === 'manager' ? 'Qty Sent' : 'Qty loaded'}</th>
                       </tr>
                     </thead>
                     <tbody>

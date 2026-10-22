@@ -67,7 +67,8 @@ function ManagerTaskHistoryDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState('');
   const [filter, setFilter]   = useState('all');
-  const [sortAZ, setSortAZ]   = useState(false);
+  // Always sorted A→Z (2026-10-22, Hera) — the Sort button was removed.
+  const sortAZ = true;
 
   // Type in SKU / barcode scan → read-only item lookup popup. Same UI as the
   // live page's Type in SKU flow, minus any editing.
@@ -262,7 +263,7 @@ function ManagerTaskHistoryDetail() {
               <InlineStack align="space-between">
                 <span style={{
                   display: 'inline-block', padding: '4px 12px', borderRadius: '999px',
-                  background: '#E1E3E5', color: '#3F4448', fontSize: '13px', fontWeight: 600,
+                  background: entry.label === 'Committed' ? '#CDFEE1' : '#E1E3E5', color: entry.label === 'Committed' ? '#0C5132' : '#3F4448', fontSize: '13px', fontWeight: 600, // green Committed (2026-10-22)
                 }}>
                   {entry.label}
                 </span>
@@ -353,31 +354,18 @@ function ManagerTaskHistoryDetail() {
                           {f === 'all'
                             ? `All (${totalCount})`
                             : f === 'not_scanned'
-                              ? `Not scanned (${unprocessedCount})`
-                              : `Qty off (${qtyOffCount})`}
+                              ? `Not Scanned (${unprocessedCount})`
+                              : `Wrong Qty (${qtyOffCount})`}
                         </button>
                       ))}
                 </InlineStack>
-                {!isScanCountMode && (
-                  <button
-                    onClick={() => setSortAZ(v => !v)}
-                    style={{
-                      padding: '6px 14px', borderRadius: '20px', border: '1px solid #c9cccf',
-                      background: sortAZ ? '#1a1a1a' : 'white',
-                      color: sortAZ ? 'white' : '#202223',
-                      cursor: 'pointer', fontSize: '13px',
-                      fontWeight: sortAZ ? '600' : '400', whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {sortAZ ? 'Sort A→Z ✓' : 'Sort'}
-                  </button>
-                )}
+                {/* Sort button removed 2026-10-22 — always A→Z */}
               </InlineStack>
 
               <Card>
                 <DataTable
                   columnContentTypes={['text', 'text', 'text', 'text']}
-                  headings={['Name', 'SKU', 'Detail', 'Result']}
+                  headings={['Name', 'SKU', 'Difference', 'Result']} /* was "Detail" (2026-10-22) */
                   rows={rows}
                 />
               </Card>

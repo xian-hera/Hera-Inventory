@@ -365,7 +365,7 @@ router.patch('/:id/notes', async (req, res) => {
 // bookkeeping and must not block the real action.
 const HISTORY_LABELS = {
   reviewing: 'Waiting for buyer review',
-  archived: 'Committed by buyer',
+  archived: 'Committed', // was 'Committed by buyer' (2026-10-22, Hera) — light green pill on the store side
   counting: 'Sent back to store',
 };
 async function syncTaskHistory(taskId, { bumpCreatedAt = false, label } = {}) {

@@ -749,7 +749,7 @@ function ManagerStockLosses() {
             )}
 
             <Text variant="bodySm" tone="subdued">
-              Scan to add items · saved for 15 days · shared across this location
+              Scan to add items · saved for 15 days
             </Text>
 
             <Card>
@@ -769,25 +769,25 @@ function ManagerStockLosses() {
                     disabled={selectedIds.length === 0 || submitting}
                     onClick={handleDeleteSelected}
                     style={btnBase(selectedIds.length === 0 || submitting, true, false)}>
-                    Delete selected
+                    Delete Selected
                   </button>
                   <button
                     disabled={items.length === 0 || submitting}
                     onClick={handleDeleteAll}
                     style={{ ...btnBase(items.length === 0 || submitting, false, false), background: items.length > 0 && !submitting ? '#d72c0d' : '#f6f6f7', color: items.length > 0 && !submitting ? 'white' : '#8c9196', border: 'none' }}>
-                    Delete all
+                    Delete All
                   </button>
                   <button
                     disabled={selectedIds.length === 0 || submitting}
                     onClick={() => handleSubmitItems(selectedIds)}
                     style={btnBase(selectedIds.length === 0 || submitting, false, false)}>
-                    Submit selected
+                    Submit Selected
                   </button>
                   <button
                     disabled={items.length === 0 || submitting}
                     onClick={() => handleSubmitItems(items.map(i => i.id))}
                     style={btnBase(items.length === 0 || submitting, false, true)}>
-                    Submit all
+                    Submit All
                   </button>
                 </div>
 
