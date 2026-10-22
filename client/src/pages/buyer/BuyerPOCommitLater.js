@@ -5,6 +5,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import MultiSelectDropdown from '../../components/MultiSelectDropdown';
 import { useDD, poEntries, poPb, DDList, PBGreyPill, useIsPhoneWidth } from '../shared/ddPill';
+import { useLocationMap } from '../shared/locationMap';
 
 const STATUS_PILLS = {
   pending: { label: 'Pending', tone: 'attention' },
@@ -123,10 +124,19 @@ function BuyerPOCommitLater() {
     fetchInvoices('');
   };
 
-  const locationOptions = useMemo(
-    () => [...new Set(invoices.map(inv => inv.location).filter(Boolean))].sort(),
-    [invoices]
-  );
+  // Location filter options: only locations that appear in the current
+  // invoices, in the shared location-map order (2026-10-22, Hera; was plain
+  // alphabetical). A location not in the map goes last, alphabetically.
+  const { names: locationMapNames } = useLocationMap();
+  const locationOptions = useMemo(() => {
+    const idx = new Map(locationMapNames.map((n, i) => [n, i]));
+    return [...new Set(invoices.map(inv => inv.location).filter(Boolean))].sort((a, b) => {
+      const ia = idx.has(a) ? idx.get(a) : Number.MAX_SAFE_INTEGER;
+      const ib = idx.has(b) ? idx.get(b) : Number.MAX_SAFE_INTEGER;
+      if (ia !== ib) return ia - ib;
+      return a < b ? -1 : a > b ? 1 : 0;
+    });
+  }, [invoices, locationMapNames]);
   const supplierOptions = useMemo(
     () => [...new Set(invoices.map(inv => inv.supplier_name).filter(Boolean))].sort(),
     [invoices]

@@ -16,6 +16,12 @@ const { gql } = require('../services/shopifyGql');
 const { listPublications, fetchDefinitions } = require('../services/productData');
 const { getSettings, saveSettings } = require('../services/publicationSettings');
 const job = require('../jobs/publicationScan');
+// Shared canonical location order (2026-10-22, Hera) — same order as every
+// other location list in the Hub.
+// (2026-10-22, later the same day: now reads the shared list itself via
+// getActiveLocationMap(), so it follows the order saved in Settings →
+// Locations. compareLocationNames is still imported but no longer used here.)
+const { compareLocationNames, getActiveLocationMap } = require('./shopify');
 
 const PAGE_SIZE = 100;
 
@@ -45,12 +51,17 @@ router.get('/meta', wrap(async (req, res) => {
   const [channels, types, locs] = await Promise.all([
     listPublications(),
     productTypes(),
-    pool.query('SELECT location_name FROM location_map WHERE is_active = TRUE ORDER BY location_name'),
+    // Was: pool.query('SELECT location_name FROM location_map WHERE is_active = TRUE ORDER BY location_name')
+    // — now the shared list (same source and order as GET /api/shopify/location-map).
+    getActiveLocationMap(),
   ]);
   res.json({
     channels: channels.sort((a, b) => a.name.localeCompare(b.name)),
     productTypes: types,
-    locations: locs.rows.map(r => r.location_name),
+    // Was alphabetical (SQL ORDER BY location_name only); now the shared
+    // canonical order (2026-10-22, Hera). Was:
+    //   locs.rows.map(r => r.location_name).sort(compareLocationNames)
+    locations: locs.map(l => l.name),
   });
 }));
 

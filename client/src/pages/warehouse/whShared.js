@@ -67,7 +67,9 @@ export function PbPill({ count, unit }) {
 }
 
 // Location sort order = the order of the shared location map (canonical:
-// MTL → EDM → CAL → OTT → QC → other → HQ, numeric within a prefix).
+// HQ → MTL → OTT → QC → CAL → EDM → other, numeric within a prefix; defined
+// in server/routes/shopify.js compareLocationNames; editable in Purchasing →
+// Settings → Locations since 2026-10-22).
 // Unknown names go last, alphabetically.
 export function useLocationOrder() {
   const { names } = useLocationMap();

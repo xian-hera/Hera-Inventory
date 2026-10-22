@@ -545,20 +545,63 @@ router.get('/inventory', async (req, res) => {
 // Locations" button in Buyer Settings, plus one automatic run at server
 // startup (see server/index.js) so every deploy self-heals.
 
-// Canonical display order, identical to the order the old hardcoded lists
-// used: MTL → EDM → CAL → OTT → QC → any other prefix (alphabetical) → HQ
-// last; numeric order within a prefix (MTL02 before MTL10). A brand-new
-// code like MTL12 or TOR01 slots in automatically.
-const LOCATION_PREFIX_ORDER = ['MTL', 'EDM', 'CAL', 'OTT', 'QC'];
+// Canonical display order (changed 2026-10-22, Hera): HQ first → MTL → OTT
+// → QC → CAL → EDM → any other prefix (alphabetical); numeric order within a
+// prefix (MTL02 before MTL10). A brand-new code like MTL12 slots in
+// automatically; a new prefix like TOR01 goes after EDM until it is added to
+// LOCATION_PREFIX_ORDER below.
+// Was (2026-09-24 → 2026-10-22): MTL → EDM → CAL → OTT → QC → other → HQ last,
+// i.e. LOCATION_PREFIX_ORDER = ['MTL', 'EDM', 'CAL', 'OTT', 'QC'] with HQ
+// sorted after every other prefix.
+// This is the ONE place the location order is defined: GET /location-map
+// (every frontend page, via client/src/pages/shared/locationMap.js), the Sync
+// Locations result, and GET /api/publication/meta all sort with it.
+//
+// UI-controlled order (2026-10-22, Hera): the prefix order is now edited in
+// Purchasing → Settings → Locations (second card) and saved in app_settings
+// key `location_prefix_order` (JSON array of prefixes, e.g.
+// ["HQ","MTL","OTT","QC","CAL","EDM"]). HQ is an ordinary entry of that
+// list. The constants below are only the fallback used until the first Save
+// (they produce exactly the 2026-10-22 order above).
+const LOCATION_PREFIX_ORDER = ['MTL', 'OTT', 'QC', 'CAL', 'EDM'];
+const DEFAULT_LOCATION_ORDER = ['HQ', ...LOCATION_PREFIX_ORDER];
+const LOCATION_ORDER_SETTING_KEY = 'location_prefix_order';
+// In-memory copy of the saved order; refreshed from the DB by
+// loadLocationOrder() before every sort that answers a request.
+let currentLocationOrder = DEFAULT_LOCATION_ORDER;
+
+// "MTL01" → "MTL", "HQ" → "HQ"; a name that isn't letters+digits is its own
+// prefix (whole name, upper-cased).
+function locationPrefix(name) {
+  const upper = String(name || '').toUpperCase().trim();
+  const m = upper.match(/^([A-Z]+)(\d*)$/);
+  return m ? m[1] : upper;
+}
+
+async function loadLocationOrder() {
+  const { pool } = require('../database/init');
+  try {
+    const { rows } = await pool.query('SELECT value FROM app_settings WHERE key = $1', [LOCATION_ORDER_SETTING_KEY]);
+    const saved = rows[0] && rows[0].value;
+    currentLocationOrder = Array.isArray(saved) && saved.length ? saved.map(p => String(p).toUpperCase()) : DEFAULT_LOCATION_ORDER;
+  } catch (e) {
+    // Keep the last known order; sorting must never break a page.
+    console.error('[location-order] load failed:', e.message);
+  }
+  return currentLocationOrder;
+}
+
 function locationSortKey(name) {
   const upper = String(name || '').toUpperCase().trim();
-  if (upper === 'HQ') return [LOCATION_PREFIX_ORDER.length + 1, '', 0, upper];
+  // HQ is now an ordinary prefix in the saved order (2026-10-22, UI-controlled).
+  // Was: if (upper === 'HQ') return [-1, '', 0, upper];   (HQ always first)
   const m = upper.match(/^([A-Z]+)(\d*)$/);
   const prefix = m ? m[1] : upper;
   const num = m && m[2] ? parseInt(m[2], 10) : 0;
-  const idx = LOCATION_PREFIX_ORDER.indexOf(prefix);
-  // Unknown prefixes share one group, ordered alphabetically by prefix.
-  return [idx === -1 ? LOCATION_PREFIX_ORDER.length : idx, idx === -1 ? prefix : '', num, upper];
+  const idx = currentLocationOrder.indexOf(prefix);
+  // Unknown prefixes (not in the saved order yet) go after every known one,
+  // ordered alphabetically by prefix.
+  return [idx === -1 ? currentLocationOrder.length : idx, idx === -1 ? prefix : '', num, upper];
 }
 function compareLocationNames(a, b) {
   const ka = locationSortKey(a);
@@ -578,6 +621,7 @@ function compareLocationNames(a, b) {
 // still resolve a stored location name to its shopify id through this table
 // for older records.
 async function syncLocationMap() {
+  await loadLocationOrder();
   const session = await getSession();
   if (!session) throw new Error('No session');
 
@@ -649,15 +693,22 @@ async function syncLocationMap() {
 // GET /api/shopify/location-map — active locations, canonical order.
 // Same { id, name } shape as GET /locations so pages could switch over as a
 // drop-in replacement.
+// getActiveLocationMap() (2026-10-22) is the same list for server code —
+// GET /api/publication/meta uses it, so it can never drift from this one.
+async function getActiveLocationMap() {
+  const { pool } = require('../database/init');
+  await loadLocationOrder();
+  const result = await pool.query(
+    'SELECT location_name, shopify_location_id FROM location_map WHERE is_active = TRUE'
+  );
+  return result.rows
+    .map(r => ({ id: r.shopify_location_id, name: r.location_name }))
+    .sort((a, b) => compareLocationNames(a.name, b.name));
+}
+
 router.get('/location-map', async (req, res) => {
   try {
-    const { pool } = require('../database/init');
-    const result = await pool.query(
-      'SELECT location_name, shopify_location_id FROM location_map WHERE is_active = TRUE'
-    );
-    const list = result.rows
-      .map(r => ({ id: r.shopify_location_id, name: r.location_name }))
-      .sort((a, b) => compareLocationNames(a.name, b.name));
+    const list = await getActiveLocationMap();
     res.json(list);
   } catch (e) {
     console.error('GET /api/shopify/location-map error:', e);
@@ -665,7 +716,54 @@ router.get('/location-map', async (req, res) => {
   }
 });
 
+// GET /api/shopify/location-order (2026-10-22, Hera) — for Settings →
+// Locations. `prefixes` = the distinct letter prefixes of the ACTIVE
+// locations (digits removed: MTL01…MTL11 → MTL), in the current order;
+// a prefix that isn't in the saved order yet comes after, alphabetically.
+router.get('/location-order', async (req, res) => {
+  try {
+    const list = await getActiveLocationMap(); // already sorted
+    const prefixes = [];
+    for (const l of list) {
+      const p = locationPrefix(l.name);
+      if (!prefixes.includes(p)) prefixes.push(p);
+    }
+    res.json({ prefixes, saved: currentLocationOrder });
+  } catch (e) {
+    console.error('GET /api/shopify/location-order error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PUT /api/shopify/location-order { prefixes: ['HQ','MTL',…] } — Save on
+// Settings → Locations. Saved prefixes that are not in the list sent (e.g. a
+// prefix whose locations are all inactive right now) keep their place at the
+// end, so they come back in a known position if reactivated.
+router.put('/location-order', async (req, res) => {
+  try {
+    const { pool } = require('../database/init');
+    const raw = req.body && req.body.prefixes;
+    if (!Array.isArray(raw) || raw.length === 0) return res.status(400).json({ error: 'prefixes must be a non-empty array' });
+    const prefixes = raw.map(p => String(p || '').toUpperCase().trim());
+    if (prefixes.some(p => !p)) return res.status(400).json({ error: 'Empty prefix' });
+    if (new Set(prefixes).size !== prefixes.length) return res.status(400).json({ error: 'Duplicate prefix' });
+    const previous = await loadLocationOrder();
+    const toSave = [...prefixes, ...previous.filter(p => !prefixes.includes(p))];
+    await pool.query(
+      `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2::jsonb, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = $2::jsonb, updated_at = NOW()`,
+      [LOCATION_ORDER_SETTING_KEY, JSON.stringify(toSave)]
+    );
+    currentLocationOrder = toSave;
+    res.json({ success: true, saved: toSave });
+  } catch (e) {
+    console.error('PUT /api/shopify/location-order error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // POST /api/shopify/sync-locations — Buyer Settings "Sync Locations" button.
+// (2026-10-22: the button now lives on Settings → Locations, first card.)
 router.post('/sync-locations', async (req, res) => {
   try {
     const result = await syncLocationMap();
@@ -1385,4 +1483,4 @@ router.post('/sync-variant-index', async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-module.exports = { router, getDepartment, fetchInventoryForBarcode, syncLocationMap };
+module.exports = { router, getDepartment, fetchInventoryForBarcode, syncLocationMap, compareLocationNames, getActiveLocationMap };

@@ -13,9 +13,13 @@
 //   2. per-page live calls to GET /api/shopify/locations (Transfer, BOX PO,
 //      Manager task/stock-loss/restock/zero-qty/wig-demo pages).
 //
-// The server already returns the list in canonical order (MTL → EDM → CAL →
-// OTT → QC → other → HQ, numeric within a prefix) — the same order the old
-// hardcoded lists used — so pages must NOT re-sort it.
+// The server already returns the list in canonical order (HQ → MTL → OTT →
+// QC → CAL → EDM → other, numeric within a prefix; changed 2026-10-22 — was
+// MTL → EDM → CAL → OTT → QC → other → HQ) — defined only in
+// server/routes/shopify.js compareLocationNames — so pages must NOT re-sort it.
+// Since 2026-10-22 (later) the prefix order is edited in the UI: Purchasing →
+// Settings → Locations → Order (saved in app_settings.location_prefix_order);
+// the order named above is only the default until the first Save.
 //
 // Fetched once per app load and shared by every page (module-level cache);
 // clearLocationMapCache() is called after a manual Sync so the next page

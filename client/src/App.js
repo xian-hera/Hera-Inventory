@@ -116,6 +116,8 @@ const BuyerNewArrivalSettings = lazyWithReload(() => import(/* webpackChunkName:
 const BuyerGroupGate = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './components/BuyerGroupGate'));
 const BuyerProductTypesSettings = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerProductTypesSettings'));
 const BuyerUserGroupSettings = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerUserGroupSettings'));
+// Settings → Locations: Sync + location order (2026-10-22, Hera)
+const BuyerLocationsSettings = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerLocationsSettings'));
 
 // Shown while a section file is downloading. Plain "Loading..." text, not a
 // Polaris Spinner — see claude/UI_RULES_READ_FIRST.md rule 1.
@@ -141,6 +143,7 @@ function App() {
           <Route path="/buyer" element={<BuyerHome />} />
           <Route path="/buyer/settings/user-group" element={<BuyerUserGroupSettings />} />
           <Route path="/buyer/settings/product-types" element={<BuyerProductTypesSettings />} />
+          <Route path="/buyer/settings/locations" element={<BuyerLocationsSettings />} />
           <Route path="/buyer/inventory-count" element={<BuyerInventoryCount />} />
           <Route path="/buyer/settings" element={<BuyerSettings />} />
           <Route path="/buyer/settings/new-arrival" element={<BuyerNewArrivalSettings />} />
