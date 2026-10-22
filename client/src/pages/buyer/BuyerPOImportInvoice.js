@@ -10,6 +10,7 @@ import InfoTooltip from '../../components/InfoTooltip';
 import { useLocationMap } from '../shared/locationMap';
 import { useGroupContext } from '../../userGroup'; // Purchasing user groups, 2026-10-09
 import { useDD, poEntries, poPb, DDList, PBGreyPill } from '../shared/ddPill';
+import { LineNoteIcon, LineNoteHover } from '../shared/lineNote';
 
 // Location list: comes from the shared location map (pages/shared/locationMap.js,
 // 2026-09-24). The hardcoded 19-code LOCATIONS constant that used to live here
@@ -1624,6 +1625,8 @@ function BuyerPOImportInvoice() {
                       <span style={{ fontWeight: 700 }}>CAD${fmtMoney(subtotalCad)}</span>
                     </Text>
                   </InlineStack>
+                  {/* Store line-item notes (2026-10-22): hover a row with a note → its text. */}
+                  <LineNoteHover>
                   <div style={{ overflowX: 'auto' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                       <thead>
@@ -1681,7 +1684,7 @@ function BuyerPOImportInvoice() {
                           // just not the row-wide highlight color.
                           const rowBackground = highlighted ? '#fff8e1' : (qtyMismatch ? '#fdeceb' : undefined);
                           return (
-                            <tr key={it.id} style={{ borderBottom: '1px solid #f1f1f1', background: rowBackground }}>
+                            <tr key={it.id} data-line-note={it.line_note || undefined} style={{ borderBottom: '1px solid #f1f1f1', background: rowBackground }}>
                               {itemsEditable && (
                                 <td style={{ padding: '10px 6px' }}>
                                   <input type="checkbox" checked={selectedIds.has(it.id)} onChange={() => toggleSelectItem(it.id)} />
@@ -1852,6 +1855,7 @@ function BuyerPOImportInvoice() {
                                       {it.store_count}
                                     </span>
                                   )}
+                                  <LineNoteIcon note={it.line_note} />
                                 </td>
                               )}
                             </tr>
@@ -1860,6 +1864,7 @@ function BuyerPOImportInvoice() {
                       </tbody>
                     </table>
                   </div>
+                  </LineNoteHover>
                 </BlockStack>
               </Card>
             )}

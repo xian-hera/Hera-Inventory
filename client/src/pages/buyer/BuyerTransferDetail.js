@@ -6,6 +6,7 @@ import {
 import { useNavigate, useParams } from 'react-router-dom';
 import { StatusBadge, HoldBadge, AutoCommittedBadge } from '../shared/transferStatus';
 import { useDD, transferEntries, DDList } from '../shared/ddPill';
+import { LineNoteIcon, LineNoteHover } from '../shared/lineNote';
 
 const HQ_LOCATION_NAME = 'HQ';
 
@@ -756,6 +757,8 @@ function BuyerTransferDetail() {
               )}
 
               <Card>
+                {/* Receiving side's line-item notes (2026-10-22): hover a row with a note → its text. */}
+                <LineNoteHover>
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                     <thead>
@@ -827,6 +830,7 @@ function BuyerTransferDetail() {
                         return (
                           <tr
                             key={item.id}
+                            data-line-note={item.line_note || undefined}
                             style={{
                               borderBottom: '1px solid #f1f1f1',
                               background: (receivedMismatch || loadedMismatch) ? '#fdeceb' : undefined,
@@ -934,6 +938,7 @@ function BuyerTransferDetail() {
                                     >
                                       ✓
                                     </button>
+                                    <LineNoteIcon note={item.line_note} />
                                   </InlineStack>
                                 )}
                               </td>
@@ -944,6 +949,7 @@ function BuyerTransferDetail() {
                     </tbody>
                   </table>
                 </div>
+                </LineNoteHover>
               </Card>
               {isCountedLike && hasMismatch && !editing && (
                 <Text tone="subdued" variant="bodySm">

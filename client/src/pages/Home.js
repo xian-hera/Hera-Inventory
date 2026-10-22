@@ -120,6 +120,8 @@ function Home() {
       `}</style>
       <Layout>
         <Layout.Section>
+          {/* Store (2026-10-22): state.entry = 'hub' tells the Store home it was
+              opened from here, so it picks Dashboard / Tasks by itself. */}
           <div className="home-nav-mobile">
             <BlockStack gap="400">
               <Button size="large" fullWidth onClick={() => navigate('/crm')}>
@@ -135,7 +137,7 @@ function Home() {
               {/* Warehouse / Store — large touch-friendly tiles for mobile use */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                 <Tile label="Warehouse" onClick={() => navigate('/warehouse')} />
-                <Tile label="Store" onClick={() => navigate('/manager')} />
+                <Tile label="Store" onClick={() => navigate('/manager', { state: { entry: 'hub' } })} />
               </div>
             </BlockStack>
           </div>
@@ -154,7 +156,7 @@ function Home() {
               <Button size="large" fullWidth onClick={() => navigate('/warehouse')}>
                 Warehouse
               </Button>
-              <Button size="large" fullWidth onClick={() => navigate('/manager')}>
+              <Button size="large" fullWidth onClick={() => navigate('/manager', { state: { entry: 'hub' } })}>
                 Store
               </Button>
             </BlockStack>

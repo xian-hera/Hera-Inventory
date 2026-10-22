@@ -140,9 +140,11 @@ function ManagerPOReceivingHistoryDetail() {
                   <Text tone="subdued" variant="bodySm">{countedCount}/{totalCount} counted</Text>
                 </InlineStack>
                 <InlineStack gap="200" blockAlign="center">
+                  {/* "Committed" (green) once Purchasing committed the PO (2026-10-22, Hera). */}
                   <span style={{
                     display: 'inline-block', padding: '4px 12px', borderRadius: '999px',
-                    background: '#E1E3E5', color: '#3F4448', fontSize: '13px', fontWeight: 600,
+                    background: entry.label === 'Committed' ? '#CDFEE1' : '#E1E3E5',
+                    color: entry.label === 'Committed' ? '#0C5132' : '#3F4448', fontSize: '13px', fontWeight: 600,
                   }}>
                     {entry.label}
                   </span>

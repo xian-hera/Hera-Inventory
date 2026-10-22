@@ -2,9 +2,10 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Page, Layout, Card, Button, BlockStack, InlineStack, Text, TextField, Banner, Spinner, Modal,
 } from '@shopify/polaris';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { StatusBadge, TagPills } from './transferStatus';
 import { useDD, transferEntries, DDList } from './ddPill';
+import { LineNote, LineNoteIcon, transferLineNoteApi } from './lineNote';
 import { getManagerLocation } from '../../accountMemory';
 import MobileModalSafeArea from '../../components/MobileModalSafeArea';
 
@@ -50,6 +51,10 @@ function cleanBarcode(raw) {
 // conflict modal (改动一第2点) on Delivered/Submit.
 function TransferReceivingDetail({ role, backPath, showTags }) {
   const navigate = useNavigate();
+  // Back / after-submit target (2026-10-22): where this page was opened
+  // from (state.from — e.g. the Store Dashboard), else the usual list.
+  const routerLoc = useLocation();
+  const backTo = (routerLoc.state && routerLoc.state.from) || backPath;
   const { transferId } = useParams();
   // Store only (2026-10-21, Hera — claude/SCHEDULER_FEATURE_SPEC.md §7):
   // full DD pill(s) on the line under the transfer number — only the card(s)
@@ -176,6 +181,13 @@ function TransferReceivingDetail({ role, backPath, showTags }) {
     setPopupItem(null);
     setCountInput('');
     setCountError('');
+  };
+
+  // Line-item note (2026-10-22, Hera — Store and WH › Receiving to HQ):
+  // saved at once; updates the row and the open modal.
+  const applyLineNote = (itemId, line_note) => {
+    setItems(prev => prev.map(i => (i.id === itemId ? { ...i, line_note } : i)));
+    setPopupItem(prev => (prev && prev.id === itemId ? { ...prev, line_note } : prev));
   };
 
   const postWithConflictCheck = async (url, body) => {
@@ -306,7 +318,7 @@ function TransferReceivingDetail({ role, backPath, showTags }) {
     setSubmitError('');
     try {
       await postWithConflictCheck(`/api/transfers/${transferId}/submit-count`, { force });
-      navigate(backPath);
+      navigate(backTo);
     } catch (e) {
       if (e.message !== '__conflict__') setSubmitError(e.message);
       setShowSubmitConfirm(false);
@@ -317,14 +329,14 @@ function TransferReceivingDetail({ role, backPath, showTags }) {
 
   if (loading) {
     return (
-      <Page title="Transfer" backAction={{ onAction: () => navigate(backPath) }}>
+      <Page title="Transfer" backAction={{ onAction: () => navigate(backTo) }}>
         <Layout><Layout.Section><InlineStack align="center"><Spinner /></InlineStack></Layout.Section></Layout>
       </Page>
     );
   }
   if (!transfer) {
     return (
-      <Page title="Transfer" backAction={{ onAction: () => navigate(backPath) }}>
+      <Page title="Transfer" backAction={{ onAction: () => navigate(backTo) }}>
         <Layout><Layout.Section>{error && <Banner tone="critical">{error}</Banner>}</Layout.Section></Layout>
       </Page>
     );
@@ -358,7 +370,7 @@ function TransferReceivingDetail({ role, backPath, showTags }) {
         {conflictModal}
         <Page
           title={transfer.shopify_transfer_name || transfer.transfer_no}
-          backAction={{ onAction: () => navigate(backPath) }}
+          backAction={{ onAction: () => navigate(backTo) }}
           titleMetadata={
             <InlineStack gap="150" blockAlign="center">
               {/* 2026-10-07: Warehouse only (showTags) — tags between the transfer id and the status pill */}
@@ -481,7 +493,7 @@ function TransferReceivingDetail({ role, backPath, showTags }) {
       {conflictModal}
       <Page
         title={transfer.shopify_transfer_name || transfer.transfer_no}
-        backAction={{ onAction: () => navigate(backPath) }}
+        backAction={{ onAction: () => navigate(backTo) }}
         titleMetadata={
             <InlineStack gap="150" blockAlign="center">
               {/* 2026-10-07: Warehouse only (showTags) — tags between the transfer id and the status pill */}
@@ -597,6 +609,7 @@ function TransferReceivingDetail({ role, backPath, showTags }) {
                               ) : (
                                 <span style={{ color: '#d72c0d', fontWeight: 700 }}>{item.received_quantity}</span>
                               )}
+                              <LineNoteIcon note={item.line_note} />
                             </td>
                           </tr>
                         );
@@ -683,6 +696,13 @@ function TransferReceivingDetail({ role, backPath, showTags }) {
                 }}>
                   Quantity {popupItem.quantity}　Correct
                 </button>
+
+                {/* Line-item note (2026-10-22, Hera) — under the green button, left. */}
+                <LineNote
+                  note={popupItem.line_note}
+                  onSave={async (text) => { const d = await transferLineNoteApi(transferId, popupItem.id).save(text); applyLineNote(popupItem.id, d.line_note); }}
+                  onDelete={async () => { await transferLineNoteApi(transferId, popupItem.id).remove(); applyLineNote(popupItem.id, null); }}
+                />
               </BlockStack>
             </div>
           </div>

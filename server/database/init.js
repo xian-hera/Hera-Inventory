@@ -1765,6 +1765,31 @@ const initDatabase = async () => {
       )
     `);
 
+    // ─── Store line-item notes (2026-10-22, Hera) ───────────────────────────
+    // While counting (PO Receiving, Transfer receiving, Weekly Inventory
+    // Count) the store — and WH when receiving at HQ — can leave ONE note per
+    // line item (count modal › Note). Shown to Purchasing as a blue (i) next
+    // to the store's count, with the text on hover. Empty = no note.
+    await client.query(`ALTER TABLE po_invoice_items ADD COLUMN IF NOT EXISTS line_note TEXT`).catch(() => {});
+    await client.query(`ALTER TABLE po_invoice_items ADD COLUMN IF NOT EXISTS line_note_at TIMESTAMPTZ`).catch(() => {});
+    await client.query(`ALTER TABLE transfer_items ADD COLUMN IF NOT EXISTS line_note TEXT`).catch(() => {});
+    await client.query(`ALTER TABLE transfer_items ADD COLUMN IF NOT EXISTS line_note_at TIMESTAMPTZ`).catch(() => {});
+    await client.query(`ALTER TABLE task_items ADD COLUMN IF NOT EXISTS line_note TEXT`).catch(() => {});
+    await client.query(`ALTER TABLE task_items ADD COLUMN IF NOT EXISTS line_note_at TIMESTAMPTZ`).catch(() => {});
+
+    // Store › PO Receiving › History (2026-10-22, Hera): a submitted PO shows
+    // "Committed" (green) once Purchasing committed it. New commits / undos
+    // update the label in poInvoices.js; this one-time catch-up fixes the
+    // rows written before (idempotent — only 'Submitted' rows of POs that
+    // are committed now).
+    await client.query(`
+      UPDATE manager_history h SET label = 'Committed'
+       WHERE h.kind = 'po_invoice' AND h.label = 'Submitted'
+         AND (h.detail->>'invoice_id') ~ '^[0-9]+$'
+         AND EXISTS (SELECT 1 FROM po_invoices i
+                      WHERE i.id = (h.detail->>'invoice_id')::int AND i.status IN ('committed', 'archived'))
+    `).catch(e => console.error('manager_history Committed catch-up failed:', e.message));
+
     await client.query('COMMIT');
     console.log('✓ Database initialized successfully');
   } catch (e) {

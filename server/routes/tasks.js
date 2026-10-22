@@ -681,7 +681,40 @@ router.patch('/:id/submit', async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
 
+// PUT / DELETE /api/tasks/:taskId/items/:itemId/note (2026-10-22, Hera) —
+// the store's ONE note on a line item (count modal › Note). body { text }
+// (non-empty). Purchasing sees it as a blue (i) next to the Result, text on
+// hover.
+router.put('/:taskId/items/:itemId/note', async (req, res) => {
+  try {
+    const text = String((req.body && req.body.text) || '').trim();
+    if (!text) return res.status(400).json({ error: 'Note is empty' });
+    const r = await pool.query(
+      'UPDATE task_items SET line_note = $1, line_note_at = NOW() WHERE id = $2 AND task_id = $3 RETURNING id, line_note, line_note_at',
+      [text, req.params.itemId, req.params.taskId]
+    );
+    if (r.rows.length === 0) return res.status(404).json({ error: 'Item not found' });
+    res.json(r.rows[0]);
+  } catch (e) {
+    console.error('PUT /api/tasks/:taskId/items/:itemId/note error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+router.delete('/:taskId/items/:itemId/note', async (req, res) => {
+  try {
+    const r = await pool.query(
+      'UPDATE task_items SET line_note = NULL, line_note_at = NULL WHERE id = $1 AND task_id = $2 RETURNING id',
+      [req.params.itemId, req.params.taskId]
+    );
+    if (r.rows.length === 0) return res.status(404).json({ error: 'Item not found' });
+    res.json({ id: r.rows[0].id, line_note: null, line_note_at: null });
+  } catch (e) {
+    console.error('DELETE /api/tasks/:taskId/items/:itemId/note error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
 // PATCH /api/tasks/:taskId/items/:itemId/poh
 router.patch('/:taskId/items/:itemId/poh', async (req, res) => {
   try {

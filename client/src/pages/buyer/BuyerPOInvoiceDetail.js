@@ -5,6 +5,7 @@ import {
 import { useNavigate, useParams } from 'react-router-dom';
 import InfoTooltip from '../../components/InfoTooltip';
 import { useDD, poEntries, poPb, DDList, PBGreyPill } from '../shared/ddPill';
+import { LineNoteIcon, LineNoteHover } from '../shared/lineNote';
 
 // 2026-10-16 (Hera): money shown with thousands separators, e.g. 111,791.63.
 const fmtMoney = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -289,6 +290,8 @@ function BuyerPOInvoiceDetail() {
                     <span style={{ fontWeight: 700 }}>CAD${fmtMoney(subtotalCad)}</span>
                   </Text>
                 </InlineStack>
+                {/* Store line-item notes (2026-10-22): hover a row with a note → its text. */}
+                <LineNoteHover>
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                     <thead>
@@ -329,7 +332,7 @@ function BuyerPOInvoiceDetail() {
                         // value, just not the row-wide highlight color.
                         const rowBackground = highlighted ? '#fff8e1' : (qtyMismatch ? '#fdeceb' : undefined);
                         return (
-                          <tr key={it.id} style={{ borderBottom: '1px solid #f1f1f1', background: rowBackground }}>
+                          <tr key={it.id} data-line-note={it.line_note || undefined} style={{ borderBottom: '1px solid #f1f1f1', background: rowBackground }}>
                             <td style={{ padding: '10px' }}>{it.sku}</td>
                             <td style={{ padding: '10px' }}>{it.name}</td>
                             <td style={{ padding: '10px' }}>{it.code}</td>
@@ -363,6 +366,7 @@ function BuyerPOInvoiceDetail() {
                               fontWeight: qtyMismatch ? 700 : undefined,
                             }}>
                               {committedQty(it)}
+                              <LineNoteIcon note={it.line_note} />
                             </td>
                           </tr>
                         );
@@ -370,6 +374,7 @@ function BuyerPOInvoiceDetail() {
                     </tbody>
                   </table>
                 </div>
+                </LineNoteHover>
               </BlockStack>
             </Card>
           </BlockStack>

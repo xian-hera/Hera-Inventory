@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   Page, Layout, Card, Button, BlockStack, InlineStack, Text, Banner, Spinner, TextField, Modal,
 } from '@shopify/polaris';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { StatusBadge, TagPills } from './transferStatus';
 import { useDD, transferEntries, DDList } from './ddPill';
 import { getManagerLocation } from '../../accountMemory';
@@ -32,6 +32,10 @@ import MobileModalSafeArea from '../../components/MobileModalSafeArea';
 //     offers Refresh instead of silently failing.
 function TransferPrepDetail({ role, showWigNumber, backPath, dispatchLabel, showTags }) {
   const navigate = useNavigate();
+  // Back / after-submit target (2026-10-22): where this page was opened
+  // from (state.from — e.g. the Store Dashboard), else the usual list.
+  const routerLoc = useLocation();
+  const backTo = (routerLoc.state && routerLoc.state.from) || backPath;
   const { transferId } = useParams();
   // Store only (2026-10-21, Hera — claude/SCHEDULER_FEATURE_SPEC.md §7):
   // full DD pill(s) on the line under the transfer number — only the card(s)
@@ -231,7 +235,7 @@ function TransferPrepDetail({ role, showWigNumber, backPath, dispatchLabel, show
     setError('');
     try {
       await postWithConflictCheck(`/api/transfers/${transferId}/submit-loading`, {});
-      navigate(backPath);
+      navigate(backTo);
     } catch (e) {
       if (e.message !== '__conflict__') setError(e.message);
       setSubmitting(false);
@@ -243,7 +247,7 @@ function TransferPrepDetail({ role, showWigNumber, backPath, dispatchLabel, show
     setError('');
     try {
       await postWithConflictCheck(`/api/transfers/${transferId}/dispatch`, {});
-      navigate(backPath);
+      navigate(backTo);
     } catch (e) {
       if (e.message !== '__conflict__') setError(e.message);
       setDispatching(false);
@@ -252,14 +256,14 @@ function TransferPrepDetail({ role, showWigNumber, backPath, dispatchLabel, show
 
   if (loading) {
     return (
-      <Page title="Transfer" backAction={{ onAction: () => navigate(backPath) }}>
+      <Page title="Transfer" backAction={{ onAction: () => navigate(backTo) }}>
         <Layout><Layout.Section><InlineStack align="center"><Spinner /></InlineStack></Layout.Section></Layout>
       </Page>
     );
   }
   if (!transfer) {
     return (
-      <Page title="Transfer" backAction={{ onAction: () => navigate(backPath) }}>
+      <Page title="Transfer" backAction={{ onAction: () => navigate(backTo) }}>
         <Layout><Layout.Section>{error && <Banner tone="critical">{error}</Banner>}</Layout.Section></Layout>
       </Page>
     );
@@ -317,7 +321,7 @@ function TransferPrepDetail({ role, showWigNumber, backPath, dispatchLabel, show
 
       <Page
         title={transfer.shopify_transfer_name || transfer.transfer_no}
-        backAction={{ onAction: () => navigate(backPath) }}
+        backAction={{ onAction: () => navigate(backTo) }}
         titleMetadata={
           <InlineStack gap="150" blockAlign="center">
             {/* 2026-10-07: Warehouse only (showTags) — tags go between the transfer id and the status pill */}

@@ -2,8 +2,9 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Page, Layout, Card, Button, BlockStack, InlineStack, Text, TextField, Banner, Spinner
 } from '@shopify/polaris';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { useDD, poEntries, DDList } from '../shared/ddPill';
+import { LineNote, LineNoteIcon, poLineNoteApi } from '../shared/lineNote';
 
 // Same keydown-buffer barcode-scanner listening pattern used by
 // ManagerTaskDetail.js / ManagerRestockPlan.js — kept as its own local copy
@@ -55,6 +56,10 @@ function TallyBars({ count }) {
 
 function ManagerPOReceivingDetail() {
   const navigate = useNavigate();
+  // Back / after-submit target (2026-10-22): where this page was opened
+  // from (state.from — e.g. the Store Dashboard), else the usual list.
+  const routerLoc = useLocation();
+  const backTo = (routerLoc.state && routerLoc.state.from) || '/manager/po-receiving';
   const { invoiceId } = useParams();
   const dd = useDD({ poIds: invoiceId ? [invoiceId] : [] }); // DD pills (2026-10-21)
 
@@ -75,6 +80,12 @@ function ManagerPOReceivingDetail() {
   const [savingNote, setSavingNote] = useState(false);
 
   const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
+
+  // Line-item note (2026-10-22): saved at once; updates the row and the open modal.
+  const applyLineNote = (itemId, line_note) => {
+    setItems(prev => prev.map(i => (i.id === itemId ? { ...i, line_note } : i)));
+    setPopupItem(prev => (prev && prev.id === itemId ? { ...prev, line_note } : prev));
+  };
   const [submitting, setSubmitting] = useState(false);
 
   const [exportingPdf, setExportingPdf] = useState(false);
@@ -386,7 +397,7 @@ function ManagerPOReceivingDetail() {
       const res = await fetch(`/api/po-invoices/manager/receiving/${invoiceId}/submit`, { method: 'POST' });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      navigate('/manager/po-receiving');
+      navigate(backTo);
     } catch (e) {
       setError(e.message);
       setShowSubmitConfirm(false);
@@ -397,14 +408,14 @@ function ManagerPOReceivingDetail() {
 
   if (loading) {
     return (
-      <Page title="PO Receiving" backAction={{ onAction: () => navigate('/manager/po-receiving') }}>
+      <Page title="PO Receiving" backAction={{ onAction: () => navigate(backTo) }}>
         <Layout><Layout.Section><InlineStack align="center"><Spinner /></InlineStack></Layout.Section></Layout>
       </Page>
     );
   }
   if (!invoice) {
     return (
-      <Page title="PO Receiving" backAction={{ onAction: () => navigate('/manager/po-receiving') }}>
+      <Page title="PO Receiving" backAction={{ onAction: () => navigate(backTo) }}>
         <Layout><Layout.Section>{error && <Banner tone="critical">{error}</Banner>}</Layout.Section></Layout>
       </Page>
     );
@@ -461,7 +472,7 @@ function ManagerPOReceivingDetail() {
       `}</style>
       <Page
         title={invoice.po_number || invoice.invoice_number}
-        backAction={{ onAction: () => navigate('/manager/po-receiving') }}
+        backAction={{ onAction: () => navigate(backTo) }}
         secondaryActions={[
           { content: 'Export PDF', onAction: handleExportPdf, loading: exportingPdf, disabled: exportingPdf },
         ]}
@@ -620,6 +631,7 @@ function ManagerPOReceivingDetail() {
                               ) : (
                                 <span style={{ color: '#d72c0d', fontWeight: 700 }}>{item.store_count}</span>
                               )}
+                              <LineNoteIcon note={item.line_note} />
                             </td>
                           </tr>
                         );
@@ -751,6 +763,13 @@ function ManagerPOReceivingDetail() {
                 }}>
                   Quantity {popupItem.quantity}　Correct
                 </button>
+
+                {/* Line-item note (2026-10-22, Hera) — under the green button, left. */}
+                <LineNote
+                  note={popupItem.line_note}
+                  onSave={async (text) => { const d = await poLineNoteApi(invoiceId, popupItem.id).save(text); applyLineNote(popupItem.id, d.line_note); }}
+                  onDelete={async () => { await poLineNoteApi(invoiceId, popupItem.id).remove(); applyLineNote(popupItem.id, null); }}
+                />
               </BlockStack>
             </div>
           </div>

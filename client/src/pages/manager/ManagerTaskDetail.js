@@ -3,9 +3,10 @@ import {
   Page, Layout, Card, Button, BlockStack, InlineStack,
   Text, DataTable, Banner, TextField, Spinner
 } from '@shopify/polaris';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { fetchLocationMap } from '../shared/locationMap';
 import FulfilCountInfo from '../shared/FulfilCountInfo';
+import { LineNote, LineNoteIcon, taskLineNoteApi } from '../shared/lineNote';
 import useKeyboardInset from '../../components/useKeyboardInset';
 // Store location: remembered per Shopify account, loaded before this page
 // renders by ManagerLocationGate (2026-09-29) — replaces reading
@@ -69,6 +70,10 @@ function cleanBarcode(raw) {
 
 function ManagerTaskDetail() {
   const navigate = useNavigate();
+  // Back / after-submit target (2026-10-22): where this page was opened
+  // from (state.from — e.g. the Store Dashboard), else the usual list.
+  const routerLoc = useLocation();
+  const backTo = (routerLoc.state && routerLoc.state.from) || '/manager/counting-tasks';
   const { taskId } = useParams();
   const [task, setTask]               = useState(null);
   const [loading, setLoading]         = useState(true);
@@ -348,6 +353,13 @@ function ManagerTaskDetail() {
     return true;
   };
 
+  // Line-item note (2026-10-22, Hera): saved at once; updates the row and
+  // the open modal. A Reset of the count keeps the note.
+  const applyLineNote = (itemId, line_note) => {
+    setTask(prev => ({ ...prev, items: prev.items.map(i => (i.id === itemId ? { ...i, line_note } : i)) }));
+    setPopupItem(prev => (prev && prev.id === itemId ? { ...prev, line_note } : prev));
+  };
+
   const handleResetConfirmed = async () => {
     if (!popupItem) return;
     const currentSoh = popupSoh;
@@ -416,7 +428,7 @@ function ManagerTaskDetail() {
       const res = await fetch(`/api/tasks/${taskId}/complete-scan`, { method: 'PATCH' });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to complete scan');
-      navigate('/manager/counting-tasks');
+      navigate(backTo);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -479,7 +491,7 @@ function ManagerTaskDetail() {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
       });
-      navigate('/manager/counting-tasks');
+      navigate(backTo);
     } catch (e) {
       setError('Failed to submit task');
     } finally {
@@ -488,13 +500,13 @@ function ManagerTaskDetail() {
   };
 
   if (loading) return (
-    <Page title="Task" backAction={{ onAction: () => navigate('/manager/counting-tasks') }}>
+    <Page title="Task" backAction={{ onAction: () => navigate(backTo) }}>
       <Spinner />
     </Page>
   );
 
   if (!task) return (
-    <Page title="Task" backAction={{ onAction: () => navigate('/manager/counting-tasks') }}>
+    <Page title="Task" backAction={{ onAction: () => navigate(backTo) }}>
       <Banner tone="critical">{error || 'Task not found'}</Banner>
     </Page>
   );
@@ -601,7 +613,7 @@ function ManagerTaskDetail() {
       <div onClick={() => openPopup(item)} style={{ cursor: 'pointer' }}>{nameSku}</div>,
       <div onClick={() => openPopup(item)} style={{ cursor: 'pointer' }}>{item.soh !== null ? String(item.soh) : ''}</div>,
       <div onClick={() => openPopup(item)} style={{ cursor: 'pointer' }}><InlineStack gap="050">{scanBars}</InlineStack></div>,
-      <div onClick={() => openPopup(item)} style={{ cursor: 'pointer' }}>{pohDisplay}</div>,
+      <div onClick={() => openPopup(item)} style={{ cursor: 'pointer' }}>{pohDisplay}<LineNoteIcon note={item.line_note} /></div>,
     ];
   });
 
@@ -611,7 +623,7 @@ function ManagerTaskDetail() {
         title={task.task_no}
         // 改动一：subtitle 显示 types
         subtitle={typesLabel}
-        backAction={{ onAction: () => navigate('/manager/counting-tasks') }}
+        backAction={{ onAction: () => navigate(backTo) }}
       >
         <Layout>
           <Layout.Section>
@@ -988,10 +1000,18 @@ function ManagerTaskDetail() {
                         so every other location keeps showing nothing here. It
                         replaces the old one-line "N committed" text. */}
                     <FulfilCountInfo soh={popupSoh} committed={popupCommitted} picked={popupPicked} />
+                    {/* Line-item note (2026-10-22, Hera): Note button right of
+                        Check History; text box / saved note below them. */}
+                    <LineNote
+                      note={popupItem.line_note}
+                      onSave={async (text) => { const d = await taskLineNoteApi(taskId, popupItem.id).save(text); applyLineNote(popupItem.id, d.line_note); }}
+                      onDelete={async () => { await taskLineNoteApi(taskId, popupItem.id).remove(); applyLineNote(popupItem.id, null); }}
+                      leading={(
                     <button
                       onClick={() => openHistory(popupItem.barcode)}
                       disabled={historyLoading}
                       style={{
+                        flex: 1, // still as wide as before, the Note button sits on its right
                         padding: '8px 16px', borderRadius: '8px',
                         border: '1px solid #c9cccf', background: 'white',
                         color: historyLoading ? '#8c9196' : '#202223',
@@ -1000,6 +1020,8 @@ function ManagerTaskDetail() {
                       }}>
                       {historyLoading ? '...' : 'Check History ↗'}
                     </button>
+                      )}
+                    />
                   </>
                 )}
               </BlockStack>

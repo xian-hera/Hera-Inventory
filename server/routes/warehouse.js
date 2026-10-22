@@ -891,13 +891,13 @@ const CARD_STORE_SQL = `CASE
   WHEN tr.from_location = 'HQ' THEN tr.to_location
   ELSE tr.from_location END`;
 
-router.post('/dd', async (req, res) => {
-  const poIds = toIdList(req.body && req.body.poIds);
-  const transferIds = toIdList(req.body && req.body.transferIds);
+// Shared by POST /dd and GET /store-custom. customIds = wh_tasks ids of
+// custom tasks (2026-10-22, Store › Dashboard) → out.custom[id].
+async function computeDD({ poIds = [], transferIds = [], customIds = [] }) {
   const today = torontoToday();
-  const out = { today, pos: {}, transfers: {} };
-  if (poIds.length === 0 && transferIds.length === 0) return res.json(out);
-  try {
+  const out = { today, pos: {}, transfers: {}, custom: {} };
+  if (poIds.length === 0 && transferIds.length === 0 && customIds.length === 0) return out;
+  {
     if (transferIds.length) await ensureTransferTasks(pool);
     const [taskRes, poRes] = await Promise.all([
       pool.query(
@@ -909,8 +909,9 @@ router.post('/dd', async (req, res) => {
          LEFT JOIN transfers tr ON tr.id = w.transfer_id
          WHERE w.removed_at IS NULL
            AND ((w.kind = 'po' AND w.po_invoice_id = ANY($1::int[]))
-             OR (w.kind = 'transfer' AND w.transfer_id = ANY($2::int[])))`,
-        [poIds, transferIds]
+             OR (w.kind = 'transfer' AND w.transfer_id = ANY($2::int[]))
+             OR (w.kind = 'custom' AND w.id = ANY($3::int[])))`,
+        [poIds, transferIds, customIds]
       ),
       poIds.length ? pool.query(
         `SELECT id, location, pb_qty, pb_qty_wh_set, pb_qty_received,
@@ -969,8 +970,8 @@ router.post('/dd', async (req, res) => {
       entry.leg = t.leg || null;
       entry.pbCount = t.kind === 'po' ? t.pb_count : null;
       entry.pbUnit = t.kind === 'po' ? t.pb_unit : null;
-      const bucket = t.kind === 'po' ? out.pos : out.transfers;
-      const id = t.kind === 'po' ? t.po_invoice_id : t.transfer_id;
+      const bucket = t.kind === 'po' ? out.pos : t.kind === 'custom' ? out.custom : out.transfers;
+      const id = t.kind === 'po' ? t.po_invoice_id : t.kind === 'custom' ? t.id : t.transfer_id;
       if (!bucket[id]) bucket[id] = { entries: [] };
       bucket[id].entries.push(entry);
     }
@@ -984,13 +985,51 @@ router.post('/dd', async (req, res) => {
         }];
       }
     }
-    for (const b of [...Object.values(out.pos), ...Object.values(out.transfers)]) {
+    for (const b of [...Object.values(out.pos), ...Object.values(out.transfers), ...Object.values(out.custom)]) {
       sortEntries(b.entries);
       b.entries.forEach(e => { delete e.order; });
     }
+  }
+  return out;
+}
+
+router.post('/dd', async (req, res) => {
+  try {
+    const out = await computeDD({
+      poIds: toIdList(req.body && req.body.poIds),
+      transferIds: toIdList(req.body && req.body.transferIds),
+    });
+    delete out.custom;
     res.json(out);
   } catch (e) {
     console.error('POST /api/warehouse/dd error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/warehouse/store-custom?location=MTL01 (2026-10-22, Hera — Store ›
+// Dashboard › Incoming Delivery): WH custom tasks going to this store that
+// carry a DD — unscheduled (TBD) or scheduled today or later.
+// → [{ id, type, title, entry }]
+router.get('/store-custom', async (req, res) => {
+  const location = String(req.query.location || '').trim();
+  if (!location) return res.status(400).json({ error: 'location required' });
+  try {
+    const today = torontoToday();
+    const r = await pool.query(
+      `SELECT id, custom_type, custom_title FROM wh_tasks
+        WHERE kind = 'custom' AND removed_at IS NULL AND to_location = $1
+          AND (sched_date IS NULL OR sched_date >= $2::date)
+        ORDER BY sched_date NULLS LAST, sched_half, sched_pos, id`,
+      [location, today]
+    );
+    const dd = await computeDD({ customIds: r.rows.map(x => x.id) });
+    res.json(r.rows.map(x => ({
+      id: x.id, type: x.custom_type || 'Custom', title: x.custom_title || '',
+      entry: ((dd.custom[x.id] || {}).entries || [])[0] || null,
+    })).filter(x => x.entry));
+  } catch (e) {
+    console.error('GET /api/warehouse/store-custom error:', e);
     res.status(500).json({ error: e.message });
   }
 });

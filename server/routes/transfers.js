@@ -1704,6 +1704,37 @@ router.post('/:id/delivered', async (req, res) => {
   }
 });
 
+// PUT / DELETE /api/transfers/:id/items/:itemId/note (2026-10-22, Hera) —
+// the receiving side's ONE note on a line item (count modal › Note; Store
+// and WH › Receiving to HQ). body { text } (non-empty). Purchasing sees it
+// as a blue (i) next to Received Qty, text on hover.
+router.put('/:id/items/:itemId/note', async (req, res) => {
+  try {
+    const text = String((req.body && req.body.text) || '').trim();
+    if (!text) return res.status(400).json({ error: 'Note is empty' });
+    const r = await pool.query(
+      'UPDATE transfer_items SET line_note = $1, line_note_at = NOW() WHERE id = $2 AND transfer_id = $3 RETURNING id, line_note, line_note_at',
+      [text, req.params.itemId, req.params.id]
+    );
+    if (r.rows.length === 0) return res.status(404).json({ error: 'Item not found' });
+    res.json(r.rows[0]);
+  } catch (e) {
+    sendErr(res, e, 'PUT /api/transfers/:id/items/:itemId/note');
+  }
+});
+router.delete('/:id/items/:itemId/note', async (req, res) => {
+  try {
+    const r = await pool.query(
+      'UPDATE transfer_items SET line_note = NULL, line_note_at = NULL WHERE id = $1 AND transfer_id = $2 RETURNING id',
+      [req.params.itemId, req.params.id]
+    );
+    if (r.rows.length === 0) return res.status(404).json({ error: 'Item not found' });
+    res.json({ id: r.rows[0].id, line_note: null, line_note_at: null });
+  } catch (e) {
+    sendErr(res, e, 'DELETE /api/transfers/:id/items/:itemId/note');
+  }
+});
+
 // POST /api/transfers/:id/count — one line item's count-modal submission.
 // Body: { itemId, count }.
 router.post('/:id/count', async (req, res) => {

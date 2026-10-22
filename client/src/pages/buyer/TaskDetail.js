@@ -3,6 +3,7 @@ import {
   Page, Layout, Card, Button, BlockStack, InlineStack,
   Text, DataTable, Checkbox, Banner, Badge, TextField, Spinner, Modal
 } from '@shopify/polaris';
+import { LineNoteIcon, LineNoteHover } from '../shared/lineNote';
 import { useNavigate, useParams } from 'react-router-dom';
 
 const TYPE_LABEL_MAP = {
@@ -443,7 +444,11 @@ function TaskDetail() {
       item.name || '-',
       item.barcode || '-',
       detail,
-      item.is_committed ? <Badge tone="success">committed</Badge> : result,
+      // Store's line-item note (2026-10-22): blue (i) after the result.
+      <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+        {item.is_committed ? <Badge tone="success">committed</Badge> : result}
+        <LineNoteIcon note={item.line_note} />
+      </span>,
     ];
 
     // PO-related row (2026-10): light-yellow cells, and "PO" next to the count
@@ -622,6 +627,8 @@ function TaskDetail() {
             </Card>
 
             <Card>
+              {/* Store line-item notes (2026-10-22): hover a row with a note → its text. */}
+              <LineNoteHover notesByRow={[...task.items].sort(compareByName).map(i => i.line_note || '')}>
               <DataTable
                 columnContentTypes={['text','text','text','text','text']}
                 headings={[
@@ -634,6 +641,7 @@ function TaskDetail() {
                 ]}
                 rows={rows}
               />
+              </LineNoteHover>
             </Card>
 
           </BlockStack>

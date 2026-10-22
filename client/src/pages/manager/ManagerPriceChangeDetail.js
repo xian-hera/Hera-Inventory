@@ -3,7 +3,7 @@ import {
   Page, Layout, Card, Button, BlockStack, InlineStack,
   Text, Banner, Spinner, Modal, Select, TextField
 } from '@shopify/polaris';
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import MobileModalSafeArea from '../../components/MobileModalSafeArea';
 // Store location: remembered per Shopify account, loaded before this page
 // renders by ManagerLocationGate (2026-09-29) — replaces reading
@@ -16,6 +16,10 @@ import { TaskTypeLabel } from '../shared/priceChangeShared';
 function ManagerPriceChangeDetail() {
   const { taskId } = useParams();
   const navigate = useNavigate();
+  // Back / after-submit target (2026-10-22): where this page was opened
+  // from (state.from — e.g. the Store Dashboard), else the usual list.
+  const routerLoc = useLocation();
+  const backTo = (routerLoc.state && routerLoc.state.from) || '/manager/label-print';
   // ?part=wig → only the WIG items; ?part=main → everything else (2026-10-08).
   const [searchParams] = useSearchParams();
   const part = searchParams.get('part') === 'wig' ? 'wig' : searchParams.get('part') === 'main' ? 'main' : '';
@@ -271,13 +275,13 @@ ${barcodeScript}</head><body>${allLabels}</body></html>`;
   }
 
   if (loading) return (
-    <Page title="Price Change" backAction={{ onAction: () => navigate('/manager/label-print') }}>
+    <Page title="Price Change" backAction={{ onAction: () => navigate(backTo) }}>
       <Spinner />
     </Page>
   );
 
   if (error || !task) return (
-    <Page title="Price Change" backAction={{ onAction: () => navigate('/manager/label-print') }}>
+    <Page title="Price Change" backAction={{ onAction: () => navigate(backTo) }}>
       <Banner tone="critical">{error || 'Task not found'}</Banner>
     </Page>
   );
@@ -298,7 +302,7 @@ ${barcodeScript}</head><body>${allLabels}</body></html>`;
     <Page
       title={pageTitle}
       titleMetadata={titleMetadata}
-      backAction={{ onAction: () => navigate('/manager/label-print') }}
+      backAction={{ onAction: () => navigate(backTo) }}
       primaryAction={{ content: 'Print', onAction: openPrintModal }}
     >
       <Layout>

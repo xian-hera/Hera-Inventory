@@ -1412,6 +1412,54 @@ function computeStoreCount(history) {
   return total;
 }
 
+// PUT / DELETE /api/po-invoices/manager/receiving/:id/items/:itemId/note
+// (2026-10-22, Hera) — the store's ONE note on a line item, written from the
+// count modal (Note). body { text } (non-empty). Purchasing sees it as a
+// blue (i) next to Store Count, text on hover. Saved immediately.
+router.put('/manager/receiving/:id/items/:itemId/note', async (req, res) => {
+  try {
+    const text = String((req.body && req.body.text) || '').trim();
+    if (!text) return res.status(400).json({ error: 'Note is empty' });
+    const r = await pool.query(
+      `UPDATE po_invoice_items SET line_note = $1, line_note_at = NOW() WHERE id = $2 AND invoice_id = $3 RETURNING id, line_note, line_note_at`,
+      [text, req.params.itemId, req.params.id]
+    );
+    if (r.rows.length === 0) return res.status(404).json({ error: 'Item not found' });
+    res.json(r.rows[0]);
+  } catch (e) {
+    console.error('PUT /api/po-invoices/manager/receiving/:id/items/:itemId/note error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+router.delete('/manager/receiving/:id/items/:itemId/note', async (req, res) => {
+  try {
+    const r = await pool.query(
+      `UPDATE po_invoice_items SET line_note = NULL, line_note_at = NULL WHERE id = $1 AND invoice_id = $2 RETURNING id`,
+      [req.params.itemId, req.params.id]
+    );
+    if (r.rows.length === 0) return res.status(404).json({ error: 'Item not found' });
+    res.json({ id: r.rows[0].id, line_note: null, line_note_at: null });
+  } catch (e) {
+    console.error('DELETE /api/po-invoices/manager/receiving/:id/items/:itemId/note error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Store › PO Receiving › History label (2026-10-22, Hera): 'Committed' once
+// Purchasing committed the PO, back to 'Submitted' on Undo commit. Never
+// throws (history is secondary bookkeeping).
+async function setPoHistoryLabel(invoiceId, label) {
+  try {
+    await pool.query(
+      `UPDATE manager_history SET label = $2
+        WHERE kind = 'po_invoice' AND (detail->>'invoice_id') = $1::text`,
+      [String(invoiceId), label]
+    );
+  } catch (e) {
+    console.error(`Failed to set manager history label for invoice ${invoiceId}:`, e.message);
+  }
+}
+
 // PATCH /api/po-invoices/manager/receiving/:id/items/:itemId/count
 // body: { type: 'counted', value } | { type: 'correct' }   (legacy { count } = counted)
 // Saved immediately on every modal submit (not batched until the final
@@ -1925,6 +1973,7 @@ async function commitInvoice(invoiceId) {
     [committedAt, unrecorded.rows.length === 0, invoice.status, supplierPrev, invoiceId]
   );
   await pool.query('UPDATE po_suppliers SET last_committed_at = $1 WHERE id = $2', [committedAt, invoice.supplier_id]);
+  await setPoHistoryLabel(invoiceId, 'Committed'); // Store's PO Receiving History (2026-10-22)
 
   // Retention is now time-based (90 days, item 10) instead of the old
   // 200-row cap — see cleanupExpiredArchived(), run lazily on every read of
@@ -2222,6 +2271,7 @@ async function undoInvoiceCommit(invoiceId) {
      WHERE id = $1`,
     [invoiceId]
   );
+  await setPoHistoryLabel(invoiceId, 'Submitted'); // Store's PO Receiving History (2026-10-22)
 }
 
 async function runInvoiceUndo(id) {
