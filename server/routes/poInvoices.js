@@ -713,7 +713,10 @@ router.get('/pending', async (req, res) => {
              COALESCE(SUM(it.quantity * it.effective_cost), 0) AS subtotal_cad,
              COALESCE(SUM(it.quantity * it.raw_cost) FILTER (WHERE s.currency = 'USD'), 0) AS subtotal_usd,
              COUNT(it.id) AS item_count,
-             COALESCE(SUM(CASE WHEN it.committed THEN 1 ELSE 0 END), 0) AS committed_count
+             COALESCE(SUM(CASE WHEN it.committed THEN 1 ELSE 0 END), 0) AS committed_count,
+             -- line items whose store count differs from the invoice qty —
+             -- drives the red "!" pill next to "Store counted" (2026-10-22, Hera)
+             COALESCE(SUM(CASE WHEN it.store_count IS NOT NULL AND it.store_count <> it.quantity THEN 1 ELSE 0 END), 0) AS count_mismatch_count
       FROM po_invoices i
       JOIN po_suppliers s ON s.id = i.supplier_id
       LEFT JOIN po_invoice_items it ON it.invoice_id = i.id

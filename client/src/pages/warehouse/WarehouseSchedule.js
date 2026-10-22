@@ -115,6 +115,8 @@ function HoverBox({ task, rect }) {
   const from = task.kind === 'transfer' ? task.from : HQ;
   const to = task.to;
   const above = rect.top > 140;
+  // PO cards (2026-10-22, Hera): just the full Supplier name, no location.
+  const poOnly = task.kind === 'po';
   return createPortal(
     <div style={{
       position: 'fixed', zIndex: 700, left: Math.max(8, Math.min(rect.left, window.innerWidth - 288)),
@@ -129,7 +131,9 @@ function HoverBox({ task, rect }) {
           {task.note && <div style={{ whiteSpace: 'pre-wrap' }}>Note: {task.note}</div>}
         </div>
       )}
-      <div><b>{from}</b> ➔ <b>{to}</b></div>
+      {poOnly
+        ? <div style={{ fontWeight: 700 }}>{task.supplier || '—'}</div>
+        : <div><b>{from}</b> ➔ <b>{to}</b></div>}
       {task.kind === 'transfer' && task.leg && (
         <div style={{ marginTop: 4, color: '#6d7175', fontSize: 12 }}>
           {task.leg === 'pickup' ? 'Part 1 of 2: pick up, bring to HQ' : 'Part 2 of 2: deliver from HQ'}
@@ -390,6 +394,11 @@ function SplitModal({ task, onClose, onDone }) {
 const showInUnscheduled = (t) => t.kind !== 'transfer' || t.status === 'good_to_go'
   || (t.leg === 'deliver' && t.status === 'in_transit');
 
+// Which Unscheduled tab a card belongs to, by the route shown on the card:
+// from HQ → Delivery; to HQ → Pickup. A store → store transfer that was not
+// split (only old rows) starts with a pickup → Pickup.
+const trayTabOf = (t) => (cardRoute(t).from === HQ ? 'delivery' : 'pickup');
+
 function WarehouseSchedule() {
   const compareLoc = useLocationOrder();
   const [view, setView] = useState('current');     // 'current' | 'past'
@@ -398,6 +407,10 @@ function WarehouseSchedule() {
   const [slots, setSlots] = useState({});          // draft calendar (editable days only)
   const [sel, setSel] = useState([]);              // selected ids, in click order
   const [filter, setFilter] = useState('all');
+  // Unscheduled tabs (2026-10-22, Hera): 'delivery' = leaves HQ (PO, custom,
+  // HQ → store transfer, part 2 of a split store → store) · 'pickup' = comes
+  // to HQ (store → HQ transfer, part 1 of a split store → store).
+  const [trayTab, setTrayTab] = useState('delivery');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState(null);      // { tone, text } — Go! result
   const [conflict, setConflict] = useState(false);
@@ -498,8 +511,11 @@ function WarehouseSchedule() {
 
   const unscheduledAll = useMemo(() => tasks.filter(t => !where[t.id] && !lockedWhere[t.id]), [tasks, where, lockedWhere]);
   const unscheduled = useMemo(() => unscheduledAll.filter(showInUnscheduled), [unscheduledAll]);
+  const unDelivery = useMemo(() => unscheduled.filter(t => trayTabOf(t) === 'delivery'), [unscheduled]);
+  const unPickup = useMemo(() => unscheduled.filter(t => trayTabOf(t) === 'pickup'), [unscheduled]);
+  const tabList = trayTab === 'pickup' ? unPickup : unDelivery;
   const tray = useMemo(() => {
-    const list = unscheduled.filter(t => filter === 'all' || t.kind === filter);
+    const list = tabList.filter(t => filter === 'all' || t.kind === filter);
     // Always grouped by location (spec §5): HQ → store (by to) · store → HQ
     // (by from) · store → store (by from, then to) — by the location shown on
     // the card, so the two halves of a split transfer land in groups 1 and 2.
@@ -515,7 +531,7 @@ function WarehouseSchedule() {
         || new Date(a.createdAt) - new Date(b.createdAt)
         || a.id - b.id;
     });
-  }, [unscheduled, filter, compareLoc]);
+  }, [tabList, filter, compareLoc]);
 
   // ── selection-dependent state ──
   const selTasks = sel.map(id => byId[id]).filter(Boolean);
@@ -785,7 +801,8 @@ function WarehouseSchedule() {
         key={id}
         task={t}
         compact
-        order={i + 1}
+        // no order number on calendar cards (2026-10-22, Hera) — TaskCard
+        // still supports `order` if it is ever wanted back
         selected={sel.includes(id)}
         locked={isLockedDay && !t.trackedBack}
         partnerLit={t.kind === 'transfer' && t.leg && litPairs.has(t.transferId) && !sel.includes(id)}
@@ -840,10 +857,30 @@ function WarehouseSchedule() {
 
           {/* Unscheduled — title, filters and buttons outside the card */}
           <InlineStack align="space-between" blockAlign="end" gap="200" wrap>
-            <InlineStack gap="200" blockAlign="center">
-              <Text variant="headingMd" as="h3">Unscheduled</Text>
-              <span style={{ fontSize: 12, fontWeight: 650, padding: '1px 8px', borderRadius: 999, background: '#e3e3e3' }}>{unscheduled.length}</span>
-            </InlineStack>
+            {/* Two tabs instead of the "Unscheduled" title (2026-10-22, Hera) */}
+            <div role="tablist" style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+              {[['delivery', 'Unscheduled Delivery', unDelivery.length], ['pickup', 'Pickup', unPickup.length]].map(([id, label, n]) => {
+                const on = trayTab === id;
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    role="tab"
+                    aria-selected={on}
+                    onClick={() => setTrayTab(id)}
+                    style={{
+                      font: 'inherit', display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer',
+                      padding: '6px 12px', minHeight: 36, borderRadius: 8, border: 'none',
+                      background: on ? '#e3e3e3' : 'transparent', color: '#303030',
+                      fontSize: 16, fontWeight: on ? 700 : 500,
+                    }}
+                  >
+                    {label}
+                    <span style={{ fontSize: 12, fontWeight: 650, padding: '1px 8px', borderRadius: 999, background: on ? '#fff' : '#e3e3e3' }}>{n}</span>
+                  </button>
+                );
+              })}
+            </div>
             <InlineStack gap="200" blockAlign="end" wrap>
               <InlineStack gap="100">
                 {filterBtn('all', 'All')}{filterBtn('po', 'PO')}{filterBtn('transfer', 'Transfer')}{filterBtn('custom', 'Other')}
@@ -854,7 +891,7 @@ function WarehouseSchedule() {
 
           <div style={{ background: '#fff', borderRadius: 12, boxShadow: '0 1px 0 rgba(0,0,0,0.07), 0 0 0 1px rgba(0,0,0,0.08)', padding: 14 }}>
             {tray.length === 0 ? (
-              <Text tone="subdued">{unscheduled.length === 0 ? 'No unscheduled tasks.' : 'No unscheduled tasks match.'}</Text>
+              <Text tone="subdued">{tabList.length === 0 ? (trayTab === 'pickup' ? 'No pickups.' : 'No unscheduled deliveries.') : 'No tasks match.'}</Text>
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 10 }}>
                 {tray.map(t => (
@@ -933,15 +970,17 @@ function WarehouseSchedule() {
                       return (
                         <div key={h.id} style={{
                           display: 'flex', flexDirection: 'column', gap: 6, padding: 8,
+                          // 2× space above and below the Morning / Afternoon line (2026-10-22)
+                          ...(hi === 0 ? { paddingBottom: 16 } : { paddingTop: 16 }),
                           // black line between Morning and Afternoon (2026-10-22)
                           borderTop: hi === 0 ? 'none' : '1px solid #000', flex: hi === 1 ? 1 : '0 0 auto',
                           background: showAdd ? '#fbfdff' : 'transparent',
                         }}>
-                          {/* Morning / Afternoon and the task count: same size as
-                              the weekday, in light grey pills (2026-10-22). */}
+                          {/* Morning / Afternoon: same size as the weekday, in a
+                              light grey pill (2026-10-22). Task count removed
+                              (2026-10-22, Hera). */}
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <span style={HALF_PILL}>{h.label}</span>
-                            {ids.length > 0 && <span style={HALF_PILL}>{ids.length}</span>}
                           </div>
                           {vis.map((id, i) => renderCard(id, i, isLockedDay))}
                           {ids.length === 0 && !showAdd && <span style={{ fontSize: 12, color: '#8a8a8a' }}>No tasks</span>}

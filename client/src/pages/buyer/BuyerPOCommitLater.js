@@ -331,6 +331,24 @@ function BuyerPOCommitLater() {
         return <Text tone="critical" variant="bodySm" fontWeight="medium">Commit failed</Text>;
       }
       const p = STATUS_PILLS[inv.status] || STATUS_PILLS.pending;
+      // Store counted with at least one line item whose count differs from
+      // the invoice qty → red pill with a white "!" right of the green one
+      // (2026-10-22, Hera). A fully matching count keeps the green pill alone.
+      if (inv.status === 'store_counted' && Number(inv.count_mismatch_count || 0) > 0) {
+        return (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
+            <Badge tone={p.tone}>{p.label}</Badge>
+            <span
+              title={`${inv.count_mismatch_count} line item(s) counted differently from the invoice`}
+              style={{
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                minWidth: 20, height: 20, padding: '0 6px', borderRadius: 10, boxSizing: 'border-box',
+                background: '#e51c00', color: '#fff', fontSize: 13, fontWeight: 700, lineHeight: 1,
+              }}
+            >!</span>
+          </span>
+        );
+      }
       return <Badge tone={p.tone}>{p.label}</Badge>;
     })(),
   ]);
