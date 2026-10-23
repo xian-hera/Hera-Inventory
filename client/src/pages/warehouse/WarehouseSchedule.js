@@ -722,18 +722,21 @@ function WarehouseSchedule() {
     await load({ nextView: next });
   };
 
-  // Go! — today's trucks have left: today is locked and today's Ready to
-  // Ship transfers are marked In Transit (server). Once per day.
+  // Go! — today's trucks have left: today's cards become fixed (gone) and
+  // today's Ready to Ship transfers from HQ are marked In Transit (server).
+  // Can be pressed again for cards added to today afterwards (2026-10-23).
   const go = async () => {
     const todayKeys = [slotKey(data.today, 'AM'), slotKey(data.today, 'PM')];
     // One transfer = one status: count each transfer once, whichever of its
     // cards is on today's schedule.
-    const todayTransfers = todayKeys.flatMap(k => saved[k] || []).map(id => byId[id])
+    // only cards that did not go out yet (Go! again, 2026-10-23)
+    const todayTransfers = todayKeys.flatMap(k => saved[k] || []).map(id => byId[id]).filter(t => t && !t.gone)
       // pickups (part 1 of store → store, store → HQ) don't change the status
       // on Go! (2026-10-23) — store → HQ goes In Transit on the Delivery tab.
-      .filter(t => t && t.kind === 'transfer' && t.leg !== 'pickup' && t.to !== HQ);
+      // only transfers FROM HQ (2026-10-23, Hera) — from a store: Delivery › Picked Up
+      .filter(t => t && t.kind === 'transfer' && !t.leg && t.from === HQ);
     const ready = new Set(todayTransfers.filter(t => t.status === 'good_to_go').map(t => t.transferId)).size;
-    if (!window.confirm(`Go! — today's schedule is done and the trucks have left?\n\nToday's schedule will be locked (tasks can still be tracked back to it), and ${ready} Ready to Ship transfer${ready === 1 ? '' : 's'} on today's schedule will be marked In Transit (pickups don't change the status here — store → HQ transfers go In Transit when picked up on the Delivery tab).\n\nThis can be done once per day.`)) return;
+    if (!window.confirm(`Go! — today's schedule is done and the trucks have left?\n\nToday's cards will be fixed (new tasks can still be added to today and sent with another Go!), and ${ready} Ready to Ship transfer${ready === 1 ? '' : 's'} on today's schedule from HQ will be marked In Transit (transfers from a store go In Transit when picked up on the Delivery tab).`)) return;
     setGoing(true);
     setError('');
     setNotice(null);
@@ -803,8 +806,15 @@ function WarehouseSchedule() {
     + Object.values(lockedSlots).reduce((a, l) => a + l.length, 0);
   const hasSel = sel.length > 0;
   const todayIsWorkday = data.days[0] === data.today && !past;
-  const goDisabled = !todayIsWorkday || data.goneToday || dirty || going || saving;
-  const goTitle = data.goneToday ? 'Go! was already pressed today.' : dirty ? 'Save the schedule first.' : !todayIsWorkday ? 'Today is not a business day.' : 'Today’s schedule is done, the trucks have left.';
+  // Go! again (2026-10-23, Hera): enabled while today has saved cards that
+  // did not go out yet.
+  const newToday = todayIsWorkday
+    ? [slotKey(data.today, 'AM'), slotKey(data.today, 'PM')].flatMap(k => saved[k] || []).filter(id => byId[id] && !byId[id].gone).length
+    : 0;
+  const goDisabled = !todayIsWorkday || newToday === 0 || dirty || going || saving;
+  const goTitle = dirty ? 'Save the schedule first.' : !todayIsWorkday ? 'Today is not a business day.'
+    : newToday === 0 ? (data.goneToday ? 'Nothing new on today’s schedule since the last Go!.' : 'Nothing on today’s schedule yet.')
+    : 'Today’s schedule is done, the trucks have left.';
 
   const smallBtn = (label, onClick, extra = {}) => (
     <button
@@ -841,7 +851,8 @@ function WarehouseSchedule() {
         // no order number on calendar cards (2026-10-22, Hera) — TaskCard
         // still supports `order` if it is ever wanted back
         selected={sel.includes(id)}
-        locked={isLockedDay && !t.trackedBack}
+        // gone = went out with Go! → fixed (2026-10-23)
+        locked={(isLockedDay && !t.trackedBack) || t.gone}
         partnerLit={t.kind === 'transfer' && t.leg && litPairs.has(t.transferId) && !sel.includes(id)}
         onHoverPair={setHoverPair}
         onToggle={toggle}
@@ -974,7 +985,11 @@ function WarehouseSchedule() {
                       <span style={{ fontWeight: 700, fontSize: 14 }}>{p.dow}</span>
                       <span style={{ color: '#303030' }}>{mmdd(col.date)}</span>
                       {col.date === data.today && !data.goneToday && <span style={{ marginLeft: 'auto', fontSize: 11, color: '#6d7175' }}>Today</span>}
-                      {col.date === data.today && data.goneToday && <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: '#16a34a' }}>Gone</span>}
+                      {col.date === data.today && data.goneToday && (
+                        <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: '#16a34a' }}>
+                          Gone{newToday > 0 ? ` · ${newToday} new` : ''}
+                        </span>
+                      )}
                     </div>
                     {HALVES.map((h, hi) => {
                       const key = slotKey(col.date, h.id);

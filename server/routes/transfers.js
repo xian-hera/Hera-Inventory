@@ -1358,7 +1358,7 @@ router.post('/:id/qty-loaded/undo', async (req, res) => {
     const t = await pool.query('SELECT status FROM transfers WHERE id = $1', [req.params.id]);
     if (t.rows.length === 0) return res.status(404).json({ error: 'Transfer not found' });
     if (t.rows[0].status !== 'loading') {
-      return res.status(400).json({ error: 'Loaded qty can only be changed while the transfer is in Draft' });
+      return res.status(400).json({ error: 'Loaded qty can only be changed while the transfer is in Preparing' });
     }
     await pool.query(
       'UPDATE transfer_items SET loaded_confirmed = FALSE WHERE id = $1 AND transfer_id = $2',

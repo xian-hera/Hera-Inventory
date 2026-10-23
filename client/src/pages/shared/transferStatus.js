@@ -17,8 +17,10 @@
 // pre-migration row (or a stray old reference) still renders instead of
 // falling back to the raw string.
 export const STATUS_LABELS = {
-  loading: 'Draft',
-  pending: 'Pending',
+  // 2026-10-23 (Hera): Draft → Preparing, Pending → Reviewing (labels only;
+  // the stored values stay 'loading' / 'pending').
+  loading: 'Preparing',
+  pending: 'Reviewing',
   good_to_go: 'Ready to Ship',
   in_transit: 'In transit',
   receiving: 'Receiving',

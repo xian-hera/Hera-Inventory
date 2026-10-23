@@ -410,13 +410,15 @@ const SYNC_PO_STATUSES = ['pending', 'sent_to_store'];
 // today or later. (Tasks placed on past days are history — not shown.)
 // view 'current' = the next 7 business days (today first); 'past' = the 7
 // business days before today. lockedDays = days that can only take
-// track-back additions: every past day, and today once Go! was pressed.
+// track-back additions: every past day. (Until 2026-10-23 also today after
+// Go!; now today stays editable — cards that went out with Go! are `gone` and
+// fixed, new cards can still be added and sent with another Go!.)
 async function loadSchedule(db, view = 'current') {
   const today = torontoToday();
   const past = view === 'past';
   const days = past ? pastWindow(today) : businessWindow(today);
   const goneToday = await isGoneToday(db, today);
-  const lockedDays = past ? days : (goneToday && days[0] === today ? [today] : []);
+  const lockedDays = past ? days : [];
   const dateFilter = past
     ? `(w.sched_date IS NULL OR (w.sched_date >= $1::date AND w.sched_date < $2::date))`
     : `(w.sched_date IS NULL OR w.sched_date >= $1::date)`;
@@ -447,6 +449,7 @@ async function loadSchedule(db, view = 'current') {
       half: w.sched_half,
       pos: w.sched_pos,
       trackedBack: !!w.tracked_back,
+      gone: !!w.gone_at, // went out with a Go! (2026-10-23) — fixed
       createdAt: w.created_at,
     };
     if (w.kind === 'po') {
@@ -545,9 +548,10 @@ router.put('/schedule', async (req, res) => {
   const { version, slots } = req.body || {};
   if (!slots || typeof slots !== 'object') return res.status(400).json({ error: 'slots missing' });
   const today = torontoToday();
-  // Today is not editable any more once Go! was pressed (only track-back).
-  const goneToday = await isGoneToday(pool, today);
-  const allowed = new Set(businessWindow(today).filter(d => !(goneToday && d === today)));
+  // Today stays editable after Go! (2026-10-23, Hera): cards that went out
+  // (gone) must stay on today, in the same half-day and the same order among
+  // themselves; new cards may be added anywhere around them.
+  const allowed = new Set(businessWindow(today));
   const placements = []; // { id, date, half, pos }
   const seen = new Set();
   for (const [key, list] of Object.entries(slots)) {
@@ -570,6 +574,21 @@ router.put('/schedule', async (req, res) => {
       await client.query('ROLLBACK');
       return res.status(409).json({ error: 'Someone else saved the schedule in the meantime. Reload the page and make your changes again.' });
     }
+    const gone = await client.query(
+      `SELECT id, sched_half FROM wh_tasks
+        WHERE removed_at IS NULL AND gone_at IS NOT NULL AND sched_date = $1::date
+        ORDER BY CASE sched_half WHEN 'AM' THEN 0 ELSE 1 END, sched_pos, id`,
+      [today]
+    );
+    for (const half of ['AM', 'PM']) {
+      const want = gone.rows.filter(r => r.sched_half === half).map(r => r.id);
+      const goneSet = new Set(want);
+      const got = placements.filter(p => p.date === today && p.half === half && goneSet.has(p.id)).map(p => p.id);
+      if (want.join(',') !== got.join(',')) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: "Tasks that already went out with Go! can't be moved or removed. Reload the page." });
+      }
+    }
     const ids = placements.map(p => p.id);
     // Unschedule what is no longer on the calendar — editable days only
     // (a locked today keeps what it has).
@@ -580,7 +599,9 @@ router.put('/schedule', async (req, res) => {
     );
     for (const p of placements) {
       await client.query(
-        `UPDATE wh_tasks SET sched_date = $2::date, sched_half = $3, sched_pos = $4, updated_at = NOW()
+        `UPDATE wh_tasks SET sched_date = $2::date, sched_half = $3, sched_pos = $4, updated_at = NOW(),
+                sched_set_at = CASE WHEN sched_date IS DISTINCT FROM $2::date OR sched_half IS DISTINCT FROM $3
+                                    THEN NOW() ELSE sched_set_at END
          WHERE id = $1 AND removed_at IS NULL`,
         [p.id, p.date, p.half, p.pos]
       );
@@ -629,8 +650,9 @@ router.post('/tasks/track-back', async (req, res) => {
   if (ids.length === 0) return res.status(400).json({ error: 'Nothing selected' });
   if (half !== 'AM' && half !== 'PM') return res.status(400).json({ error: 'Bad half-day' });
   const today = torontoToday();
-  const ok = pastWindow(today).includes(date) || (date === today && await isGoneToday(pool, today));
-  if (!ok) return res.status(400).json({ error: 'Tasks can only be tracked back to the past 7 business days, or to today after Go!.' });
+  // Past days only since 2026-10-23 (today stays editable after Go!).
+  const ok = pastWindow(today).includes(date);
+  if (!ok) return res.status(400).json({ error: 'Tasks can only be tracked back to the past 7 business days.' });
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -642,7 +664,7 @@ router.post('/tasks/track-back', async (req, res) => {
     let added = 0;
     for (const id of ids) {
       const r = await client.query(
-        `UPDATE wh_tasks SET sched_date = $2::date, sched_half = $3, sched_pos = $4, tracked_back = TRUE, updated_at = NOW()
+        `UPDATE wh_tasks SET sched_date = $2::date, sched_half = $3, sched_pos = $4, tracked_back = TRUE, updated_at = NOW(), sched_set_at = NOW()
          WHERE id = $1 AND removed_at IS NULL AND sched_date IS NULL`,
         [id, date, half, pos]
       );
@@ -686,15 +708,23 @@ router.post('/tasks/untrack', async (req, res) => {
 //      transfer with ONE status: it is marked once, whichever of its two
 //      cards is on today (normally part 1, the pickup). Its part 2 card then
 //      stays on the Schedule while In Transit (exception, Hera 2026-10-21).
-//      Changed 2026-10-23 (Hera): the part 1 (pickup) card is ignored here —
-//      only the part 2 (deliver) card being on today marks it In Transit.
-// Once per day.
+//      Changed 2026-10-23 (Hera, final): only transfers FROM HQ (cards
+//      without a leg, from HQ) are marked here; every transfer from a store
+//      goes In Transit on Delivery › Picked Up.
+// Once per day → since 2026-10-23: again whenever new cards were added to
+// today after the last Go! (only those are handled).
 router.post('/go', async (req, res) => {
   const today = torontoToday();
   if (!businessWindow(today).includes(today)) return res.status(400).json({ error: 'Today is not a business day.' });
   try {
-    const ins = await pool.query('INSERT INTO wh_go_days (day) VALUES ($1::date) ON CONFLICT DO NOTHING RETURNING day', [today]);
-    if (ins.rowCount === 0) return res.status(409).json({ error: 'Go! was already pressed today.' });
+    // Go! can be pressed again for cards added to today after the last Go!
+    // (2026-10-23, Hera); each press only handles cards not gone yet.
+    const fresh = await pool.query(
+      'SELECT COUNT(*)::int AS n FROM wh_tasks WHERE removed_at IS NULL AND sched_date = $1::date AND gone_at IS NULL',
+      [today]
+    );
+    if (fresh.rows[0].n === 0) return res.status(409).json({ error: 'Nothing new on today\'s schedule since the last Go!.' });
+    await pool.query('INSERT INTO wh_go_days (day) VALUES ($1::date) ON CONFLICT (day) DO UPDATE SET gone_at = NOW()', [today]);
     // Saved schedules from other pages must reload (today changed to locked).
     await pool.query(
       `UPDATE app_settings SET value = to_jsonb(COALESCE(value::text::int, 0) + 1), updated_at = NOW() WHERE key = 'wh_schedule_version'`
@@ -702,14 +732,15 @@ router.post('/go', async (req, res) => {
     const rows = (await pool.query(
       `SELECT DISTINCT tr.id, tr.status, COALESCE(tr.shopify_transfer_name, tr.transfer_no) AS number
        FROM wh_tasks w JOIN transfers tr ON tr.id = w.transfer_id
-       WHERE w.kind = 'transfer' AND w.removed_at IS NULL AND w.sched_date = $1::date
+       WHERE w.kind = 'transfer' AND w.removed_at IS NULL AND w.sched_date = $1::date AND w.gone_at IS NULL
          -- part 1 (pickup) of a store → store transfer no longer changes
          -- the Shopify status (2026-10-23, Hera): it goes In Transit when its
          -- part 2 (deliver) card goes out with Go!.
-         AND COALESCE(w.leg, '') <> 'pickup'
-         -- store → HQ transfers are pickups too: since 2026-10-23 they go In
-         -- Transit when the driver presses "picked up" on the Delivery tab.
-         AND NOT (w.leg IS NULL AND tr.to_location = 'HQ')`,
+         -- 2026-10-23 (Hera, final): Go! only sends out transfers FROM HQ.
+         -- A transfer from a store (to HQ, or part 1 / 2 of store → store)
+         -- goes In Transit when the driver presses Picked Up on the Delivery
+         -- tab (part 2 of store → store is then already In Transit).
+         AND w.leg IS NULL AND tr.from_location = 'HQ'`,
       [today]
     )).rows;
     const results = { inTransit: [], skipped: [], failed: [] };
@@ -724,6 +755,10 @@ router.post('/go', async (req, res) => {
       }
     }
     await pool.query('UPDATE wh_go_days SET results = $2 WHERE day = $1::date', [today, JSON.stringify(results)]);
+    await pool.query(
+      'UPDATE wh_tasks SET gone_at = NOW() WHERE removed_at IS NULL AND sched_date = $1::date AND gone_at IS NULL',
+      [today]
+    );
     res.json(results);
   } catch (e) {
     console.error('POST /api/warehouse/go error:', e);
@@ -1102,8 +1137,10 @@ router.get('/store-custom', async (req, res) => {
 //     a transfer still Ready to Ship is first marked In Transit in Shopify.
 //     PO: no status change (Sent to store stays; the store counts it).
 //   Picked up (green button) — every pickup task: wh_tasks.picked_at;
-//     store → HQ transfer Ready to Ship → In Transit (Shopify);
-//     part 1 of a split store → store: no status change.
+//     store → HQ transfer and part 1 of a split store → store
+//     Ready to Ship → In Transit (Shopify) (part 1: since 2026-10-23).
+//   When the LAST stop of the day is done, today's store → HQ transfers
+//     In Transit → Receiving (back at HQ).
 // A task whose status change fails is NOT marked, so the button can be
 // pressed again.
 const deliveryRole = (w) => {
@@ -1133,37 +1170,57 @@ async function loadDeliveryRows(today) {
   return r.rows.map(w => ({ ...w, ...deliveryRole(w) }));
 }
 
+// Stops in schedule order, one per store per half-day — except (2026-10-23,
+// Hera) a card put on today AFTER that store's stop was already finished
+// starts a new stop for the same store at its own place in the order (e.g.
+// stops 1-3 done, truck at 4, a new card for store 3 placed after 4 → a
+// second "3" after 4, not inside the grey 3). Keys: 'AM|MTL03', then
+// 'AM|MTL03|2', … (stable while the order doesn't change).
 function buildStops(rows) {
   const stops = [];
-  const byKey = {};
+  const lastOf = {};   // half|store → latest stop of that store
+  const countOf = {};  // half|store → number of stops so far
+  const doneTime = (t) => (t.role === 'deliver' ? t.delivered_at : t.picked_at);
   for (const w of rows) {
-    const key = `${w.sched_half}|${w.store}`;
-    if (!byKey[key]) {
-      byKey[key] = { key, half: w.sched_half, location: w.store, deliver: [], pickup: [] };
-      stops.push(byKey[key]);
+    const base = `${w.sched_half}|${w.store}`;
+    let st = lastOf[base];
+    if (st) {
+      const all = [...st.rawDeliver, ...st.rawPickup];
+      const finishedAt = all.every(t => doneTime(t)) ? new Date(Math.max(...all.map(t => new Date(doneTime(t)).getTime()))) : null;
+      if (finishedAt && w.sched_set_at && new Date(w.sched_set_at) > finishedAt) st = null;
     }
-    const number = w.kind === 'po' ? `${w.po_number || ''}${w.split_no ? `-${w.split_no}` : ''}`
-      : w.kind === 'transfer' ? (w.shopify_transfer_name || w.transfer_no || '')
-      : (w.custom_title || '');
-    byKey[key][w.role].push({
-      id: w.id, kind: w.kind, number,
-      online: false, // Online order transfers: to come (Hera, next message)
-      delivered: !!w.delivered_at, picked: !!w.picked_at,
-      doneAt: w.delivered_at || w.picked_at || null,
-    });
+    if (!st) {
+      countOf[base] = (countOf[base] || 0) + 1;
+      st = { key: countOf[base] === 1 ? base : `${base}|${countOf[base]}`, half: w.sched_half, location: w.store, rawDeliver: [], rawPickup: [] };
+      lastOf[base] = st;
+      stops.push(st);
+    }
+    (w.role === 'deliver' ? st.rawDeliver : st.rawPickup).push(w);
   }
-  return stops.map(st => ({
-    ...st,
-    hasDeliver: st.deliver.length > 0,
-    hasPickup: st.pickup.length > 0,
-    delivered: st.deliver.length > 0 && st.deliver.every(t => t.delivered),
-    pickedUp: st.pickup.length > 0 && st.pickup.every(t => t.picked),
-  })).map(st => {
+  const view = (w) => ({
+    id: w.id, kind: w.kind,
+    number: w.kind === 'po' ? `${w.po_number || ''}${w.split_no ? `-${w.split_no}` : ''}`
+      : w.kind === 'transfer' ? (w.shopify_transfer_name || w.transfer_no || '')
+      : (w.custom_title || ''),
+    online: false, // Online order transfers: to come (Hera, next message)
+    delivered: !!w.delivered_at, picked: !!w.picked_at,
+    doneAt: w.delivered_at || w.picked_at || null,
+  });
+  return stops.map(({ rawDeliver, rawPickup, ...st }) => {
+    const deliver = rawDeliver.map(view);
+    const pickup = rawPickup.map(view);
+    const out = {
+      ...st, deliver, pickup, taskIds: [...rawDeliver, ...rawPickup].map(w => w.id),
+      hasDeliver: deliver.length > 0,
+      hasPickup: pickup.length > 0,
+      delivered: deliver.length > 0 && deliver.every(t => t.delivered),
+      pickedUp: pickup.length > 0 && pickup.every(t => t.picked),
+    };
     // When the stop was finished (latest mark of its tasks) — the Delivery
     // page moves the truck to the stop after the one finished last.
-    const done = (!st.hasDeliver || st.delivered) && (!st.hasPickup || st.pickedUp);
-    const times = [...st.deliver, ...st.pickup].map(t => t.doneAt).filter(Boolean).map(t => new Date(t).toISOString());
-    return { ...st, doneAt: done && times.length ? times.sort().pop() : null };
+    const done = (!out.hasDeliver || out.delivered) && (!out.hasPickup || out.pickedUp);
+    const times = [...deliver, ...pickup].map(t => t.doneAt).filter(Boolean).map(t => new Date(t).toISOString());
+    return { ...out, doneAt: done && times.length ? times.sort().pop() : null };
   });
 }
 
@@ -1181,15 +1238,20 @@ router.get('/delivery', async (req, res) => {
 // POST /api/warehouse/delivery/done { half, location, action: 'deliver' | 'pickup' }
 // → { done: n, failed: [{ number, error }], stops }
 router.post('/delivery/done', async (req, res) => {
-  const { half, location, action } = req.body || {};
-  if (!['AM', 'PM'].includes(half) || !location || !['deliver', 'pickup'].includes(action)) {
-    return res.status(400).json({ error: 'half, location and action are required' });
+  // key = the stop's key from GET /delivery (a store can have two stops in
+  // one half-day since 2026-10-23); half + location still accepted.
+  const { key, half, location, action } = req.body || {};
+  if (!['deliver', 'pickup'].includes(action) || !(key || (['AM', 'PM'].includes(half) && location))) {
+    return res.status(400).json({ error: 'key (or half and location) and action are required' });
   }
   try {
     const today = torontoToday();
-    const rows = (await loadDeliveryRows(today))
-      .filter(w => w.sched_half === half && w.store === location && w.role === action
-        && !(action === 'deliver' ? w.delivered_at : w.picked_at));
+    const all = await loadDeliveryRows(today);
+    const stop = buildStops(all).find(st => (key ? st.key === key : st.half === half && st.location === location));
+    if (!stop) return res.status(404).json({ error: 'This stop is not on today\'s schedule any more. Reload the page.' });
+    const inStop = new Set(stop.taskIds);
+    const rows = all.filter(w => inStop.has(w.id) && w.role === action
+      && !(action === 'deliver' ? w.delivered_at : w.picked_at));
     const failed = [];
     let done = 0;
     for (const w of rows) {
@@ -1205,8 +1267,10 @@ router.post('/delivery/done', async (req, res) => {
                 [w.transfer_id]
               );
             }
-          } else if (!w.leg && w.tr_status === 'good_to_go') {
-            await dispatchOne(w.transfer_id); // store → HQ: picked up = In Transit
+          } else if (w.tr_status === 'good_to_go') {
+            // Picked up = In Transit: store → HQ, and (2026-10-23, Hera) also
+            // part 1 of a store → store transfer.
+            await dispatchOne(w.transfer_id);
           }
         }
         await pool.query(
@@ -1218,7 +1282,24 @@ router.post('/delivery/done', async (req, res) => {
         failed.push({ number, error: e.message });
       }
     }
-    res.json({ done, failed, stops: buildStops(await loadDeliveryRows(today)) });
+    // End of the day (2026-10-23, Hera): once EVERY stop of today is done the
+    // truck heads back to HQ → today's store → HQ transfers that were picked
+    // up (In Transit) become Receiving, like a "Delivered" at HQ.
+    let stops = buildStops(await loadDeliveryRows(today));
+    let backAtHq = 0;
+    const allDone = stops.length > 0 && stops.every(st => (!st.hasDeliver || st.delivered) && (!st.hasPickup || st.pickedUp));
+    if (allDone) {
+      const r = await pool.query(
+        `UPDATE transfers t SET status = 'receiving', delivered_at = NOW(), updated_at = NOW()
+          WHERE t.status = 'in_transit' AND t.to_location = $2
+            AND EXISTS (SELECT 1 FROM wh_tasks w WHERE w.transfer_id = t.id AND w.kind = 'transfer'
+                         AND w.leg IS NULL AND w.removed_at IS NULL AND w.sched_date = $1::date)`,
+        [today, HQ]
+      );
+      backAtHq = r.rowCount;
+      if (backAtHq) stops = buildStops(await loadDeliveryRows(today));
+    }
+    res.json({ done, failed, backAtHq, stops });
   } catch (e) {
     console.error('POST /api/warehouse/delivery/done error:', e);
     res.status(500).json({ error: e.message });

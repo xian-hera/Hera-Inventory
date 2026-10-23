@@ -562,7 +562,7 @@ function WarehouseSettings({ currentGroup = null } = {}) {
             <BlockStack gap="300">
               <Text variant="headingMd" as="h2">Sync Tasks</Text>
               <Text tone="subdued" variant="bodySm">
-                Sync Transfer tasks, and PO tasks to Receive Shipments. Adds Draft / Pending / Ready to Ship transfers to the
+                Sync Transfer tasks, and PO tasks to Receive Shipments. Adds Preparing / Reviewing / Ready to Ship transfers to the
                 Schedule and Pending / Sent to store POs to Receive Shipments — including ones from before the Schedule
                 started and ones deleted by mistake. Tasks that are already there are skipped.
               </Text>

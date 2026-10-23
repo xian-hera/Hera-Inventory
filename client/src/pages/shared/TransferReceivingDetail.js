@@ -49,7 +49,10 @@ function cleanBarcode(raw) {
 // role='buyer', so the hold check always applies here), diff highlighting
 // for Buyer-edited rows (改动五), and the "someone else updated this"
 // conflict modal (改动一第2点) on Delivered/Submit.
-function TransferReceivingDetail({ role, backPath, showTags }) {
+// canDeliver (2026-10-23, Hera): the In transit page's Delivered button is
+// gone for Store and WH (WH's Delivery tab / end of the day do it; BY can on
+// its own page). Kept behind this prop, which no page passes now.
+function TransferReceivingDetail({ role, backPath, showTags, canDeliver = false }) {
   const navigate = useNavigate();
   // Back / after-submit target (2026-10-22): where this page was opened
   // from (state.from — e.g. the Store Dashboard), else the usual list.
@@ -398,14 +401,16 @@ function TransferReceivingDetail({ role, backPath, showTags }) {
                   </InlineStack>
                   <InlineStack gap="200">
                     <Button onClick={exportPdf} loading={exportingPdf} disabled={exportingPdf}>Export PDF</Button>
-                    <Button
-                      onClick={handleDelivered}
-                      loading={delivering}
-                      disabled={held}
-                      fullWidth={false}
-                    >
-                      Delivered
-                    </Button>
+                    {canDeliver && (
+                      <Button
+                        onClick={handleDelivered}
+                        loading={delivering}
+                        disabled={held}
+                        fullWidth={false}
+                      >
+                        Delivered
+                      </Button>
+                    )}
                   </InlineStack>
                 </InlineStack>
 

@@ -393,7 +393,10 @@ function TransferPrepDetail({ role, showWigNumber, backPath, dispatchLabel, show
                       {submitButtonLabel}
                     </Button>
                   )}
-                  {isGoodToGo && (
+                  {/* 2026-10-23 (Hera): no Store / WH page passes dispatchLabel any
+                      more — Ready to Ship → In Transit happens through WH's Go!
+                      (from HQ) or Delivery › Picked Up (from a store), or BY. */}
+                  {isGoodToGo && dispatchLabel && (
                     <Button variant="primary" loading={dispatching} disabled={held} onClick={dispatch}>
                       {dispatchLabel}
                     </Button>

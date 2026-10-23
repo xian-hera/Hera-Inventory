@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Page, BlockStack, Text, Banner } from '@shopify/polaris';
 import { useLocationColors, LOC_PILL_DEFAULT, pillTextColor, TruckIcon, EnterIcon, ExitIcon, refreshWarehouseBadges } from './whShared';
 
@@ -144,6 +144,18 @@ function WarehouseDelivery() {
     }
   }, []);
   useEffect(() => { load(); }, [load]);
+  // Cards WH adds to today (and Saves) show up without leaving the page
+  // (2026-10-23): reload every 30 s while the page is visible, and right away
+  // when the phone comes back to it.
+  const busyRef = useRef(false);
+  busyRef.current = busy;
+  useEffect(() => {
+    const tick = () => { if (document.visibilityState === 'visible' && !busyRef.current) load(); };
+    const t = setInterval(tick, 30000);
+    document.addEventListener('visibilitychange', tick);
+    window.addEventListener('focus', tick);
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', tick); window.removeEventListener('focus', tick); };
+  }, [load]);
 
   if (error && !data) return <Page><Banner tone="critical">{error}</Banner></Page>;
   if (!data) return <Page><Text tone="subdued">Loading...</Text></Page>;
@@ -163,7 +175,8 @@ function WarehouseDelivery() {
     try {
       const r = await fetch('/api/warehouse/delivery/done', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ half: stop.half, location: stop.location, action }),
+        // key: a store can have two stops in one half-day (2026-10-23)
+        body: JSON.stringify({ key: stop.key, half: stop.half, location: stop.location, action }),
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || 'Failed');
@@ -171,7 +184,9 @@ function WarehouseDelivery() {
       if (d.failed && d.failed.length) {
         setNotice({ tone: 'critical', text: `Not done: ${d.failed.map(f => `${f.number} (${f.error})`).join(', ')}. Try again.` });
       } else {
-        setNotice(null);
+        // Last stop of the day done → today's store → HQ transfers are now
+        // Receiving at HQ (server, 2026-10-23).
+        setNotice(d.backAtHq ? { tone: 'success', text: `All stops done — ${d.backAtHq} transfer${d.backAtHq === 1 ? '' : 's'} to HQ now Receiving.` } : null);
         // The stop is finished → the view moves on with the truck to the
         // next stop (2026-10-23, Hera).
         const after = (d.stops || []).find(x => x.key === stop.key);

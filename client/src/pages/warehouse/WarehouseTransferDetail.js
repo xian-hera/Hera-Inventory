@@ -17,7 +17,9 @@ function WarehouseTransferDetail() {
       role="warehouse"
       showWigNumber={false}
       backPath={backPath}
-      dispatchLabel="Mark as In Transit"
+      // "Mark as In Transit" button removed 2026-10-23 (Hera): an HQ
+      // transfer stays Ready to Ship until it is on today's Schedule and
+      // Go! is pressed.
       showTags
     />
   );

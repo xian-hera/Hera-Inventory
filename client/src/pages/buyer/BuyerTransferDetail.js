@@ -532,12 +532,16 @@ function BuyerTransferDetail() {
   };
   const qtyStyle = (item) => (item.edit_state === 'qty_changed' ? { color: '#1f5199', fontWeight: 700 } : {});
 
+  // Not used since 2026-10-23 (the Ready to Ship button no longer depends on
+  // where the transfer comes from); kept for reference.
+  // eslint-disable-next-line no-unused-vars
   const fromIsHQ = transfer.from_location === HQ_LOCATION_NAME;
 
   let mainButtonLabel = null;
   let mainButtonAction = null;
   if (isLoading) { mainButtonLabel = 'Ready to Ship'; mainButtonAction = () => runMainAction('submit-loading', { force: true }); }
-  else if (isGoodToGo) { mainButtonLabel = fromIsHQ ? 'Mark as In Transit' : 'Truck picked up'; mainButtonAction = () => runMainAction('dispatch'); }
+  // One name for every transfer since 2026-10-23 (was 'Truck picked up' when not from HQ).
+  else if (isGoodToGo) { mainButtonLabel = 'Mark as In Transit'; mainButtonAction = () => runMainAction('dispatch'); }
   else if (isInTransit) { mainButtonLabel = 'Delivered'; mainButtonAction = () => runMainAction('delivered'); }
 
   const editAddedTotal = editAdded.length;

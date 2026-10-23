@@ -1825,6 +1825,18 @@ const initDatabase = async () => {
     await client.query(`ALTER TABLE wh_tasks ADD COLUMN IF NOT EXISTS from_location TEXT`).catch(() => {});
     await client.query(`ALTER TABLE wh_tasks ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ`).catch(() => {});
     await client.query(`ALTER TABLE wh_tasks ADD COLUMN IF NOT EXISTS picked_at TIMESTAMPTZ`).catch(() => {});
+    // Go! more than once a day (2026-10-23, Hera): gone_at = this card went
+    // out with a Go! (it can't be moved / removed any more); sched_set_at =
+    // when the card was last put on its day / half-day (Delivery uses it to
+    // start a new stop for a card added after its store was already done).
+    await client.query(`ALTER TABLE wh_tasks ADD COLUMN IF NOT EXISTS gone_at TIMESTAMPTZ`).catch(() => {});
+    await client.query(`ALTER TABLE wh_tasks ADD COLUMN IF NOT EXISTS sched_set_at TIMESTAMPTZ`).catch(() => {});
+    // one-time: cards already on a day that had Go! count as gone
+    await client.query(`
+      UPDATE wh_tasks w SET gone_at = g.gone_at
+        FROM wh_go_days g
+       WHERE w.gone_at IS NULL AND w.sched_date = g.day AND w.removed_at IS NULL
+    `).catch(e => console.error('wh_tasks gone_at catch-up failed:', e.message));
 
     await client.query('COMMIT');
     console.log('✓ Database initialized successfully');

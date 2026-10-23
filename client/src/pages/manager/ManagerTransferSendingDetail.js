@@ -11,7 +11,8 @@ function ManagerTransferSendingDetail() {
       role="manager"
       showWigNumber={true}
       backPath="/manager/transfer"
-      dispatchLabel="Truck picked up"
+      // "Truck picked up" button removed 2026-10-23 (Hera): the store's job
+      // ends at Ready to Ship; WH's Delivery › Picked Up makes it In Transit.
     />
   );
 }
