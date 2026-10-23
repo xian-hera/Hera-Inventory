@@ -197,7 +197,7 @@ function WarehouseReceiveShipments() {
                 edge) — give the heading row its own 16px gutter. */}
             <div style={{ padding: phone ? '0 16px' : 0 }}>
               <BlockStack gap="300">
-                <Text variant="headingLg" as="h2">Receive Shipments</Text>
+                {/* no "Receive Shipments" title under the tab bar (2026-10-23, Hera) */}
                 {suppliers.length > 0 && <FilterButtons values={suppliers} value={supplier} onChange={setSupplier} />}
               </BlockStack>
             </div>

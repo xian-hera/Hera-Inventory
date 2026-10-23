@@ -179,7 +179,7 @@ function WarehouseDelivery() {
     <Page>
       <div style={{ padding: '0 16px', maxWidth: 640, margin: '0 auto' }}>
         <BlockStack gap="400">
-          <Text variant="headingLg" as="h2">Delivery</Text>
+          {/* no "Delivery" title under the tab bar (2026-10-23, Hera) */}
           {notice && <Banner tone={notice.tone} onDismiss={() => setNotice(null)}>{notice.text}</Banner>}
           {stops.length === 0 ? (
             <Text tone="subdued">Nothing on today's schedule.</Text>

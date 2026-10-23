@@ -855,7 +855,7 @@ function WarehouseSchedule() {
           {/* Header */}
           <InlineStack align="space-between" blockAlign="start" gap="300" wrap>
             <BlockStack gap="100">
-              <Text variant="headingLg" as="h2">Schedule</Text>
+              {/* no "Schedule" title under the tab bar (2026-10-23, Hera — same as HQ Transfers) */}
               <Text tone="subdued" as="p">
                 {past ? 'Past 7 business days' : 'Next 7 business days'} · {longDay(data.days[0])} – {longDay(data.days[data.days.length - 1])} · {scheduledCount} scheduled · {unscheduled.length} unscheduled
               </Text>
