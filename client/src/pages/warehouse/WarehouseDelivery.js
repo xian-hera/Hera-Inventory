@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Page, BlockStack, Text, Banner, Modal } from '@shopify/polaris';
-import { useLocationColors, LOC_PILL_DEFAULT, pillTextColor, TruckIcon, refreshWarehouseBadges } from './whShared';
+import { Page, BlockStack, Text, Banner } from '@shopify/polaris';
+import { useLocationColors, LOC_PILL_DEFAULT, pillTextColor, TruckIcon, EnterIcon, ExitIcon, refreshWarehouseBadges } from './whShared';
 
 // Warehouse › Delivery tab (2026-10-23, Hera) — for the truck driver, phone
 // only. Shows TODAY's saved Schedule as stops: Morning / Afternoon rows of
@@ -10,19 +10,20 @@ import { useLocationColors, LOC_PILL_DEFAULT, pillTextColor, TruckIcon, refreshW
 //   • the stop the truck is at = the first stop not done yet → bigger pill,
 //     truck icon, bold label;
 //   • done stops → light grey pill and label;
-//   • a stop with pickup tasks → orange dot with white ring after the label
-//     (hidden once the stop is done);
-//   • the stop being viewed → black outline. It follows the truck, but the
+//   • a stop with pickup tasks → green "arrow into door" sign after the label
+//     (hidden once the stop is done; was an orange dot);
+//   • the stop being viewed → bigger pill (was a black outline). It follows the truck, but the
 //     driver can tap any stop to look at it / use its buttons out of order.
 //
 // Below the rows, for the viewed stop: its location pill, then
-//   • blue "unload" button (only if it has deliveries) → confirm → every
+//   • blue "Delivered" button (only if it has deliveries) → (no confirm since
+//     2026-10-23) every
 //     delivery of the stop is Delivered (server: transfers In Transit →
 //     Receiving; POs keep Sent to store). Done → grey "Delivered" block;
 //   • Pickup card (only if it has pickups): transfer numbers (custom: title),
 //     not clickable; Online order transfers first in pickup colour (opening
 //     their items: to come);
-//   • green "load" button → confirm → every pickup Picked up (store → HQ
+//   • green "Picked Up" button → (no confirm) every pickup Picked up (store → HQ
 //     transfers go In Transit; part 1 of a store → store transfer doesn't
 //     change). Done → grey "Picked Up" block.
 // A stop is done when both (whichever it has) are done; the next stop then
@@ -33,56 +34,67 @@ const HALVES = [{ id: 'AM', label: 'AM' }, { id: 'PM', label: 'PM' }];
 const GREY_BG = '#ebebeb';
 const GREY_TEXT = '#a8a8a8';
 const ORANGE = '#e2ac0c';
-const BLUE = '#1f6fbf';
-const GREEN = '#b3dfb8';
+// Colours from Hera's artwork (2026-10-23)
+const BLUE = '#3771BC';
+const GREEN = '#4D8F53';
 const PICKUP_BG = '#fff3d6';
 
 const stopDone = (st) => (!st.hasDeliver || st.delivered) && (!st.hasPickup || st.pickedUp);
 
-function StopPill({ stop, active, selected, onClick, big }) {
+// Stop pill (changed 2026-10-23, Hera):
+//   • selected (being viewed) → clearly bigger, bold, bigger truck; it pushes
+//     the pills beside it a little, but keeps the row height (negative
+//     vertical margin), so the rows above / below don't move;
+//   • truck icon = the stop the truck is at;
+//   • green "arrow into door" sign = the stop has pickups (until it is done).
+// size 'display' = the stop's pill under the line.
+function StopPill({ stop, active, selected, onClick, size }) {
   const colors = useLocationColors();
   const done = stopDone(stop);
   const bg = done ? GREY_BG : (colors[stop.location] || LOC_PILL_DEFAULT);
   const fg = done ? GREY_TEXT : pillTextColor(bg);
-  const large = big || active;
+  const big = selected && size !== 'display';
+  const disp = size === 'display';
   return (
     <button
       type="button"
       onClick={onClick}
-      aria-pressed={selected}
+      aria-pressed={!!selected}
       style={{
-        font: 'inherit', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
-        border: 'none', boxShadow: selected ? 'inset 0 0 0 2px #303030' : 'none',
-        background: bg, color: fg, borderRadius: 999, whiteSpace: 'nowrap',
-        // Same height (30px) big or small, so the AM / PM label can line up
-        // with the first row whichever pill is in it.
-        padding: large ? '4px 14px' : '5px 12px', fontSize: large ? 16 : 14,
-        fontWeight: large ? 700 : 500, lineHeight: large ? '22px' : '20px',
+        font: 'inherit', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: big ? 8 : 6,
+        border: 'none', background: bg, color: fg, borderRadius: 999, whiteSpace: 'nowrap',
+        // normal 30px high; selected 38px drawn over the row gap (margin -4px)
+        padding: big ? '7px 16px' : disp ? '5px 14px' : '5px 12px',
+        margin: big ? '-4px 0' : 0,
+        fontSize: big ? 19 : disp ? 16 : 14, lineHeight: big ? '24px' : '20px',
+        fontWeight: big || disp ? 700 : 500,
       }}
     >
-      {active && !done && <TruckIcon height={18} arrow="none" color={fg} bg={bg} label="Truck is here" />}
+      {active && !done && <TruckIcon height={big ? 22 : 16} arrow="none" color={fg} label="Truck is here" />}
       {stop.location}
-      {stop.hasPickup && !done && (
-        <span aria-label="Has pickup" style={{
-          width: 14, height: 14, borderRadius: '50%', background: ORANGE, boxShadow: '0 0 0 2px #fff', flex: 'none',
-        }} />
-      )}
+      {stop.hasPickup && !done && <EnterIcon size={big ? 24 : 20} disc={GREEN} glyph="#ffffff" label="Has pickup" />}
     </button>
   );
 }
 
-function BigButton({ color, onClick, disabled, children, label }) {
+// Delivered / Picked Up buttons: white label + small round sign (its arrow /
+// door show the button colour) — Delivered: arrow out of the door,
+// Picked Up: arrow into the door — no truck icon any more (2026-10-23).
+function BigButton({ color, onClick, disabled, text, exit }) {
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
-      aria-label={label}
       style={{
         width: '100%', minHeight: 64, border: 'none', borderRadius: 12, background: color, cursor: disabled ? 'default' : 'pointer',
-        display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: disabled ? 0.6 : 1,
+        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, opacity: disabled ? 0.6 : 1,
+        color: '#ffffff', font: 'inherit', fontSize: 22, fontWeight: 700,
       }}
-    >{children}</button>
+    >
+      {text}
+      {exit ? <ExitIcon size={30} disc="#ffffff" label="" /> : <EnterIcon size={30} disc="#ffffff" label="" />}
+    </button>
   );
 }
 
@@ -117,7 +129,6 @@ function WarehouseDelivery() {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [selectedKey, setSelectedKey] = useState(null); // null = follow the truck
-  const [confirm, setConfirm] = useState(null);         // { stop, action }
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState(null);
 
@@ -146,8 +157,8 @@ function WarehouseDelivery() {
     || stops.find(st => !stopDone(st)) || null;
   const selected = stops.find(st => st.key === selectedKey) || active || stops[stops.length - 1] || null;
 
-  const run = async () => {
-    const { stop, action } = confirm;
+  // No confirmation any more (2026-10-23, Hera): a tap takes effect at once.
+  const run = async (stop, action) => {
     setBusy(true);
     try {
       const r = await fetch('/api/warehouse/delivery/done', {
@@ -171,7 +182,6 @@ function WarehouseDelivery() {
       setNotice({ tone: 'critical', text: e.message });
     } finally {
       setBusy(false);
-      setConfirm(null);
     }
   };
 
@@ -218,22 +228,18 @@ function WarehouseDelivery() {
               {selected && (
                 <BlockStack gap="300">
                   <div style={{ display: 'flex', justifyContent: 'center' }}>
-                    <StopPill stop={selected} big active={false} selected={false} onClick={() => {}} />
+                    <StopPill stop={selected} size="display" active={false} selected={false} onClick={() => {}} />
                   </div>
                   {selected.hasDeliver && (selected.delivered
                     ? <DoneBlock text="Delivered" />
                     : (
-                      <BigButton color={BLUE} label="Delivered" disabled={busy} onClick={() => setConfirm({ stop: selected, action: 'deliver' })}>
-                        <TruckIcon height={30} color="#ffffff" bg={BLUE} arrow="out" label="Unload" />
-                      </BigButton>
+                      <BigButton color={BLUE} text="Delivered" exit disabled={busy} onClick={() => run(selected, 'deliver')} />
                     ))}
                   {selected.hasPickup && <PickupCard tasks={selected.pickup} />}
                   {selected.hasPickup && (selected.pickedUp
                     ? <DoneBlock text="Picked Up" />
                     : (
-                      <BigButton color={GREEN} label="Picked up" disabled={busy} onClick={() => setConfirm({ stop: selected, action: 'pickup' })}>
-                        <TruckIcon height={30} color="#231f20" bg={GREEN} arrow="in" label="Load" />
-                      </BigButton>
+                      <BigButton color={GREEN} text="Picked Up" disabled={busy} onClick={() => run(selected, 'pickup')} />
                     ))}
                 </BlockStack>
               )}
@@ -241,17 +247,6 @@ function WarehouseDelivery() {
           )}
         </BlockStack>
       </div>
-      <Modal
-        open={!!confirm}
-        onClose={() => { if (!busy) setConfirm(null); }}
-        title={confirm && confirm.action === 'pickup' ? 'Confirm everything is picked up?' : 'Confirm everything is unloaded?'}
-        primaryAction={{ content: 'Confirm', onAction: run, loading: busy, disabled: busy }}
-        secondaryActions={[{ content: 'Cancel', onAction: () => setConfirm(null), disabled: busy }]}
-      >
-        <Modal.Section>
-          <Text>{confirm ? confirm.stop.location : ''}</Text>
-        </Modal.Section>
-      </Modal>
     </Page>
   );
 }

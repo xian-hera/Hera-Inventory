@@ -40,7 +40,9 @@ const HALF_PILL = {
   display: 'inline-block', padding: '2px 10px', borderRadius: 999, background: '#ebebeb',
   color: '#303030', fontSize: 14, fontWeight: 700, lineHeight: '20px', whiteSpace: 'nowrap',
 };
-const HALVES = [{ id: 'AM', label: 'Morning', name: 'Morning' }, { id: 'PM', label: 'Afternoon', name: 'Afternoon' }];
+// label = calendar pill text (AM / PM since 2026-10-23); name = used in
+// messages ("Wed, Oct 21 · Morning").
+const HALVES = [{ id: 'AM', label: 'AM', name: 'Morning' }, { id: 'PM', label: 'PM', name: 'Afternoon' }];
 const PINK = '#e0336f';
 
 const slotKey = (date, half) => `${date}|${half}`;
@@ -186,10 +188,12 @@ function TaskCard({ task, selected, onToggle, onOpenNumber, order, compact, lock
     // PO: Supplier on top, PO number + location below; no PB pill on the
     // card any more (shown on hover) — 2026-10-23, Hera.
     first = <span style={{ fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{task.supplier}</span>;
+    // Location first, PO number after it (2026-10-23) — like transfers, the
+    // location is always at the bottom-left.
     second = (
       <>
-        <LinkText onClick={() => onOpenNumber(task)}>{task.number}</LinkText>
         {locLine}
+        <LinkText onClick={() => onOpenNumber(task)}>{task.number}</LinkText>
       </>
     );
   } else if (task.kind === 'transfer') {
@@ -197,14 +201,12 @@ function TaskCard({ task, selected, onToggle, onOpenNumber, order, compact, lock
       <>
         <LinkText onClick={() => onOpenNumber(task)}>{task.number}</LinkText>
         {task.tag && <span style={{ fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{task.tag}</span>}
+        {/* 1/2 · 2/2 on the first line now (2026-10-23); a long tag is cut
+            (…) instead of wrapping. */}
+        {pc && <span style={{ marginLeft: 'auto', flex: 'none', paddingLeft: 4, fontSize: 11, fontWeight: 700, color: pc }}>{task.leg === 'pickup' ? '1/2' : '2/2'}</span>}
       </>
     );
-    second = (
-      <>
-        {locLine}
-        {pc && <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: pc }}>{task.leg === 'pickup' ? '1/2' : '2/2'}</span>}
-      </>
-    );
+    second = locLine;
   } else {
     first = (
       <>
