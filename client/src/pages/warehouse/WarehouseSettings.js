@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Page, Layout, Card, BlockStack, InlineStack, Text, Button, Banner } from '@shopify/polaris';
+import { Page, Layout, Card, BlockStack, InlineStack, Text, Button, Banner, Modal, TextField, Checkbox } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import { useLocationMap } from '../shared/locationMap';
 import { LOC_PILL_DEFAULT, pillTextColor, setLocationColorsCache } from './whShared';
+import { WarehouseGate, WH_ALL_TABS, WH_TAB_LABELS, WH_PIN_KEY, logoutWarehouse } from './whAccess';
 
 // Warehouse Settings (2026-10-21, Hera — claude/SCHEDULER_FEATURE_SPEC.md §10a).
 // (Cards since: Sync Tasks, and Location Color 2026-10-22 — see LocationColorCard.)
@@ -215,6 +216,194 @@ function EditablePill({ item, editing, onStartEdit, onCommit, onCancel, onDelete
   );
 }
 
+// ─── User Group card (2026-10-23, Hera) ─────────────────────────────────────
+// Up to 3 groups: name + the tabs it may open (Settings is one of them).
+// Edited as a draft, stored with the card's Save (PUT /api/warehouse/user-groups).
+// Accounts of a deleted group choose again on their next visit.
+function UserGroupCard() {
+  const [saved, setSaved] = useState([]);
+  const [draft, setDraft] = useState([]);
+  const [max, setMax] = useState(3);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState(null);
+  const tmpId = useRef(-1);
+
+  useEffect(() => {
+    fetch('/api/warehouse/user-groups')
+      .then(r => r.json())
+      .then(d => { const g = (d && d.groups) || []; setSaved(g); setDraft(g); if (d && d.max) setMax(d.max); })
+      .catch(e => setMsg({ tone: 'critical', text: e.message }))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
+  const update = (id, patch) => { setDraft(prev => prev.map(g => (g.id === id ? { ...g, ...patch } : g))); setMsg(null); };
+  const add = () => { setDraft(prev => [...prev, { id: tmpId.current--, name: '', tabs: [] }]); setMsg(null); };
+  const remove = (id) => { setDraft(prev => prev.filter(g => g.id !== id)); setMsg(null); };
+  const toggleTab = (g, t) => update(g.id, { tabs: g.tabs.includes(t) ? g.tabs.filter(x => x !== t) : WH_ALL_TABS.filter(x => x === t || g.tabs.includes(x)) });
+
+  const save = async () => {
+    setSaving(true); setMsg(null);
+    try {
+      const r = await fetch('/api/warehouse/user-groups', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ groups: draft.map(g => ({ id: g.id > 0 ? g.id : undefined, name: g.name, tabs: g.tabs })) }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'Save failed');
+      setSaved(d.groups); setDraft(d.groups);
+      setMsg({ tone: 'success', text: 'Saved.' });
+    } catch (e) {
+      setMsg({ tone: 'critical', text: e.message });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card>
+      <BlockStack gap="300">
+        <Text variant="headingMd" as="h2">User Group</Text>
+        <Text tone="subdued" variant="bodySm">
+          Up to {max} groups. Each user picks a group the first time they open Warehouse and only sees that group's tabs.
+          With no groups, everyone sees every tab.
+        </Text>
+        {msg && <Banner tone={msg.tone} onDismiss={() => setMsg(null)}>{msg.text}</Banner>}
+        {loading ? <Text tone="subdued">Loading...</Text> : (
+          <BlockStack gap="300">
+            {draft.length === 0 && <Text tone="subdued">No groups yet.</Text>}
+            {draft.map(g => (
+              <div key={g.id} style={{ border: '1px solid #e1e3e5', borderRadius: 10, padding: 12 }}>
+                <BlockStack gap="200">
+                  <InlineStack gap="200" blockAlign="end" wrap={false}>
+                    <div style={{ flex: 1 }}>
+                      <TextField label="Group name" value={g.name} onChange={(v) => update(g.id, { name: v })} autoComplete="off" maxLength={30} />
+                    </div>
+                    <Button tone="critical" variant="plain" onClick={() => remove(g.id)}>Delete</Button>
+                  </InlineStack>
+                  <InlineStack gap="400" wrap>
+                    {WH_ALL_TABS.map(t => (
+                      <Checkbox key={t} label={WH_TAB_LABELS[t]} checked={g.tabs.includes(t)} onChange={() => toggleTab(g, t)} />
+                    ))}
+                  </InlineStack>
+                </BlockStack>
+              </div>
+            ))}
+            <InlineStack align="space-between">
+              <Button onClick={add} disabled={draft.length >= max}>Add group</Button>
+              <Button variant="primary" onClick={save} loading={saving} disabled={!dirty}>Save</Button>
+            </InlineStack>
+          </BlockStack>
+        )}
+      </BlockStack>
+    </Card>
+  );
+}
+
+// ─── PIN card (2026-10-23, Hera) — same as Online / Purchasing ───────────────
+function PinCard() {
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  const [step, setStep] = useState('verify');
+  const [current, setCurrent] = useState('');
+  const [verified, setVerified] = useState('');
+  const [newPin, setNewPin] = useState('');
+  const [hint, setHint] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+
+  const openModal = () => { setStep('verify'); setCurrent(''); setVerified(''); setNewPin(''); setHint(''); setError(''); setDone(false); setOpen(true); };
+  const close = () => setOpen(false);
+
+  const verify = async () => {
+    setBusy(true); setError('');
+    try {
+      const r = await fetch('/api/settings/pin/verify', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: WH_PIN_KEY, pin: current }),
+      });
+      if (r.ok) {
+        const h = await fetch(`/api/settings/pin/hint?key=${WH_PIN_KEY}`).then(x => x.json()).catch(() => ({}));
+        setHint(h.hint || ''); setVerified(current); setStep('set'); setCurrent('');
+      } else { setError('Incorrect PIN.'); setCurrent(''); }
+    } catch (e) {
+      setError('Network error. Please try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const savePin = async () => {
+    if (!/^\d{4}$/.test(newPin)) { setError('PIN must be exactly 4 digits.'); return; }
+    setBusy(true); setError('');
+    try {
+      const r = await fetch('/api/settings/pin/update', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: WH_PIN_KEY, currentPin: verified, newPin, hint }),
+      });
+      if (r.ok) { setDone(true); setTimeout(close, 1400); }
+      else { const d = await r.json().catch(() => ({})); setError(d.error || 'Failed to update PIN.'); }
+    } catch (e) {
+      setError('Network error. Please try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const logout = async () => { await logoutWarehouse(); navigate('/'); };
+
+  return (
+    <Card>
+      <BlockStack gap="300">
+        <Text variant="headingMd" as="h2">PIN</Text>
+        <InlineStack gap="200">
+          <Button onClick={openModal}>Set PIN</Button>
+          <Button tone="critical" onClick={logout}>Log out</Button>
+        </InlineStack>
+      </BlockStack>
+      <Modal
+        open={open}
+        onClose={close}
+        title="Set PIN"
+        primaryAction={step === 'verify'
+          ? { content: 'Verify', onAction: verify, disabled: current.length !== 4 || busy, loading: busy }
+          : { content: 'Save PIN', onAction: savePin, disabled: newPin.length !== 4 || busy || done, loading: busy }}
+        secondaryActions={[{ content: 'Cancel', onAction: close }]}
+      >
+        <Modal.Section>
+          <BlockStack gap="300">
+            {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
+            {done && <Banner tone="success">PIN updated successfully.</Banner>}
+            {step === 'verify' && !done && (
+              <TextField
+                label="Current PIN" type="password" value={current} autoComplete="off" maxLength={4} placeholder="Enter current PIN"
+                onChange={(v) => { if (/^\d{0,4}$/.test(v)) setCurrent(v); setError(''); }}
+                onKeyDown={(e) => { if (e.key === 'Enter' && current.length === 4) verify(); }}
+                helpText="Default PIN is 3591 if it has never been changed."
+              />
+            )}
+            {step === 'set' && !done && (
+              <>
+                <TextField
+                  label="New PIN (4 digits)" type="password" value={newPin} autoComplete="off" maxLength={4} placeholder="Choose a 4-digit PIN"
+                  onChange={(v) => { if (/^\d{0,4}$/.test(v)) setNewPin(v); setError(''); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && newPin.length === 4) savePin(); }}
+                />
+                <TextField
+                  label="Hint (optional)" value={hint} onChange={setHint} autoComplete="off" multiline={2}
+                  placeholder="e.g. Year + first initial" helpText="This hint is shown on the PIN login screen. Keep it vague."
+                />
+                <Text variant="bodySm" tone="subdued">Changing the PIN will sign out all devices. They will need to re-enter the new PIN.</Text>
+              </>
+            )}
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
+    </Card>
+  );
+}
+
 function WarehouseSettings() {
   const navigate = useNavigate();
   const [items, setItems] = useState([]); // [{ key, name }] — '' name = new, not saved yet
@@ -370,9 +559,21 @@ function WarehouseSettings() {
         <Layout.Section>
           <LocationColorCard />
         </Layout.Section>
+        <Layout.Section>
+          <UserGroupCard />
+        </Layout.Section>
+        <Layout.Section>
+          <PinCard />
+        </Layout.Section>
       </Layout>
     </Page>
   );
 }
 
-export default WarehouseSettings;
+// PIN + user group gate (2026-10-23): a group without Settings is sent to its
+// first tab.
+function WarehouseSettingsGated() {
+  return <WarehouseGate tab="settings">{() => <WarehouseSettings />}</WarehouseGate>;
+}
+
+export default WarehouseSettingsGated;

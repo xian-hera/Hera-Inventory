@@ -26,6 +26,7 @@ export const PIN_LOCAL_KEYS = {
   buyer_pin: 'buyer_pin_verified',
   crm_pin: 'crm_pin_verified',
   online_pin: 'online_pin_verified',
+  wh_pin: 'wh_pin_verified', // Warehouse (2026-10-23)
 };
 const MANAGER_LOCATION_KEY = 'managerLocation';
 

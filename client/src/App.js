@@ -102,6 +102,7 @@ const WarehouseShell = lazyWithReload(() => import(/* webpackChunkName: "warehou
 const WarehouseSchedule = lazyWithReload(() => import(/* webpackChunkName: "warehouse" */ './pages/warehouse/WarehouseSchedule'));
 const WarehouseReceiveShipments = lazyWithReload(() => import(/* webpackChunkName: "warehouse" */ './pages/warehouse/WarehouseReceiveShipments'));
 const WarehouseSettings = lazyWithReload(() => import(/* webpackChunkName: "warehouse" */ './pages/warehouse/WarehouseSettings'));
+const WarehouseDelivery = lazyWithReload(() => import(/* webpackChunkName: "warehouse" */ './pages/warehouse/WarehouseDelivery'));
 const ManagerTransferHome = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerTransferHome'));
 const ManagerTransferSendingDetail = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerTransferSendingDetail'));
 const ManagerTransferReceivingDetail = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerTransferReceivingDetail'));
@@ -194,6 +195,7 @@ function App() {
           <Route path="/warehouse" element={<WarehouseShell tab="schedule"><WarehouseSchedule /></WarehouseShell>} />
           <Route path="/warehouse/receive-shipments" element={<WarehouseShell tab="receive-shipments"><WarehouseReceiveShipments /></WarehouseShell>} />
           <Route path="/warehouse/hq-transfers" element={<WarehouseShell tab="hq-transfers"><WarehouseHome inTabs section="hq" /></WarehouseShell>} />
+          <Route path="/warehouse/delivery" element={<WarehouseShell tab="delivery"><WarehouseDelivery /></WarehouseShell>} />
           <Route path="/warehouse/settings" element={<WarehouseSettings />} />
           {/* Receiving to HQ (改动二) — fixed "receiving" segment registered
               before the :transferId route so it can't be shadowed. */}

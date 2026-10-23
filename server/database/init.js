@@ -1808,6 +1808,24 @@ const initDatabase = async () => {
                       WHERE i.id = (h.detail->>'invoice_id')::int AND i.status IN ('committed', 'archived'))
     `).catch(e => console.error('manager_history Committed catch-up failed:', e.message));
 
+    // Warehouse user groups (2026-10-23, Hera): the groups themselves are
+    // app_settings 'wh_user_groups' = [{ id, name, tabs: [...] }] (max 3);
+    // this table remembers which group each Shopify staff account picked.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS wh_account_groups (
+        account_id TEXT PRIMARY KEY,
+        group_id INTEGER NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await client.query(`INSERT INTO app_settings (key, value) VALUES ('wh_user_groups', '[]'::jsonb) ON CONFLICT (key) DO NOTHING`).catch(() => {});
+
+    // Custom task From (2026-10-23, Hera; NULL = HQ) and the Delivery tab's
+    // Delivered / Picked up marks per card.
+    await client.query(`ALTER TABLE wh_tasks ADD COLUMN IF NOT EXISTS from_location TEXT`).catch(() => {});
+    await client.query(`ALTER TABLE wh_tasks ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ`).catch(() => {});
+    await client.query(`ALTER TABLE wh_tasks ADD COLUMN IF NOT EXISTS picked_at TIMESTAMPTZ`).catch(() => {});
+
     await client.query('COMMIT');
     console.log('✓ Database initialized successfully');
   } catch (e) {

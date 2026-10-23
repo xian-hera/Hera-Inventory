@@ -34,12 +34,13 @@ const { rememberPinForAccount, forgetPinForAllAccounts } = require('./accountMem
 
 const hashPin = (pin) => crypto.createHash('sha256').update(pin).digest('hex');
 
-const VALID_PIN_KEYS = ['buyer_pin', 'crm_pin', 'online_pin'];
+// wh_pin (2026-10-23, Hera): Warehouse gets its own PIN, default 3591.
+const VALID_PIN_KEYS = ['buyer_pin', 'crm_pin', 'online_pin', 'wh_pin'];
 
 // Per-key default PIN (used only when no row exists yet for that key, i.e.
 // it has never been changed). buyer_pin/crm_pin keep the original 3591;
 // online_pin's default is 0000, per Hera's spec for the new Online section.
-const DEFAULT_PINS = { buyer_pin: '3591', crm_pin: '3591', online_pin: '0000' };
+const DEFAULT_PINS = { buyer_pin: '3591', crm_pin: '3591', online_pin: '0000', wh_pin: '3591' };
 const defaultStoredValue = (key) => ({ hash: hashPin(DEFAULT_PINS[key]), hint: '' });
 
 // One-time, hash-verified backfill (2026-09-21): crm_pin was customized to

@@ -22,6 +22,7 @@ const PIN_LIST_SECTIONS = [
   { key: 'crm_pin', label: 'Operation' },
   { key: 'online_pin', label: 'Online' },
   { key: 'buyer_pin', label: 'Purchasing' },
+  { key: 'wh_pin', label: 'Warehouse' }, // 2026-10-23
 ];
 
 function OnlineSettings() {

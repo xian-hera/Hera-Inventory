@@ -6,7 +6,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { useLocationMap } from '../shared/locationMap';
 import {
-  HQ, RoutePills, PbPill, LinkText, PoPopup, TransferPopup, truncate,
+  HQ, PbPill, LinkText, PoPopup, TransferPopup, truncate, LocPill, PickupTruck,
   useLocationOrder, useToast, refreshWarehouseBadges, setScheduleDirty, confirmLeaveSchedule,
 } from './whShared';
 
@@ -99,6 +99,7 @@ function cardRoute(t) {
   if (t.kind === 'transfer' && t.leg === 'pickup') return { from: t.from, to: HQ };
   if (t.kind === 'transfer' && t.leg === 'deliver') return { from: HQ, to: t.to };
   if (t.kind === 'transfer') return { from: t.from, to: t.to };
+  if (t.kind === 'custom') return { from: t.from || HQ, to: t.to }; // custom From (2026-10-23)
   return { from: HQ, to: t.to };
 }
 
@@ -106,17 +107,38 @@ function cardRoute(t) {
 const PAIR_COLORS = ['#f59e0b', '#10b981', '#3b82f6', '#ec4899', '#8b5cf6', '#14b8a6', '#ef4444', '#84cc16', '#0ea5e9', '#d946ef'];
 const pairColor = (transferId) => PAIR_COLORS[Math.abs(Number(transferId) || 0) % PAIR_COLORS.length];
 
-// Hover box: every card shows its full location relation "{from} ➔ {to}"
-// (locations bold); custom cards also Type / Title / Note. Rendered in a
-// portal with fixed position so the calendar's scroll box and the page's
-// centring transform can't clip or shift it.
+// Hover box (rules changed 2026-10-23, Hera):
+//   PO              → full Supplier name + PB qty
+//   transfer        → nothing, except a split store → store card → the real
+//                     route "{from} ➔ {to}" (locations bold)
+//   custom          → Title + Note
+// "Tracked back" is added under any box that is shown. Rendered in a portal
+// with fixed position so the calendar's scroll box and the page's centring
+// transform can't clip or shift it.
 function HoverBox({ task, rect }) {
   if (!rect) return null;
-  const from = task.kind === 'transfer' ? task.from : HQ;
-  const to = task.to;
+  let body = null;
+  if (task.kind === 'po') {
+    body = (
+      <>
+        <div style={{ fontWeight: 700 }}>{task.supplier || '—'}</div>
+        {task.pbCount && task.pbUnit
+          ? <div style={{ marginTop: 4 }}><PbPill count={task.pbCount} unit={task.pbUnit} /></div>
+          : <div style={{ marginTop: 2, color: '#6d7175', fontSize: 12 }}>No P / B qty</div>}
+      </>
+    );
+  } else if (task.kind === 'transfer') {
+    if (task.leg) body = <div><b>{task.from}</b> ➔ <b>{task.to}</b></div>;
+  } else {
+    body = (
+      <>
+        <div style={{ fontWeight: 700 }}>{task.title}</div>
+        {task.note && <div style={{ whiteSpace: 'pre-wrap', marginTop: 2 }}>{task.note}</div>}
+      </>
+    );
+  }
+  if (!body) return null;
   const above = rect.top > 140;
-  // PO cards (2026-10-22, Hera): just the full Supplier name, no location.
-  const poOnly = task.kind === 'po';
   return createPortal(
     <div style={{
       position: 'fixed', zIndex: 700, left: Math.max(8, Math.min(rect.left, window.innerWidth - 288)),
@@ -124,26 +146,19 @@ function HoverBox({ task, rect }) {
       maxWidth: 280, background: '#fff', color: '#303030', border: '1px solid #c9cccf', borderRadius: 8,
       boxShadow: '0 6px 18px rgba(0,0,0,0.15)', padding: '8px 10px', fontSize: 13, lineHeight: '18px', pointerEvents: 'none',
     }}>
-      {task.kind === 'custom' && (
-        <div style={{ marginBottom: 4 }}>
-          <div>Type: {task.type || 'Custom'}</div>
-          <div>Title: {task.title}</div>
-          {task.note && <div style={{ whiteSpace: 'pre-wrap' }}>Note: {task.note}</div>}
-        </div>
-      )}
-      {poOnly
-        ? <div style={{ fontWeight: 700 }}>{task.supplier || '—'}</div>
-        : <div><b>{from}</b> ➔ <b>{to}</b></div>}
-      {task.kind === 'transfer' && task.leg && (
-        <div style={{ marginTop: 4, color: '#6d7175', fontSize: 12 }}>
-          {task.leg === 'pickup' ? 'Part 1 of 2: pick up, bring to HQ' : 'Part 2 of 2: deliver from HQ'}
-        </div>
-      )}
+      {body}
       {task.trackedBack && <div style={{ marginTop: 4, color: '#6d7175', fontSize: 12 }}>Tracked back</div>}
     </div>,
     document.body
   );
 }
+
+// Pickup card = WH goes to a store and brings the goods to HQ: a store → HQ
+// transfer, or part 1 of a split store → store transfer (2026-10-23, Hera).
+// Also a custom task To HQ (From a store), 2026-10-23.
+const isPickup = (t) => (t.kind === 'transfer' || t.kind === 'custom') && cardRoute(t).to === HQ && cardRoute(t).from !== HQ;
+const PICKUP_BG = '#fff3d6';
+const PICKUP_BORDER = '#e2ac0c';
 
 // One task card. `compact` = the calendar version (slightly smaller, with
 // the order number in front). `partnerLit` = the other card of the same
@@ -154,16 +169,29 @@ function TaskCard({ task, selected, onToggle, onOpenNumber, order, compact, lock
   const [hoverRect, setHoverRect] = useState(null);
   const route = cardRoute(task);
   const pc = task.kind === 'transfer' && task.leg ? pairColor(task.transferId) : null;
+  // Cards show only the location now — no arrows (2026-10-23, Hera). The
+  // location is the store the truck goes to: `to` for deliveries, `from` for
+  // pickups (followed by the ➔ truck mark).
+  const pickup = isPickup(task);
+  const where = pickup ? route.from : route.to;
+  const locLine = (
+    <>
+      <LocPill name={where} />
+      {pickup && <PickupTruck height={compact ? 16 : 18} />}
+    </>
+  );
   let first;
   let second;
   if (task.kind === 'po') {
-    first = (
+    // PO: Supplier on top, PO number + location below; no PB pill on the
+    // card any more (shown on hover) — 2026-10-23, Hera.
+    first = <span style={{ fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{task.supplier}</span>;
+    second = (
       <>
         <LinkText onClick={() => onOpenNumber(task)}>{task.number}</LinkText>
-        <span style={{ fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{task.supplier}</span>
+        {locLine}
       </>
     );
-    second = <><RoutePills from={HQ} to={task.to} /><PbPill count={task.pbCount} unit={task.pbUnit} /></>;
   } else if (task.kind === 'transfer') {
     first = (
       <>
@@ -173,7 +201,7 @@ function TaskCard({ task, selected, onToggle, onOpenNumber, order, compact, lock
     );
     second = (
       <>
-        <RoutePills from={route.from} to={route.to} />
+        {locLine}
         {pc && <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: pc }}>{task.leg === 'pickup' ? '1/2' : '2/2'}</span>}
       </>
     );
@@ -184,9 +212,10 @@ function TaskCard({ task, selected, onToggle, onOpenNumber, order, compact, lock
         <span style={{ fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{truncate(task.title)}</span>
       </>
     );
-    second = <RoutePills from={HQ} to={task.to} />;
+    second = locLine;
   }
-  const borderColor = selected ? PINK : '#c9cccf';
+  // Pickup: whole card #fff3d6 with a #e2ac0c border of the normal width.
+  const borderColor = selected ? PINK : pickup ? PICKUP_BORDER : '#c9cccf';
   const bw = selected ? 2 : 1;
   return (
     <div
@@ -204,7 +233,7 @@ function TaskCard({ task, selected, onToggle, onOpenNumber, order, compact, lock
         borderLeft: pc ? `5px solid ${pc}` : `${bw}px solid ${borderColor}`,
         boxShadow: partnerLit && pc ? `0 0 0 3px ${pc}55` : 'none',
         padding: `${compact ? 5 - (bw - 1) : 7 - (bw - 1)}px ${compact ? 8 - (bw - 1) : 10 - (bw - 1)}px`,
-        borderRadius: 10, background: locked ? '#f7f7f7' : '#fff', fontSize: fs, lineHeight: '18px',
+        borderRadius: 10, background: pickup ? PICKUP_BG : locked ? '#f7f7f7' : '#fff', fontSize: fs, lineHeight: '18px',
         display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0,
       }}
     >
@@ -212,7 +241,7 @@ function TaskCard({ task, selected, onToggle, onOpenNumber, order, compact, lock
         {order != null && <span style={{ color: '#6d7175', fontSize: 11, minWidth: 12, fontVariantNumeric: 'tabular-nums' }}>{order}</span>}
         {first}
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', minWidth: 0 }}>{second}</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', minWidth: 0, rowGap: 4 }}>{second}</div>
       <HoverBox task={task} rect={hoverRect} />
       {selected && (
         <span aria-hidden="true" style={{
@@ -233,6 +262,9 @@ function CreateTaskModal({ open, onClose, onCreated }) {
   const { names } = useLocationMap({ excludeHQ: true });
   const [types, setTypes] = useState(null);
   const [type, setType] = useState('');
+  // From (2026-10-23, Hera): default HQ. One side must be HQ, so a store as
+  // From makes To = HQ (a pickup); From = HQ → To is any store.
+  const [from, setFrom] = useState(HQ);
   const [to, setTo] = useState('');
   const [title, setTitle] = useState('');
   const [note, setNote] = useState('');
@@ -241,7 +273,7 @@ function CreateTaskModal({ open, onClose, onCreated }) {
 
   useEffect(() => {
     if (!open) return;
-    setType(''); setTo(''); setTitle(''); setNote(''); setError(''); setTypes(null);
+    setType(''); setFrom(HQ); setTo(''); setTitle(''); setNote(''); setError(''); setTypes(null);
     fetch('/api/warehouse/task-types')
       .then(r => r.json())
       .then(d => { const list = Array.isArray(d.types) ? d.types : []; setTypes(list); if (list.length) setType(list[0]); })
@@ -257,7 +289,7 @@ function CreateTaskModal({ open, onClose, onCreated }) {
     try {
       const r = await fetch('/api/warehouse/tasks', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: noTypes ? '' : type, toLocation: to, title: title.trim(), note: note.trim() }),
+        body: JSON.stringify({ type: noTypes ? '' : type, fromLocation: from, toLocation: to, title: title.trim(), note: note.trim() }),
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || 'Failed to create the task');
@@ -286,7 +318,8 @@ function CreateTaskModal({ open, onClose, onCreated }) {
       <Modal.Section>
         <BlockStack gap="300">
           {error && <Banner tone="critical">{error}</Banner>}
-          <InlineStack gap="300" wrap={false}>
+          {/* Layout 2026-10-23 (Hera): Type | Title, then From | To. */}
+          <InlineStack gap="300" wrap={false} blockAlign="start">
             <div style={{ flex: 1 }}>
               <Select label="Type" options={typeOptions} value={type} onChange={setType} disabled={!types || noTypes} />
               {noTypes && (
@@ -296,16 +329,28 @@ function CreateTaskModal({ open, onClose, onCreated }) {
               )}
             </div>
             <div style={{ flex: 1 }}>
+              <TextField label="Title" value={title} onChange={setTitle} autoComplete="off" maxLength={120} requiredIndicator />
+            </div>
+          </InlineStack>
+          <InlineStack gap="300" wrap={false}>
+            <div style={{ flex: 1 }}>
+              <Select
+                label="From Location"
+                options={[HQ, ...names].map(n => ({ label: n, value: n }))}
+                value={from}
+                onChange={(v) => { setFrom(v); setTo(v === HQ ? '' : HQ); }}
+              />
+            </div>
+            <div style={{ flex: 1 }}>
               <Select
                 label="To Location"
                 placeholder="Select"
-                options={names.map(n => ({ label: n, value: n }))}
+                options={(from === HQ ? names : [HQ]).map(n => ({ label: n, value: n }))}
                 value={to}
                 onChange={setTo}
               />
             </div>
           </InlineStack>
-          <TextField label="Title" value={title} onChange={setTitle} autoComplete="off" maxLength={120} requiredIndicator />
           <TextField label="Note" value={note} onChange={setNote} autoComplete="off" placeholder="optional" maxLength={500} />
         </BlockStack>
       </Modal.Section>
@@ -394,11 +439,6 @@ function SplitModal({ task, onClose, onDone }) {
 const showInUnscheduled = (t) => t.kind !== 'transfer' || t.status === 'good_to_go'
   || (t.leg === 'deliver' && t.status === 'in_transit');
 
-// Which Unscheduled tab a card belongs to, by the route shown on the card:
-// from HQ → Delivery; to HQ → Pickup. A store → store transfer that was not
-// split (only old rows) starts with a pickup → Pickup.
-const trayTabOf = (t) => (cardRoute(t).from === HQ ? 'delivery' : 'pickup');
-
 function WarehouseSchedule() {
   const compareLoc = useLocationOrder();
   const [view, setView] = useState('current');     // 'current' | 'past'
@@ -407,10 +447,6 @@ function WarehouseSchedule() {
   const [slots, setSlots] = useState({});          // draft calendar (editable days only)
   const [sel, setSel] = useState([]);              // selected ids, in click order
   const [filter, setFilter] = useState('all');
-  // Unscheduled tabs (2026-10-22, Hera): 'delivery' = leaves HQ (PO, custom,
-  // HQ → store transfer, part 2 of a split store → store) · 'pickup' = comes
-  // to HQ (store → HQ transfer, part 1 of a split store → store).
-  const [trayTab, setTrayTab] = useState('delivery');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState(null);      // { tone, text } — Go! result
   const [conflict, setConflict] = useState(false);
@@ -511,11 +547,8 @@ function WarehouseSchedule() {
 
   const unscheduledAll = useMemo(() => tasks.filter(t => !where[t.id] && !lockedWhere[t.id]), [tasks, where, lockedWhere]);
   const unscheduled = useMemo(() => unscheduledAll.filter(showInUnscheduled), [unscheduledAll]);
-  const unDelivery = useMemo(() => unscheduled.filter(t => trayTabOf(t) === 'delivery'), [unscheduled]);
-  const unPickup = useMemo(() => unscheduled.filter(t => trayTabOf(t) === 'pickup'), [unscheduled]);
-  const tabList = trayTab === 'pickup' ? unPickup : unDelivery;
   const tray = useMemo(() => {
-    const list = tabList.filter(t => filter === 'all' || t.kind === filter);
+    const list = unscheduled.filter(t => filter === 'all' || t.kind === filter);
     // Always grouped by location (spec §5): HQ → store (by to) · store → HQ
     // (by from) · store → store (by from, then to) — by the location shown on
     // the card, so the two halves of a split transfer land in groups 1 and 2.
@@ -531,7 +564,7 @@ function WarehouseSchedule() {
         || new Date(a.createdAt) - new Date(b.createdAt)
         || a.id - b.id;
     });
-  }, [tabList, filter, compareLoc]);
+  }, [unscheduled, filter, compareLoc]);
 
   // ── selection-dependent state ──
   const selTasks = sel.map(id => byId[id]).filter(Boolean);
@@ -694,9 +727,11 @@ function WarehouseSchedule() {
     // One transfer = one status: count each transfer once, whichever of its
     // cards is on today's schedule.
     const todayTransfers = todayKeys.flatMap(k => saved[k] || []).map(id => byId[id])
-      .filter(t => t && t.kind === 'transfer');
+      // pickups (part 1 of store → store, store → HQ) don't change the status
+      // on Go! (2026-10-23) — store → HQ goes In Transit on the Delivery tab.
+      .filter(t => t && t.kind === 'transfer' && t.leg !== 'pickup' && t.to !== HQ);
     const ready = new Set(todayTransfers.filter(t => t.status === 'good_to_go').map(t => t.transferId)).size;
-    if (!window.confirm(`Go! — today's schedule is done and the trucks have left?\n\nToday's schedule will be locked (tasks can still be tracked back to it), and ${ready} Ready to Ship transfer${ready === 1 ? '' : 's'} on today's schedule will be marked In Transit.\n\nThis can be done once per day.`)) return;
+    if (!window.confirm(`Go! — today's schedule is done and the trucks have left?\n\nToday's schedule will be locked (tasks can still be tracked back to it), and ${ready} Ready to Ship transfer${ready === 1 ? '' : 's'} on today's schedule will be marked In Transit (pickups don't change the status here — store → HQ transfers go In Transit when picked up on the Delivery tab).\n\nThis can be done once per day.`)) return;
     setGoing(true);
     setError('');
     setNotice(null);
@@ -857,30 +892,12 @@ function WarehouseSchedule() {
 
           {/* Unscheduled — title, filters and buttons outside the card */}
           <InlineStack align="space-between" blockAlign="end" gap="200" wrap>
-            {/* Two tabs instead of the "Unscheduled" title (2026-10-22, Hera) */}
-            <div role="tablist" style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-              {[['delivery', 'Unscheduled Delivery', unDelivery.length], ['pickup', 'Pickup', unPickup.length]].map(([id, label, n]) => {
-                const on = trayTab === id;
-                return (
-                  <button
-                    key={id}
-                    type="button"
-                    role="tab"
-                    aria-selected={on}
-                    onClick={() => setTrayTab(id)}
-                    style={{
-                      font: 'inherit', display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer',
-                      padding: '6px 12px', minHeight: 36, borderRadius: 8, border: 'none',
-                      background: on ? '#e3e3e3' : 'transparent', color: '#303030',
-                      fontSize: 16, fontWeight: on ? 700 : 500,
-                    }}
-                  >
-                    {label}
-                    <span style={{ fontSize: 12, fontWeight: 650, padding: '1px 8px', borderRadius: 999, background: on ? '#fff' : '#e3e3e3' }}>{n}</span>
-                  </button>
-                );
-              })}
-            </div>
+            {/* One list again (2026-10-23, Hera) — the Delivery / Pickup tabs of
+                2026-10-22 were removed; pickup cards are amber instead. */}
+            <InlineStack gap="200" blockAlign="center">
+              <Text variant="headingMd" as="h3">Unscheduled</Text>
+              <span style={{ fontSize: 12, fontWeight: 650, padding: '1px 8px', borderRadius: 999, background: '#e3e3e3' }}>{unscheduled.length}</span>
+            </InlineStack>
             <InlineStack gap="200" blockAlign="end" wrap>
               <InlineStack gap="100">
                 {filterBtn('all', 'All')}{filterBtn('po', 'PO')}{filterBtn('transfer', 'Transfer')}{filterBtn('custom', 'Other')}
@@ -891,7 +908,7 @@ function WarehouseSchedule() {
 
           <div style={{ background: '#fff', borderRadius: 12, boxShadow: '0 1px 0 rgba(0,0,0,0.07), 0 0 0 1px rgba(0,0,0,0.08)', padding: 14 }}>
             {tray.length === 0 ? (
-              <Text tone="subdued">{tabList.length === 0 ? (trayTab === 'pickup' ? 'No pickups.' : 'No unscheduled deliveries.') : 'No tasks match.'}</Text>
+              <Text tone="subdued">{unscheduled.length === 0 ? 'No unscheduled tasks.' : 'No unscheduled tasks match.'}</Text>
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 10 }}>
                 {tray.map(t => (

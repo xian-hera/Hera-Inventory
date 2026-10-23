@@ -484,7 +484,7 @@ async function loadSchedule(db, view = 'current') {
       type: w.custom_type || '',
       title: w.custom_title || '',
       note: w.custom_note || '',
-      from: HQ,
+      from: w.from_location || HQ, // custom From (2026-10-23); older tasks: HQ
       to: w.to_location || '',
     };
   });
@@ -686,6 +686,8 @@ router.post('/tasks/untrack', async (req, res) => {
 //      transfer with ONE status: it is marked once, whichever of its two
 //      cards is on today (normally part 1, the pickup). Its part 2 card then
 //      stays on the Schedule while In Transit (exception, Hera 2026-10-21).
+//      Changed 2026-10-23 (Hera): the part 1 (pickup) card is ignored here —
+//      only the part 2 (deliver) card being on today marks it In Transit.
 // Once per day.
 router.post('/go', async (req, res) => {
   const today = torontoToday();
@@ -700,7 +702,14 @@ router.post('/go', async (req, res) => {
     const rows = (await pool.query(
       `SELECT DISTINCT tr.id, tr.status, COALESCE(tr.shopify_transfer_name, tr.transfer_no) AS number
        FROM wh_tasks w JOIN transfers tr ON tr.id = w.transfer_id
-       WHERE w.kind = 'transfer' AND w.removed_at IS NULL AND w.sched_date = $1::date`,
+       WHERE w.kind = 'transfer' AND w.removed_at IS NULL AND w.sched_date = $1::date
+         -- part 1 (pickup) of a store → store transfer no longer changes
+         -- the Shopify status (2026-10-23, Hera): it goes In Transit when its
+         -- part 2 (deliver) card goes out with Go!.
+         AND COALESCE(w.leg, '') <> 'pickup'
+         -- store → HQ transfers are pickups too: since 2026-10-23 they go In
+         -- Transit when the driver presses "picked up" on the Delivery tab.
+         AND NOT (w.leg IS NULL AND tr.to_location = 'HQ')`,
       [today]
     )).rows;
     const results = { inTransit: [], skipped: [], failed: [] };
@@ -729,17 +738,22 @@ router.post('/tasks', async (req, res) => {
     const body = req.body || {};
     const title = String(body.title || '').trim();
     const toLocation = String(body.toLocation || '').trim();
+    // From (2026-10-23, Hera): default HQ. One side must be HQ — From = HQ is
+    // a delivery to To; To = HQ is a pickup at From (no store → store).
+    const fromLocation = String(body.fromLocation || HQ).trim() || HQ;
     const note = String(body.note || '').trim();
     let type = String(body.type || '').trim();
     if (!title) return res.status(400).json({ error: 'Title is required.' });
     if (!toLocation) return res.status(400).json({ error: 'To Location is required.' });
+    if (fromLocation === toLocation) return res.status(400).json({ error: 'From and To can not be the same location.' });
+    if (fromLocation !== HQ && toLocation !== HQ) return res.status(400).json({ error: 'From or To must be HQ.' });
     const types = await getTaskTypes(pool);
     if (types.length > 0 && !type) return res.status(400).json({ error: 'Type is required.' });
     if (types.length === 0) type = ''; // no types in Settings → shown as "Custom"
     const r = await pool.query(
-      `INSERT INTO wh_tasks (kind, custom_type, custom_title, custom_note, to_location)
-       VALUES ('custom', $1, $2, $3, $4) RETURNING id`,
-      [type || null, title, note || null, toLocation]
+      `INSERT INTO wh_tasks (kind, custom_type, custom_title, custom_note, to_location, from_location)
+       VALUES ('custom', $1, $2, $3, $4, $5) RETURNING id`,
+      [type || null, title, note || null, toLocation, fromLocation]
     );
     res.json({ id: r.rows[0].id });
   } catch (e) {
@@ -926,7 +940,7 @@ router.post('/tasks/:id/split', async (req, res) => {
 // The store a card goes to (or picks up from) — the "location" of the card.
 const CARD_STORE_SQL = `CASE
   WHEN w.kind = 'po' THEN i.location
-  WHEN w.kind = 'custom' THEN w.to_location
+  WHEN w.kind = 'custom' THEN (CASE WHEN COALESCE(w.from_location, 'HQ') = 'HQ' THEN w.to_location ELSE w.from_location END)
   WHEN w.leg = 'pickup' THEN tr.from_location
   WHEN w.leg = 'deliver' THEN tr.to_location
   WHEN tr.from_location = 'HQ' THEN tr.to_location
@@ -1073,6 +1087,245 @@ router.get('/store-custom', async (req, res) => {
   } catch (e) {
     console.error('GET /api/warehouse/store-custom error:', e);
     res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── Delivery tab (2026-10-23, Hera) ─────────────────────────────────────────
+// For the truck driver, on a phone. Today's saved Schedule, as a list of
+// stops: per half-day, the cards grouped by the store they go to / pick up
+// from, in schedule order (first card of each store decides its place).
+// A stop has "deliver" tasks (PO, HQ → store transfer, part 2 of a split
+// store → store, custom from HQ) and/or "pickup" tasks (store → HQ transfer,
+// part 1 of a split store → store, custom to HQ).
+//   Delivered (blue button) — every deliver task of the stop: wh_tasks.delivered_at;
+//     transfer In Transit → Receiving (same as the Store's "Delivered");
+//     a transfer still Ready to Ship is first marked In Transit in Shopify.
+//     PO: no status change (Sent to store stays; the store counts it).
+//   Picked up (green button) — every pickup task: wh_tasks.picked_at;
+//     store → HQ transfer Ready to Ship → In Transit (Shopify);
+//     part 1 of a split store → store: no status change.
+// A task whose status change fails is NOT marked, so the button can be
+// pressed again.
+const deliveryRole = (w) => {
+  if (w.kind === 'po') return { role: 'deliver', store: w.po_location || w.to_location };
+  if (w.kind === 'custom') {
+    const from = w.from_location || HQ;
+    return from === HQ ? { role: 'deliver', store: w.to_location } : { role: 'pickup', store: from };
+  }
+  if (w.leg === 'pickup') return { role: 'pickup', store: w.tr_from };
+  if (w.leg === 'deliver') return { role: 'deliver', store: w.tr_to };
+  if (w.tr_to === HQ) return { role: 'pickup', store: w.tr_from };
+  return { role: 'deliver', store: w.tr_to };
+};
+
+async function loadDeliveryRows(today) {
+  const r = await pool.query(
+    `SELECT w.*, i.po_number, i.location AS po_location,
+            tr.shopify_transfer_name, tr.transfer_no, tr.from_location AS tr_from, tr.to_location AS tr_to,
+            tr.status AS tr_status, tr.on_hold AS tr_on_hold
+       FROM wh_tasks w
+       LEFT JOIN po_invoices i ON i.id = w.po_invoice_id
+       LEFT JOIN transfers tr ON tr.id = w.transfer_id
+      WHERE w.removed_at IS NULL AND w.sched_date = $1::date
+      ORDER BY CASE w.sched_half WHEN 'AM' THEN 0 ELSE 1 END, w.sched_pos, w.id`,
+    [today]
+  );
+  return r.rows.map(w => ({ ...w, ...deliveryRole(w) }));
+}
+
+function buildStops(rows) {
+  const stops = [];
+  const byKey = {};
+  for (const w of rows) {
+    const key = `${w.sched_half}|${w.store}`;
+    if (!byKey[key]) {
+      byKey[key] = { key, half: w.sched_half, location: w.store, deliver: [], pickup: [] };
+      stops.push(byKey[key]);
+    }
+    const number = w.kind === 'po' ? `${w.po_number || ''}${w.split_no ? `-${w.split_no}` : ''}`
+      : w.kind === 'transfer' ? (w.shopify_transfer_name || w.transfer_no || '')
+      : (w.custom_title || '');
+    byKey[key][w.role].push({
+      id: w.id, kind: w.kind, number,
+      online: false, // Online order transfers: to come (Hera, next message)
+      delivered: !!w.delivered_at, picked: !!w.picked_at,
+    });
+  }
+  return stops.map(st => ({
+    ...st,
+    hasDeliver: st.deliver.length > 0,
+    hasPickup: st.pickup.length > 0,
+    delivered: st.deliver.length > 0 && st.deliver.every(t => t.delivered),
+    pickedUp: st.pickup.length > 0 && st.pickup.every(t => t.picked),
+  }));
+}
+
+// GET /api/warehouse/delivery → { today, stops: [...] }
+router.get('/delivery', async (req, res) => {
+  try {
+    const today = torontoToday();
+    res.json({ today, stops: buildStops(await loadDeliveryRows(today)) });
+  } catch (e) {
+    console.error('GET /api/warehouse/delivery error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/warehouse/delivery/done { half, location, action: 'deliver' | 'pickup' }
+// → { done: n, failed: [{ number, error }], stops }
+router.post('/delivery/done', async (req, res) => {
+  const { half, location, action } = req.body || {};
+  if (!['AM', 'PM'].includes(half) || !location || !['deliver', 'pickup'].includes(action)) {
+    return res.status(400).json({ error: 'half, location and action are required' });
+  }
+  try {
+    const today = torontoToday();
+    const rows = (await loadDeliveryRows(today))
+      .filter(w => w.sched_half === half && w.store === location && w.role === action
+        && !(action === 'deliver' ? w.delivered_at : w.picked_at));
+    const failed = [];
+    let done = 0;
+    for (const w of rows) {
+      const number = w.shopify_transfer_name || w.transfer_no || w.po_number || w.custom_title || String(w.id);
+      try {
+        if (w.kind === 'transfer') {
+          const { dispatchOne } = require('./transfers'); // Shopify client lives there
+          if (action === 'deliver') {
+            if (w.tr_status === 'good_to_go') { await dispatchOne(w.transfer_id); w.tr_status = 'in_transit'; }
+            if (w.tr_status === 'in_transit') {
+              await pool.query(
+                "UPDATE transfers SET status = 'receiving', delivered_at = NOW(), updated_at = NOW() WHERE id = $1 AND status = 'in_transit'",
+                [w.transfer_id]
+              );
+            }
+          } else if (!w.leg && w.tr_status === 'good_to_go') {
+            await dispatchOne(w.transfer_id); // store → HQ: picked up = In Transit
+          }
+        }
+        await pool.query(
+          `UPDATE wh_tasks SET ${action === 'deliver' ? 'delivered_at' : 'picked_at'} = NOW(), updated_at = NOW() WHERE id = $1`,
+          [w.id]
+        );
+        done++;
+      } catch (e) {
+        failed.push({ number, error: e.message });
+      }
+    }
+    res.json({ done, failed, stops: buildStops(await loadDeliveryRows(today)) });
+  } catch (e) {
+    console.error('POST /api/warehouse/delivery/done error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── Warehouse user groups (2026-10-23, Hera) ────────────────────────────────
+// Up to 3 groups; each = a name + the Warehouse tabs it may open (Settings is
+// one of the choices). A Shopify account picks a group the first time it
+// enters Warehouse and keeps it until "Reset User" (or the group is deleted).
+// No groups → everybody sees everything. Like accountMemory.js these routes
+// never answer 401: no account → { identified: false } and the page falls
+// back to localStorage.
+const { getAccountId } = require('../accountAuth');
+const WH_GROUP_TABS = ['schedule', 'receive-shipments', 'hq-transfers', 'delivery', 'settings'];
+const WH_GROUPS_MAX = 3;
+
+async function readWhGroups() {
+  const r = await pool.query(`SELECT value FROM app_settings WHERE key = 'wh_user_groups'`);
+  const v = r.rows[0] ? r.rows[0].value : [];
+  return Array.isArray(v) ? v : [];
+}
+
+router.get('/user-groups', async (req, res) => {
+  try {
+    res.json({ groups: await readWhGroups(), tabs: WH_GROUP_TABS, max: WH_GROUPS_MAX });
+  } catch (e) {
+    console.error('GET /api/warehouse/user-groups error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PUT { groups: [{ id?, name, tabs }] } — replaces the whole list. Kept ids
+// stay (accounts keep their choice); new groups get new ids; accounts whose
+// group was removed have to choose again.
+router.put('/user-groups', async (req, res) => {
+  try {
+    const input = Array.isArray(req.body && req.body.groups) ? req.body.groups : null;
+    if (!input) return res.status(400).json({ error: 'groups must be a list' });
+    if (input.length > WH_GROUPS_MAX) return res.status(400).json({ error: `At most ${WH_GROUPS_MAX} groups.` });
+    const current = await readWhGroups();
+    let nextId = current.reduce((m, g) => Math.max(m, Number(g.id) || 0), 0) + 1;
+    const seen = new Set();
+    const out = [];
+    for (const g of input) {
+      const name = String((g && g.name) || '').trim();
+      if (!name) return res.status(400).json({ error: 'Every group needs a name.' });
+      if (name.length > 30) return res.status(400).json({ error: 'Group name is too long (max 30).' });
+      if (seen.has(name.toLowerCase())) return res.status(400).json({ error: `Group name "${name}" is used twice.` });
+      seen.add(name.toLowerCase());
+      const tabs = WH_GROUP_TABS.filter(t => Array.isArray(g.tabs) && g.tabs.includes(t));
+      if (tabs.length === 0) return res.status(400).json({ error: `Group "${name}" needs at least one tab.` });
+      const id = current.some(c => Number(c.id) === Number(g.id)) ? Number(g.id) : nextId++;
+      out.push({ id, name, tabs });
+    }
+    await pool.query(
+      `INSERT INTO app_settings (key, value) VALUES ('wh_user_groups', $1::jsonb)
+       ON CONFLICT (key) DO UPDATE SET value = $1::jsonb, updated_at = NOW()`,
+      [JSON.stringify(out)]
+    );
+    const ids = out.map(g => g.id);
+    await pool.query(`DELETE FROM wh_account_groups WHERE NOT (group_id = ANY($1::int[]))`, [ids]);
+    res.json({ groups: out, tabs: WH_GROUP_TABS, max: WH_GROUPS_MAX });
+  } catch (e) {
+    console.error('PUT /api/warehouse/user-groups error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET → { identified, groupId } (groupId null when none / group gone)
+router.get('/user-groups/my', async (req, res) => {
+  try {
+    const accountId = await getAccountId(req);
+    if (!accountId) return res.json({ identified: false, groupId: null });
+    const r = await pool.query(`SELECT group_id FROM wh_account_groups WHERE account_id = $1`, [accountId]);
+    const groups = await readWhGroups();
+    const gid = r.rows[0] ? Number(r.rows[0].group_id) : null;
+    res.json({ identified: true, groupId: gid && groups.some(g => Number(g.id) === gid) ? gid : null });
+  } catch (e) {
+    console.error('GET /api/warehouse/user-groups/my error:', e);
+    res.json({ identified: false, groupId: null });
+  }
+});
+
+// PUT { groupId }
+router.put('/user-groups/my', async (req, res) => {
+  try {
+    const gid = parseInt(req.body && req.body.groupId, 10);
+    const groups = await readWhGroups();
+    if (!groups.some(g => Number(g.id) === gid)) return res.status(400).json({ error: 'Unknown group.' });
+    const accountId = await getAccountId(req);
+    if (!accountId) return res.json({ identified: false, success: false });
+    await pool.query(
+      `INSERT INTO wh_account_groups (account_id, group_id, updated_at) VALUES ($1, $2, NOW())
+       ON CONFLICT (account_id) DO UPDATE SET group_id = $2, updated_at = NOW()`,
+      [accountId, gid]
+    );
+    res.json({ identified: true, success: true });
+  } catch (e) {
+    console.error('PUT /api/warehouse/user-groups/my error:', e);
+    res.json({ identified: false, success: false });
+  }
+});
+
+// DELETE — "Reset User": forget this account's group.
+router.delete('/user-groups/my', async (req, res) => {
+  try {
+    const accountId = await getAccountId(req);
+    if (!accountId) return res.json({ identified: false, success: false });
+    await pool.query(`DELETE FROM wh_account_groups WHERE account_id = $1`, [accountId]);
+    res.json({ identified: true, success: true });
+  } catch (e) {
+    console.error('DELETE /api/warehouse/user-groups/my error:', e);
+    res.json({ identified: false, success: false });
   }
 });
 

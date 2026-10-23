@@ -97,6 +97,35 @@ export function RoutePills({ from, to }) {
   );
 }
 
+// Truck icon (2026-10-23, Hera), truck always facing right:
+//   arrow 'in'   → "➔ truck"  — load / pick up (pickup cards, Delivery › Picked up)
+//   arrow 'out'  → "← truck"  — unload (Delivery › Delivered)
+//   arrow 'none' → truck only (Delivery › the stop the truck is at)
+// `bg` = colour behind the icon (cut-outs for the window and wheel rims).
+// Drawn by Claude from Hera's mock-up until her own SVG file replaces it.
+export function TruckIcon({ height = 18, color = '#231f20', bg = '#ffffff', arrow = 'in', label }) {
+  const withArrow = arrow !== 'none';
+  const x0 = withArrow ? 0 : 98; // viewBox starts at the truck when there is no arrow
+  const vbW = 320 - x0;
+  return (
+    <svg width={Math.round(height * vbW / 128)} height={height} viewBox={`${x0} 0 ${vbW} 128`} role="img" aria-label={label || 'Truck'} style={{ flex: 'none', display: 'block' }}>
+      {arrow === 'in' && <path d="M0 64h86M50 26l40 38-40 38" fill="none" stroke={color} strokeWidth="20" />}
+      {arrow === 'out' && <path d="M8 64h86M46 26L8 64l38 38" fill="none" stroke={color} strokeWidth="20" />}
+      <path d="M108 4h120a6 6 0 0 1 6 6v94H108a6 6 0 0 1-6-6V10a6 6 0 0 1 6-6z" fill={color} />
+      <path d="M240 26h44a10 10 0 0 1 8 4l22 28a10 10 0 0 1 2 6v34a6 6 0 0 1-6 6h-70z" fill={color} />
+      <path d="M254 38h26l16 22h-42z" fill={bg} />
+      <circle cx="146" cy="110" r="16" fill={color} stroke={bg} strokeWidth="5" />
+      <circle cx="270" cy="110" r="16" fill={color} stroke={bg} strokeWidth="5" />
+    </svg>
+  );
+}
+
+// Pickup mark on Schedule cards: "➔ truck" right of the location, height
+// follows the location pill (card fill #fff3d6 behind it).
+export function PickupTruck({ height = 18 }) {
+  return <TruckIcon height={height} bg="#fff3d6" arrow="in" label="Pickup" />;
+}
+
 // Pink PB pill on PO cards: "P 4" / "B 12". Nothing when there is no PB qty.
 export function PbPill({ count, unit }) {
   if (!count || !unit) return null;

@@ -20,7 +20,7 @@ const { getAccountId } = require('../accountAuth');
 
 // Same keys as VALID_PIN_KEYS in routes/settings.js (kept separate to avoid
 // a require cycle — settings.js requires this file).
-const PIN_KEYS = ['buyer_pin', 'crm_pin', 'online_pin'];
+const PIN_KEYS = ['buyer_pin', 'crm_pin', 'online_pin', 'wh_pin']; // wh_pin: Warehouse (2026-10-23)
 const PIN_REMEMBER_DAYS = 30;
 
 // ── helpers used by routes/settings.js ───────────────────────────────────────
