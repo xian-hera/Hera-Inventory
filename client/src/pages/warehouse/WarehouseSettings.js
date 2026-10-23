@@ -3,7 +3,7 @@ import { Page, Layout, Card, BlockStack, InlineStack, Text, Button, Banner, Moda
 import { useNavigate } from 'react-router-dom';
 import { useLocationMap } from '../shared/locationMap';
 import { LOC_PILL_DEFAULT, pillTextColor, setLocationColorsCache } from './whShared';
-import { WarehouseGate, WH_ALL_TABS, WH_TAB_LABELS, WH_PIN_KEY, logoutWarehouse } from './whAccess';
+import { WarehouseGate, WH_ALL_TABS, WH_TAB_LABELS, WH_PIN_KEY, logoutWarehouse, resetWarehouseUser, leaveWarehouse } from './whAccess';
 
 // Warehouse Settings (2026-10-21, Hera — claude/SCHEDULER_FEATURE_SPEC.md §10a).
 // (Cards since: Sync Tasks, and Location Color 2026-10-22 — see LocationColorCard.)
@@ -220,7 +220,8 @@ function EditablePill({ item, editing, onStartEdit, onCommit, onCancel, onDelete
 // Up to 3 groups: name + the tabs it may open (Settings is one of them).
 // Edited as a draft, stored with the card's Save (PUT /api/warehouse/user-groups).
 // Accounts of a deleted group choose again on their next visit.
-function UserGroupCard() {
+function UserGroupCard({ currentGroup }) {
+  const navigate = useNavigate();
   const [saved, setSaved] = useState([]);
   const [draft, setDraft] = useState([]);
   const [max, setMax] = useState(3);
@@ -290,6 +291,22 @@ function UserGroupCard() {
                 </BlockStack>
               </div>
             ))}
+            {/* Reset User (2026-10-23): forget this account's group → choose
+                again on the next Warehouse page (groups with Settings had no
+                way to do this before). */}
+            {saved.length > 0 && (
+              <InlineStack gap="200" blockAlign="center">
+                <Text tone="subdued" variant="bodySm">Your group: {currentGroup ? currentGroup.name : 'none'}</Text>
+                <Button
+                  onClick={async () => {
+                    if (!window.confirm('Reset User? You will choose your user group again.')) return;
+                    await resetWarehouseUser();
+                    leaveWarehouse();
+                    navigate('/warehouse');
+                  }}
+                >Reset User</Button>
+              </InlineStack>
+            )}
             <InlineStack align="space-between">
               <Button onClick={add} disabled={draft.length >= max}>Add group</Button>
               <Button variant="primary" onClick={save} loading={saving} disabled={!dirty}>Save</Button>
@@ -404,7 +421,7 @@ function PinCard() {
   );
 }
 
-function WarehouseSettings() {
+function WarehouseSettings({ currentGroup = null } = {}) {
   const navigate = useNavigate();
   const [items, setItems] = useState([]); // [{ key, name }] — '' name = new, not saved yet
   const [loading, setLoading] = useState(true);
@@ -560,7 +577,7 @@ function WarehouseSettings() {
           <LocationColorCard />
         </Layout.Section>
         <Layout.Section>
-          <UserGroupCard />
+          <UserGroupCard currentGroup={currentGroup} />
         </Layout.Section>
         <Layout.Section>
           <PinCard />
@@ -573,7 +590,7 @@ function WarehouseSettings() {
 // PIN + user group gate (2026-10-23): a group without Settings is sent to its
 // first tab.
 function WarehouseSettingsGated() {
-  return <WarehouseGate tab="settings">{() => <WarehouseSettings />}</WarehouseGate>;
+  return <WarehouseGate tab="settings">{({ group }) => <WarehouseSettings currentGroup={group} />}</WarehouseGate>;
 }
 
 export default WarehouseSettingsGated;

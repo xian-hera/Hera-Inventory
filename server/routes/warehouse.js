@@ -1149,6 +1149,7 @@ function buildStops(rows) {
       id: w.id, kind: w.kind, number,
       online: false, // Online order transfers: to come (Hera, next message)
       delivered: !!w.delivered_at, picked: !!w.picked_at,
+      doneAt: w.delivered_at || w.picked_at || null,
     });
   }
   return stops.map(st => ({
@@ -1157,7 +1158,13 @@ function buildStops(rows) {
     hasPickup: st.pickup.length > 0,
     delivered: st.deliver.length > 0 && st.deliver.every(t => t.delivered),
     pickedUp: st.pickup.length > 0 && st.pickup.every(t => t.picked),
-  }));
+  })).map(st => {
+    // When the stop was finished (latest mark of its tasks) — the Delivery
+    // page moves the truck to the stop after the one finished last.
+    const done = (!st.hasDeliver || st.delivered) && (!st.hasPickup || st.pickedUp);
+    const times = [...st.deliver, ...st.pickup].map(t => t.doneAt).filter(Boolean).map(t => new Date(t).toISOString());
+    return { ...st, doneAt: done && times.length ? times.sort().pop() : null };
+  });
 }
 
 // GET /api/warehouse/delivery → { today, stops: [...] }

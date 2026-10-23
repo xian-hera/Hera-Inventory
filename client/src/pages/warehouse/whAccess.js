@@ -241,8 +241,11 @@ export function WarehouseGate({ tab, children }) {
 
 // Warehouse Settings › Log out: forget the PIN for this account (all its
 // devices) and leave Warehouse.
+// Also forgets the account's user group (2026-10-23, Hera): after Log out the
+// next visit asks for the PIN and the group again.
 export async function logoutWarehouse() {
   await logoutPin(PIN_KEY);
+  await resetWarehouseUser();
   leaveWarehouse();
 }
 

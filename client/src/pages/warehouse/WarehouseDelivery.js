@@ -54,8 +54,10 @@ function StopPill({ stop, active, selected, onClick, big }) {
         font: 'inherit', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
         border: 'none', boxShadow: selected ? 'inset 0 0 0 2px #303030' : 'none',
         background: bg, color: fg, borderRadius: 999, whiteSpace: 'nowrap',
-        padding: large ? '6px 14px' : '4px 12px', fontSize: large ? 16 : 14,
-        fontWeight: large ? 700 : 500, lineHeight: '20px',
+        // Same height (30px) big or small, so the AM / PM label can line up
+        // with the first row whichever pill is in it.
+        padding: large ? '4px 14px' : '5px 12px', fontSize: large ? 16 : 14,
+        fontWeight: large ? 700 : 500, lineHeight: large ? '22px' : '20px',
       }}
     >
       {active && !done && <TruckIcon height={18} arrow="none" color={fg} bg={bg} label="Truck is here" />}
@@ -136,7 +138,12 @@ function WarehouseDelivery() {
   if (!data) return <Page><Text tone="subdued">Loading...</Text></Page>;
 
   const stops = data.stops || [];
-  const active = stops.find(st => !stopDone(st)) || null;
+  // The truck's stop (2026-10-23, Hera): the first unfinished stop AFTER the
+  // stop finished last (stops can be done out of order); none after it →
+  // the first unfinished stop of the day.
+  const lastDone = stops.reduce((best, st, i) => (st.doneAt && (!best || st.doneAt > best.doneAt) ? { doneAt: st.doneAt, i } : best), null);
+  const active = (lastDone && stops.slice(lastDone.i + 1).find(st => !stopDone(st)))
+    || stops.find(st => !stopDone(st)) || null;
   const selected = stops.find(st => st.key === selectedKey) || active || stops[stops.length - 1] || null;
 
   const run = async () => {
@@ -154,8 +161,10 @@ function WarehouseDelivery() {
         setNotice({ tone: 'critical', text: `Not done: ${d.failed.map(f => `${f.number} (${f.error})`).join(', ')}. Try again.` });
       } else {
         setNotice(null);
-        // Viewing the truck's stop and it is finished → follow the truck.
-        if (selectedKey === stop.key) setSelectedKey(null);
+        // The stop is finished → the view moves on with the truck to the
+        // next stop (2026-10-23, Hera).
+        const after = (d.stops || []).find(x => x.key === stop.key);
+        if (after && stopDone(after)) setSelectedKey(null);
       }
       refreshWarehouseBadges();
     } catch (e) {
@@ -176,12 +185,19 @@ function WarehouseDelivery() {
             <Text tone="subdued">Nothing on today's schedule.</Text>
           ) : (
             <>
-              <BlockStack gap="300">
+              {/* 18px between AM and PM (1.5× the old 12px, 2026-10-23) */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
                 {HALVES.map(h => {
                   const row = stops.filter(st => st.half === h.id);
                   return (
-                    <div key={h.id} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <span style={{ fontWeight: 700, width: 30, flex: 'none' }}>{h.label}</span>
+                    // AM / PM stay level with the FIRST row of pills when the
+                    // pills wrap (2026-10-23): top-aligned, label as tall as
+                    // that row (pills are all 30px high).
+                    <div key={h.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                      <span style={{
+                        fontWeight: 700, width: 30, flex: 'none', display: 'flex', alignItems: 'center',
+                        height: 30,
+                      }}>{h.label}</span>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', minWidth: 0 }}>
                         {row.length === 0 && <span style={{ color: GREY_TEXT, fontSize: 14 }}>—</span>}
                         {row.map(st => (
@@ -197,7 +213,7 @@ function WarehouseDelivery() {
                     </div>
                   );
                 })}
-              </BlockStack>
+              </div>
               <div style={{ borderTop: '1px solid #303030' }} />
               {selected && (
                 <BlockStack gap="300">
