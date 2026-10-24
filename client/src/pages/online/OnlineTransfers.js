@@ -134,7 +134,9 @@ function OnlineTransfers({ inTabs = false } = {}) {
   }, []);
   useEffect(() => { load(); }, [load]);
   return (
-    <Page title={inTabs ? undefined : 'Online Transfers'} fullWidth>
+    // Normal page width like the other Online tabs (was fullWidth, which put
+    // the content at the far left under the centred tab bar — Hera 2026-10-24).
+    <Page title={inTabs ? undefined : 'Online Transfers'}>
       <BlockStack gap="400">
         {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
         {list === null ? <Text tone="subdued">Loading...</Text>
