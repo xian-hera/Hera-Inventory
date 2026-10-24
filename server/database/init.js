@@ -1838,6 +1838,65 @@ const initDatabase = async () => {
        WHERE w.gone_at IS NULL AND w.sched_date = g.day AND w.removed_at IS NULL
     `).catch(e => console.error('wh_tasks gone_at catch-up failed:', e.message));
 
+    // ── Online (Fulfiller) transfers (2026-10-23, Hera) —
+    // claude/FULFILLER_ONLINE_TRANSFER_SPEC.md. Fulfiller (Hera's other app)
+    // creates a store → store transfer in Shopify and hands it to Hub; Hub
+    // shows it to the from-store, schedules ONE pickup on WH › Delivery and
+    // takes it to In Transit.
+    await client.query(`ALTER TABLE transfers ADD COLUMN IF NOT EXISTS source TEXT`).catch(() => {}); // NULL/'hub' | 'fulfiller'
+    await client.query(`ALTER TABLE transfers ADD COLUMN IF NOT EXISTS fulfiller_ref TEXT`).catch(() => {});
+    await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_transfers_shopify_transfer_id ON transfers (shopify_transfer_id) WHERE shopify_transfer_id IS NOT NULL`)
+      .catch(e => console.error('idx_transfers_shopify_transfer_id not created (duplicate Shopify transfer ids?):', e.message));
+    // product info kept at import (Online pages show image / type / variant)
+    await client.query(`ALTER TABLE transfer_items ADD COLUMN IF NOT EXISTS requested_qty INTEGER`).catch(() => {});
+    await client.query(`ALTER TABLE transfer_items ADD COLUMN IF NOT EXISTS variant_id TEXT`).catch(() => {});
+    await client.query(`ALTER TABLE transfer_items ADD COLUMN IF NOT EXISTS product_id TEXT`).catch(() => {});
+    await client.query(`ALTER TABLE transfer_items ADD COLUMN IF NOT EXISTS product_title TEXT`).catch(() => {});
+    await client.query(`ALTER TABLE transfer_items ADD COLUMN IF NOT EXISTS variant_title TEXT`).catch(() => {});
+    await client.query(`ALTER TABLE transfer_items ADD COLUMN IF NOT EXISTS product_type TEXT`).catch(() => {});
+    await client.query(`ALTER TABLE transfer_items ADD COLUMN IF NOT EXISTS image_url TEXT`).catch(() => {});
+    await client.query(`ALTER TABLE transfer_items ADD COLUMN IF NOT EXISTS wig_no TEXT`).catch(() => {});
+    // which order each requested unit is for (sent by Fulfiller)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS transfer_item_orders (
+        id               SERIAL PRIMARY KEY,
+        transfer_id      INTEGER NOT NULL REFERENCES transfers(id) ON DELETE CASCADE,
+        transfer_item_id INTEGER NOT NULL REFERENCES transfer_items(id) ON DELETE CASCADE,
+        order_id         TEXT,
+        order_name       TEXT,
+        quantity         INTEGER NOT NULL
+      )
+    `);
+    // the ONE pickup on WH › Delivery: anchored to a stop (day, half-day,
+    // store, nth stop of that store in that half-day) — not to the Schedule
+    // (it is never shown there and a Schedule save doesn't touch it)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS wh_online_pickups (
+        transfer_id       INTEGER PRIMARY KEY REFERENCES transfers(id) ON DELETE CASCADE,
+        pickup_date       DATE,
+        half              TEXT,
+        location          TEXT,
+        occurrence        INTEGER NOT NULL DEFAULT 1,
+        placed_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        picked_at         TIMESTAMPTZ,
+        needs_reassign_at TIMESTAMPTZ,
+        reassign_reason   TEXT
+      )
+    `);
+    // messages Hub sends to Fulfiller (webhook, retried until delivered)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS integration_outbox (
+        id              SERIAL PRIMARY KEY,
+        event           TEXT NOT NULL,
+        payload         JSONB NOT NULL,
+        created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        attempts        INTEGER NOT NULL DEFAULT 0,
+        next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        delivered_at    TIMESTAMPTZ,
+        last_error      TEXT
+      )
+    `);
+
     await client.query('COMMIT');
     console.log('✓ Database initialized successfully');
   } catch (e) {

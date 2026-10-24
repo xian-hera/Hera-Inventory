@@ -141,7 +141,9 @@ async function ensureShipment(shopifyClient, transferRow, items) {
     // reached ensureShipment(), which is why transfers were getting stuck
     // showing this error and never leaving Loading.
     movementId: transferRow.shopify_transfer_id,
-    lineItems: items.map(i => ({
+    // 2026-10-24: a zero-quantity line is no longer on the transfer (removed at
+    // Confirm, see removeTransferLines) — it must not go into the shipment.
+    lineItems: items.filter(i => (i.qty_loaded != null ? i.qty_loaded : i.quantity) > 0).map(i => ({
       inventoryItemId: i.inventory_item_id,
       quantity: i.qty_loaded != null ? i.qty_loaded : i.quantity,
     })),
@@ -202,7 +204,9 @@ async function ensureShipmentInTransit(shopifyClient, transferRow, items) {
     // Same movementId fix as ensureShipment() above — same input type,
     // same bug, same Shopify-confirmed field name.
     movementId: transferRow.shopify_transfer_id,
-    lineItems: items.map(i => ({
+    // 2026-10-24: a zero-quantity line is no longer on the transfer (removed at
+    // Confirm, see removeTransferLines) — it must not go into the shipment.
+    lineItems: items.filter(i => (i.qty_loaded != null ? i.qty_loaded : i.quantity) > 0).map(i => ({
       inventoryItemId: i.inventory_item_id,
       quantity: i.qty_loaded != null ? i.qty_loaded : i.quantity,
     })),
@@ -274,7 +278,7 @@ async function setTransferLineQuantities(client, transfer, lines) {
   });
   const errors = data?.inventoryTransferSetItems?.userErrors || [];
   if (errors.length > 0) {
-    throw new Error(`Could not update the Shopify transfer quantity: ${errors.map(e => e.message).join('; ')}`);
+    throw new Error(`Could not update the Shopify transfer quantity (${lines.map(l => `${l.sku || l.inventory_item_id} → ${l.target}`).join(', ')}): ${errors.map(e => e.message).join('; ')}`);
   }
 }
 
@@ -294,7 +298,12 @@ async function setShipmentLineQuantities(client, shipmentId, lines) {
   const changes = [];
   for (const l of lines) {
     const node = byInventoryItemId.get(l.inventory_item_id);
-    if (!node) throw new Error(`Could not find the Shopify shipment line for ${l.sku || l.inventory_item_id}`);
+    if (!node) {
+      // A line removed from the transfer (final qty 0, see removeTransferLines)
+      // has no shipment line either — nothing to align.
+      if (l.target === 0) continue;
+      throw new Error(`Could not find the Shopify shipment line for ${l.sku || l.inventory_item_id}`);
+    }
     if (Number(node.quantity) !== l.target) changes.push({ shipmentLineItemId: node.id, quantity: l.target });
   }
   if (changes.length === 0) return;
@@ -313,25 +322,83 @@ async function setShipmentLineQuantities(client, shipmentId, lines) {
   }
 }
 
+// 2026-10-24: Shopify refuses a transfer line quantity of 0 ("The quantity
+// can't be zero"), so a line whose final qty is 0 (e.g. the from-location
+// loaded 0) is removed from the transfer instead — only done while there is no
+// shipment yet (Draft → Confirm). ⚠️ Input shape (`id` + `transferLineItemIds`,
+// ids read from the transfer's own line items) is our best reading of
+// shopify.dev's inventoryTransferRemoveItems reference, NOT yet exercised
+// against a real transfer — if it errors, the message (with SKUs) is shown.
+async function removeTransferLines(client, transfer, lines) {
+  if (lines.length === 0) return;
+  const lookup = `
+    query transferLines($id: ID!) {
+      inventoryTransfer(id: $id) {
+        lineItems(first: 250) { edges { node { id inventoryItem { id } } } }
+      }
+    }
+  `;
+  const lookupData = await graphql(client, lookup, { id: transfer.shopify_transfer_id });
+  const edges = lookupData?.inventoryTransfer?.lineItems?.edges || [];
+  const byInventoryItemId = new Map(edges.map(({ node }) => [node.inventoryItem.id, node.id]));
+  const lineItemIds = [];
+  for (const l of lines) {
+    const id = byInventoryItemId.get(l.inventory_item_id);
+    if (id) lineItemIds.push(id); // already gone from the transfer → nothing to remove
+  }
+  if (lineItemIds.length === 0) return;
+  const mutation = `
+    mutation inventoryTransferRemoveItems($input: InventoryTransferRemoveItemsInput!, $idempotencyKey: String!) {
+      inventoryTransferRemoveItems(input: $input) @idempotent(key: $idempotencyKey) {
+        inventoryTransfer { id }
+        userErrors { field message }
+      }
+    }
+  `;
+  const data = await graphql(client, mutation, {
+    input: { id: transfer.shopify_transfer_id, transferLineItemIds: lineItemIds },
+    idempotencyKey: crypto.randomUUID(),
+  });
+  const errors = data?.inventoryTransferRemoveItems?.userErrors || [];
+  if (errors.length > 0) {
+    throw new Error(`Could not remove the zero-quantity line from the Shopify transfer (${lines.map(l => l.sku || l.inventory_item_id).join(', ')}): ${errors.map(e => e.message).join('; ')}`);
+  }
+}
+
 // Aligns Shopify (transfer line + shipment line, when a shipment exists) and
 // Hub's transfer_items.quantity to targetOf(item). Order matters when a
 // shipment exists: raise the transfer line BEFORE raising the shipment, lower
 // the shipment BEFORE lowering the transfer line. Throws (never silent) if
 // Shopify refuses a step. Mutates item.quantity in memory to the new value.
+//
+// Final qty 0 (2026-10-24, Hera): Shopify's transfer line can't be 0.
+//   - no shipment yet → the line is REMOVED from the Shopify transfer, and Hub
+//     marks it received 0 / counted so later counting steps skip it;
+//   - shipment exists → only the shipment line is set to 0, the transfer line
+//     is left untouched; Hub quantity becomes 0.
 async function alignTransferQuantities(client, transfer, items, targetOf, shipmentId) {
   const lines = items.map(i => ({ ref: i, id: i.id, sku: i.sku, inventory_item_id: i.inventory_item_id, quantity: Number(i.quantity), target: Number(targetOf(i)) }));
+  const zeros = lines.filter(l => l.target === 0 && l.quantity > 0);
   const ups = lines.filter(l => l.target > l.quantity);
-  const downs = lines.filter(l => l.target < l.quantity);
+  const downs = lines.filter(l => l.target < l.quantity && l.target > 0);
   if (!shipmentId) {
     await setTransferLineQuantities(client, transfer, [...ups, ...downs]);
+    await removeTransferLines(client, transfer, zeros);
   } else {
     await setTransferLineQuantities(client, transfer, ups);
     await setShipmentLineQuantities(client, shipmentId, lines);
     await setTransferLineQuantities(client, transfer, downs);
   }
-  for (const l of [...ups, ...downs]) {
+  for (const l of [...ups, ...downs, ...zeros]) {
     await pool.query('UPDATE transfer_items SET quantity = $1 WHERE id = $2', [l.target, l.id]);
     l.ref.quantity = l.target;
+  }
+  if (!shipmentId) {
+    for (const l of zeros) {
+      await pool.query('UPDATE transfer_items SET received_quantity = 0, counted_confirmed = TRUE WHERE id = $1', [l.id]);
+      l.ref.received_quantity = 0;
+      l.ref.counted_confirmed = true;
+    }
   }
 }
 
@@ -626,7 +693,7 @@ router.get('/recent', async (req, res) => {
       `SELECT id, transfer_no, shopify_transfer_id, shopify_transfer_name, shopify_transfer_url,
               from_location, to_location, committed_at, auto_committed
        FROM transfers
-       WHERE status = 'archived'${groupFilter ? ` AND ${arrayVisibleSql('tags', 2)}` : ''}
+       WHERE status = 'archived' AND COALESCE(source, 'hub') <> 'fulfiller'${groupFilter ? ` AND ${arrayVisibleSql('tags', 2)}` : ''}
        ORDER BY committed_at DESC
        LIMIT $1`,
       groupFilter ? [RECENT_LIMIT, groupFilter.hiddenTags] : [RECENT_LIMIT]
@@ -646,7 +713,7 @@ router.get('/history', async (req, res) => {
       SELECT id, transfer_no, shopify_transfer_id, shopify_transfer_name, shopify_transfer_url,
              from_location, to_location, committed_at, auto_committed
       FROM transfers
-      WHERE status = 'archived'`;
+      WHERE status = 'archived' AND COALESCE(source, 'hub') <> 'fulfiller'`; // Online (Fulfiller) transfers never shown to Purchasing (2026-10-23)
     // User group (2026-10-09): hide transfers whose tags all belong to other groups
     const groupFilter = await getGroupFilter(req);
     if (groupFilter) {
@@ -694,7 +761,8 @@ router.get('/ongoing', async (req, res) => {
       `SELECT id, transfer_no, shopify_transfer_id, shopify_transfer_name, shopify_transfer_url,
               from_location, to_location, status, created_at, on_hold, auto_committed, tags
        FROM transfers
-       ${groupFilter ? `WHERE ${arrayVisibleSql('tags', 1)}` : ''}
+       WHERE COALESCE(source, 'hub') <> 'fulfiller' -- Online (Fulfiller) transfers: not for Purchasing (2026-10-23)
+       ${groupFilter ? `AND ${arrayVisibleSql('tags', 1)}` : ''}
        ORDER BY created_at DESC`,
       groupFilter ? [groupFilter.hiddenTags] : []
     );
@@ -720,7 +788,7 @@ router.get('/warehouse/home', async (req, res) => {
       // Warehouse home cards.
       `SELECT id, transfer_no, shopify_transfer_name, from_location, to_location, status, on_hold, created_at, tags
        FROM transfers
-       WHERE status = ANY($1)
+       WHERE status = ANY($1) AND COALESCE(source, 'hub') <> 'fulfiller'
        ORDER BY created_at ASC`,
       [statuses]
     );
@@ -752,7 +820,7 @@ router.get('/warehouse/receiving-to-hq', async (req, res) => {
     const result = await pool.query(
       `SELECT id, transfer_no, shopify_transfer_name, from_location, to_location, status, on_hold, created_at, tags
        FROM transfers
-       WHERE to_location = $1 AND status IN ('in_transit', 'receiving')
+       WHERE to_location = $1 AND status IN ('in_transit', 'receiving') AND COALESCE(source, 'hub') <> 'fulfiller'
        ORDER BY created_at ASC`,
       [HQ_LOCATION_NAME]
     );
@@ -781,11 +849,13 @@ router.get('/manager/home', async (req, res) => {
       `SELECT id, transfer_no, shopify_transfer_name, from_location, to_location, status, on_hold, tags
        FROM transfers
        WHERE to_location = $1 AND status IN ('in_transit','receiving')
+         AND COALESCE(source, 'hub') <> 'fulfiller' -- the to-store never sees an Online transfer (2026-10-23)
        ORDER BY created_at ASC`,
       [location]
     );
     const sending = await pool.query(
-      `SELECT id, transfer_no, shopify_transfer_name, from_location, to_location, status, on_hold, tags
+      `SELECT id, transfer_no, shopify_transfer_name, from_location, to_location, status, on_hold, tags,
+              COALESCE(source, 'hub') AS source
        FROM transfers
        WHERE from_location = $1 AND status IN ('loading','good_to_go','pending')
        ORDER BY created_at ASC`,
@@ -1408,6 +1478,13 @@ router.post('/:id/submit-loading', async (req, res) => {
         }
       }
     }
+    // Online (Fulfiller) transfer (2026-10-23, Hera): the store may load any
+    // qty — no Reviewing; Shopify is aligned to the loaded qty and it goes
+    // straight to Ready to Ship.
+    if (transfer.source === 'fulfiller') {
+      await onlineReadyToShip(transfer.id);
+      return res.json({ success: true, status: 'good_to_go' });
+    }
     // 2026-10-20: ANY line whose loaded qty differs from its transfer qty (more
     // OR less) goes to Buyer's Pending — even on Buyer's forced Good to Go —
     // because Confirm is what aligns the Shopify transfer qty to the loaded
@@ -1633,6 +1710,73 @@ router.post('/warehouse/dispatch-all-good-to-go', async (req, res) => {
 // Shared by the two batch endpoints above and, indirectly, the single
 // /:id/dispatch route's logic (kept as a small helper rather than an HTTP
 // self-call).
+// Online (Fulfiller) transfer → Ready to Ship (2026-10-23, Hera). Used by the
+// store's Ready to Ship and by WH Delivery › Picked Up while still Preparing.
+// Lines not picked yet count as the requested qty (like Purchasing's forced
+// Ready to Ship). Shopify's transfer lines are set to the loaded qty (a line
+// loaded 0 is removed from the transfer), then marked ready to ship and the
+// shipment is created from the loaded qty. Throws on any Shopify refusal.
+async function onlineReadyToShip(id) {
+  const found = await fetchTransferWithItems(id);
+  if (!found) throw new Error('Transfer not found');
+  const { transfer } = found;
+  if (transfer.status === 'good_to_go') return;
+  if (transfer.status !== 'loading') throw new Error(`Transfer is ${transfer.status}, not Preparing`);
+  const items = activeItems(found.items);
+  for (const i of items) {
+    if (!i.loaded_confirmed || i.qty_loaded == null) {
+      await pool.query('UPDATE transfer_items SET qty_loaded = quantity, loaded_confirmed = TRUE WHERE id = $1', [i.id]);
+      i.qty_loaded = i.quantity;
+      i.loaded_confirmed = true;
+    }
+  }
+  const session = await getSession();
+  if (!session) throw new Error('No session');
+  const shopify = getShopify();
+  const client = new shopify.clients.Graphql({ session });
+  const zero = items.filter(i => Number(i.qty_loaded) === 0);
+  const keep = items.filter(i => Number(i.qty_loaded) > 0);
+  if (keep.length === 0) throw new Error('Nothing was picked (every line is 0).');
+  if (!transfer.shopify_shipment_id) {
+    await alignTransferQuantities(client, transfer, keep, i => i.qty_loaded, null);
+    if (zero.length > 0) {
+      const removeMutation = `
+        mutation inventoryTransferRemoveItems($input: InventoryTransferRemoveItemsInput!, $idempotencyKey: String!) {
+          inventoryTransferRemoveItems(input: $input) @idempotent(key: $idempotencyKey) {
+            inventoryTransfer { id }
+            userErrors { field message }
+          }
+        }
+      `;
+      const data = await graphql(client, removeMutation, {
+        input: { id: transfer.shopify_transfer_id, lineItems: zero.map(i => ({ inventoryItemId: i.inventory_item_id, quantity: Number(i.quantity) })) },
+        idempotencyKey: crypto.randomUUID(),
+      });
+      const errors = data?.inventoryTransferRemoveItems?.userErrors || [];
+      if (errors.length > 0) throw new Error(`Could not remove the 0-qty lines in Shopify: ${errors.map(e => e.message).join('; ')}`);
+    }
+    const markReadyMutation = `
+      mutation inventoryTransferMarkAsReadyToShip($id: ID!, $idempotencyKey: String!) {
+        inventoryTransferMarkAsReadyToShip(id: $id) @idempotent(key: $idempotencyKey) {
+          inventoryTransfer { id }
+          userErrors { field message }
+        }
+      }
+    `;
+    const markData = await graphql(client, markReadyMutation, { id: transfer.shopify_transfer_id, idempotencyKey: crypto.randomUUID() });
+    const markErrors = markData?.inventoryTransferMarkAsReadyToShip?.userErrors || [];
+    if (markErrors.length > 0) throw new Error(markErrors.map(e => e.message).join('; '));
+  }
+  const shipmentId = await ensureShipment(client, transfer, keep);
+  await pool.query(
+    "UPDATE transfers SET status = 'good_to_go', shopify_shipment_id = $1, updated_at = NOW() WHERE id = $2",
+    [shipmentId, transfer.id]
+  );
+  // 2026-10-24 (Fulfiller B3): tell Fulfiller if some order lines got less
+  // than requested (transfer.items_changed, cause ready_to_ship). Never fails.
+  await require('./onlineTransfers').notifyReadyToShip(transfer.id);
+}
+
 async function dispatchOne(id, asBuyer) {
   await assertNotHeld(id, asBuyer);
   const found = await fetchTransferWithItems(id);
@@ -2135,3 +2279,10 @@ router.post('/delete-selected', async (req, res) => {
 module.exports = router;
 // Used by Warehouse › Schedule › Go! (routes/warehouse.js).
 module.exports.dispatchOne = dispatchOne;
+// Online (Fulfiller) transfers (2026-10-23) — routes/onlineTransfers.js, warehouse.js.
+module.exports.onlineReadyToShip = onlineReadyToShip;
+module.exports.shopifyGraphql = graphql;
+module.exports.fetchTransferWithItems = fetchTransferWithItems;
+module.exports.generateTransferNo = generateTransferNo;
+module.exports.buildTransferAdminUrl = buildTransferAdminUrl;
+module.exports.attachWigNumbers = attachWigNumbers;

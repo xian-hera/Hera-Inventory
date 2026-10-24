@@ -77,6 +77,11 @@ export function AutoCommittedBadge() {
 // number in the home-card lists and in the detail-page title. Same small grey
 // pill look as Buyer's Tags column / detail page. Renders nothing when the
 // transfer has no tags.
+// The tag Hub gives Online (Fulfiller) transfers — not managed in Purchasing's
+// Transfer Settings (2026-10-23).
+export const ONLINE_TAG = 'Online';
+export const ONLINE_TAG_COLOR = '#E32A69';
+
 export function TagPills({ tags }) {
   const list = Array.isArray(tags) ? tags : [];
   if (list.length === 0) return null;
@@ -89,6 +94,8 @@ export function TagPills({ tags }) {
             display: 'inline-flex', alignItems: 'center',
             padding: '2px 8px', borderRadius: '12px',
             background: '#e4e5e7', fontSize: '12px', whiteSpace: 'nowrap',
+            // Online (Fulfiller) transfers (2026-10-23, Hera): pink pill, white label
+            ...(tag === ONLINE_TAG ? { background: ONLINE_TAG_COLOR, color: '#ffffff', fontWeight: 650 } : {}),
           }}
         >
           {tag}

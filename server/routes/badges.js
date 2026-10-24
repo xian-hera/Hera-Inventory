@@ -109,7 +109,7 @@ router.get('/manager', async (req, res) => {
     try {
       const transferRes = await pool.query(
         `SELECT COUNT(*) FROM transfers
-         WHERE (to_location = $1 AND status IN ('in_transit','receiving'))
+         WHERE (to_location = $1 AND status IN ('in_transit','receiving') AND COALESCE(source, 'hub') <> 'fulfiller')
             OR (from_location = $1 AND status IN ('loading','good_to_go','pending'))`,
         [location]
       );

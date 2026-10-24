@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Page, BlockStack, Text, Banner } from '@shopify/polaris';
 import { useLocationColors, LOC_PILL_DEFAULT, pillTextColor, TruckIcon, EnterIcon, ExitIcon, refreshWarehouseBadges } from './whShared';
 
@@ -107,21 +108,70 @@ function DoneBlock({ text }) {
   );
 }
 
-function PickupCard({ tasks }) {
-  const list = [...tasks].sort((a, b) => (b.online ? 1 : 0) - (a.online ? 1 : 0));
+// Pickup card: Online (Fulfiller) transfers of the stop are merged into ONE
+// amber "Online" chip, first; it opens the driver's item list (2026-10-23).
+// Other pickups: number only, not clickable.
+function PickupCard({ tasks, onOpenOnline }) {
+  const online = tasks.filter(t => t.online);
+  const others = tasks.filter(t => !t.online);
+  const chip = { padding: '5px 12px', borderRadius: 8, fontSize: 14, fontWeight: 600, whiteSpace: 'nowrap' };
   return (
     <div style={{
       background: '#fff', borderRadius: 12, boxShadow: '0 1px 0 rgba(0,0,0,0.07), 0 0 0 1px rgba(0,0,0,0.08)',
       padding: 12, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
     }}>
       <span style={{ fontWeight: 650, marginRight: 4 }}>Pickup</span>
-      {list.map(t => (
-        <span key={t.id} style={{
-          padding: '5px 12px', borderRadius: 8, fontSize: 14, fontWeight: 600, whiteSpace: 'nowrap',
-          border: `1px solid ${t.online ? ORANGE : '#c9cccf'}`, background: t.online ? PICKUP_BG : '#fff',
-        }}>{t.online ? 'Online' : t.number}</span>
+      {online.length > 0 && (
+        <button
+          type="button"
+          onClick={() => onOpenOnline(online)}
+          style={{ ...chip, font: 'inherit', fontSize: 14, fontWeight: 600, cursor: 'pointer', border: `1px solid ${ORANGE}`, background: PICKUP_BG, minWidth: 96 }}
+        >Online</button>
+      )}
+      {others.map(t => (
+        <span key={t.id} style={{ ...chip, border: '1px solid #c9cccf', background: '#fff' }}>{t.number}</span>
       ))}
     </div>
+  );
+}
+
+// Driver's Online modal: all items of the stop's Online transfers. Tap an
+// image → the image big (tap anywhere to close it); tap outside the images →
+// closes the modal; the list scrolls. Qty = loaded qty once the store
+// prepared it, else the requested qty.
+function OnlineModal({ transfers, onClose }) {
+  const [big, setBig] = useState(null);
+  const items = transfers.flatMap(t => t.items || []);
+  const total = items.reduce((n, i) => n + (Number(i.qty) || 0), 0);
+  return createPortal(
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 520, background: 'rgba(0,0,0,0.45)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', padding: '4vh 12px 0' }}>
+      <div style={{ width: 'min(520px, 100%)', maxHeight: '84vh', overflowY: 'auto', WebkitOverflowScrolling: 'touch', background: '#fff', borderRadius: 14, padding: '14px 16px', boxSizing: 'border-box', boxShadow: '0 10px 30px rgba(0,0,0,0.25)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, paddingBottom: 10, borderBottom: '1px solid #e1e3e5' }}>
+          <span style={{ fontSize: 18, fontWeight: 700 }}>Total items</span>
+          <span style={{ fontSize: 18, fontWeight: 700 }}>{total}</span>
+          <span style={{ marginLeft: 'auto', padding: '3px 12px', borderRadius: 999, border: `1.5px solid ${ORANGE}`, background: PICKUP_BG, fontSize: 13, fontWeight: 600 }}>Online</span>
+        </div>
+        {items.map((i, n) => (
+          <div key={`${i.id}-${n}`} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderBottom: '1px solid #f1f1f1' }}>
+            {i.image
+              ? <img src={i.image} alt="" onClick={(e) => { e.stopPropagation(); setBig(i.image); }} style={{ width: 72, height: 72, objectFit: 'cover', borderRadius: 6, flex: 'none', cursor: 'zoom-in', background: '#f1f1f1' }} />
+              : <div style={{ width: 72, height: 72, borderRadius: 6, flex: 'none', background: '#e3e3e3' }} />}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12, color: '#8a8a8a' }}>{i.sku}</div>
+              <div style={{ fontWeight: 650 }}>{i.name}</div>
+              {i.variant && <div>{i.variant}</div>}
+            </div>
+            <div style={{ fontSize: 20, fontWeight: 600, paddingRight: 4 }}>{i.qty}</div>
+          </div>
+        ))}
+      </div>
+      {big && (
+        <div onClick={(e) => { e.stopPropagation(); setBig(null); }} style={{ position: 'fixed', inset: 0, zIndex: 530, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 12 }}>
+          <img src={big} alt="" style={{ maxWidth: '100%', maxHeight: '90vh', objectFit: 'contain' }} />
+        </div>
+      )}
+    </div>,
+    document.body
   );
 }
 
@@ -131,6 +181,7 @@ function WarehouseDelivery() {
   const [selectedKey, setSelectedKey] = useState(null); // null = follow the truck
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState(null);
+  const [onlineOpen, setOnlineOpen] = useState(null); // Online transfers shown in the driver's modal
 
   const load = useCallback(async () => {
     try {
@@ -250,7 +301,7 @@ function WarehouseDelivery() {
                     : (
                       <BigButton color={BLUE} text="Delivered" exit disabled={busy} onClick={() => run(selected, 'deliver')} />
                     ))}
-                  {selected.hasPickup && <PickupCard tasks={selected.pickup} />}
+                  {selected.hasPickup && <PickupCard tasks={selected.pickup} onOpenOnline={setOnlineOpen} />}
                   {selected.hasPickup && (selected.pickedUp
                     ? <DoneBlock text="Picked Up" />
                     : (
@@ -262,6 +313,7 @@ function WarehouseDelivery() {
           )}
         </BlockStack>
       </div>
+      {onlineOpen && <OnlineModal transfers={onlineOpen} onClose={() => setOnlineOpen(null)} />}
     </Page>
   );
 }

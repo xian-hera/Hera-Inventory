@@ -382,6 +382,7 @@ async function insertTransferTasks(db, where, params) {
                           THEN ARRAY['pickup', 'deliver']::text[] ELSE ARRAY[NULL]::text[] END) AS leg
      ) l
      WHERE ${where}
+       AND COALESCE(t.source, 'hub') <> 'fulfiller' -- Online transfers: never on the Schedule (2026-10-23)
        AND NOT EXISTS (SELECT 1 FROM wh_tasks w
                        WHERE w.kind = 'transfer' AND w.transfer_id = t.id AND COALESCE(w.leg, '') = COALESCE(l.leg, ''))
      ON CONFLICT DO NOTHING`,
@@ -630,6 +631,8 @@ router.put('/schedule', async (req, res) => {
       [JSON.stringify(current + 1)]
     );
     await client.query('COMMIT');
+    // An Online pickup whose stop is gone now → Fulfiller must re-assign (2026-10-23)
+    await require('./onlineTransfers').checkOnlineAnchors();
     res.json(await loadSchedule(pool));
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
@@ -693,6 +696,7 @@ router.post('/tasks/untrack', async (req, res) => {
        WHERE id = ANY($1) AND removed_at IS NULL AND tracked_back = TRUE`,
       [ids]
     );
+    await require('./onlineTransfers').checkOnlineAnchors(); // stop gone → Fulfiller re-assigns (2026-10-23)
     res.json({ moved: r.rowCount });
   } catch (e) {
     console.error('POST /api/warehouse/tasks/untrack error:', e);
@@ -890,6 +894,7 @@ router.post('/tasks/delete', async (req, res) => {
       deleted += 1;
     }
     await client.query('COMMIT');
+    await require('./onlineTransfers').checkOnlineAnchors(); // stop gone → Fulfiller re-assigns (2026-10-23)
     res.json({ deleted });
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
@@ -1155,7 +1160,7 @@ const deliveryRole = (w) => {
   return { role: 'deliver', store: w.tr_to };
 };
 
-async function loadDeliveryRows(today) {
+async function loadDeliveryRows(day) {
   const r = await pool.query(
     `SELECT w.*, i.po_number, i.location AS po_location,
             tr.shopify_transfer_name, tr.transfer_no, tr.from_location AS tr_from, tr.to_location AS tr_to,
@@ -1165,9 +1170,37 @@ async function loadDeliveryRows(today) {
        LEFT JOIN transfers tr ON tr.id = w.transfer_id
       WHERE w.removed_at IS NULL AND w.sched_date = $1::date
       ORDER BY CASE w.sched_half WHEN 'AM' THEN 0 ELSE 1 END, w.sched_pos, w.id`,
-    [today]
+    [day]
   );
   return r.rows.map(w => ({ ...w, ...deliveryRole(w) }));
+}
+
+// Online (Fulfiller) pickups anchored to a stop of `day` (2026-10-23, Hera),
+// with their items for the driver's modal. Not shown once the stop they
+// belong to is gone (needs_reassign_at).
+async function loadOnlinePickups(day) {
+  const r = await pool.query(
+    `SELECT p.*, t.status AS tr_status, t.shopify_transfer_name, t.transfer_no
+       FROM wh_online_pickups p JOIN transfers t ON t.id = p.transfer_id
+      WHERE p.pickup_date = $1::date AND p.needs_reassign_at IS NULL
+      ORDER BY p.placed_at, p.transfer_id`,
+    [day]
+  );
+  if (r.rows.length === 0) return [];
+  const items = await pool.query(
+    `SELECT transfer_id, id, sku, name, product_title, variant_title, image_url, quantity, requested_qty, qty_loaded, loaded_confirmed
+       FROM transfer_items WHERE transfer_id = ANY($1) AND edit_state IS DISTINCT FROM 'removed' ORDER BY id`,
+    [r.rows.map(x => x.transfer_id)]
+  );
+  return r.rows.map(p => ({
+    ...p,
+    stopKey: p.occurrence > 1 ? `${p.half}|${p.location}|${p.occurrence}` : `${p.half}|${p.location}`,
+    items: items.rows.filter(i => i.transfer_id === p.transfer_id).map(i => ({
+      id: i.id, sku: i.sku, name: i.product_title || i.name, variant: i.variant_title || '', image: i.image_url || null,
+      // driver sees the loaded qty once the store prepared it, else the requested qty
+      qty: i.loaded_confirmed && i.qty_loaded != null ? Number(i.qty_loaded) : Number(i.requested_qty != null ? i.requested_qty : i.quantity),
+    })),
+  }));
 }
 
 // Stops in schedule order, one per store per half-day — except (2026-10-23,
@@ -1176,7 +1209,10 @@ async function loadDeliveryRows(today) {
 // stops 1-3 done, truck at 4, a new card for store 3 placed after 4 → a
 // second "3" after 4, not inside the grey 3). Keys: 'AM|MTL03', then
 // 'AM|MTL03|2', … (stable while the order doesn't change).
-function buildStops(rows) {
+// online = Online (Fulfiller) pickups of the day; each joins the stop whose
+// key it is anchored to (pickup tasks with online: true, all merged into ONE
+// "Online" chip on the page).
+function buildStops(rows, online = []) {
   const stops = [];
   const lastOf = {};   // half|store → latest stop of that store
   const countOf = {};  // half|store → number of stops so far
@@ -1191,26 +1227,36 @@ function buildStops(rows) {
     }
     if (!st) {
       countOf[base] = (countOf[base] || 0) + 1;
-      st = { key: countOf[base] === 1 ? base : `${base}|${countOf[base]}`, half: w.sched_half, location: w.store, rawDeliver: [], rawPickup: [] };
+      st = { key: countOf[base] === 1 ? base : `${base}|${countOf[base]}`, half: w.sched_half, location: w.store, rawDeliver: [], rawPickup: [], rawOnline: [] };
       lastOf[base] = st;
       stops.push(st);
     }
     (w.role === 'deliver' ? st.rawDeliver : st.rawPickup).push(w);
+  }
+  for (const p of online) {
+    const st = stops.find(x => x.key === p.stopKey);
+    if (st) st.rawOnline.push(p);
   }
   const view = (w) => ({
     id: w.id, kind: w.kind,
     number: w.kind === 'po' ? `${w.po_number || ''}${w.split_no ? `-${w.split_no}` : ''}`
       : w.kind === 'transfer' ? (w.shopify_transfer_name || w.transfer_no || '')
       : (w.custom_title || ''),
-    online: false, // Online order transfers: to come (Hera, next message)
+    online: false,
     delivered: !!w.delivered_at, picked: !!w.picked_at,
     doneAt: w.delivered_at || w.picked_at || null,
   });
-  return stops.map(({ rawDeliver, rawPickup, ...st }) => {
+  const onlineView = (p) => ({
+    id: `online-${p.transfer_id}`, transferId: p.transfer_id, kind: 'transfer', online: true,
+    number: p.shopify_transfer_name || p.transfer_no || '',
+    picked: !!p.picked_at, delivered: false, doneAt: p.picked_at || null, items: p.items,
+  });
+  return stops.map(({ rawDeliver, rawPickup, rawOnline, ...st }) => {
     const deliver = rawDeliver.map(view);
-    const pickup = rawPickup.map(view);
+    const pickup = [...rawOnline.map(onlineView), ...rawPickup.map(view)];
     const out = {
       ...st, deliver, pickup, taskIds: [...rawDeliver, ...rawPickup].map(w => w.id),
+      onlineTransferIds: rawOnline.map(p => p.transfer_id),
       hasDeliver: deliver.length > 0,
       hasPickup: pickup.length > 0,
       delivered: deliver.length > 0 && deliver.every(t => t.delivered),
@@ -1224,11 +1270,27 @@ function buildStops(rows) {
   });
 }
 
+// All stops of a day, Online pickups included (Delivery page, integration).
+async function stopsForDay(day, { withOnline = true } = {}) {
+  const [rows, online] = await Promise.all([loadDeliveryRows(day), withOnline ? loadOnlinePickups(day) : []]);
+  return buildStops(rows, online);
+}
+
+const stopIsDone = (st) => (!st.hasDeliver || st.delivered) && (!st.hasPickup || st.pickedUp);
+// The truck's stop: the first unfinished stop after the stop finished last
+// (stops may be done out of order); none after it → first unfinished.
+function truckStopKey(stops) {
+  let last = -1; let lastAt = '';
+  stops.forEach((st, i) => { if (st.doneAt && st.doneAt > lastAt) { lastAt = st.doneAt; last = i; } });
+  const next = (last >= 0 && stops.slice(last + 1).find(st => !stopIsDone(st))) || stops.find(st => !stopIsDone(st));
+  return next ? next.key : null;
+}
+
 // GET /api/warehouse/delivery → { today, stops: [...] }
 router.get('/delivery', async (req, res) => {
   try {
     const today = torontoToday();
-    res.json({ today, stops: buildStops(await loadDeliveryRows(today)) });
+    res.json({ today, stops: await stopsForDay(today) });
   } catch (e) {
     console.error('GET /api/warehouse/delivery error:', e);
     res.status(500).json({ error: e.message });
@@ -1247,7 +1309,8 @@ router.post('/delivery/done', async (req, res) => {
   try {
     const today = torontoToday();
     const all = await loadDeliveryRows(today);
-    const stop = buildStops(all).find(st => (key ? st.key === key : st.half === half && st.location === location));
+    const online = await loadOnlinePickups(today);
+    const stop = buildStops(all, online).find(st => (key ? st.key === key : st.half === half && st.location === location));
     if (!stop) return res.status(404).json({ error: 'This stop is not on today\'s schedule any more. Reload the page.' });
     const inStop = new Set(stop.taskIds);
     const rows = all.filter(w => inStop.has(w.id) && w.role === action
@@ -1282,10 +1345,30 @@ router.post('/delivery/done', async (req, res) => {
         failed.push({ number, error: e.message });
       }
     }
+    // Online (Fulfiller) pickups of this stop (2026-10-23, Hera): Picked Up
+    // takes them Preparing → Ready to Ship (if the store hasn't) → In Transit.
+    if (action === 'pickup') {
+      const { onlineReadyToShip, dispatchOne } = require('./transfers');
+      const pickedOnline = [];
+      for (const p of online.filter(x => stop.onlineTransferIds.includes(x.transfer_id) && !x.picked_at)) {
+        const number = p.shopify_transfer_name || p.transfer_no || String(p.transfer_id);
+        try {
+          if (p.tr_status === 'loading') { await onlineReadyToShip(p.transfer_id); p.tr_status = 'good_to_go'; }
+          if (p.tr_status === 'good_to_go') await dispatchOne(p.transfer_id);
+          await pool.query('UPDATE wh_online_pickups SET picked_at = NOW() WHERE transfer_id = $1', [p.transfer_id]);
+          pickedOnline.push(p.transfer_id);
+          done++;
+        } catch (e) {
+          failed.push({ number: `Online ${number}`, error: e.message });
+        }
+      }
+      // 2026-10-24 (Fulfiller B4): transfer.picked_up message. Never fails.
+      if (pickedOnline.length) await require('./onlineTransfers').notifyPickedUp(pickedOnline);
+    }
     // End of the day (2026-10-23, Hera): once EVERY stop of today is done the
     // truck heads back to HQ → today's store → HQ transfers that were picked
     // up (In Transit) become Receiving, like a "Delivered" at HQ.
-    let stops = buildStops(await loadDeliveryRows(today));
+    let stops = await stopsForDay(today);
     let backAtHq = 0;
     const allDone = stops.length > 0 && stops.every(st => (!st.hasDeliver || st.delivered) && (!st.hasPickup || st.pickedUp));
     if (allDone) {
@@ -1297,7 +1380,7 @@ router.post('/delivery/done', async (req, res) => {
         [today, HQ]
       );
       backAtHq = r.rowCount;
-      if (backAtHq) stops = buildStops(await loadDeliveryRows(today));
+      if (backAtHq) stops = await stopsForDay(today);
     }
     res.json({ done, failed, backAtHq, stops });
   } catch (e) {
@@ -1419,4 +1502,8 @@ router.delete('/user-groups/my', async (req, res) => {
 
 module.exports = router;
 module.exports.torontoToday = torontoToday;
+// Online (Fulfiller) integration (2026-10-23) — routes/onlineTransfers.js
+module.exports.stopsForDay = stopsForDay;
+module.exports.truckStopKey = truckStopKey;
+module.exports.stopIsDone = stopIsDone;
 module.exports.businessWindow = businessWindow;
