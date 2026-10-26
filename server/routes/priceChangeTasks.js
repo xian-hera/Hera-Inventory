@@ -264,6 +264,26 @@ router.post('/process', async (req, res) => {
   }
 });
 
+// ── Manually Add SKU (2026-10-26, Hera) ──
+// body { productTypes, taskType, sku } → { item } or { reason } — the same
+// checks as Process, for one SKU typed by hand (no price: Regular = label
+// only, Discontinued = its price rule).
+router.post('/check-sku', async (req, res) => {
+  try {
+    const { productTypes, taskType, sku } = req.body || {};
+    if (!Array.isArray(productTypes) || !productTypes.length) return res.status(400).json({ error: 'Choose at least one type.' });
+    if (!typeOk(taskType)) return res.status(400).json({ error: 'Choose a task type.' });
+    const s = String(sku || '').trim();
+    if (!s) return res.status(400).json({ error: 'Enter a SKU.' });
+    const r = await PC.processRows({ productTypes, taskType, rows: [{ row: 'Manual', sku: s, price: '', labelOnly: true }] });
+    if (r.items.length) return res.json({ item: r.items[0] });
+    res.json({ reason: (r.skipped[0] && r.skipped[0].reason) || 'SKU can not be added' });
+  } catch (e) {
+    console.error('POST /api/price-change-tasks/check-sku error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Create a scheduled task ──
 // body { productTypes, locations, taskType, note, items, when: { date, time } | 'now',
 //        reverse: { date, time, taskType } | null }
@@ -412,6 +432,9 @@ router.get('/:id/detail', async (req, res) => {
     const settings = await PC.getSettings();
     // Not applied yet: say where the new price will come from.
     for (const it of items) {
+      if (t.status === 'scheduled' && !t.reverse_of && !it.csv_price && t.task_type === 'regular') {
+        it.rule_text = 'Label only'; // 2026-10-26: no price → nothing changes in Shopify, stores print
+      }
       if (t.status === 'scheduled' && !t.reverse_of && !it.csv_price && t.task_type === 'discontinued') {
         const rule = PC.ruleForType(settings.rules, it.product_type);
         it.rule_text = rule ? `−${rule.percent}%, cents → .${String(rule.cents).padStart(2, '0')}` : 'No rule — will be skipped';

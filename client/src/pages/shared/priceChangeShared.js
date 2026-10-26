@@ -5,10 +5,13 @@ import React from 'react';
 export const TIMEZONE = 'America/Toronto';
 
 // Task types: value stored in the DB → label + dot colour.
+// 2026-10-26 (Hera): shown everywhere (Purchasing and Store) as the short
+// codes REG / SALE / DC; the old long name is kept as `name` (not shown).
+// The stored values stay 'regular' / 'promotion' / 'discontinued'.
 export const TASK_TYPES = [
-  { value: 'regular', label: 'Regular', color: '#4fb3ea', help: 'Update Price ONLY' },
-  { value: 'promotion', label: 'Promotion', color: '#f2c94c', help: 'Update Price and Compare-at Price ONLY' },
-  { value: 'discontinued', label: 'Discontinued', color: '#e5483a', help: 'Update Price and Compare-at Price, Discontinued metafield, and adding @ to custom.name, or replace #' },
+  { value: 'regular', label: 'REG', name: 'Regular', color: '#4fb3ea', help: 'Update Price ONLY. Without a Price column (SKU only, or SKUs added by hand): nothing changes in Shopify, the stores just print the labels' },
+  { value: 'promotion', label: 'SALE', name: 'Promotion', color: '#f2c94c', help: 'Update Price and Compare-at Price ONLY' },
+  { value: 'discontinued', label: 'DC', name: 'Discontinued', color: '#e5483a', help: 'Update Price and Compare-at Price, Discontinued metafield, and adding @ to custom.name, or replace #' },
 ];
 export const taskTypeOf = (v) => TASK_TYPES.find(t => t.value === v) || null;
 
@@ -20,13 +23,19 @@ export function TaskTypeDot({ type, size = 10 }) {
 
 export function TaskTypeLabel({ type, fallback = '' }) {
   const t = taskTypeOf(type);
-  if (!t) return <span>{fallback}</span>;
+  if (!t) return <span>{legacyLabel(fallback)}</span>;
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
       <TaskTypeDot type={type} />{t.label}
     </span>
   );
 }
+
+// Older tasks (made before Create Task) only have a label_type: 'Regular
+// price' / 'Sale price' are shown as REG / SALE too (2026-10-26); others
+// (e.g. 'Wig') as they are.
+const LEGACY_LABELS = { 'Regular price': 'REG', 'Sale price': 'SALE' };
+export const legacyLabel = (labelType) => LEGACY_LABELS[labelType] || labelType || '';
 
 // "Ex. HQ, MTL01" — the locations NOT selected (Hera 2026-10-08).
 export function excludedText(selected, all) {

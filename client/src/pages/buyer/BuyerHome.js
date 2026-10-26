@@ -101,10 +101,10 @@ function BuyerHome() {
               Transfers
             </Button>
 
-            {/* Price Change */}
+            {/* Price Change — shown as "Label Print" (2026-10-26, Hera) */}
             <Button size="large" fullWidth onClick={() => navigate('/buyer/price-change')}>
               <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                Price Change
+                Label Print
                 {badges.priceChangeAlert && <ExclamationBadge />}
               </span>
             </Button>

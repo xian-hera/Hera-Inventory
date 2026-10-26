@@ -205,7 +205,10 @@ async function processRows({ productTypes, taskType, rows }) {
       if (c === null || c < 0) { skipped.push({ row: r.row, sku, reason: `Price "${raw}" is not a valid price` }); continue; }
       csvPrice = fromCents(c);
     }
-    candidates.push({ row: r.row, sku, csvPrice, wigNumber: String(r.wigNumber == null ? '' : r.wigNumber).trim() });
+    // labelOnly (2026-10-26, Hera): the row came without any Price column
+    // (SKU-only CSV, or a SKU added by hand) — a Regular task then changes
+    // nothing in Shopify and only sends the SKU to the stores to print.
+    candidates.push({ row: r.row, sku, csvPrice, wigNumber: String(r.wigNumber == null ? '' : r.wigNumber).trim(), labelOnly: !!r.labelOnly && csvPrice === null });
   }
 
   const found = await findBySku(candidates.map(c => c.sku));
@@ -222,7 +225,8 @@ async function processRows({ productTypes, taskType, rows }) {
     const needsWig = taskType === 'discontinued' && lc(type) === 'wig';
     if (needsWig && !c.wigNumber) { skipped.push({ row: c.row, sku: c.sku, reason: 'Wig number is empty' }); continue; }
     let rule = null;
-    if (c.csvPrice === null) {
+    const labelOnly = taskType === 'regular' && c.labelOnly;
+    if (c.csvPrice === null && !labelOnly) {
       rule = taskType === 'discontinued' ? ruleForType(settings.rules, type) : null;
       if (!rule) {
         skipped.push({ row: c.row, sku: c.sku, reason: taskType === 'discontinued' ? `No price, and no Discontinued rule for "${type}"` : 'No price' });
@@ -234,6 +238,7 @@ async function processRows({ productTypes, taskType, rows }) {
       name: variantName(v), barcode: v.barcode || '', csvPrice: c.csvPrice, currentPrice: v.price,
       rule: rule ? { percent: rule.percent, cents: rule.cents } : null,
       wigNumber: needsWig ? c.wigNumber : '',
+      labelOnly,
     });
   }
   // Variants of one product share one custom.wig_number: if the CSV gives
@@ -253,7 +258,8 @@ async function processRows({ productTypes, taskType, rows }) {
     }
   }
   const kept = conflict.size ? items.filter(it => !conflict.has(it.productId) || !it.wigNumber) : items;
-  skipped.sort((a, b) => (a.row || 0) - (b.row || 0));
+  // rows added by hand have row 'Manual' (2026-10-26) — listed after the CSV rows
+  skipped.sort((a, b) => (Number(a.row) || Infinity) - (Number(b.row) || Infinity));
   return { items: kept, skipped };
 }
 
@@ -462,6 +468,15 @@ async function applyTask(taskId) {
       // done → only the name is left)
       f = isNew ? { ...recorded, priceDone: true } : recorded;
       if (!nameLeft) f.newName = it.new_name && cur.name === it.new_name ? it.new_name : null;
+    } else if (!task.reverse_of && task.task_type === 'regular' && (it.csv_price == null || it.csv_price === '')) {
+      // Label only (2026-10-26, Hera): a Regular row without a price changes
+      // nothing in Shopify; the SKU just goes to the stores to print (the
+      // store prints from live Shopify data).
+      f = {
+        oldPrice: cur.price, oldCompareAt: cur.compareAt, oldDiscontinued: cur.discontinued,
+        newPrice: cur.price, newCompareAt: cur.compareAt, setDiscontinued: false,
+        oldName: cur.name, newName: null, priceDone: true, labelOnly: true,
+      };
     } else if (!task.reverse_of) {
       let newPrice = it.csv_price;
       if (newPrice == null || newPrice === '') {
@@ -537,7 +552,7 @@ async function applyTask(taskId) {
   for (const [id, f] of planned) {
     if (priceErrors.has(id)) await setItem(id, { ...f, status: 'failed', note: `Not changed — ${priceErrors.get(id)}` });
     else {
-      const note = [metaErrors.get(id), nameErrors.get(id), clearErrors.get(id), wigErrors.get(id)].filter(Boolean).join(' · ') || null;
+      const note = [f.labelOnly ? 'Label only' : null, metaErrors.get(id), nameErrors.get(id), clearErrors.get(id), wigErrors.get(id)].filter(Boolean).join(' · ') || null;
       // A name that could not be written is not recorded as the new name.
       const nameFailed = nameErrors.has(id);
       await setItem(id, { ...f, newName: nameFailed ? null : f.newName, status: 'done', note, nameWritten: !!f.newName && !nameFailed });

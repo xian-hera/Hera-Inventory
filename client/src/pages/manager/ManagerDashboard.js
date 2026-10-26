@@ -284,7 +284,7 @@ function ManagerDashboard({ location, dashboard }) {
       )}
 
       {priceGroups.length > 0 && (
-        <Section title="Price Change">
+        <Section title="Label Print">{/* was "Price Change" (2026-10-26, Hera) */}
           <div style={{ overflowX: 'auto' }}>
             <table className="sd-table">
               <tbody>

@@ -254,7 +254,7 @@ function ManagerHome() {
 
             <Button size="large" fullWidth onClick={() => handleNavigate('/manager/label-print')}>
               <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                Price Change
+                Label Print{/* was "Price Change" (2026-10-26, Hera) */}
                 <Badge count={badges.labelPrint} />
               </span>
             </Button>

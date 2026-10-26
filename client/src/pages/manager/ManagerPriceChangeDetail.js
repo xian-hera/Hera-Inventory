@@ -11,7 +11,7 @@ import MobileModalSafeArea from '../../components/MobileModalSafeArea';
 import { getManagerLocation } from '../../accountMemory';
 // Task type in the title, WIG part, live prices (2026-10-08, Hera) — spec:
 // claude/PRICE_CHANGE_SCHEDULE_REVERSE_SPEC.md
-import { TaskTypeLabel } from '../shared/priceChangeShared';
+import { TaskTypeLabel, legacyLabel } from '../shared/priceChangeShared';
 
 function ManagerPriceChangeDetail() {
   const { taskId } = useParams();
@@ -290,7 +290,7 @@ ${barcodeScript}</head><body>${allLabels}</body></html>`;
   // for the WIG part. Older tasks keep "Price Change 000137 · Regular price".
   const pageTitle = part === 'wig' ? `${task.task_no}  WIG`
     : task.task_type ? task.task_no
-      : `Price Change ${task.task_no}${task.label_type ? ` · ${task.label_type}` : ''}`;
+      : `Price Change ${task.task_no}${task.label_type ? ` · ${legacyLabel(task.label_type)}` : ''}`; // REG / SALE wording, 2026-10-26
   const titleMetadata = part !== 'wig' && task.task_type ? <TaskTypeLabel type={task.task_type} /> : undefined;
 
   const templateOptions = templates.map(t => ({

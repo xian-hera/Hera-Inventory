@@ -155,10 +155,11 @@ function ManagerLabelPrintTasks() {
   }
 
   return (
+    // Page title "Label Print" (was "Price Change") — 2026-10-26, Hera
     <Page
       // Plain title, no location suffix (2026-09-24, Hera). "Price Change"
       // since 2026-10-22 (was "Label print tasks"); no header buttons.
-      title="Price Change"
+      title="Label Print"
       backAction={{ onAction: () => navigate('/manager') }}
     >
       <Layout>
@@ -168,7 +169,7 @@ function ManagerLabelPrintTasks() {
           {/* ── Price change tasks (from buyer) ── */}
           <div>
             <BlockStack gap="300">
-              <Text variant="headingSm">Price Change Tasks</Text>
+              <Text variant="headingSm">Label Print Tasks</Text>{/* was "Price Change Tasks" (2026-10-26, Hera) */}
               {priceLoading ? (
                 <Card>
                   <div style={{ display: 'flex', justifyContent: 'center', padding: '24px' }}>

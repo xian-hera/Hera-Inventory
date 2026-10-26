@@ -82,7 +82,7 @@ function BuyerPriceChangeSettings() {
   const Saved = ({ card }) => (msg[card] ? <Banner tone="success" onDismiss={() => setMsg(m => ({ ...m, [card]: '' }))}>{msg[card]}</Banner> : null);
 
   return (
-    <Page title="Price Change Settings" backAction={{ onAction: () => navigate('/buyer/price-change/create') }}>
+    <Page title="Label Print Settings" /* was "Price Change Settings" (2026-10-26, Hera) */ backAction={{ onAction: () => navigate('/buyer/price-change/create') }}>
       <div style={NARROW}>
         <BlockStack gap="400">
           {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}

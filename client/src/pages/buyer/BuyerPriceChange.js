@@ -12,7 +12,7 @@ import { decodeCsvBuffer, cleanCell, UNREADABLE_CHAR } from './importProducts/im
 // Scheduled price changes (2026-10-08, Hera) — spec:
 // claude/PRICE_CHANGE_SCHEDULE_REVERSE_SPEC.md
 import ScheduledTasksCard, { ScheduledTaskModal } from './priceChange/ScheduledTasksCard';
-import { TaskTypeLabel, excludedText, formatToronto, money } from '../shared/priceChangeShared';
+import { TaskTypeLabel, excludedText, formatToronto, money, legacyLabel } from '../shared/priceChangeShared';
 
 // The old "Upload CSV → Publish" flow on this page (labels only, no price
 // change in Shopify) is replaced by Create Task (2026-10-08, Hera). Kept,
@@ -348,8 +348,9 @@ function BuyerPriceChange() {
   });
 
   return (
+    // Page title "Label Print" (was "Price Change") — 2026-10-26, Hera
     <Page
-      title="Price Change"
+      title="Label Print"
       backAction={{ onAction: () => navigate('/buyer') }}
       primaryAction={{ content: 'Create Task', onAction: () => navigate('/buyer/price-change/create') }}
     >
@@ -601,7 +602,7 @@ function BuyerPriceChange() {
                 )}
                 {!detailTask.task_type && detailTask.label_type && (
                   <span style={{ fontWeight: 400, color: '#6d7175' }}>
-                    {' · '}{detailTask.label_type}
+                    {' · '}{legacyLabel(detailTask.label_type)}
                   </span>
                 )}
               </Text>

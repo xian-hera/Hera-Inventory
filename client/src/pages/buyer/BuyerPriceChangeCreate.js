@@ -5,6 +5,10 @@
 //   Start (Type, Location, Task Type) → Upload CSV (SKU + Price) → Publish
 //   (change date/time in Eastern time, optional reverse, note, Schedule it /
 //   Publish Now).
+// 2026-10-26 (Hera): task types shown as REG / SALE / DC; the summary row
+// lists the chosen locations (cut off, full list on hover); a REG task can
+// take a SKU-only CSV and SKUs added by hand ("Manually Add SKU") — those
+// change nothing in Shopify, the stores just print the labels.
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Page, Card, BlockStack, InlineStack, Text, Button, Banner, Select, Tooltip,
@@ -15,16 +19,10 @@ import Papa from 'papaparse';
 import MultiSelectDropdown from '../../components/MultiSelectDropdown';
 import { useLocationMap } from '../shared/locationMap';
 import { decodeCsvBuffer, cleanCell } from './importProducts/importModel';
-import { TASK_TYPES, taskTypeOf, excludedText } from '../shared/priceChangeShared';
+import { TASK_TYPES, TaskTypeLabel, excludedText } from '../shared/priceChangeShared';
 import { useGroupContext } from '../../userGroup'; // Purchasing user groups, 2026-10-09
 
 const NARROW = { maxWidth: '62.375rem', margin: '0 auto', width: '100%' };
-
-const TASK_TYPE_TIP = (
-  <div>
-    {TASK_TYPES.map(t => <div key={t.value}><b>{t.label}</b>: {t.help}</div>)}
-  </div>
-);
 
 function Summary({ label, children }) {
   return (
@@ -57,6 +55,12 @@ function BuyerPriceChangeCreate() {
   const [processing, setProcessing] = useState(false);
   const [result, setResult] = useState(null); // { items, skipped }
   const [showSkipped, setShowSkipped] = useState(false);
+  // Manually Add SKU (2026-10-26): [{ row: 'Manual', sku, price: '', labelOnly: true, name }]
+  const [manualRows, setManualRows] = useState([]);
+  const [manualOpen, setManualOpen] = useState(false);
+  const [manualSku, setManualSku] = useState('');
+  const [manualBusy, setManualBusy] = useState(false);
+  const [manualMsg, setManualMsg] = useState(null); // { tone: 'success'|'critical', text }
 
   // ── Publish ──
   const [date, setDate] = useState('');
@@ -91,7 +95,7 @@ function BuyerPriceChangeCreate() {
 
   const startReady = types.length > 0 && locations.length > 0 && !!taskType;
 
-  const resetUpload = () => { setFileName(''); setCsvRows(null); setResult(null); setShowSkipped(false); };
+  const resetUpload = () => { setFileName(''); setCsvRows(null); setResult(null); setShowSkipped(false); setManualRows([]); };
   const resetPublish = () => {
     setDate(''); setTime(''); setReverseOn(false); setRevDate(''); setRevTime(''); setRevType(''); setNote('');
   };
@@ -126,6 +130,10 @@ function BuyerPriceChangeCreate() {
         const sku = cleanCell(cells[skuCol]).trim();
         if (!sku) continue;
         const r = { row: i + 1, sku, price: priceCol === -1 ? '' : cleanCell(cells[priceCol]).trim() };
+        // No Price column at all (2026-10-26): REG = label only (stores just
+        // print); a row with an empty price in a CSV that HAS the column is
+        // still "No price".
+        if (priceCol === -1) r.labelOnly = true;
         if (needWig) r.wigNumber = cleanCell(cells[wigCol]).trim();
         rows.push(r);
       }
@@ -136,14 +144,15 @@ function BuyerPriceChangeCreate() {
     reader.readAsArrayBuffer(f);
   };
 
+  const allRows = [...(csvRows || []), ...manualRows];
   const process = async () => {
-    if (!csvRows) return;
+    if (!allRows.length) return;
     setProcessing(true);
     setError('');
     try {
       const res = await fetch('/api/price-change-tasks/process', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ productTypes: types, taskType, rows: csvRows }),
+        body: JSON.stringify({ productTypes: types, taskType, rows: allRows }),
       });
       const d = await res.json();
       if (!res.ok) throw new Error(d.error || 'Process failed');
@@ -156,6 +165,36 @@ function BuyerPriceChangeCreate() {
       setProcessing(false);
     }
   };
+
+  // Manually Add SKU: checked on the server (exists, one variant, type
+  // chosen…), then added; the modal stays open for the next one.
+  // REG only (2026-10-26, Hera).
+  const manualAllowed = taskType === 'regular';
+  const addManual = async () => {
+    const sku = manualSku.trim();
+    if (!sku || manualBusy) return;
+    if (allRows.some(r => r.sku === sku)) { setManualMsg({ tone: 'critical', text: `${sku} is already in this task.` }); return; }
+    setManualBusy(true);
+    setManualMsg(null);
+    try {
+      const res = await fetch('/api/price-change-tasks/check-sku', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ productTypes: types, taskType, sku }),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || 'Could not check the SKU');
+      if (!d.item) { setManualMsg({ tone: 'critical', text: `${sku}: ${d.reason}` }); return; }
+      setManualRows(prev => [...prev, { row: 'Manual', sku, price: '', labelOnly: true, name: d.item.name }]);
+      setResult(null);
+      setManualMsg({ tone: 'success', text: `Added ${sku}${d.item.name ? ` — ${d.item.name}` : ''}` });
+      setManualSku('');
+    } catch (e) {
+      setManualMsg({ tone: 'critical', text: e.message });
+    } finally {
+      setManualBusy(false);
+    }
+  };
+  const rowText = (r) => (r === 'Manual' ? 'Added by hand' : `Row ${r}`);
 
   const downloadSkipped = () => {
     const text = Papa.unparse({ fields: ['Row', 'SKU', 'Reason'], data: result.skipped.map(s => [s.row, s.sku, s.reason]) });
@@ -196,11 +235,12 @@ function BuyerPriceChangeCreate() {
   };
 
   const typeOptions = [{ label: 'Choose', value: '' }, ...TASK_TYPES.map(t => ({ label: t.label, value: t.value }))];
+  const labelOnlyCount = result ? result.items.filter(it => it.labelOnly).length : 0;
   const skippedList = useMemo(() => (result ? result.skipped : []), [result]);
 
   return (
     <Page
-      title="Creating Price Change Task"
+      title="Creating Label Print Task" // was "Creating Price Change Task" (2026-10-26, Hera)
       backAction={{ onAction: () => navigate('/buyer/price-change') }}
       secondaryActions={[{ content: 'Settings', onAction: () => navigate('/buyer/price-change/settings') }]}
     >
@@ -224,8 +264,9 @@ function BuyerPriceChangeCreate() {
                     />
                   </div>
                   <div style={{ minWidth: 200 }}>
+                    {/* No hover help on Task Type any more (2026-10-26, Hera) — the short codes are enough. */}
                     <Select
-                      label={<Tooltip content={TASK_TYPE_TIP}><span style={{ borderBottom: '1px dotted #8c9196' }}>Task Type</span></Tooltip>}
+                      label="Task Type"
                       options={typeOptions} value={taskType} onChange={setTaskType}
                     />
                   </div>
@@ -238,10 +279,17 @@ function BuyerPriceChangeCreate() {
           ) : (
             <InlineStack gap="800" blockAlign="end" wrap={false}>
               <Summary label="Type">{types.join(', ')}</Summary>
-              <div style={{ minWidth: 0, flex: 1, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
-                <Summary label="Locations">{excludedText(locations, locationNames)}</Summary>
+              {/* Locations (2026-10-26): the chosen ones (not "Ex. …"),
+                  cut off when long — the full list on hover. */}
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <Summary label="Locations">
+                  <Tooltip content={locations.join(', ')} activatorWrapper="div" preferredPosition="below">
+                    <div style={{ overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{locations.join(', ')}</div>
+                  </Tooltip>
+                </Summary>
               </div>
-              <div style={{ fontSize: 15, fontWeight: 500, whiteSpace: 'nowrap' }}>{taskTypeOf(taskType) && `${taskTypeOf(taskType).label} Price Change`}</div>
+              {/* Just "● REG" / "● SALE" / "● DC", no "Task Type" caption (2026-10-26, Hera). */}
+              <div style={{ fontSize: 15, fontWeight: 500, whiteSpace: 'nowrap' }}><TaskTypeLabel type={taskType} /></div>
               <Button variant="plain" onClick={() => { resetUpload(); resetPublish(); setStep('start'); }}>Change</Button>
             </InlineStack>
           )}
@@ -252,13 +300,21 @@ function BuyerPriceChangeCreate() {
               <BlockStack gap="300">
                 <Text variant="headingMd" as="h2">Upload csv</Text>
                 <InlineStack gap="300" blockAlign="center">
-                  <Tooltip content={<span>Only SKU and Price columns with Headers are required{taskType === 'discontinued' && (types || []).some(t => String(t).toLowerCase() === 'wig') ? <>,<br />plus Wig Number for WIG Discontinued tasks</> : null},<br />Other columns will be ignored.</span>}>
+                  {manualAllowed && (
+                    <Button onClick={() => { setManualSku(''); setManualMsg(null); setManualOpen(true); }}>Manually Add SKU</Button>
+                  )}
+                  <Tooltip content={<span>{taskType === 'regular' ? <>A SKU column with a Header is required; with a Price column the prices are changed, without one only the labels are sent to the stores</> : 'Only SKU and Price columns with Headers are required'}{taskType === 'discontinued' && (types || []).some(t => String(t).toLowerCase() === 'wig') ? <>,<br />plus Wig Number for WIG Discontinued tasks</> : null},<br />Other columns will be ignored.</span>}>
                     <Button onClick={() => fileRef.current && fileRef.current.click()}>Upload CSV</Button>
                   </Tooltip>
                   <input ref={fileRef} type="file" accept=".csv,text/csv" style={{ display: 'none' }} onChange={onFile} />
                   {fileName && <Text tone="subdued">{fileName} added</Text>}
+                  {manualRows.length > 0 && (
+                    <Tooltip content={manualRows.map(r => r.sku).join(', ')}>
+                      <Text tone="subdued">{manualRows.length} SKU{manualRows.length === 1 ? '' : 's'} added by hand</Text>
+                    </Tooltip>
+                  )}
                   <div style={{ marginLeft: 'auto' }}>
-                    <Button variant="primary" onClick={process} loading={processing} disabled={!csvRows}>Process</Button>
+                    <Button variant="primary" onClick={process} loading={processing} disabled={!allRows.length}>Process</Button>
                   </div>
                 </InlineStack>
                 {result && !result.items.length && (
@@ -269,8 +325,12 @@ function BuyerPriceChangeCreate() {
           )}
           {step === 'publish' && result && (
             <InlineStack gap="300" blockAlign="center">
-              <Text tone="subdued">{fileName}</Text>
-              <Text fontWeight="medium">Processed, {result.items.length} Rows will be updated</Text>
+              {fileName && <Text tone="subdued">{fileName}</Text>}
+              {manualRows.length > 0 && <Text tone="subdued">{manualRows.length} added by hand</Text>}
+              <Text fontWeight="medium">
+                Processed, {result.items.length} Rows will be updated
+                {labelOnlyCount > 0 && ` (${labelOnlyCount === result.items.length ? 'all' : labelOnlyCount} label only)`}
+              </Text>
               {result.skipped.length > 0 && (
                 <Button variant="plain" tone="critical" onClick={() => setShowSkipped(v => !v)}>
                   {result.skipped.length} skipped {showSkipped ? '▴' : '▾'}
@@ -283,7 +343,7 @@ function BuyerPriceChangeCreate() {
             <Banner tone="warning">
               <BlockStack gap="100">
                 <Text fontWeight="medium">{skippedList.length} row(s) will not be updated:</Text>
-                {skippedList.slice(0, 30).map((s, i) => <div key={i}>Row {s.row} · {s.sku} — {s.reason}</div>)}
+                {skippedList.slice(0, 30).map((s, i) => <div key={i}>{rowText(s.row)} · {s.sku} — {s.reason}</div>)}
                 {skippedList.length > 30 && <div>…and {skippedList.length - 30} more.</div>}
                 <InlineStack><Button onClick={downloadSkipped}>Download list</Button></InlineStack>
               </BlockStack>
@@ -351,6 +411,27 @@ function BuyerPriceChangeCreate() {
           <div style={{ height: 120 }} />
         </BlockStack>
       </div>
+
+      {/* Manually Add SKU (2026-10-26, Hera): for one or a few SKUs without a CSV. */}
+      <Modal
+        open={manualOpen}
+        onClose={() => setManualOpen(false)}
+        title="Manually Add SKU"
+        primaryAction={{ content: 'Add', onAction: addManual, loading: manualBusy, disabled: !manualSku.trim() }}
+        secondaryActions={[{ content: 'Cancel', onAction: () => setManualOpen(false) }]}
+      >
+        <Modal.Section>
+          <BlockStack gap="300">
+            <div onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addManual(); } }}>
+              <TextField label="SKU" value={manualSku} onChange={(v) => { setManualSku(v); setManualMsg(null); }} autoComplete="off" autoFocus />
+            </div>
+            {manualMsg && <Banner tone={manualMsg.tone}>{manualMsg.text}</Banner>}
+            {manualRows.length > 0 && (
+              <Text tone="subdued" variant="bodySm">Added: {manualRows.map(r => r.sku).join(', ')}</Text>
+            )}
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
 
       <Modal
         open={noteOpen}
