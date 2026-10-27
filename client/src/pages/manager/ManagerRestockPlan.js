@@ -323,13 +323,13 @@ function ManagerRestockPlan() {
                       color: items.length === 0 ? '#8c9196' : 'white',
                       cursor: items.length === 0 ? 'not-allowed' : 'pointer',
                       fontSize: '14px', fontWeight: '500' }}>
-                    Delete all
+                    Delete All{/* was "Delete all"; "Add by typing" → "Add" (2026-10-27, Hera) */}
                   </button>
                   <button onClick={() => { setSkuInput(''); setSkuError(''); setShowAddByTyping(true); }}
                     style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid #c9cccf',
                       background: 'white', color: '#202223', cursor: 'pointer',
                       fontSize: '14px', fontWeight: '500' }}>
-                    Add by typing
+                    Add
                   </button>
                 </InlineStack>
 
@@ -505,7 +505,7 @@ function ManagerRestockPlan() {
               <InlineStack gap="200" align="center">
                 <button onClick={handleDeleteAll} style={{ padding: '10px 24px', borderRadius: '8px',
                   border: 'none', background: '#d72c0d', color: 'white',
-                  cursor: 'pointer', fontSize: '14px', fontWeight: '600' }}>Delete all</button>
+                  cursor: 'pointer', fontSize: '14px', fontWeight: '600' }}>Delete All</button>
                 <button onClick={() => setShowDeleteAllConfirm(false)} style={{ padding: '10px 24px',
                   borderRadius: '8px', border: '1px solid #c9cccf', background: 'white',
                   cursor: 'pointer', fontSize: '14px' }}>Cancel</button>

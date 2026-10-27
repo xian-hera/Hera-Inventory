@@ -169,7 +169,14 @@ function ManagerTransferHome() {
         <TagPills tags={h.transfer_tags} />
         <Text tone="subdued" variant="bodySm">{formatDate(h.created_at)}</Text>
         <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-          {h.transfer_status && <StatusBadge status={h.transfer_status} />}
+          {/* Archived = Purchasing committed it → the store sees a green
+              "Committed" pill, never "Archived" (2026-10-27, Hera). */}
+          {h.transfer_status === 'archived' ? (
+            <span style={{
+              display: 'inline-block', padding: '4px 12px', borderRadius: 999, background: '#CDFEE1',
+              color: '#0C5132', fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap',
+            }}>Committed</span>
+          ) : h.transfer_status && <StatusBadge status={h.transfer_status} />}
           {h.transfer_on_hold && <HoldBadge />}
         </span>
       </div>
@@ -225,7 +232,7 @@ function ManagerTransferHome() {
                     `history` state above. */}
                 <Card>
                   <BlockStack gap="200">
-                    <Text variant="headingSm">History in past 15 days</Text>
+                    <Text variant="headingSm">History</Text>{/* was "History in past 15 days" (2026-10-27, Hera) */}
                     {historyLoading ? (
                       <InlineStack align="center"><Spinner /></InlineStack>
                     ) : history.length === 0 ? (

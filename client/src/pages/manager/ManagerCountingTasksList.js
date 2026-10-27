@@ -148,7 +148,7 @@ function ManagerCountingTasksList() {
                 already submitted; see comment on the `history` state above. */}
             <Card>
               <BlockStack gap="300">
-                <Text variant="headingSm">History in past 15 days</Text>
+                {/* No card title any more (2026-10-27, Hera; was "History in past 15 days"). */}
                 {historyLoading ? <Spinner /> : history.length === 0 ? (
                   <Text tone="subdued">No submitted tasks in the past 15 days.</Text>
                 ) : (

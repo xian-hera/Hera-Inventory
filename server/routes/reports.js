@@ -165,6 +165,28 @@ router.post('/submit', async (req, res) => {
   }
 });
 
+// GET /api/reports/manager-recent?location=MTL01  (2026-10-27, Hera)
+// Store › Manual Inventory Count: what this store submitted in the past 15
+// days, newest first, with its status — reviewing (shown "Submitted") or
+// committed / archived (shown "Committed"). Rows Purchasing deleted are gone.
+router.get('/manager-recent', async (req, res) => {
+  try {
+    const { location } = req.query;
+    if (!location) return res.status(400).json({ error: 'location required' });
+    const result = await pool.query(
+      `SELECT id, barcode, name, soh, poh, status, submitted_at, committed_at
+         FROM zero_qty_reports
+        WHERE location = $1 AND submitted_at >= NOW() - INTERVAL '15 days'
+        ORDER BY submitted_at DESC, id DESC`,
+      [location]
+    );
+    res.json(result.rows);
+  } catch (e) {
+    console.error('GET /api/reports/manager-recent error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // DELETE /api/reports
 router.delete('/', async (req, res) => {
   try {

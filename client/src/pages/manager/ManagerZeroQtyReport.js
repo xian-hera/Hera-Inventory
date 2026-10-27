@@ -40,6 +40,14 @@ function resolveKey(e) {
   return null;
 }
 
+// "OCT.23" — submitted date in the recent list (2026-10-27).
+const SHORT_MONTHS = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+function shortDate(v) {
+  if (!v) return '';
+  const d = new Date(v);
+  return `${SHORT_MONTHS[d.getMonth()]}.${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function cleanBarcode(raw) {
   return raw.replace(/^[^0-9]+/, '');
 }
@@ -105,6 +113,22 @@ function ManagerZeroQtyReport() {
   }, [location]);
 
   useEffect(() => { loadDrafts(); }, [loadDrafts]);
+
+  // Submitted in the past 15 days (2026-10-27, Hera): own card under the
+  // list, with the status — Submitted until Purchasing commits, then
+  // Committed. GET /api/reports/manager-recent.
+  const [recent, setRecent] = useState([]);
+  const [recentLoading, setRecentLoading] = useState(true);
+  const loadRecent = useCallback(async () => {
+    if (!location) { setRecentLoading(false); return; }
+    try {
+      const res = await fetch(`/api/reports/manager-recent?location=${encodeURIComponent(location)}`);
+      const data = await res.json();
+      if (res.ok && Array.isArray(data)) setRecent(data);
+    } catch (e) { /* secondary list — no error banner */ }
+    finally { setRecentLoading(false); }
+  }, [location]);
+  useEffect(() => { loadRecent(); }, [loadRecent]);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -285,6 +309,7 @@ function ManagerZeroQtyReport() {
       const submittedIds = toSubmit.map(i => i.id);
       setItems(prev => prev.filter(i => !submittedIds.includes(i.id)));
       setSelectedIds(prev => prev.filter(id => !submittedIds.includes(id)));
+      loadRecent(); // the submitted items show up in the card below
     } catch (e) { setError(e.message); }
     finally { setSubmitting(false); }
   };
@@ -379,9 +404,8 @@ function ManagerZeroQtyReport() {
                 {removedSkus.join(', ')} removed: purchase order related.
               </Banner>
             )}
-            <Text variant="bodySm" tone="subdued">
-              Scan to add items · saved for 15 days
-            </Text>
+            {/* The small "Scan to add items · saved for 15 days" line was
+                removed (2026-10-27, Hera). */}
             <Card>
               <BlockStack gap="300">
                 <div style={{ display: 'flex', gap: '8px' }}>
@@ -459,6 +483,36 @@ function ManagerZeroQtyReport() {
                       />
                 }
               </BlockStack>
+            </Card>
+
+            {/* Submitted in the past 15 days — status Submitted / Committed (2026-10-27). */}
+            <Card>
+              {recentLoading ? (
+                <InlineStack align="center"><Spinner /></InlineStack>
+              ) : recent.length === 0 ? (
+                <Text tone="subdued" alignment="center">Nothing submitted in the past 15 days.</Text>
+              ) : (
+                <DataTable
+                  columnContentTypes={['text', 'numeric', 'numeric', 'text']}
+                  headings={['Name / SKU', 'System', 'Actual', 'Status']}
+                  rows={recent.map(r => {
+                    const committed = r.status === 'committed' || r.status === 'archived';
+                    return [
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: '14px', fontWeight: '500', wordBreak: 'break-word', whiteSpace: 'normal' }}>{r.name || '-'}</div>
+                        <div style={{ fontSize: '12px', color: '#6d7175', wordBreak: 'break-all' }}>{r.barcode || '-'} · {shortDate(r.submitted_at)}</div>
+                      </div>,
+                      r.soh ?? '-',
+                      r.poh ?? '-',
+                      <span style={{
+                        display: 'inline-block', padding: '4px 12px', borderRadius: '999px', whiteSpace: 'nowrap',
+                        background: committed ? '#CDFEE1' : '#E1E3E5', color: committed ? '#0C5132' : '#3F4448',
+                        fontSize: '13px', fontWeight: 600,
+                      }}>{committed ? 'Committed' : 'Submitted'}</span>,
+                    ];
+                  })}
+                />
+              )}
             </Card>
           </BlockStack>
         </Layout.Section>

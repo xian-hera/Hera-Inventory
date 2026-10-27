@@ -197,24 +197,56 @@ function TaskCard({ task, selected, onToggle, onOpenNumber, order, compact, lock
       </>
     );
   } else if (task.kind === 'transfer') {
-    first = (
-      <>
-        <LinkText onClick={() => onOpenNumber(task)}>{task.number}</LinkText>
-        {task.tag && <span style={{ fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{task.tag}</span>}
-        {/* 1/2 · 2/2 on the first line now (2026-10-23); a long tag is cut
-            (…) instead of wrapping. */}
-        {pc && <span style={{ marginLeft: 'auto', flex: 'none', paddingLeft: 4, fontSize: 11, fontWeight: 700, color: pc }}>{task.leg === 'pickup' ? '1/2' : '2/2'}</span>}
-      </>
-    );
-    second = locLine;
+    // 2026-10-27 (Hera): line 1 = Tag, then the pickup truck, the 1/2 · 2/2
+    // on the right (always shown in full; a long tag is cut with …);
+    // line 2 = location, then the transfer number. No tag → see below.
+    const truck = pickup ? <PickupTruck height={compact ? 16 : 18} /> : null;
+    const splitMark = pc
+      ? <span style={{ marginLeft: 'auto', flex: 'none', paddingLeft: 4, fontSize: 11, fontWeight: 700, color: pc }}>{task.leg === 'pickup' ? '1/2' : '2/2'}</span>
+      : null;
+    const number = <LinkText onClick={() => onOpenNumber(task)}>{task.number}</LinkText>;
+    if (task.tag) {
+      first = (
+        <>
+          <span style={{ fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{task.tag}</span>
+          {truck && <span style={{ flex: 'none', display: 'inline-flex' }}>{truck}</span>}
+          {splitMark}
+        </>
+      );
+      second = (
+        <>
+          <LocPill name={where} />
+          {number}
+        </>
+      );
+    } else {
+      // No tag: line 1 keeps only the truck / 1/2 · 2/2 when there is one
+      // (one line has no room for them next to location + number); with
+      // nothing to show, line 1 is dropped and the card is lower.
+      first = (truck || splitMark) ? (
+        <>
+          {truck && <span style={{ flex: 'none', display: 'inline-flex' }}>{truck}</span>}
+          {splitMark}
+        </>
+      ) : null;
+      second = (
+        <>
+          <LocPill name={where} />
+          {number}
+        </>
+      );
+    }
   } else {
+    // Custom: the pickup truck moved up to line 1 after the title, like
+    // transfers (2026-10-27, Hera); line 2 = location only.
     first = (
       <>
         <span style={{ whiteSpace: 'nowrap', color: '#303030' }}>{truncate(task.type || 'Custom')}</span>
         <span style={{ fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{truncate(task.title)}</span>
+        {pickup && <span style={{ flex: 'none', display: 'inline-flex' }}><PickupTruck height={compact ? 16 : 18} /></span>}
       </>
     );
-    second = locLine;
+    second = <LocPill name={where} />;
   }
   // Pickup: whole card #fff3d6 with a #e2ac0c border of the normal width.
   const borderColor = selected ? PINK : pickup ? PICKUP_BORDER : '#c9cccf';
@@ -239,11 +271,22 @@ function TaskCard({ task, selected, onToggle, onOpenNumber, order, compact, lock
         display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0,
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, paddingRight: selected ? 12 : 0 }}>
-        {order != null && <span style={{ color: '#6d7175', fontSize: 11, minWidth: 12, fontVariantNumeric: 'tabular-nums' }}>{order}</span>}
-        {first}
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', minWidth: 0, rowGap: 4 }}>{second}</div>
+      {first ? (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, paddingRight: selected ? 12 : 0 }}>
+            {order != null && <span style={{ color: '#6d7175', fontSize: 11, minWidth: 12, fontVariantNumeric: 'tabular-nums' }}>{order}</span>}
+            {first}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', minWidth: 0, rowGap: 4 }}>{second}</div>
+        </>
+      ) : (
+        // One line only (transfer without a tag, 2026-10-27): the order
+        // number goes in front of it.
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', minWidth: 0, rowGap: 4, paddingRight: selected ? 12 : 0 }}>
+          {order != null && <span style={{ color: '#6d7175', fontSize: 11, minWidth: 12, fontVariantNumeric: 'tabular-nums' }}>{order}</span>}
+          {second}
+        </div>
+      )}
       <HoverBox task={task} rect={hoverRect} />
       {selected && (
         <span aria-hidden="true" style={{

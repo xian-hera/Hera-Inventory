@@ -32,6 +32,9 @@ function formatDateCompact(dateStr) {
 }
 
 // Mobile-only supplier truncation — max 15 characters, ellipsis beyond that.
+// Not used since 2026-10-27 (the history Supplier has its own column and is
+// cut with CSS ellipsis); kept per the project's no-silent-delete rule.
+// eslint-disable-next-line no-unused-vars
 function truncateSupplier(name) {
   if (!name) return '';
   return name.length > 15 ? `${name.slice(0, 15)}…` : name;
@@ -102,32 +105,38 @@ function ManagerPOReceiving() {
           just toggles which one is visible. Below 768px the columns also
           get tighter fixed widths (see .po-col-*) so all of them still fit
           on one line instead of each wrapping onto its own line. */}
+      {/* 2026-10-27 (Hera): both lists are CSS grids sharing the same first
+          two columns (PO number | Supplier), so the two cards line up.
+          Desktop column widths follow Hera's mock-up (9 : 37 : 35 : 9.5 :
+          9.5); the PO number is not bold; Qty is left-aligned. Phone: PO
+          number column ~8 characters wide with Qty (list) / Date (history)
+          under it, Supplier takes the rest, the DD pills on line 2 start
+          under Supplier; everything left-aligned except the progress
+          (counted / total), which is right-aligned. Replaces the earlier
+          flex columns (.po-row / .po-col-*) and the separate phone DD line. */}
       <style>{`
-        .po-row { display: flex; align-items: center; flex-wrap: nowrap; gap: 12px; }
-        .po-col-first { flex: 1 1 160px; min-width: 0; }
-        .po-col-date { flex: 0 0 150px; text-align: center; }
-        .po-col-supplier { flex: 1 1 160px; min-width: 0; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .po-col-dd { flex: 0 0 220px; display: flex; justify-content: flex-start; }
-        .po-dd-mobile { display: none; }
-        .po-col-qty { flex: 0 0 100px; text-align: center; }
-        .po-col-ratio { flex: 0 0 70px; text-align: right; }
-        .po-col-status { flex: 0 0 110px; text-align: right; }
-        .po-supplier-mobile, .po-date-mobile { display: none; }
+        .po-grid { display: grid; grid-template-columns: 9fr 37fr 35fr 9.5fr 9.5fr; column-gap: 12px; row-gap: 6px; align-items: center; }
+        .po-list-row { grid-template-areas: "po sup dd qty ratio"; }
+        .po-hist-row { grid-template-areas: "po sup rest rest rest"; }
+        .po-a-po { grid-area: po; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .po-a-sup { grid-area: sup; min-width: 0; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .po-a-dd { grid-area: dd; min-width: 0; display: flex; justify-content: flex-start; }
+        .po-a-qty { grid-area: qty; min-width: 0; white-space: nowrap; text-align: left; }
+        .po-a-ratio { grid-area: ratio; text-align: right; white-space: nowrap; }
+        .po-a-rest { grid-area: rest; display: flex; align-items: center; justify-content: flex-end; gap: 12px; min-width: 0; }
+        .po-a-date { flex: 0 0 150px; text-align: center; white-space: nowrap; }
+        .po-a-status { flex: 0 0 110px; text-align: right; }
+        .po-date-mobile { display: none; }
         @media (max-width: 767px) {
-          .po-row { gap: 6px; }
-          .po-col-first { flex: 1 1 90px; }
-          .po-col-date { flex: 0 0 100px; }
-          .po-col-supplier { flex: 1 1 90px; }
-          .po-col-qty { flex: 0 0 80px; }
-          .po-col-ratio { flex: 0 0 55px; }
-          .po-col-status { flex: 0 0 85px; }
-          .po-supplier-desktop, .po-date-desktop { display: none; }
-          .po-col-dd { display: none; }
-          .po-dd-mobile { display: flex; gap: 6px; margin-top: 6px; }
-          .po-dd-mobile .po-col-first { flex: 1 1 90px; }
-          /* DD starts under the Supplier column (2026-10-22: was under Date) */
-          .po-dd-mobile-pills { flex: 1 1 auto; }
-          .po-supplier-mobile { display: inline; font-size: 11px; color: #6d7175; }
+          .po-grid { grid-template-columns: 8ch minmax(0, 1fr) auto; column-gap: 8px; }
+          .po-list-row { grid-template-areas: "po sup ratio" "qty dd dd"; }
+          .po-hist-row { grid-template-areas: "po sup status" "date date ."; }
+          .po-a-po { overflow: visible; }
+          .po-a-qty { overflow: visible; align-self: start; padding-top: 3px; }
+          .po-a-rest { display: contents; }
+          .po-a-date { grid-area: date; text-align: left; }
+          .po-a-status { grid-area: status; }
+          .po-date-desktop { display: none; }
           .po-date-mobile { display: inline; }
         }
       `}</style>
@@ -166,18 +175,16 @@ function ManagerPOReceiving() {
                       {/* 2026-10-22 (Hera): the date column is no longer shown
                           here, and the supplier has its own column (bold)
                           instead of sitting under the PO number. */}
-                      <div className="po-row">
-                        <div className="po-col-first">
-                          <Text fontWeight="semibold" truncate>{inv.po_number || inv.invoice_number}</Text>
-                        </div>
-                        <div className="po-col-supplier">{inv.supplier_name}</div>
-                        <div className="po-col-dd">
+                      <div className="po-grid po-list-row">
+                        <div className="po-a-po">{inv.po_number || inv.invoice_number}</div>
+                        <div className="po-a-sup">{inv.supplier_name}</div>
+                        <div className="po-a-dd">
                           <DDList full entries={poEntries(dd, inv.id)} />
                         </div>
-                        <div className="po-col-qty">
-                          <Text variant="bodySm" tone="subdued" alignment="center">Qty: {inv.total_quantity}</Text>
+                        <div className="po-a-qty">
+                          <Text variant="bodySm" tone="subdued">Qty: {inv.total_quantity}</Text>
                         </div>
-                        <div className="po-col-ratio">
+                        <div className="po-a-ratio">
                           <Text
                             variant="bodySm"
                             fontWeight="medium"
@@ -188,13 +195,8 @@ function ManagerPOReceiving() {
                           </Text>
                         </div>
                       </div>
-                      {/* Phone: the DD line under Supplier / Qty (row gets taller). */}
-                      {poEntries(dd, inv.id).length > 0 && (
-                        <div className="po-dd-mobile">
-                          <div className="po-col-first" />
-                          <div className="po-dd-mobile-pills"><DDList full entries={poEntries(dd, inv.id)} /></div>
-                        </div>
-                      )}
+                      {/* Phone: the DD pills are line 2 of the grid above (under
+                          Supplier) since 2026-10-27 — no separate DD line. */}
                     </div>
                   ))}
                 </BlockStack>
@@ -226,25 +228,22 @@ function ManagerPOReceiving() {
                             Date/status need their own fixed width so they
                             stay lined up regardless of how long ref_no/
                             supplier_name happen to be on a given row. */}
-                        <div className="po-row">
-                          <div className="po-col-first">
-                            <BlockStack gap="0">
-                              <span style={{ fontWeight: 600, textDecoration: 'underline' }}>{h.ref_no}</span>
-                              <span className="po-supplier-desktop">
-                                <Text variant="bodySm" tone="subdued" truncate>{h.summary?.supplier_name}</Text>
-                              </span>
-                              <span className="po-supplier-mobile">{truncateSupplier(h.summary?.supplier_name)}</span>
-                            </BlockStack>
-                          </div>
-                          <div className="po-col-date">
+                        {/* 2026-10-27 (Hera): same first two columns as the
+                            list above — PO number (not bold), Supplier (bold,
+                            own column); phone: Date under the PO number. */}
+                        <div className="po-grid po-hist-row">
+                          <div className="po-a-po" style={{ textDecoration: 'underline' }}>{h.ref_no}</div>
+                          <div className="po-a-sup">{h.summary?.supplier_name}</div>
+                          <div className="po-a-rest">
+                          <div className="po-a-date">
                             <span className="po-date-desktop">
                               <Text variant="bodySm" tone="subdued" alignment="center">{formatDate(h.created_at)}</Text>
                             </span>
                             <span className="po-date-mobile">
-                              <Text variant="bodySm" tone="subdued" alignment="center">{formatDateCompact(h.created_at)}</Text>
+                              <Text variant="bodySm" tone="subdued">{formatDateCompact(h.created_at)}</Text>
                             </span>
                           </div>
-                          <div className="po-col-status">
+                          <div className="po-a-status">
                             {/* "Committed" (green) once Purchasing committed the PO (2026-10-22, Hera). */}
                             <span style={{
                               display: 'inline-block', padding: '4px 12px', borderRadius: '999px',
@@ -253,6 +252,7 @@ function ManagerPOReceiving() {
                             }}>
                               {h.label}
                             </span>
+                          </div>
                           </div>
                         </div>
                       </div>

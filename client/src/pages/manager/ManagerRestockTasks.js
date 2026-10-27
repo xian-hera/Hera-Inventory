@@ -97,9 +97,9 @@ function ManagerRestockTasks() {
     <Page
       title="Restock"
       backAction={{ onAction: () => navigate('/manager') }}
-      primaryAction={{ content: 'New task', onAction: () => setShowNew(true), disabled: !location }}
+      primaryAction={{ content: 'New Task', onAction: () => setShowNew(true), disabled: !location }}
       secondaryActions={selectedIds.length > 0 ? [{
-        content: `Delete selected (${selectedIds.length})`,
+        content: `Delete Selected (${selectedIds.length})`, // capitalised 2026-10-27 (Hera), also New Task
         destructive: true,
         onAction: () => setShowDeleteConfirm(true),
       }] : []}

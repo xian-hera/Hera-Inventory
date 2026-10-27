@@ -169,7 +169,7 @@ function ManagerLabelPrintTasks() {
           {/* ── Price change tasks (from buyer) ── */}
           <div>
             <BlockStack gap="300">
-              <Text variant="headingSm">Label Print Tasks</Text>{/* was "Price Change Tasks" (2026-10-26, Hera) */}
+              <Text variant="headingSm">Tasks</Text>{/* was "Price Change Tasks", then "Label Print Tasks" (2026-10-26/27, Hera) */}
               {priceLoading ? (
                 <Card>
                   <div style={{ display: 'flex', justifyContent: 'center', padding: '24px' }}>
