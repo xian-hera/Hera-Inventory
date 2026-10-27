@@ -963,7 +963,9 @@ router.post('/tasks/:id/split', async (req, res) => {
 // One entry per Schedule card (a split PO / a store → store transfer can have
 // several), sorted: scheduled by date / half / order, then TBD:
 //   { state: 'scheduled' | 'tbd' | 'received', date, half, position,
-//     location, leg, pbCount, pbUnit, past }
+//     location, leg, pbCount, pbUnit, past, delivered }
+//   delivered (2026-10-27, Hera) — PO cards only: the driver pressed
+//               Delivered for this card (part) → a √ before its pill.
 //   scheduled — on the calendar. position = rank of the card's store among
 //               the DIFFERENT stores of that half-day, in schedule order (each
 //               store counted once, at its first card; every kind counts; HQ
@@ -996,7 +998,7 @@ async function computeDD({ poIds = [], transferIds = [], customIds = [] }) {
     if (transferIds.length) await ensureTransferTasks(pool);
     const [taskRes, poRes] = await Promise.all([
       pool.query(
-        `SELECT w.id, w.kind, w.po_invoice_id, w.transfer_id, w.leg, w.pb_count, w.pb_unit,
+        `SELECT w.id, w.kind, w.po_invoice_id, w.transfer_id, w.leg, w.pb_count, w.pb_unit, w.delivered_at,
                 w.sched_half, w.sched_pos, to_char(w.sched_date, 'YYYY-MM-DD') AS sched_day,
                 tr.status AS tr_status, ${CARD_STORE_SQL} AS store
          FROM wh_tasks w
@@ -1065,6 +1067,7 @@ async function computeDD({ poIds = [], transferIds = [], customIds = [] }) {
       entry.leg = t.leg || null;
       entry.pbCount = t.kind === 'po' ? t.pb_count : null;
       entry.pbUnit = t.kind === 'po' ? t.pb_unit : null;
+      entry.delivered = t.kind === 'po' && !!t.delivered_at;
       const bucket = t.kind === 'po' ? out.pos : t.kind === 'custom' ? out.custom : out.transfers;
       const id = t.kind === 'po' ? t.po_invoice_id : t.kind === 'custom' ? t.id : t.transfer_id;
       if (!bucket[id]) bucket[id] = { entries: [] };

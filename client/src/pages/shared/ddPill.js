@@ -41,6 +41,16 @@ export function ordinal(n) {
   return `${n}${({ 1: 'st', 2: 'nd', 3: 'rd' })[n % 10] || 'th'}`;
 }
 
+// Delivered (2026-10-27, Hera): a PO card (part) the driver marked
+// Delivered gets a √ before its pill — MA and BY alike.
+const CHECK_STYLE = { color: '#0c5132', fontWeight: 700, fontSize: 14, lineHeight: '20px', verticalAlign: 'middle' };
+// reserve: keep the √'s space on rows without one, so a column of full
+// pills stays lined up.
+const Check = ({ entry, reserve = false }) => {
+  if (entry && entry.delivered) return <span style={CHECK_STYLE} aria-label="Delivered">√</span>;
+  return reserve ? <span style={{ ...CHECK_STYLE, visibility: 'hidden' }} aria-hidden="true">√</span> : null;
+};
+
 const pillStyle = (past) => ({
   display: 'inline-block', padding: '1px 10px', borderRadius: 999, background: past ? DD_BG_PAST : DD_BG,
   color: '#000', fontSize: 13, lineHeight: '20px', whiteSpace: 'nowrap', verticalAlign: 'middle',
@@ -51,11 +61,18 @@ export function DDMini({ entry }) {
   if (!entry) return null;
   // TBD not bold (2026-10-22, Hera) — same weight as the date.
   if (entry.state === 'tbd') return <span style={pillStyle(false)}>TBD</span>;
+  if (entry.delivered) {
+    return (
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, whiteSpace: 'nowrap' }}>
+        <Check entry={entry} /><span style={pillStyle(entry.past)}>{ddDateText(entry.date)}</span>
+      </span>
+    );
+  }
   return <span style={pillStyle(entry.past)}>{ddDateText(entry.date)}</span>;
 }
 
 // Full: [2 P] [TUE. AM. 4th. OCT 02] / [2 P] [TBD].
-export function DDFull({ entry }) {
+export function DDFull({ entry, reserveCheck = false }) {
   if (!entry) return null;
   const pb = entry.pbCount && entry.pbUnit ? `${entry.pbCount} ${entry.pbUnit}` : null;
   let main;
@@ -74,6 +91,7 @@ export function DDFull({ entry }) {
   }
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>
+      <Check entry={entry} reserve={reserveCheck} />
       {pb && <span style={pillStyle(entry.state === 'scheduled' && entry.past)}><b>{pb}</b></span>}
       {main}
     </span>
@@ -91,7 +109,7 @@ export function DDList({ entries, full = false, direction }) {
       display: 'inline-flex', flexDirection: column ? 'column' : 'row', alignItems: column ? 'flex-start' : 'center',
       gap: column ? 2 : 6, flexWrap: column ? 'nowrap' : 'wrap', verticalAlign: 'middle',
     }}>
-      {list.map((e, i) => <Item key={i} entry={e} />)}
+      {list.map((e, i) => <Item key={i} entry={e} reserveCheck={column && list.some(x => x.delivered)} />)}
     </span>
   );
 }
