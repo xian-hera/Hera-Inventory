@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useLayoutEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Card, BlockStack, InlineStack, Text, Button, Select, Banner, Spinner, Checkbox } from '@shopify/polaris';
 
 // Store › Label Print › "Search by Filters" (2026-10-28, Hera).
@@ -33,6 +34,27 @@ function TypeAheadPicker({ label, options, value, onChange }) {
   const [open, setOpen] = useState(false);
   const [typed, setTyped] = useState(false);
   const boxRef = useRef(null);
+  const inputRef = useRef(null);
+  // The list is drawn in a portal on <body> (2026-10-28 fix): inside the
+  // Polaris Card it was cut off by the card's edge. Placed under the input
+  // (above it when there is no room below) and kept in place on scroll /
+  // resize while open.
+  const [pos, setPos] = useState(null); // { left, top | bottom, width }
+  useLayoutEffect(() => {
+    if (!open) return undefined;
+    const place = () => {
+      const r = inputRef.current && inputRef.current.getBoundingClientRect();
+      if (!r) return;
+      const below = window.innerHeight - r.bottom;
+      setPos(below < 200 && r.top > below
+        ? { left: r.left, bottom: window.innerHeight - r.top + 4, width: r.width }
+        : { left: r.left, top: r.bottom + 4, width: r.width });
+    };
+    place();
+    window.addEventListener('scroll', place, true);
+    window.addEventListener('resize', place);
+    return () => { window.removeEventListener('scroll', place, true); window.removeEventListener('resize', place); };
+  }, [open]);
   useEffect(() => { if (!open) setText(value || 'Any'); }, [value, open]);
   const list = useMemo(() => {
     const q = typed ? text.trim().toLowerCase() : '';
@@ -43,6 +65,7 @@ function TypeAheadPicker({ label, options, value, onChange }) {
     <div ref={boxRef} style={{ position: 'relative', width: 150 }}>
       <div style={{ marginBottom: 4 }}><Text as="span" variant="bodyMd">{label}</Text></div>
       <input
+        ref={inputRef}
         type="text"
         value={text}
         onFocus={(e) => { setOpen(true); setTyped(false); e.target.select(); }}
@@ -59,9 +82,10 @@ function TypeAheadPicker({ label, options, value, onChange }) {
           border: '1px solid #8a8a8a', borderRadius: 8, outline: 'none', background: '#fff',
         }}
       />
-      {open && (
+      {open && pos && createPortal(
         <div style={{
-          position: 'absolute', zIndex: 50, top: '100%', left: 0, right: 0, marginTop: 4, maxHeight: 260, overflowY: 'auto',
+          position: 'fixed', zIndex: 99999, left: pos.left, top: pos.top, bottom: pos.bottom, width: Math.max(pos.width, 200),
+          maxHeight: 260, overflowY: 'auto', boxSizing: 'border-box',
           background: '#fff', border: '1px solid #c9cccf', borderRadius: 8, boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
         }}>
           {!typed && (
@@ -75,7 +99,8 @@ function TypeAheadPicker({ label, options, value, onChange }) {
             </div>
           ))}
           {typed && list.length === 0 && <div style={{ padding: '8px 10px', fontSize: 13, color: '#6d7175' }}>No results</div>}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
