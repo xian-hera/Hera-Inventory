@@ -6,6 +6,20 @@ let lastSyncedAt = null;
 let lastSyncCount = null;
 let schedulerTimer = null;
 
+// custom.display_section may be a single value or a list (JSON array) —
+// stored as a text[] either way; empty → NULL (2026-10-28).
+function displaySectionList(raw) {
+  if (raw == null || raw === '') return null;
+  const s = String(raw).trim();
+  if (s.startsWith('[')) {
+    try {
+      const arr = JSON.parse(s).map(x => String(x).trim()).filter(Boolean);
+      return arr.length ? arr : null;
+    } catch (e) { /* not JSON — use as one value */ }
+  }
+  return s ? [s] : null;
+}
+
 async function syncVariantIndex() {
   if (isSyncing) {
     console.log('[syncVariantIndex] Already running, skipping.');
@@ -42,6 +56,9 @@ async function syncVariantIndex() {
             node {
               id sku barcode
               metafield(namespace: "custom", key: "name") { value }
+              supplierA: metafield(namespace: "custom", key: "supplier_a_name") { value }
+              displaySection: metafield(namespace: "custom", key: "display_section") { value }
+              discontinued: metafield(namespace: "custom", key: "discontinued") { value }
               product {
                 id title productType vendor
               }
@@ -68,8 +85,9 @@ async function syncVariantIndex() {
         await pool.query(
           `INSERT INTO variant_search_index
              (shopify_variant_id, shopify_product_id, sku, barcode,
-              custom_name, product_title, product_type, vendor, synced_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW())
+              custom_name, product_title, product_type, vendor,
+              supplier_a_name, display_section, discontinued, synced_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW())
            ON CONFLICT (shopify_variant_id) DO UPDATE SET
              shopify_product_id = EXCLUDED.shopify_product_id,
              sku                = EXCLUDED.sku,
@@ -78,6 +96,9 @@ async function syncVariantIndex() {
              product_title      = EXCLUDED.product_title,
              product_type       = EXCLUDED.product_type,
              vendor             = EXCLUDED.vendor,
+             supplier_a_name    = EXCLUDED.supplier_a_name,
+             display_section    = EXCLUDED.display_section,
+             discontinued       = EXCLUDED.discontinued,
              synced_at          = NOW()`,
           [
             v.id,
@@ -88,6 +109,10 @@ async function syncVariantIndex() {
             v.product.title || null,
             v.product.productType || null,
             v.product.vendor || null,
+            // Label Print filters (2026-10-28) — see database/init.js
+            (v.supplierA?.value || '').trim() || null,
+            displaySectionList(v.displaySection?.value),
+            v.discontinued?.value != null && v.discontinued.value !== '' ? String(v.discontinued.value).toLowerCase() : null,
           ]
         );
         total++;

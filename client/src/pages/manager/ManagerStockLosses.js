@@ -450,6 +450,22 @@ function ManagerStockLosses() {
 
   useEffect(() => { loadItems(); }, [loadItems]);
 
+  // History (2026-10-28, Hera): what this store submitted in the past 30
+  // days, with Submitted / Committed — own card under the list.
+  // GET /api/stock-losses/manager-recent.
+  const [recent, setRecent] = useState([]);
+  const [recentLoading, setRecentLoading] = useState(true);
+  const loadRecent = useCallback(async () => {
+    if (!location) { setRecentLoading(false); return; }
+    try {
+      const res = await fetch(`/api/stock-losses/manager-recent?location=${encodeURIComponent(location)}`);
+      const data = await res.json();
+      if (res.ok && Array.isArray(data)) setRecent(data);
+    } catch (e) { /* secondary list — no error banner */ }
+    finally { setRecentLoading(false); }
+  }, [location]);
+  useEffect(() => { loadRecent(); }, [loadRecent]);
+
   // While any item's photo is still processing, poll the list so
   // "Photo uploading" flips to cleared / "Photo failed" automatically once
   // the background job on the server finishes, without the manager needing
@@ -700,6 +716,7 @@ function ManagerStockLosses() {
       if (!res.ok) throw new Error(data.error || 'Submit failed');
       setItems(prev => prev.filter(i => !submittableIds.includes(i.id)));
       setSelectedIds(prev => prev.filter(id => !submittableIds.includes(id)));
+      loadRecent(); // submitted entries show up in the History card
       setSubmitSuccess(true);
       setTimeout(() => setSubmitSuccess(false), 3000);
       if (blockedIds.length > 0) {
@@ -845,6 +862,58 @@ function ManagerStockLosses() {
                   </div>
                 )}
               </BlockStack>
+            </Card>
+
+            {/* History — submitted in the past 30 days, Submitted / Committed (2026-10-28, Hera) */}
+            <Card>
+              {recentLoading ? (
+                <InlineStack align="center"><Spinner /></InlineStack>
+              ) : recent.length === 0 ? (
+                <Text tone="subdued" alignment="center">Nothing submitted in the past 30 days.</Text>
+              ) : (
+                <div>
+                  <div style={{
+                    display: 'grid', gridTemplateColumns: '1fr 60px 60px 104px',
+                    gap: '8px', padding: '8px 0', borderBottom: '1px solid #e1e3e5',
+                    fontSize: '12px', fontWeight: '600', color: '#6d7175',
+                  }}>
+                    <span>Name / SKU</span>
+                    <span>System</span>
+                    <span>Qty</span>
+                    <span>Status</span>
+                  </div>
+                  {recent.map(r => {
+                    const committed = r.status === 'committed' || r.status === 'archived';
+                    const d = r.submitted_at ? new Date(r.submitted_at) : null;
+                    const months = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+                    return (
+                      <div key={r.id} style={{
+                        display: 'grid', gridTemplateColumns: '1fr 60px 60px 104px',
+                        gap: '8px', padding: '10px 0', borderBottom: '1px solid #f1f1f1', alignItems: 'start',
+                      }}>
+                        <div>
+                          <div style={{ fontSize: '14px', fontWeight: '500', wordBreak: 'break-word' }}>{r.name || '-'}</div>
+                          <div style={{ fontSize: '12px', color: '#6d7175' }}>
+                            {r.barcode}{d ? ` · ${months[d.getMonth()]}.${String(d.getDate()).padStart(2, '0')}` : ''}
+                          </div>
+                          <div style={{ fontSize: '12px', color: '#6d7175', marginTop: '2px' }}>
+                            {r.reason_label}{r.reason_detail && ` · ${r.reason_detail}`}
+                          </div>
+                        </div>
+                        <div style={{ fontSize: '14px' }}>{r.soh ?? '—'}</div>
+                        <div style={{ fontSize: '14px', color: '#d72c0d', fontWeight: '600' }}>{r.adjustment}</div>
+                        <div>
+                          <span style={{
+                            display: 'inline-block', padding: '4px 12px', borderRadius: '999px', whiteSpace: 'nowrap',
+                            background: committed ? '#CDFEE1' : '#E1E3E5', color: committed ? '#0C5132' : '#3F4448',
+                            fontSize: '13px', fontWeight: 600,
+                          }}>{committed ? 'Committed' : 'Submitted'}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </Card>
           </BlockStack>
         </Layout.Section>

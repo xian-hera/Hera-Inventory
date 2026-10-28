@@ -427,6 +427,15 @@ const initDatabase = async () => {
       ON variant_search_index (shopify_product_id)
     `);
 
+    // Store › Label Print › Search by Filters (2026-10-28, Hera): three more
+    // variant metafields kept in the index — custom.supplier_a_name,
+    // custom.display_section (stored as a list; a single value is a list of
+    // one) and custom.discontinued ('true' / 'false' / NULL = empty).
+    // Filled by jobs/syncVariantIndex.js.
+    await client.query(`ALTER TABLE variant_search_index ADD COLUMN IF NOT EXISTS supplier_a_name TEXT`);
+    await client.query(`ALTER TABLE variant_search_index ADD COLUMN IF NOT EXISTS display_section TEXT[]`);
+    await client.query(`ALTER TABLE variant_search_index ADD COLUMN IF NOT EXISTS discontinued TEXT`);
+
     // ─── Birthday Campaign ───────────────────────────────────────────────────────
     // 顾客点击生日邮件按钮 → Netlify 通知本 APP → 加 birthday_campaign tag +
     // 写 birthday_campaign_log；Remove Job 到期时拉取该顾客 tag 期间订单存入

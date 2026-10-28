@@ -241,7 +241,17 @@ router.post('/', async (req, res) => {
 
     await client.query('BEGIN');
 
+    const skippedLocations = [];
     for (const location of locations) {
+      // 2026-10-28 (Hera): a location left with no item after its own
+      // exclusions (manual "Exclude 0" + the per-location quantity filter)
+      // gets NO task — it used to get an empty one. Checked before a task
+      // number is used.
+      const locationExcludedFirst = (excludedBarcodes && excludedBarcodes[location]) || [];
+      if (!(items || []).some(item => !locationExcludedFirst.includes(item.barcode))) {
+        skippedLocations.push(location);
+        continue;
+      }
       const shopifyLocationId = locationIdMap[location] || '';
       const taskNo = await generateTaskNo(client);
 
@@ -265,8 +275,12 @@ router.post('/', async (req, res) => {
       createdTasks.push(task);
     }
 
+    if (createdTasks.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'No location has any item left — no task was created.', skippedLocations });
+    }
     await client.query('COMMIT');
-    res.json({ success: true, tasks: createdTasks });
+    res.json({ success: true, tasks: createdTasks, skippedLocations });
   } catch (e) {
     await client.query('ROLLBACK');
     console.error('POST /api/tasks error:', e);
@@ -364,7 +378,7 @@ router.patch('/:id/notes', async (req, res) => {
 // commit and on "Send Back to Store". Never throws — history is secondary
 // bookkeeping and must not block the real action.
 const HISTORY_LABELS = {
-  reviewing: 'Waiting for buyer review',
+  reviewing: 'Submitted', // was 'Waiting for buyer review' (2026-10-28, Hera)
   archived: 'Committed', // was 'Committed by buyer' (2026-10-22, Hera) — light green pill on the store side
   counting: 'Sent back to store',
 };

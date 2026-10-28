@@ -7,6 +7,7 @@ import {
 } from '@shopify/polaris';
 import { useParams, useNavigate } from 'react-router-dom';
 import MobileModalSafeArea from '../../components/MobileModalSafeArea';
+import LabelPrintFilterSearch from './LabelPrintFilterSearch'; // Search by Filters, 2026-10-28
 
 const CUSTOM_NAME_NAMESPACE = 'custom';
 const CUSTOM_NAME_KEY = 'name';
@@ -285,6 +286,30 @@ function ManagerLabelPrintTaskDetail({ taskId: taskIdProp, embedded = false } = 
       setAddError(e.message);
     } finally {
       setAddingItems(false);
+    }
+  };
+
+  // Search by Filters (2026-10-28): add the chosen results to the print list
+  // (the caller already left out SKUs that are on it).
+  const addFilterResults = async (list) => {
+    for (const r of list) {
+      if (itemsRef.current.find(i => i.sku === r.sku)) continue;
+      const res = await fetch(`/api/label-print-tasks/${taskId}/items`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          variant_id: r.variantId,
+          sku: r.sku,
+          custom_name: r.name,
+          vendor: r.vendor || null,
+          product_type: r.type || null,
+          qty_to_print: 1,
+        }),
+      });
+      if (!res.ok) throw new Error('Failed to add item');
+      const newItem = await res.json();
+      itemsRef.current = [newItem, ...itemsRef.current];
+      setItems(prev => [newItem, ...prev]);
     }
   };
 
@@ -734,6 +759,11 @@ ${barcodeScript}</head><body>${allLabels}</body></html>`;
               {scanError && <Banner tone="critical" onDismiss={() => setScanError('')}>{scanError}</Banner>}
             </BlockStack>
           </Card>
+        </Layout.Section>
+
+        {/* Search by Filters (2026-10-28, Hera) — collapsed by default */}
+        <Layout.Section>
+          <LabelPrintFilterSearch isOnList={(sku) => items.some(i => i.sku === sku)} onAdd={addFilterResults} />
         </Layout.Section>
 
         <Layout.Section>

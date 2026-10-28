@@ -37,6 +37,98 @@ async function ensureTables() {
 }
 ensureTables().catch(e => console.error('label_print_tasks table init error:', e));
 
+// ─── Search by Filters (Store › Label Print, 2026-10-28, Hera) ──────────────
+// Read from the local variant index (active products only, refreshed by
+// jobs/syncVariantIndex.js — by default every 12 hours).
+
+// GET /api/label-print-tasks/filter-options → { vendors, suppliers, displaySections }
+// (Types come from GET /api/shopify/product-types — the enabled ones.)
+router.get('/filter-options', async (req, res) => {
+  try {
+    const [v, s] = await Promise.all([
+      pool.query(`SELECT DISTINCT vendor FROM variant_search_index WHERE vendor IS NOT NULL AND vendor <> '' ORDER BY vendor`),
+      pool.query(`SELECT name FROM po_suppliers ORDER BY name ASC`).catch(() => ({ rows: [] })),
+    ]);
+    // Display section: the metafield's own choices in Shopify; if that can't
+    // be read, the values found in the index.
+    let displaySections = [];
+    try {
+      const { fetchDefinitions } = require('../services/productData');
+      const defs = await fetchDefinitions('PRODUCTVARIANT');
+      const def = defs.find(d => d.namespace === 'custom' && d.key === 'display_section');
+      if (def && Array.isArray(def.choices)) displaySections = def.choices;
+    } catch (e) {
+      console.error('filter-options: display_section choices could not be read:', e.message);
+    }
+    if (!displaySections.length) {
+      const d = await pool.query(
+        `SELECT DISTINCT x FROM variant_search_index, unnest(display_section) AS x WHERE x <> '' ORDER BY x`
+      );
+      displaySections = d.rows.map(r => r.x);
+    }
+    res.json({
+      vendors: v.rows.map(r => r.vendor),
+      suppliers: s.rows.map(r => r.name).filter(Boolean),
+      displaySections,
+    });
+  } catch (e) {
+    console.error('GET /api/label-print-tasks/filter-options error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/label-print-tasks/filter-search
+// body { type, vendor, supplier, displaySection, discontinued } — '' / missing
+// = Any; discontinued: 'true' | 'false' | 'empty'. All filters together (AND),
+// case-insensitive exact values; supplier = custom.supplier_a_name only.
+// → { total, limit: 100, results: [{ variantId, sku, name, type, vendor,
+//      supplier, displaySection, discontinued }] } — at most 100 rows.
+const FILTER_LIMIT = 100;
+router.post('/filter-search', async (req, res) => {
+  try {
+    const b = req.body || {};
+    const val = (x) => (x == null ? '' : String(x).trim());
+    const where = [];
+    const params = [];
+    const add = (sql, v) => { params.push(v); where.push(sql.replace('?', `$${params.length}`)); };
+    if (val(b.type)) add('LOWER(product_type) = LOWER(?)', val(b.type));
+    if (val(b.vendor)) add('LOWER(vendor) = LOWER(?)', val(b.vendor));
+    if (val(b.supplier)) add('LOWER(TRIM(supplier_a_name)) = LOWER(?)', val(b.supplier));
+    if (val(b.displaySection)) add('EXISTS (SELECT 1 FROM unnest(display_section) AS ds WHERE LOWER(ds) = LOWER(?))', val(b.displaySection));
+    const disc = val(b.discontinued).toLowerCase();
+    if (disc === 'true' || disc === 'false') add('discontinued = ?', disc);
+    else if (disc === 'empty') where.push('discontinued IS NULL');
+    if (!where.length) return res.status(400).json({ error: 'Choose at least one filter.' });
+    const w = where.join(' AND ');
+    const total = (await pool.query(`SELECT COUNT(*)::int AS n FROM variant_search_index WHERE ${w}`, params)).rows[0].n;
+    const rows = (await pool.query(
+      `SELECT shopify_variant_id, sku, barcode, custom_name, product_title, product_type, vendor,
+              supplier_a_name, display_section, discontinued
+         FROM variant_search_index WHERE ${w}
+        ORDER BY LOWER(COALESCE(NULLIF(custom_name, ''), product_title)), barcode
+        LIMIT ${FILTER_LIMIT}`,
+      params
+    )).rows;
+    res.json({
+      total,
+      limit: FILTER_LIMIT,
+      results: rows.map(r => ({
+        variantId: r.shopify_variant_id,
+        sku: r.barcode || r.sku,
+        name: r.custom_name || r.product_title,
+        type: r.product_type,
+        vendor: r.vendor,
+        supplier: r.supplier_a_name,
+        displaySection: (r.display_section || []).join(', '),
+        discontinued: r.discontinued == null ? 'Empty' : r.discontinued === 'true' ? 'True' : r.discontinued === 'false' ? 'False' : r.discontinued,
+      })),
+    });
+  } catch (e) {
+    console.error('POST /api/label-print-tasks/filter-search error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // GET /api/label-print-tasks?location=MTL10
 router.get('/', async (req, res) => {
   try {

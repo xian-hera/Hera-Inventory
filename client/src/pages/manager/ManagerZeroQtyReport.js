@@ -485,12 +485,12 @@ function ManagerZeroQtyReport() {
               </BlockStack>
             </Card>
 
-            {/* Submitted in the past 15 days — status Submitted / Committed (2026-10-27). */}
+            {/* Submitted in the past 30 days (15 until 2026-10-28) — status Submitted / Committed (2026-10-27). */}
             <Card>
               {recentLoading ? (
                 <InlineStack align="center"><Spinner /></InlineStack>
               ) : recent.length === 0 ? (
-                <Text tone="subdued" alignment="center">Nothing submitted in the past 15 days.</Text>
+                <Text tone="subdued" alignment="center">Nothing submitted in the past 30 days.</Text>
               ) : (
                 <DataTable
                   columnContentTypes={['text', 'numeric', 'numeric', 'text']}

@@ -13,6 +13,9 @@ const { pool } = require('../database/init');
 // call.
 
 const RETENTION_DAYS = 15;
+// Weekly Inventory Count (kind 'task') is kept 30 days since 2026-10-28
+// (Hera); PO / transfer history stays at RETENTION_DAYS.
+const RETENTION_DAYS_BY_KIND = { task: 30 };
 
 // Writes one frozen history row. Callers wrap this in try/catch and only log
 // on failure (never let a history-recording problem block the real action —
@@ -56,7 +59,17 @@ async function upsertManagerHistory({ kind, location, ref_no, label, summary, de
 // Lazy cleanup (no cron job) — run on every list read, same pattern box_pos'
 // 90-day retention (boxPo.js) and po_invoices' 200-row retention use.
 async function pruneExpired() {
-  await pool.query(`DELETE FROM manager_history WHERE created_at < NOW() - INTERVAL '${RETENTION_DAYS} days'`);
+  const longKinds = Object.keys(RETENTION_DAYS_BY_KIND);
+  for (const kind of longKinds) {
+    await pool.query(
+      `DELETE FROM manager_history WHERE kind = $1 AND created_at < NOW() - make_interval(days => $2::int)`,
+      [kind, RETENTION_DAYS_BY_KIND[kind]]
+    );
+  }
+  await pool.query(
+    `DELETE FROM manager_history WHERE NOT (kind = ANY($1)) AND created_at < NOW() - INTERVAL '${RETENTION_DAYS} days'`,
+    [longKinds]
+  );
 }
 
 // GET /api/manager-history?kind=task&location=MTL01 — list rows for one
@@ -86,7 +99,9 @@ router.get('/', async (req, res) => {
            ORDER BY created_at DESC`,
       [kind, location]
     );
-    res.json(result.rows);
+    // Rows written before 2026-10-28 still say 'Waiting for buyer review' —
+    // shown as 'Submitted' now (Hera).
+    res.json(result.rows.map(r => (r.label === 'Waiting for buyer review' ? { ...r, label: 'Submitted' } : r)));
   } catch (e) {
     console.error('GET /api/manager-history error:', e);
     res.status(500).json({ error: e.message });
@@ -107,7 +122,8 @@ router.get('/:id', async (req, res) => {
       [req.params.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'History entry not found' });
-    res.json(result.rows[0]);
+    const row = result.rows[0];
+    res.json(row.label === 'Waiting for buyer review' ? { ...row, label: 'Submitted' } : row); // see GET / above
   } catch (e) {
     console.error('GET /api/manager-history/:id error:', e);
     res.status(500).json({ error: e.message });

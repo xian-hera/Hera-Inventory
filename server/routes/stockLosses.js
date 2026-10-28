@@ -181,6 +181,30 @@ router.get('/', async (req, res) => {
   }
 });
 
+// GET /api/stock-losses/manager-recent?location=MTL01  (2026-10-28, Hera)
+// Store › Stock Loss history card: this store's submitted entries of the past
+// 30 days, newest first — reviewing (shown "Submitted") or committed /
+// archived (shown "Committed"). Drafts (pending) are the list above; entries
+// Purchasing deleted are gone.
+router.get('/manager-recent', async (req, res) => {
+  try {
+    const { location } = req.query;
+    if (!location) return res.status(400).json({ error: 'location required' });
+    const result = await pool.query(
+      `SELECT id, barcode, name, reason_label, reason_detail, soh, adjustment, status, submitted_at, committed_at
+         FROM stock_losses
+        WHERE location = $1 AND status IN ('reviewing', 'committed', 'archived')
+          AND submitted_at >= NOW() - INTERVAL '30 days'
+        ORDER BY submitted_at DESC, id DESC`,
+      [location]
+    );
+    res.json(result.rows);
+  } catch (e) {
+    console.error('GET /api/stock-losses/manager-recent error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // GET /api/stock-losses/buyer
 router.get('/buyer', async (req, res) => {
   try {
