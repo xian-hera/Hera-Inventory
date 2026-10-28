@@ -1510,3 +1510,5 @@ module.exports.stopsForDay = stopsForDay;
 module.exports.truckStopKey = truckStopKey;
 module.exports.stopIsDone = stopIsDone;
 module.exports.businessWindow = businessWindow;
+// Inventory count Preview (2026-10-28) — routes/tasks.js POST /po-exclusions
+module.exports.computeDD = computeDD;

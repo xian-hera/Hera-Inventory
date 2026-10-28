@@ -60,10 +60,6 @@ function resolveKey(e) {
   return null;
 }
 
-// PO lock (2026-10): shown for an item that is in a not-yet-committed purchase
-// order at this location (counting is skipped for it).
-const PO_LOCK_MESSAGE = 'Purchase Orders related, skip this item without counting.';
-
 function cleanBarcode(raw) {
   return raw.replace(/^[^0-9]+/, '');
 }
@@ -136,9 +132,7 @@ function ManagerTaskDetail() {
   const fetchTask = useCallback(async () => {
     setLoading(true);
     try {
-      // ?manager=1 (2026-10): tells the server this is the store's page, so PO
-      // lock info (po_locked) is only sent while the "PO lock" switch is ON.
-      const res  = await fetch(`/api/tasks/${taskId}?manager=1`);
+      const res  = await fetch(`/api/tasks/${taskId}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       setTask(data);
@@ -202,12 +196,6 @@ function ManagerTaskDetail() {
       setErrorPopup(`"${item.name || item.barcode}" was already committed by the buyer and can't be changed.`);
       return;
     }
-    // PO lock (2026-10): the item is in a not-yet-committed purchase order at
-    // this location — no counting, just the notice.
-    if (item.po_locked) {
-      setErrorPopup(PO_LOCK_MESSAGE);
-      return;
-    }
     setPopupItem(item);
     setCountInput('');
     setCountWarning('');
@@ -221,20 +209,6 @@ function ManagerTaskDetail() {
       if (!loc) throw new Error('Location not found');
       const res  = await fetch(`/api/shopify/inventory?barcode=${encodeURIComponent(item.barcode)}&locationId=${encodeURIComponent(loc.id)}`);
       const data = await res.json();
-      if (data.poLocked) {
-        // A purchase order for this SKU appeared since the list was loaded:
-        // same as a locked row — drop the popup, show the notice, discard any
-        // count already entered (server also does this on its next load).
-        const cleared = { po_locked: true, scan_history: [], poh: null, soh: null, is_correct: false };
-        fetch(`/api/tasks/${taskId}/items/${item.id}/scan`, {
-          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ scan_history: [], poh: null, soh: null, is_correct: false }),
-        }).catch(() => {});
-        setTask(prev => ({ ...prev, items: prev.items.map(i => i.id === item.id ? { ...i, ...cleared } : i) }));
-        setPopupItem(null);
-        setErrorPopup(PO_LOCK_MESSAGE);
-        return;
-      }
       setPopupSoh(data.soh ?? null);
       setPopupCommitted(data.committed ?? 0);
       setPopupPicked(data.picked ?? 0);
@@ -478,8 +452,7 @@ function ManagerTaskDetail() {
   // 改动三：检查 Not Scanned 数量，若不为 0 则阻止提交并切换筛选
   const handleSubmit = async () => {
     if (!task) return;
-    // PO-locked items (2026-10) don't count as unfinished.
-    const notScannedCount = task.items.filter(i => i.soh === null && !i.po_locked).length;
+    const notScannedCount = task.items.filter(i => i.soh === null).length;
     if (notScannedCount > 0) {
       setSubmitBlockedMsg(`You have not finished, these are not scanned yet.`);
       setFilter('not_scanned');
@@ -516,9 +489,7 @@ function ManagerTaskDetail() {
 
   const totalCount       = task.items.length;
   const processedCount   = task.items.filter(i => i.soh !== null).length;
-  // PO-locked items (2026-10) are neither processed nor unprocessed.
-  const lockedCount      = task.items.filter(i => i.po_locked && i.soh === null).length;
-  const unprocessedCount = totalCount - processedCount - lockedCount;
+  const unprocessedCount = totalCount - processedCount;
   const qtyOffCount      = task.items.filter(i => i.soh !== null && !i.is_correct && i.poh !== null).length;
 
   // Scan Count mode: "scanned" is about scan_count, not soh (soh isn't
@@ -536,7 +507,7 @@ function ManagerTaskDetail() {
       if (filter === 'item_not_scanned') return (item.scan_count || 0) === 0;
       return true;
     }
-    if (filter === 'not_scanned') return item.soh === null && !item.po_locked;
+    if (filter === 'not_scanned') return item.soh === null;
     if (filter === 'qty_off')     return item.soh !== null && !item.is_correct && item.poh !== null;
     return true;
   });
@@ -546,12 +517,7 @@ function ManagerTaskDetail() {
         (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' })
       )
     : filteredItems;
-  // PO-locked items (2026-10) are pinned to the top (stable, keeps the order
-  // chosen above within each group). Scan Count mode has no locks.
-  const displayedItems = [
-    ...sortedItems.filter(i => i.po_locked),
-    ...sortedItems.filter(i => !i.po_locked),
-  ];
+  const displayedItems = sortedItems;
 
   const hasHistory = (popupItem?.scan_history || []).length > 0;
 
@@ -573,17 +539,6 @@ function ManagerTaskDetail() {
         <div />,
         <div>{String(item.scan_count || 0)}</div>,
       ];
-    }
-
-    // PO-locked row (2026-10): light-yellow cells, "PO" where the count goes.
-    if (item.po_locked) {
-      const hl = (node) => (
-        <div onClick={() => openPopup(item)}
-          style={{ cursor: 'pointer', background: '#fff3b0', margin: '-12px -16px', padding: '12px 16px', minHeight: '24px' }}>
-          {node}
-        </div>
-      );
-      return [hl(nameSku), hl(''), hl(''), hl(<strong>PO</strong>)];
     }
 
     const scanCount = (item.scan_history || []).length;

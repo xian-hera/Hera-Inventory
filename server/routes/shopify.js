@@ -479,20 +479,6 @@ router.get('/inventory', async (req, res) => {
     const result = await fetchInventoryForBarcode(client, barcode, locationId);
     if (!result) return res.status(404).json({ error: 'Product not found' });
 
-    // PO lock (2026-10, Hera): true when this SKU is in a not-yet-committed
-    // invoice at this location — the count modals then show "Purchase Orders
-    // related, skip this item without counting." instead of the count UI.
-    try {
-      // Only while the "PO lock" switch (Buyer → PO → Settings) is ON.
-      const { getPoLockedSet, isManagerLockEnabled } = require('../poLock');
-      if (await isManagerLockEnabled()) {
-        const lockedSet = await getPoLockedSet(decodeURIComponent(locationId), [result.barcode, barcode]);
-        result.poLocked = lockedSet.size > 0;
-      }
-    } catch (e) {
-      console.error('[inventory] po lock check failed:', e.message);
-    }
-
     // Fulfillment location extras (2026-10, Hera): only when the location being
     // counted is the one chosen in Online → Settings → "Fulfillment location",
     // also return that location's Committed quantity and the variant's

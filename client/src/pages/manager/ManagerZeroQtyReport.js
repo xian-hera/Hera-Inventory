@@ -68,13 +68,6 @@ function ManagerZeroQtyReport() {
   const [popupCommitted, setPopupCommitted]     = useState(0);
   const [historyLoading, setHistoryLoading]     = useState(false);
 
-  // PO lock (2026-10): a scanned / typed-in SKU that is in a not-yet-committed
-  // purchase order at this location shows a notice instead of the count popup;
-  // drafts that became locked are removed on load and listed in a banner (stays
-  // until dismissed with ×).
-  const [poNotice, setPoNotice]         = useState(false);
-  const [removedSkus, setRemovedSkus]   = useState([]);
-
   const [showTypeIn, setShowTypeIn]     = useState(false);
   const [skuInput, setSkuInput]         = useState('');
   const [skuSearching, setSkuSearching] = useState(false);
@@ -98,13 +91,10 @@ function ManagerZeroQtyReport() {
   const loadDrafts = useCallback(async () => {
     if (!location) { setLoadingItems(false); return; }
     try {
-      const res  = await fetch(`/api/reports/drafts-checked?location=${encodeURIComponent(location)}`);
+      const res  = await fetch(`/api/reports/drafts?location=${encodeURIComponent(location)}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to load items');
-      setItems(data.drafts || []);
-      if (data.removed && data.removed.length > 0) {
-        setRemovedSkus(prev => [...new Set([...prev, ...data.removed])]);
-      }
+      setItems(Array.isArray(data) ? data : []);
     } catch (e) {
       setError('Failed to load items');
     } finally {
@@ -171,7 +161,6 @@ function ManagerZeroQtyReport() {
       const res  = await fetch(`/api/shopify/inventory?barcode=${encodeURIComponent(barcode)}&locationId=${encodeURIComponent(loc.id)}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Product not found');
-      if (data.poLocked) { setPoNotice(true); return; }
       const existing = items.find(i => i.barcode === data.barcode);
       setPopupData({ ...data, locationId: loc.id });
       setPopupSoh(data.soh ?? null);
@@ -268,7 +257,6 @@ function ManagerZeroQtyReport() {
       const res  = await fetch(`/api/shopify/inventory?barcode=${encodeURIComponent(skuInput.trim())}&locationId=${encodeURIComponent(loc.id)}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'SKU not found');
-      if (data.poLocked) { setShowTypeIn(false); setSkuInput(''); setPoNotice(true); return; }
       setShowTypeIn(false); setSkuInput('');
       const existing = items.find(i => i.barcode === data.barcode);
       setPopupData({ ...data, locationId: loc.id });
@@ -301,11 +289,6 @@ function ManagerZeroQtyReport() {
         body: JSON.stringify({ items: toSubmit }),
       });
       if (!res.ok) throw new Error('Failed to submit');
-      // PO lock (2026-10): the server skips SKUs that are now in an open PO.
-      const submitData = await res.json().catch(() => ({}));
-      if (submitData.skipped && submitData.skipped.length > 0) {
-        setRemovedSkus(prev => [...new Set([...prev, ...submitData.skipped])]);
-      }
       const submittedIds = toSubmit.map(i => i.id);
       setItems(prev => prev.filter(i => !submittedIds.includes(i.id)));
       setSelectedIds(prev => prev.filter(id => !submittedIds.includes(id)));
@@ -399,11 +382,6 @@ function ManagerZeroQtyReport() {
         <Layout.Section>
           <BlockStack gap="400">
             {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
-            {removedSkus.length > 0 && (
-              <Banner tone="warning" onDismiss={() => setRemovedSkus([])}>
-                {removedSkus.join(', ')} removed: purchase order related.
-              </Banner>
-            )}
             {/* The small "Scan to add items · saved for 15 days" line was
                 removed (2026-10-27, Hera). */}
             <Card>
@@ -517,20 +495,6 @@ function ManagerZeroQtyReport() {
           </BlockStack>
         </Layout.Section>
       </Layout>
-
-      {/* PO lock notice (2026-10): notice + Close only, no counting */}
-      {poNotice && (
-        <div style={overlayStyle}>
-          <div style={popupInnerStyle}>
-            <BlockStack gap="400">
-              <Text variant="bodyLg" fontWeight="bold">
-                Purchase Orders related, skip this item without counting.
-              </Text>
-              <Button onClick={() => setPoNotice(false)} fullWidth>Close</Button>
-            </BlockStack>
-          </div>
-        </div>
-      )}
 
       {/* Scan Popup */}
       {(popupData || loadingSoh) && (

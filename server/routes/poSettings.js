@@ -141,40 +141,6 @@ router.patch('/cost-comparison', async (req, res) => {
   }
 });
 
-// ─── PO lock (2026-10, Hera) ──────────────────────────────────────────────
-// Switch (default OFF): when ON, items that are in a not-yet-committed
-// invoice at the store's location are locked in the manager's Weekly Count /
-// Manual Count (see server/poLock.js). OFF = managers count normally and
-// never see anything; the Buyer's task detail always highlights such items
-// and always skips them on commit.
-const { isManagerLockEnabled } = require('../poLock');
-
-// GET /api/po-settings/po-lock → { enabled }
-router.get('/po-lock', async (req, res) => {
-  try {
-    res.json({ enabled: await isManagerLockEnabled() });
-  } catch (e) {
-    console.error('GET /api/po-settings/po-lock error:', e);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// PUT /api/po-settings/po-lock — body: { enabled: boolean }
-router.put('/po-lock', async (req, res) => {
-  try {
-    const enabled = !!(req.body && req.body.enabled);
-    await pool.query(
-      `INSERT INTO app_settings (key, value, updated_at) VALUES ('po_lock_enabled', $1::jsonb, NOW())
-       ON CONFLICT (key) DO UPDATE SET value = $1::jsonb, updated_at = NOW()`,
-      [JSON.stringify({ enabled })]
-    );
-    res.json({ enabled });
-  } catch (e) {
-    console.error('PUT /api/po-settings/po-lock error:', e);
-    res.status(500).json({ error: e.message });
-  }
-});
-
 // ─── Ship to HQ rules (2026-10-22, Hera) ────────────────────────────────────
 // Purchasing › Settings › Ship to HQ: rules for POs that are NOT added to WH ›
 // Receive Shipments. app_settings 'po_hq_ship_rules' = [{ supplierId,

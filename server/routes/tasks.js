@@ -5,89 +5,10 @@ const { pool } = require('../database/init');
 // Purchasing user groups (2026-10-09): the Buyer list only shows tasks whose
 // type is the current group's or unassigned. See routes/userGroups.js.
 const { getGroupFilter, arrayVisibleSql } = require('./userGroups');
-// Purchase-order lock (2026-10): see server/poLock.js
-const { getPoLockedSet, isManagerLockEnabled, norm: normSku } = require('../poLock');
-
-// Weekly Count items whose SKU is in a not-yet-committed invoice at the task's
-// location are "PO locked". Returns the locked set (normalized SKUs). Scan
-// Count mode, archived and draft tasks are left alone.
-//   - `enabled` = the "PO lock" switch (Buyer → PO → Settings) is ON: the
-//     manager side is locked, so any count already entered for a locked item
-//     is discarded (reset exactly like the manager's own "Reset").
-//   - switch OFF: nothing is discarded and managers never notice; instead each
-//     locked item is flagged (task_items.po_flagged = "was PO related") so the
-//     buyer's view can later refresh its System qty once the invoice has been
-//     committed (see refreshPoFlagged).
-// The buyer side always highlights locked items and always skips them on commit.
-async function applyPoLock(task, items, enabled) {
-  if (!task || task.scan_count_mode || task.status === 'archived' || task.status === 'draft') return new Set();
-  const open = items.filter(i => !i.is_committed);
-  const locked = await getPoLockedSet(task.shopify_location_id, open.map(i => i.barcode));
-  if (locked.size === 0) return locked;
-  try {
-    if (enabled) {
-      await pool.query(
-        `UPDATE task_items
-            SET scan_history = '[]'::jsonb, poh = NULL, soh = NULL, is_correct = FALSE, po_flagged = FALSE
-          WHERE task_id = $1
-            AND COALESCE(is_committed, FALSE) = FALSE
-            AND LOWER(TRIM(barcode)) = ANY($2::text[])
-            AND (poh IS NOT NULL OR soh IS NOT NULL OR is_correct = TRUE
-                 OR jsonb_array_length(COALESCE(scan_history, '[]'::jsonb)) > 0)`,
-        [task.id, [...locked]]
-      );
-    } else {
-      await pool.query(
-        `UPDATE task_items SET po_flagged = TRUE
-          WHERE task_id = $1
-            AND COALESCE(is_committed, FALSE) = FALSE
-            AND LOWER(TRIM(barcode)) = ANY($2::text[])`,
-        [task.id, [...locked]]
-      );
-    }
-  } catch (e) {
-    console.error('applyPoLock failed:', e.message);
-  }
-  return locked;
-}
-
-// Items that were PO related (po_flagged), are not committed, were counted, and
-// whose invoice is no longer open: the invoice commit changed the location's
-// System qty, and the manager's count already included those goods, so the
-// stored System qty is stale. Fetch the current one, store it and re-judge
-// is_correct (poh === soh). Done ONCE per item (the flag is cleared), because
-// re-baselining again later would mix in unrelated sales. Returns how many
-// items were refreshed.
-async function refreshPoFlagged(task, items, locked) {
-  const cand = items.filter(i =>
-    i.po_flagged && !i.is_committed && i.poh !== null && i.poh !== undefined
-    && !locked.has(normSku(i.barcode)));
-  if (cand.length === 0) return 0;
-  let refreshed = 0;
-  try {
-    const { getShopify, getSession } = require('../shopify');
-    const { fetchInventoryForBarcode } = require('./shopify');
-    const session = await getSession();
-    const client = new (getShopify()).clients.Graphql({ session });
-    for (const it of cand) {
-      try {
-        const info = await fetchInventoryForBarcode(client, it.barcode, task.shopify_location_id);
-        if (!info || info.soh === null || info.soh === undefined) continue;
-        await pool.query(
-          `UPDATE task_items SET soh = $1::int, is_correct = (poh = $1::int), po_flagged = FALSE
-            WHERE id = $2 AND COALESCE(is_committed, FALSE) = FALSE`,
-          [info.soh, it.id]
-        );
-        refreshed++;
-      } catch (e) {
-        console.error(`refreshPoFlagged item ${it.id} failed:`, e.message);
-      }
-    }
-  } catch (e) {
-    console.error('refreshPoFlagged failed:', e.message);
-  }
-  return refreshed;
-}
+// Purchase orders (2026-10-28, Hera): line items whose PO was delivered (or
+// is on today's schedule) but not committed yet are left out of a location's
+// task — see server/poDelivered.js. Replaces the old "PO lock" (removed).
+const { getDeliveredPoItems } = require('../poDelivered');
 
 // GET /api/tasks - get all tasks with filters
 router.get('/', async (req, res) => {
@@ -222,6 +143,29 @@ async function generateTaskNo(client) {
   return `${last_letter}${String(last_number).padStart(4, '0')}`;
 }
 
+// POST /api/tasks/po-exclusions  (2026-10-28, Hera — Preview Tasks)
+// body { locations, barcodes } → { byLocation: { [location]: { [barcode]: [poId] } },
+//   dd: { [poId]: entries } } — line items left out of each location's task
+// because their PO was delivered / is on today's schedule but not committed
+// (see server/poDelivered.js); dd = the POs' DD pill entries for the Preview.
+router.post('/po-exclusions', async (req, res) => {
+  try {
+    const { locations, barcodes } = req.body || {};
+    const r = await getDeliveredPoItems(Array.isArray(locations) ? locations : [], Array.isArray(barcodes) ? barcodes : []);
+    let dd = {};
+    if (r.poIds.length) {
+      try {
+        const out = await require('./warehouse').computeDD({ poIds: r.poIds });
+        for (const id of r.poIds) dd[id] = ((out.pos || {})[id] || {}).entries || [];
+      } catch (e) { console.error('po-exclusions: DD failed:', e.message); dd = {}; }
+    }
+    res.json({ byLocation: r.byLocation, dd });
+  } catch (e) {
+    console.error('POST /api/tasks/po-exclusions error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // POST /api/tasks - create new task(s)
 router.post('/', async (req, res) => {
   const client = await pool.connect();
@@ -241,13 +185,20 @@ router.post('/', async (req, res) => {
 
     await client.query('BEGIN');
 
+    // Delivered-but-not-committed PO items are left out per location
+    // (2026-10-28, Hera — checked again here, also for drafts).
+    const poOut = (await getDeliveredPoItems(locations, (items || []).map(i => i.barcode))).byLocation;
+
     const skippedLocations = [];
     for (const location of locations) {
       // 2026-10-28 (Hera): a location left with no item after its own
       // exclusions (manual "Exclude 0" + the per-location quantity filter)
       // gets NO task — it used to get an empty one. Checked before a task
       // number is used.
-      const locationExcludedFirst = (excludedBarcodes && excludedBarcodes[location]) || [];
+      const locationExcludedFirst = [
+        ...((excludedBarcodes && excludedBarcodes[location]) || []),
+        ...Object.keys(poOut[location] || {}),
+      ];
       if (!(items || []).some(item => !locationExcludedFirst.includes(item.barcode))) {
         skippedLocations.push(location);
         continue;
@@ -263,7 +214,7 @@ router.post('/', async (req, res) => {
 
       const task = taskResult.rows[0];
 
-      const locationExcluded = (excludedBarcodes && excludedBarcodes[location]) || [];
+      const locationExcluded = locationExcludedFirst; // incl. the PO items above
       for (const item of items) {
         if (locationExcluded.includes(item.barcode)) continue;
         await client.query(
@@ -297,59 +248,14 @@ router.get('/:id', async (req, res) => {
     const taskResult = await pool.query('SELECT * FROM tasks WHERE id = $1', [id]);
     if (taskResult.rows.length === 0) return res.status(404).json({ error: 'Task not found' });
 
-    let itemsResult = await pool.query(
+    const itemsResult = await pool.query(
       'SELECT * FROM task_items WHERE task_id = $1 ORDER BY id',
       [id]
     );
 
-    // PO lock (2026-10): computed live on every load (see applyPoLock above).
-    // `?manager=1` (the store's task page): po_locked is only reported when the
-    // PO lock switch is ON; with it OFF managers see nothing. The buyer's page
-    // (no param) always gets po_locked.
-    const taskRow = taskResult.rows[0];
-    const lockEnabled = await isManagerLockEnabled();
-    const managerView = req.query.manager === '1';
-    const locked = await applyPoLock(taskRow, itemsResult.rows, lockEnabled);
-
-    // Buyer opening a task under review: refresh the stale System qty of items
-    // whose purchase order has been committed since (see refreshPoFlagged),
-    // and archive the task when nothing is left to commit.
-    let refreshed = 0;
-    if (!managerView && taskRow.status === 'reviewing' && !taskRow.committing) {
-      refreshed = await refreshPoFlagged(taskRow, itemsResult.rows, locked);
-    }
-    if (locked.size > 0 || refreshed > 0) {
-      itemsResult = await pool.query(
-        'SELECT * FROM task_items WHERE task_id = $1 ORDER BY id',
-        [id]
-      );
-    }
-
-    let outTask = taskRow;
-    let autoArchived = false;
-    if (refreshed > 0 && locked.size === 0) {
-      const pending = itemsResult.rows.some(i => !i.is_committed && !i.is_correct && i.poh !== null);
-      if (!pending) {
-        const notes = [...(taskRow.notes || []), {
-          text: 'Automatically archived: all quantities matched after the purchase order was committed',
-          created_at: new Date().toISOString(),
-        }];
-        await pool.query(
-          "UPDATE tasks SET status = 'archived', notes = $1, updated_at = NOW() WHERE id = $2",
-          [JSON.stringify(notes), id]
-        );
-        outTask = (await pool.query('SELECT * FROM tasks WHERE id = $1', [id])).rows[0];
-        autoArchived = true;
-        await syncTaskHistory(id);
-      }
-    }
-
-    const itemsOut = itemsResult.rows.map(i => ({
-      ...i,
-      po_locked: (!managerView || lockEnabled) && !i.is_committed && locked.has(normSku(i.barcode)),
-    }));
-
-    res.json({ ...outTask, items: itemsOut, po_lock_enabled: lockEnabled, auto_archived: autoArchived });
+    // (The PO lock — po_locked items, System qty refresh, auto-archive — was
+    // removed on 2026-10-28, Hera.)
+    res.json({ ...taskResult.rows[0], items: itemsResult.rows });
   } catch (e) {
     console.error('GET /api/tasks/:id error:', e);
     res.status(500).json({ error: e.message });
@@ -431,25 +337,12 @@ const TASK_COMMIT_STALE_MS = 5 * 60 * 1000;
 // now land on the task row (`commit_warnings`, `committing`) instead of in
 // the original HTTP response, since by the time this finishes nobody may
 // still be listening on that response.
-// `includeLocked` (2026-10): the buyer chose "Commit anyway" in the PO-lock
-// dialog — items that are in an uncommitted invoice are committed too instead
-// of being skipped.
-async function runTaskCommit(id, itemIds, includeLocked = false) {
+async function runTaskCommit(id, itemIds) {
   const errors = [];
   try {
     const taskRes = await pool.query('SELECT * FROM tasks WHERE id = $1', [id]);
     const task = taskRes.rows[0];
     if (!task) return; // task deleted mid-flight — nothing to do
-
-    // PO lock (2026-10): the server decides at commit time. Items that are in a
-    // not-yet-committed invoice at this location are skipped (switch ON: also
-    // reset by applyPoLock; switch OFF: their counts stay, they just stay
-    // uncommitted so the task stays open). Items that were PO related but
-    // whose invoice is now committed get their System qty refreshed first.
-    const poLockEnabled = await isManagerLockEnabled();
-    const allTaskItems = await pool.query('SELECT * FROM task_items WHERE task_id = $1', [id]);
-    const lockedNow = await applyPoLock(task, allTaskItems.rows, poLockEnabled);
-    await refreshPoFlagged(task, allTaskItems.rows, lockedNow);
 
     const items = await pool.query(
       'SELECT * FROM task_items WHERE id = ANY($1) AND task_id = $2',
@@ -480,9 +373,8 @@ async function runTaskCommit(id, itemIds, includeLocked = false) {
     };
 
     for (const item of items.rows) {
-      // Never apply an item twice (already committed), and skip PO-locked items.
+      // Never apply an item twice (already committed).
       if (item.is_committed) continue;
-      if (!includeLocked && lockedNow.has(normSku(item.barcode))) continue;
       if (item.is_correct || item.poh === null || item.soh === null) continue;
 
       const delta = item.poh - item.soh;
@@ -619,13 +511,10 @@ async function runTaskCommit(id, itemIds, includeLocked = false) {
 router.patch('/:id/commit', async (req, res) => {
   try {
     const { id } = req.params;
-    const { itemIds, lockedMode } = req.body;
+    const { itemIds } = req.body;
     if (!itemIds || itemIds.length === 0) {
       return res.status(400).json({ error: 'No items to commit.' });
     }
-    // lockedMode (2026-10): 'include' = "Commit anyway" (PO-locked items are
-    // committed too); anything else = skip them (default).
-    const includeLocked = lockedMode === 'include';
 
     const taskRes = await pool.query('SELECT * FROM tasks WHERE id = $1', [id]);
     if (taskRes.rows.length === 0) return res.status(404).json({ error: 'Task not found' });
@@ -651,7 +540,7 @@ router.patch('/:id/commit', async (req, res) => {
 
     res.json({ started: true, total: itemIds.length });
 
-    runTaskCommit(id, itemIds, includeLocked); // fire-and-forget — intentionally not awaited
+    runTaskCommit(id, itemIds); // fire-and-forget — intentionally not awaited
   } catch (e) {
     console.error('PATCH /api/tasks/:id/commit error:', e);
     res.status(500).json({ error: e.message });
@@ -665,15 +554,6 @@ router.patch('/:id/submit', async (req, res) => {
     const taskRes = await pool.query('SELECT * FROM tasks WHERE id = $1', [id]);
     const task = taskRes.rows[0];
     if (!task) return res.status(404).json({ error: 'Task not found' });
-
-    // PO lock (2026-10): flag items that are in an open purchase order right
-    // now (switch ON: also discards their counts) — see applyPoLock.
-    try {
-      const subItems = await pool.query('SELECT * FROM task_items WHERE task_id = $1', [id]);
-      await applyPoLock(task, subItems.rows, await isManagerLockEnabled());
-    } catch (e) {
-      console.error('submit: PO lock check failed:', e.message);
-    }
 
     await pool.query(
       "UPDATE tasks SET status = 'reviewing', updated_at = NOW() WHERE id = $1",
@@ -695,7 +575,7 @@ router.patch('/:id/submit', async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
-
+
 
 // PUT / DELETE /api/tasks/:taskId/items/:itemId/note (2026-10-22, Hera) —
 // the store's ONE note on a line item (count modal › Note). body { text }
@@ -782,22 +662,6 @@ router.patch('/:taskId/items/:itemId/scan', async (req, res) => {
        WHERE id = $5`,
       [JSON.stringify(scan_history), poh, soh, isCorrect, itemId]
     );
-    // PO lock (2026-10): a count taken while the SKU is NOT in an open invoice
-    // already has a fresh System qty, so it needs no later refresh.
-    try {
-      const ti = await pool.query(
-        `SELECT ti.barcode, t.shopify_location_id FROM task_items ti JOIN tasks t ON t.id = ti.task_id WHERE ti.id = $1`,
-        [itemId]
-      );
-      if (ti.rows[0]) {
-        const lockedSet = await getPoLockedSet(ti.rows[0].shopify_location_id, [ti.rows[0].barcode]);
-        if (lockedSet.size === 0) {
-          await pool.query('UPDATE task_items SET po_flagged = FALSE WHERE id = $1', [itemId]);
-        }
-      }
-    } catch (e) {
-      console.error('scan: po_flagged reset failed:', e.message);
-    }
     res.json({ success: true });
   } catch (e) {
     console.error('PATCH scan error:', e);
@@ -982,11 +846,29 @@ router.patch('/:id/send-back', async (req, res) => {
 router.patch('/:id/publish', async (req, res) => {
   try {
     const { id } = req.params;
+    // Checked again at publish (2026-10-28, Hera): items whose PO has since
+    // been delivered / put on today's schedule are removed from the draft.
+    // Nothing left → the draft is deleted instead of published.
+    const t = (await pool.query("SELECT * FROM tasks WHERE id = $1 AND status = 'draft'", [id])).rows[0];
+    let removed = 0;
+    if (t) {
+      const its = (await pool.query('SELECT id, barcode FROM task_items WHERE task_id = $1', [id])).rows;
+      const out = ((await getDeliveredPoItems([t.location], its.map(i => i.barcode))).byLocation[t.location]) || {};
+      const drop = its.filter(i => out[i.barcode]).map(i => i.id);
+      if (drop.length) {
+        await pool.query('DELETE FROM task_items WHERE id = ANY($1)', [drop]);
+        removed = drop.length;
+      }
+      if (drop.length === its.length && its.length > 0) {
+        await pool.query('DELETE FROM tasks WHERE id = $1', [id]);
+        return res.json({ success: true, deleted: true, removed });
+      }
+    }
     await pool.query(
       "UPDATE tasks SET status = 'counting', updated_at = NOW() WHERE id = $1 AND status = 'draft'",
       [id]
     );
-    res.json({ success: true });
+    res.json({ success: true, removed });
   } catch (e) {
     console.error('PATCH /api/tasks/:id/publish error:', e);
     res.status(500).json({ error: e.message });

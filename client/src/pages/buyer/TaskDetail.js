@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Page, Layout, Card, Button, BlockStack, InlineStack,
-  Text, DataTable, Checkbox, Banner, Badge, TextField, Spinner, Modal
+  Text, DataTable, Checkbox, Banner, Badge, TextField, Spinner
 } from '@shopify/polaris';
 import { LineNoteIcon, LineNoteHover } from '../shared/lineNote';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -66,10 +66,6 @@ function TaskDetail() {
   const [editingItemId, setEditingItemId] = useState(null);
   const [sendingBack, setSendingBack] = useState(false);
   const [editingValue, setEditingValue] = useState('');
-  const [showAutoArchived, setShowAutoArchived] = useState(false);
-  // PO-lock dialog (2026-10): { all, items } while the buyer is asked what to do
-  // with locked items involved in a commit.
-  const [lockPrompt, setLockPrompt] = useState(null);
 
   // quiet=true skips the full-page loading spinner — used while polling for
   // commit progress so the table doesn't flicker every couple seconds.
@@ -81,9 +77,6 @@ function TaskDetail() {
       if (!res.ok) throw new Error(data.error);
       setTask(data);
       setNotes(data.notes || []);
-      // The server refreshed System qty of items whose purchase order has been
-      // committed and found nothing left to commit → it archived the task.
-      if (data.auto_archived) setShowAutoArchived(true);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -130,11 +123,7 @@ function TaskDetail() {
     });
   };
 
-  // lockedMode (2026-10): undefined = first click — if the commit involves
-  // PO-locked items, ask first (dialog below); 'skip' = Skip locked; 'include'
-  // = Commit anyway. The server decides again at commit time which items are
-  // really locked (and refreshes System qty of PO-related items that are free).
-  const handleCommit = async (all, lockedMode) => {
+  const handleCommit = async (all) => {
     if (!task) return;
     if (task.status === 'counting') {
       setError('Counting not finished yet.');
@@ -151,17 +140,6 @@ function TaskDetail() {
       return;
     }
 
-    if (!lockedMode) {
-      // Only items that would really be committed (counted, mismatching, not
-      // committed yet) and are PO-locked count as "involved".
-      const lockedInvolved = task.items.filter(i =>
-        itemIds.includes(i.id) && i.po_locked && !i.is_committed && !i.is_correct && i.poh !== null);
-      if (lockedInvolved.length > 0) {
-        setLockPrompt({ all, items: lockedInvolved });
-        return;
-      }
-    }
-
     setCommitting(true);
     setError('');
     try {
@@ -173,7 +151,7 @@ function TaskDetail() {
       const res = await fetch(`/api/tasks/${taskId}/commit`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ itemIds, lockedMode: lockedMode === 'include' ? 'include' : 'skip' }),
+        body: JSON.stringify({ itemIds }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
@@ -217,6 +195,15 @@ function TaskDetail() {
     try {
       const res = await fetch(`/api/tasks/${taskId}/publish`, { method: 'PATCH' });
       if (!res.ok) throw new Error('Publish failed');
+      // 2026-10-28: items whose PO was delivered (or is on today's schedule)
+      // are removed at publish; nothing left → the draft was deleted.
+      const d = await res.json().catch(() => ({}));
+      if (d.deleted) {
+        window.alert('Every item of this task is in a delivered purchase order that is not committed yet — the draft was deleted instead of published.');
+        navigate('/buyer/counting-tasks');
+        return;
+      }
+      if (d.removed) window.alert(`${d.removed} item(s) removed: in a delivered purchase order that is not committed yet.`);
       fetchTask();
     } catch (e) {
       setError(e.message);
@@ -451,21 +438,6 @@ function TaskDetail() {
       </span>,
     ];
 
-    // PO-related row (2026-10): light-yellow cells, and "PO" next to the count
-    // result (the manager's count is still shown for reference). Such an item
-    // is skipped when committing while its invoice is still uncommitted.
-    if (item.po_locked) {
-      const hl = (node) => (
-        <div style={{ background: '#fff3b0', margin: '-12px -16px', padding: '12px 16px', minHeight: '24px' }}>{node}</div>
-      );
-      cells[4] = (
-        <InlineStack gap="200" blockAlign="center" wrap={false}>
-          {cells[4]}
-          <strong>PO</strong>
-        </InlineStack>
-      );
-      return cells.map(hl);
-    }
     return cells;
   });
 
@@ -475,45 +447,6 @@ function TaskDetail() {
       subtitle={[typesLabel, task.location].filter(Boolean).join('  ')}
       backAction={{ onAction: () => navigate('/buyer/counting-tasks') }}
     >
-      <Modal
-        open={!!lockPrompt}
-        onClose={() => setLockPrompt(null)}
-        title="Locked items"
-        primaryAction={{
-          content: 'Skip locked',
-          onAction: () => { const p = lockPrompt; setLockPrompt(null); handleCommit(p.all, 'skip'); },
-        }}
-        secondaryActions={[
-          {
-            content: 'Commit anyway',
-            destructive: true,
-            onAction: () => { const p = lockPrompt; setLockPrompt(null); handleCommit(p.all, 'include'); },
-          },
-          { content: 'Cancel', onAction: () => setLockPrompt(null) },
-        ]}
-      >
-        <Modal.Section>
-          <BlockStack gap="300">
-            {lockPrompt && lockPrompt.items.map(i => (
-              <Text key={i.id}>{i.barcode} {i.name}</Text>
-            ))}
-            <Text>
-              {lockPrompt && lockPrompt.items.length > 1 ? 'are' : 'is'} being locked, due to existing in uncommitted purchase invoice.
-            </Text>
-          </BlockStack>
-        </Modal.Section>
-      </Modal>
-
-      <Modal
-        open={showAutoArchived}
-        onClose={() => setShowAutoArchived(false)}
-        title="Task archived"
-        primaryAction={{ content: 'OK', onAction: () => setShowAutoArchived(false) }}
-      >
-        <Modal.Section>
-          <Text>All qty matched, task has been archived automatically.</Text>
-        </Modal.Section>
-      </Modal>
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">
