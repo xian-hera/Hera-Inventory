@@ -27,7 +27,6 @@ function getStatusBadge(status) {
     reviewing: 'warning',
     committed: 'success',
     auto_committed: 'success',
-    draft: 'new',
     archived: '',
   };
   return <Badge tone={toneMap[status] || ''}>{status}</Badge>;
@@ -60,8 +59,6 @@ function TaskDetail() {
   // from task.committing, which is persisted server-side so it also survives
   // a page reload or someone else opening this task while a commit is running.
   const [committing, setCommitting] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [publishing, setPublishing] = useState(false);
   const [deletingItems, setDeletingItems] = useState(false);
   const [editingItemId, setEditingItemId] = useState(null);
   const [sendingBack, setSendingBack] = useState(false);
@@ -170,45 +167,6 @@ function TaskDetail() {
       setError(e.message);
     } finally {
       setCommitting(false);
-    }
-  };
-
-  const handleDelete = async () => {
-    if (!window.confirm('Delete this draft? This cannot be undone.')) return;
-    setDeleting(true);
-    try {
-      const res = await fetch('/api/tasks', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids: [task.id] }),
-      });
-      if (!res.ok) throw new Error('Delete failed');
-      navigate('/buyer/counting-tasks');
-    } catch (e) {
-      setError(e.message);
-      setDeleting(false);
-    }
-  };
-
-  const handlePublish = async () => {
-    setPublishing(true);
-    try {
-      const res = await fetch(`/api/tasks/${taskId}/publish`, { method: 'PATCH' });
-      if (!res.ok) throw new Error('Publish failed');
-      // 2026-10-28: items whose PO was delivered (or is on today's schedule)
-      // are removed at publish; nothing left → the draft was deleted.
-      const d = await res.json().catch(() => ({}));
-      if (d.deleted) {
-        window.alert('Every item of this task is in a delivered purchase order that is not committed yet — the draft was deleted instead of published.');
-        navigate('/buyer/counting-tasks');
-        return;
-      }
-      if (d.removed) window.alert(`${d.removed} item(s) removed: in a delivered purchase order that is not committed yet.`);
-      fetchTask();
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setPublishing(false);
     }
   };
 
@@ -477,16 +435,6 @@ function TaskDetail() {
                   >
                     Delete selected
                   </Button>
-                  {task.status === 'draft' && (
-                    <>
-                      <Button variant="primary" onClick={handlePublish} loading={publishing}>
-                        Publish
-                      </Button>
-                      <Button tone="critical" onClick={handleDelete} loading={deleting}>
-                        Delete
-                      </Button>
-                    </>
-                  )}
                   {isCommittingOnServer ? (
                     <BlockStack gap="100">
                       <Button disabled loading>

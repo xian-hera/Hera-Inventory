@@ -170,7 +170,9 @@ router.post('/po-exclusions', async (req, res) => {
 router.post('/', async (req, res) => {
   const client = await pool.connect();
   try {
-    const { types, locations, filterSummary, items, notes, publish, excludedBarcodes, scanCount } = req.body;
+    // No drafts any more (2026-10-29, Hera): every task is created published
+    // ('counting'); a `publish` flag from older pages is ignored.
+    const { types, locations, filterSummary, items, notes, excludedBarcodes, scanCount } = req.body;
     if (!types || types.length === 0 || !locations || locations.length === 0) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
@@ -179,14 +181,14 @@ router.post('/', async (req, res) => {
     const locationIdMap = {};
     locMap.rows.forEach(r => { locationIdMap[r.location_name] = r.shopify_location_id; });
 
-    const status = publish ? 'counting' : 'draft';
+    const status = 'counting';
     const scanCountMode = !!scanCount;
     const createdTasks = [];
 
     await client.query('BEGIN');
 
     // Delivered-but-not-committed PO items are left out per location
-    // (2026-10-28, Hera — checked again here, also for drafts).
+    // (2026-10-28, Hera — checked again here on save).
     const poOut = (await getDeliveredPoItems(locations, (items || []).map(i => i.barcode))).byLocation;
 
     const skippedLocations = [];
@@ -838,39 +840,6 @@ router.patch('/:id/send-back', async (req, res) => {
     res.json({ success: true });
   } catch (e) {
     console.error('PATCH /api/tasks/:id/send-back error:', e);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// PATCH /api/tasks/:id/publish
-router.patch('/:id/publish', async (req, res) => {
-  try {
-    const { id } = req.params;
-    // Checked again at publish (2026-10-28, Hera): items whose PO has since
-    // been delivered / put on today's schedule are removed from the draft.
-    // Nothing left → the draft is deleted instead of published.
-    const t = (await pool.query("SELECT * FROM tasks WHERE id = $1 AND status = 'draft'", [id])).rows[0];
-    let removed = 0;
-    if (t) {
-      const its = (await pool.query('SELECT id, barcode FROM task_items WHERE task_id = $1', [id])).rows;
-      const out = ((await getDeliveredPoItems([t.location], its.map(i => i.barcode))).byLocation[t.location]) || {};
-      const drop = its.filter(i => out[i.barcode]).map(i => i.id);
-      if (drop.length) {
-        await pool.query('DELETE FROM task_items WHERE id = ANY($1)', [drop]);
-        removed = drop.length;
-      }
-      if (drop.length === its.length && its.length > 0) {
-        await pool.query('DELETE FROM tasks WHERE id = $1', [id]);
-        return res.json({ success: true, deleted: true, removed });
-      }
-    }
-    await pool.query(
-      "UPDATE tasks SET status = 'counting', updated_at = NOW() WHERE id = $1 AND status = 'draft'",
-      [id]
-    );
-    res.json({ success: true, removed });
-  } catch (e) {
-    console.error('PATCH /api/tasks/:id/publish error:', e);
     res.status(500).json({ error: e.message });
   }
 });

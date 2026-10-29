@@ -52,7 +52,7 @@ function formatDate(dateStr) {
 function getStatusBadge(status) {
   const toneMap = {
     counting: 'info', reviewing: 'warning', committed: 'success',
-    auto_committed: 'success', draft: 'new', archived: '',
+    auto_committed: 'success', archived: '', // no 'draft' any more (2026-10-29)
   };
   return <Badge tone={toneMap[status] || ''}>{status}</Badge>;
 }

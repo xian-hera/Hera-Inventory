@@ -17,6 +17,7 @@ import { DDList } from '../shared/ddPill';
 //   - "Remove Selected from ALL" (action card) removes the selected items from
 //     every location; "Remove from {location}" only from the chosen one;
 //     "Remove this Location" drops the location (no task is created for it).
+//   - no "Save as draft" any more (2026-10-29): tasks are always published.
 const pillBtn = (on) => ({
   display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 12px', borderRadius: 999, cursor: 'pointer',
   border: on ? '1px solid #303030' : '1px solid #c9cccf', background: on ? '#303030' : '#fff',
@@ -235,7 +236,6 @@ function PreviewTask() {
                   <Button disabled={selectedBarcodes.length === 0} onClick={handleRemoveSelected}>
                     Remove Selected from ALL
                   </Button>
-                  <Button onClick={() => handleSave(false)} loading={saving}>Save as draft</Button>
                   <Button variant="primary" onClick={() => handleSave(true)} loading={saving}>
                     Save and publish
                   </Button>
