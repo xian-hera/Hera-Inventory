@@ -1785,6 +1785,12 @@ const initDatabase = async () => {
     await client.query(`ALTER TABLE transfer_items ADD COLUMN IF NOT EXISTS line_note_at TIMESTAMPTZ`).catch(() => {});
     await client.query(`ALTER TABLE task_items ADD COLUMN IF NOT EXISTS line_note TEXT`).catch(() => {});
     await client.query(`ALTER TABLE task_items ADD COLUMN IF NOT EXISTS line_note_at TIMESTAMPTZ`).catch(() => {});
+    // Weekly Count: WIG items (2026-10-29, Hera) — product type / product
+    // custom.wig_number, looked up once per item when a task with the Wig
+    // type is opened (routes/tasks.js attachTaskWigNumbers).
+    await client.query(`ALTER TABLE task_items ADD COLUMN IF NOT EXISTS is_wig BOOLEAN`).catch(() => {});
+    await client.query(`ALTER TABLE task_items ADD COLUMN IF NOT EXISTS wig_number TEXT`).catch(() => {});
+    await client.query(`ALTER TABLE task_items ADD COLUMN IF NOT EXISTS wig_checked BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
 
     // Store › Weekly Inventory Count › History (2026-10-22, Hera): the label
     // "Committed by buyer" is now just "Committed" (routes/tasks.js

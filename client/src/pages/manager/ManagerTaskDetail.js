@@ -517,7 +517,24 @@ function ManagerTaskDetail() {
         (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' })
       )
     : filteredItems;
-  const displayedItems = sortedItems;
+  // WIG items (2026-10-29, Hera): on top, ordered by Wig Number (numbers
+  // compared as numbers; wigs without one last), then the rest by name as
+  // above. A "Wig Number" column is shown when the task has any wig.
+  const hasWig = task.items.some(i => i.is_wig);
+  const byWigNumber = (a, b) => {
+    const x = a.wig_number || ''; const y = b.wig_number || '';
+    if (!x !== !y) return x ? -1 : 1;
+    return x.localeCompare(y, undefined, { numeric: true, sensitivity: 'base' })
+      || (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' });
+  };
+  const displayedItems = hasWig
+    ? [...sortedItems.filter(i => i.is_wig).sort(byWigNumber), ...sortedItems.filter(i => !i.is_wig)]
+    : sortedItems;
+  const wigCell = (item, clickable) => (
+    <div onClick={clickable ? () => openPopup(item) : undefined} style={{ cursor: clickable ? 'pointer' : 'default', whiteSpace: 'nowrap' }}>
+      {item.is_wig ? (item.wig_number || '—') : ''}
+    </div>
+  );
 
   const hasHistory = (popupItem?.scan_history || []).length > 0;
 
@@ -535,6 +552,7 @@ function ManagerTaskDetail() {
       // between it and System for extra visual separation.
       return [
         <div>{nameSku}</div>,
+        ...(hasWig ? [wigCell(item, false)] : []),
         <div>{item.soh !== null ? String(item.soh) : ''}</div>,
         <div />,
         <div>{String(item.scan_count || 0)}</div>,
@@ -567,6 +585,7 @@ function ManagerTaskDetail() {
 
     return [
       <div onClick={() => openPopup(item)} style={{ cursor: 'pointer' }}>{nameSku}</div>,
+      ...(hasWig ? [wigCell(item, true)] : []),
       <div onClick={() => openPopup(item)} style={{ cursor: 'pointer' }}>{item.soh !== null ? String(item.soh) : ''}</div>,
       <div onClick={() => openPopup(item)} style={{ cursor: 'pointer' }}><InlineStack gap="050">{scanBars}</InlineStack></div>,
       <div onClick={() => openPopup(item)} style={{ cursor: 'pointer' }}>{pohDisplay}<LineNoteIcon note={item.line_note} /></div>,
@@ -749,8 +768,14 @@ function ManagerTaskDetail() {
 
               <Card>
                 <DataTable
-                  columnContentTypes={isScanCountMode ? ['text', 'numeric', 'text', 'numeric'] : ['text', 'numeric', 'text', 'text']}
-                  headings={isScanCountMode ? ['Name / SKU', 'System', '', 'Scans'] : ['Name / SKU', 'System', 'Scans', 'Actual']}
+                  columnContentTypes={[
+                    'text', ...(hasWig ? ['text'] : []),
+                    ...(isScanCountMode ? ['numeric', 'text', 'numeric'] : ['numeric', 'text', 'text']),
+                  ]}
+                  headings={[
+                    'Name / SKU', ...(hasWig ? ['Wig Number'] : []),
+                    ...(isScanCountMode ? ['System', '', 'Scans'] : ['System', 'Scans', 'Actual']),
+                  ]}
                   rows={rows}
                 />
               </Card>
@@ -862,7 +887,8 @@ function ManagerTaskDetail() {
               <BlockStack gap="400">
                 <div style={{ paddingRight: '28px' }}>
                   <div style={{ fontSize: '16px', fontWeight: '700', lineHeight: '1.4', wordBreak: 'break-word' }}>
-                    {popupItem.name}
+                    {/* WIG (2026-10-29): "{wig number} - {name}" */}
+                    {popupItem.is_wig && popupItem.wig_number ? `${popupItem.wig_number} - ${popupItem.name || ''}` : popupItem.name}
                   </div>
                 </div>
 

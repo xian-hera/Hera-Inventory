@@ -10,6 +10,55 @@ const { getGroupFilter, arrayVisibleSql } = require('./userGroups');
 // task — see server/poDelivered.js. Replaces the old "PO lock" (removed).
 const { getDeliveredPoItems } = require('../poDelivered');
 
+// WIG items (2026-10-29, Hera): for a task whose types include Wig, each item
+// not looked up yet gets is_wig (product type WIG) and wig_number (product
+// custom.wig_number) from Shopify — once, then stored on task_items
+// (wig_checked). A failed lookup is simply tried again next time.
+async function attachTaskWigNumbers(task, items) {
+  if (!task || !(task.types || []).some(t => String(t).trim().toLowerCase() === 'wig')) return false;
+  const todo = items.filter(i => !i.wig_checked && i.barcode);
+  if (todo.length === 0) return false;
+  try {
+    const { getShopify, getSession, activeFilter, searchQuote } = require('../shopify');
+    const { shopifyGraphql } = require('./transfers');
+    const session = await getSession();
+    if (!session) return false;
+    const client = new (getShopify()).clients.Graphql({ session });
+    const found = new Map(); // barcode → { isWig, wigNumber }
+    const codes = [...new Set(todo.map(i => i.barcode))];
+    for (let k = 0; k < codes.length; k += 50) {
+      const chunk = codes.slice(k, k + 50);
+      const data = await shopifyGraphql(client, `
+        query taskWigNumbers($filter: String!) {
+          productVariants(first: ${chunk.length * 2}, query: $filter) {
+            edges { node { barcode product {
+              productType
+              wigNumber: metafield(namespace: "custom", key: "wig_number") { value }
+            } } }
+          }
+        }`, { filter: activeFilter(chunk.map(c => `barcode:${searchQuote(c)}`).join(' OR ')) });
+      for (const { node } of (data?.productVariants?.edges || [])) {
+        if (!node?.barcode) continue;
+        found.set(node.barcode, {
+          isWig: String(node.product?.productType || '').toUpperCase() === 'WIG',
+          wigNumber: node.product?.wigNumber?.value || '',
+        });
+      }
+    }
+    for (const it of todo) {
+      const f = found.get(it.barcode);
+      await pool.query(
+        'UPDATE task_items SET is_wig = $2, wig_number = $3, wig_checked = TRUE WHERE id = $1',
+        [it.id, f ? f.isWig : false, f && f.isWig ? (f.wigNumber || null) : null]
+      );
+    }
+    return true;
+  } catch (e) {
+    console.error('attachTaskWigNumbers failed:', e.message);
+    return false;
+  }
+}
+
 // GET /api/tasks - get all tasks with filters
 router.get('/', async (req, res) => {
   try {
@@ -250,10 +299,14 @@ router.get('/:id', async (req, res) => {
     const taskResult = await pool.query('SELECT * FROM tasks WHERE id = $1', [id]);
     if (taskResult.rows.length === 0) return res.status(404).json({ error: 'Task not found' });
 
-    const itemsResult = await pool.query(
+    let itemsResult = await pool.query(
       'SELECT * FROM task_items WHERE task_id = $1 ORDER BY id',
       [id]
     );
+    // WIG items: is_wig / wig_number (2026-10-29) — see attachTaskWigNumbers.
+    if (await attachTaskWigNumbers(taskResult.rows[0], itemsResult.rows)) {
+      itemsResult = await pool.query('SELECT * FROM task_items WHERE task_id = $1 ORDER BY id', [id]);
+    }
 
     // (The PO lock — po_locked items, System qty refresh, auto-archive — was
     // removed on 2026-10-28, Hera.)
