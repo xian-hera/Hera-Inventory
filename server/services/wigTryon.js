@@ -187,7 +187,7 @@ function startJob({ config, prepared, selfie, ctx }) {
       job.result = { b64: out.b64, mime: out.mime };
       job.status = 'done';
       job.info = {
-        durationMs: Date.now() - t0, usage: out.usage, prompt,
+        durationMs: Date.now() - t0, usage: out.usage, prompt, model: config.openai.model, quality: config.openai.quality,
         colorUsed: useColor, colorMissingImage: !!(color && !color.ref),
       };
       await store.logEvent({

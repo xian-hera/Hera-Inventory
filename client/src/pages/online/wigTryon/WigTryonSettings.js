@@ -1,7 +1,7 @@
 // Online › Wig Try-on › Settings: switches, product types, OpenAI, limits, texts.
 import React, { useState } from 'react';
 import { Card, BlockStack, InlineStack, InlineGrid, Text, TextField, Checkbox, Select, Button, Banner } from '@shopify/polaris';
-import { api } from './wigTryonApi';
+import { api, IMAGE_MODELS } from './wigTryonApi';
 
 const TEXTS = [
   { key: 'limitReached', label: 'Daily limit reached (account and IP — same text on purpose)' },
@@ -30,7 +30,7 @@ export const MODES = [
   { label: 'Live — real store', value: 'live' },
 ];
 
-const MODELS = ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1-mini'];
+const MODELS = IMAGE_MODELS;
 
 export default function WigTryonSettings({ config, defaults, reload, setBanner }) {
   const [f, setF] = useState(() => JSON.parse(JSON.stringify(config)));
@@ -103,11 +103,12 @@ export default function WigTryonSettings({ config, defaults, reload, setBanner }
         <BlockStack gap="300">
           <Text variant="headingMd">OpenAI</Text>
           <InlineGrid columns={{ xs: 1, md: 3 }} gap="300">
-            <Select label="Model" options={modelOptions} value={f.openai.model} onChange={v => set('openai.model', v)} />
+            <Select label="Model (image generation)" options={modelOptions} value={f.openai.model} onChange={v => set('openai.model', v)}
+              helpText="Compare models first with “Model (this test only)” on Prompt & Test." />
             <Select label="Image size" value={f.openai.size} onChange={v => set('openai.size', v)}
               options={[{ label: '1024 × 1536 (portrait)', value: '1024x1536' }, { label: '1024 × 1024', value: '1024x1024' }, { label: '1536 × 1024 (landscape)', value: '1536x1024' }, { label: 'auto', value: 'auto' }]} />
             <Select label="Quality" value={f.openai.quality} onChange={v => set('openai.quality', v)}
-              options={['low', 'medium', 'high', 'auto'].map(v => ({ label: v, value: v }))} />
+              options={['low', 'medium', 'high', 'xhigh', 'max', 'auto'].map(v => ({ label: v === 'xhigh' || v === 'max' ? `${v} (gpt-image-2.5 only)` : v, value: v }))} />
             <Select label="Output format" value={f.openai.outputFormat} onChange={v => set('openai.outputFormat', v)}
               options={[{ label: 'JPEG (smaller)', value: 'jpeg' }, { label: 'PNG', value: 'png' }, { label: 'WebP', value: 'webp' }]} />
             <Select label="Input fidelity" value={f.openai.inputFidelity} onChange={v => set('openai.inputFidelity', v)}

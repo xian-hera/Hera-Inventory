@@ -98,6 +98,10 @@ export function photoToJpeg(file, maxSide = 1536) {
   });
 }
 
+// Image models for /v1/images/edits (OpenAI docs, checked 2026-11-05; gpt-image-1 was
+// shut down 2026-10-23). Any other name can still be saved in Settings.
+export const IMAGE_MODELS = ['gpt-image-2.5-sunburst', 'gpt-image-2.5-flare', 'gpt-image-2', 'gpt-image-1.5', 'gpt-image-1-mini'];
+
 export const fmtTime = (iso) => (iso ? new Date(iso).toLocaleString() : '—');
 export const fmtMs = (ms) => (ms == null ? '—' : `${(ms / 1000).toFixed(1)} s`);
 export const fmtNum = (n) => (n == null ? '—' : Number(n).toLocaleString());

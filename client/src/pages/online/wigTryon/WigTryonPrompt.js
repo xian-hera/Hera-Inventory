@@ -7,7 +7,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Card, BlockStack, InlineStack, InlineGrid, Text, TextField, Button, Badge, Checkbox, Select, Banner, Box, Collapsible,
 } from '@shopify/polaris';
-import { api, photoToJpeg, fmtTime, fmtMs, fmtNum, ADMIN_PRODUCT, REASON_LABEL, TH, TD } from './wigTryonApi';
+import { api, IMAGE_MODELS, CHECK_MODELS, photoToJpeg, fmtTime, fmtMs, fmtNum, ADMIN_PRODUCT, REASON_LABEL, TH, TD } from './wigTryonApi';
 
 const PLACEHOLDER_HELP = 'Placeholders: {{product_title}} {{color_name}} {{image_count}}. '
   + '{{#color}}…{{/color}} is kept only when a colour reference image is sent; {{^color}}…{{/color}} only when it is not. '
@@ -56,6 +56,8 @@ function TestPanel({ editorText, editorFrom, prompts, setBanner, onDone }) {
   const [selfie, setSelfie] = useState(null); // data URL
   const [promptSource, setPromptSource] = useState('editor');
   const [quality, setQuality] = useState('');
+  const [model, setModel] = useState('');
+  const [checkModel, setCheckModel] = useState('');
   const [job, setJob] = useState(null); // { id, status, image, info, error, startedAt }
   const [showPrompt, setShowPrompt] = useState(false);
   const fileRef = useRef(null);
@@ -98,7 +100,8 @@ function TestPanel({ editorText, editorFrom, prompts, setBanner, onDone }) {
     const body = { productId: product.product.numericId, colorName: colorName || null, selfie, runCheck };
     if (promptSource === 'editor') body.template = editorText;
     else body.promptVersion = parseInt(promptSource, 10);
-    if (quality) body.openai = { quality };
+    if (checkModel) body.checkModel = checkModel;
+    if (quality || model) body.openai = { ...(quality ? { quality } : {}), ...(model ? { model } : {}) };
     try {
       setJob(null);
       setChecking(runCheck);
@@ -116,7 +119,7 @@ function TestPanel({ editorText, editorFrom, prompts, setBanner, onDone }) {
   // Check only (no generation) — to tune the selfie check cheaply.
   const checkOnly = async () => {
     setChecking(true);
-    try { setCheck((await api.post('/check', { selfie })).check); onDone(); } catch (e) { setBanner({ tone: 'critical', text: e.message }); }
+    try { setCheck((await api.post('/check', { selfie, checkModel: checkModel || undefined })).check); onDone(); } catch (e) { setBanner({ tone: 'critical', text: e.message }); }
     setChecking(false);
   };
 
@@ -215,7 +218,7 @@ function TestPanel({ editorText, editorFrom, prompts, setBanner, onDone }) {
                   <BlockStack gap="100">
                     <Text fontWeight="semibold">{check.suitable ? 'Selfie OK' : `Selfie rejected: ${REASON_LABEL[check.reason] || check.reason}`}{check.error ? ' (check failed)' : ''}</Text>
                     {check.note && <Text variant="bodySm">{check.note}</Text>}
-                    <Text variant="bodySm" tone="subdued">{fmtMs(check.durationMs)} · {fmtNum(check.usage && check.usage.input_tokens)} in / {fmtNum(check.usage && check.usage.output_tokens)} out tokens</Text>
+                    <Text variant="bodySm" tone="subdued">{check.model ? `${check.model} · ` : ''}{fmtMs(check.durationMs)} · {fmtNum(check.usage && check.usage.input_tokens)} in / {fmtNum(check.usage && check.usage.output_tokens)} out tokens</Text>
                   </BlockStack>
                 </Banner>
               )}
@@ -224,9 +227,17 @@ function TestPanel({ editorText, editorFrom, prompts, setBanner, onDone }) {
             {/* 4. Prompt + run */}
             <InlineStack gap="300" blockAlign="end" wrap>
               <div style={{ minWidth: 320 }}><Select label="Prompt" options={promptOptions} value={promptSource} onChange={setPromptSource} /></div>
+              <div style={{ minWidth: 200 }}>
+                <Select label="Check model (this test only)" value={checkModel} onChange={setCheckModel}
+                  options={[{ label: 'As in Settings', value: '' }, ...CHECK_MODELS.map(m => ({ label: m.value, value: m.value }))]} />
+              </div>
+              <div style={{ minWidth: 200 }}>
+                <Select label="Model (this test only)" value={model} onChange={setModel}
+                  options={[{ label: 'As in Settings', value: '' }, ...IMAGE_MODELS.map(m => ({ label: m, value: m }))]} />
+              </div>
               <div style={{ minWidth: 180 }}>
                 <Select label="Quality (this test only)" value={quality} onChange={setQuality}
-                  options={[{ label: 'As in Settings', value: '' }, { label: 'low', value: 'low' }, { label: 'medium', value: 'medium' }, { label: 'high', value: 'high' }]} />
+                  options={[{ label: 'As in Settings', value: '' }, ...['low', 'medium', 'high', 'xhigh', 'max'].map(v => ({ label: v, value: v }))]} />
               </div>
               <Checkbox label="Check the selfie first (like the storefront)" checked={runCheck} onChange={setRunCheck} />
               <Button variant="primary" onClick={run} loading={running || checking} disabled={!product.product.media[0] || !selfie || running || checking}>Generate</Button>
@@ -243,6 +254,7 @@ function TestPanel({ editorText, editorFrom, prompts, setBanner, onDone }) {
                 <InlineGrid columns={{ xs: 1, md: 2 }} gap="300">
                   <img src={job.image} alt="Try-on result" style={{ width: '100%', maxWidth: 480, borderRadius: 8 }} />
                   <BlockStack gap="200">
+                    <Text>Model: {job.info.model || '—'} · quality {job.info.quality || '—'}</Text>
                     <Text>Time: {fmtMs(job.info.durationMs)}</Text>
                     <Text>Tokens: {fmtNum(job.info.usage && job.info.usage.input_tokens)} in / {fmtNum(job.info.usage && job.info.usage.output_tokens)} out</Text>
                     <Text>Colour reference: {job.info.colorUsed ? 'used' : 'not used'}</Text>

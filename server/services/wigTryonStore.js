@@ -225,6 +225,7 @@ async function saveConfig(patch) {
   next.openai.maxConcurrent = toInt(next.openai.maxConcurrent, 1, 10, 3);
   if (!['', 'low', 'high'].includes(next.openai.inputFidelity)) next.openai.inputFidelity = '';
   if (!['jpeg', 'png', 'webp'].includes(next.openai.outputFormat)) next.openai.outputFormat = 'jpeg';
+  if (!['low', 'medium', 'high', 'xhigh', 'max', 'auto'].includes(next.openai.quality)) next.openai.quality = 'medium';
   next.pricing = {
     inputTextPerM: toPrice(next.pricing.inputTextPerM),
     inputImagePerM: toPrice(next.pricing.inputImagePerM),
