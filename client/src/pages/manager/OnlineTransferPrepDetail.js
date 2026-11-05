@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Page, Card, BlockStack, Text, Banner, Button } from '@shopify/polaris';
+import { Page, Card, BlockStack, Text, Banner, Button, Modal } from '@shopify/polaris';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { StatusBadge, TagPills } from '../shared/transferStatus';
 import { LineNote, LineNoteIcon, transferLineNoteApi } from '../shared/lineNote';
@@ -18,6 +18,10 @@ import { LineNote, LineNoteIcon, transferLineNoteApi } from '../shared/lineNote'
 //     line shows "You have picked …" / its qty with Reset;
 //   • Ready to Ship only when every line is picked. Any qty may be loaded —
 //     no Reviewing (server). Read-only afterwards.
+//   • 2026-11-05 (Hera): a line not picked yet shows a green "Pick" button in
+//     Loaded Qty (opens the item modal, like tapping the row). When the last
+//     line gets picked, a confirm asks to mark the transfer Ready to Ship
+//     ("Not now" leaves it; the header button still works).
 
 function resolveKey(e) {
   if (e.key && e.key !== 'Unidentified' && e.key.length === 1) return e.key;
@@ -188,6 +192,18 @@ function OnlineTransferPrepDetail() {
   }, [transferId]);
   useEffect(() => { load(); }, [load]);
 
+  // Ask for Ready to Ship once the last line has just been picked (only on
+  // the change not-all-picked → all-picked while this page is open).
+  const [askRts, setAskRts] = useState(false);
+  const prevAllPicked = useRef(null);
+  const allPickedNow = items.length > 0 && items.every(isPicked);
+  useEffect(() => {
+    if (!transfer) return;
+    const canEdit = transfer.status === 'loading' && !transfer.on_hold;
+    if (prevAllPicked.current === false && allPickedNow && canEdit) setAskRts(true);
+    prevAllPicked.current = allPickedNow;
+  }, [allPickedNow, transfer]);
+
   const editable = transfer && transfer.status === 'loading' && !transfer.on_hold;
 
   // barcode scanner: keydown buffer, Enter ends a scan
@@ -293,7 +309,16 @@ function OnlineTransferPrepDetail() {
                       </td>
                       <td style={{ padding: '10px 8px', textAlign: 'right', fontSize: 18, fontWeight: 500 }}>{req}</td>
                       <td style={{ padding: '10px 8px', textAlign: 'right', fontSize: 18, fontWeight: 500, color: off ? '#d72c0d' : '#303030', whiteSpace: 'nowrap' }}>
-                        {isPicked(i) ? i.qty_loaded : ''}
+                        {isPicked(i) ? i.qty_loaded : editable ? (
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); setOpenId(i.id); }}
+                            style={{
+                              border: 'none', borderRadius: 8, padding: '6px 14px', background: '#008060', color: '#fff',
+                              fontSize: 14, fontWeight: 600, cursor: 'pointer', lineHeight: '20px',
+                            }}
+                          >Pick</button>
+                        ) : ''}
                         {i.line_note && <span style={{ marginLeft: 6 }}><LineNoteIcon note={i.line_note} /></span>}
                       </td>
                     </tr>
@@ -305,6 +330,17 @@ function OnlineTransferPrepDetail() {
           <div style={{ height: 'var(--shopify-safe-area-inset-bottom, 80px)' }} />
         </BlockStack>
       </Page>
+      <Modal
+        open={askRts && !!editable}
+        onClose={() => setAskRts(false)}
+        title="All items picked"
+        primaryAction={{ content: 'Ready to Ship', loading: submitting, onAction: async () => { await readyToShip(); setAskRts(false); } }}
+        secondaryActions={[{ content: 'Not now', onAction: () => setAskRts(false) }]}
+      >
+        <Modal.Section>
+          <Text>Every line has been picked. Mark this transfer as Ready to Ship?</Text>
+        </Modal.Section>
+      </Modal>
       {open && editable && (
         <ItemModal item={open} transferId={transferId} onClose={() => setOpenId(null)} onChanged={load} setError={setError} />
       )}
