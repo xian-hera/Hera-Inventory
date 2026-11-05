@@ -196,14 +196,22 @@
     else renderResult();
   }
 
+  // Card size / accent from Online › Swatch › Style (same as the product page picker).
+  function swatchVars() {
+    var st = D.swatchStyle || {};
+    var w = +st.w || 72, h = +st.h || 81;
+    var acc = /^#[0-9a-f]{3,8}$|^rgba?\([\d\s.,%]+\)$/i.test(String(st.accent || '')) ? st.accent : '#E32A69';
+    return '--ht-w:' + w + 'px;--ht-h:' + h + 'px;--ht-accent:' + acc;
+  }
+
   function renderForm() {
     var h = '';
     if (D.colors && D.colors.length) {
-      h += '<div class="ht-sec"><div class="ht-h"><span>' + esc(tx('chooseColor')) + '</span><span class="ht-sel">' + esc(S.color || '') + '</span></div><div class="ht-colors" role="radiogroup">';
+      h += '<div class="ht-sec"><div class="ht-h"><span>' + esc(tx('chooseColor')) + '</span><span class="ht-sel">' + esc(S.color || '') + '</span></div><div class="ht-colors" role="radiogroup" style="' + swatchVars() + '">';
       D.colors.forEach(function (c, i) {
         var sel = c.v === S.color;
         h += '<button type="button" class="ht-color' + (sel ? ' is-sel' : '') + '" role="radio" aria-checked="' + sel + '" data-i="' + i + '">'
-          + '<span class="ht-swatch"' + (c.img ? ' style="background-image:url(&quot;' + esc(c.img) + '&quot;);background-position:' + esc(c.pos || 'center top') + '"' : '') + '></span>'
+          + '<span class="ht-swatch"' + (c.img ? ' style="background-image:url(&quot;' + esc(c.img) + '&quot;);background-position:' + esc(c.pos || (D.swatchStyle && D.swatchStyle.pos) || 'center top') + '"' : '') + '></span>'
           + '<span class="ht-cname">' + esc(c.v) + '</span></button>';
       });
       h += '</div></div>';
@@ -230,9 +238,9 @@
         var c = D.colors[+b.getAttribute('data-i')];
         if (S.color !== c.v) { S.color = c.v; track('color_selected', { color_name: c.v }); }
         setAlert('');
-        var keep = body.querySelector('.ht-colors').scrollLeft;
+        var keep = body.scrollTop;
         renderForm();
-        body.querySelector('.ht-colors').scrollLeft = keep;
+        body.scrollTop = keep;
       });
     });
     var cb = body.querySelector('.ht-consent-cb');

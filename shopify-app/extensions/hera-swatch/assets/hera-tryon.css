@@ -28,13 +28,18 @@
 .ht-h { display: flex; align-items: baseline; gap: 14px; margin: 0 0 12px; font-size: 16px; font-weight: 500; }
 .ht-sel { font-size: 12px; font-weight: 700; color: #E32A69; }
 
-.ht-colors { display: flex; gap: 5px; overflow-x: auto; padding: 2px 2px 6px; margin: 0 -2px; scrollbar-width: thin; }
-.ht-color { flex: 0 0 46px; width: 46px; padding: 0; margin: 0; border: 0; background: none; cursor: pointer; text-align: center; font-family: inherit; color: inherit; min-width: 0; min-height: 0; box-shadow: none; }
-.ht-color .ht-swatch { display: block; width: 46px; height: 54px; border: 1px solid #333; border-radius: 6px; background: #f4f4f4 center top / cover no-repeat; }
-.ht-color .ht-cname { display: block; margin-top: 3px; padding: 1px 2px; border-radius: 4px; font-size: 10px; font-weight: 600; line-height: 1.3; color: #333; letter-spacing: -.2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ht-color.is-sel .ht-swatch { border: 2px solid #E32A69; box-shadow: 0 0 0 2px rgba(227, 42, 105, .25); }
-.ht-color.is-sel .ht-cname { background: #E32A69; color: #fff; }
-.ht-color:focus-visible .ht-swatch { outline: 2px solid #E32A69; outline-offset: 2px; }
+/* Colour cards = the same cards as Hera Swatch on the product page (2026-11-05, Hera):
+   image on top, variant name below (cut off with "…"), same width / image height / border
+   colour (taken from Online › Swatch › Style through --ht-w / --ht-h / --ht-accent).
+   Strong resets: the theme styles every <button> (inline-flex row), which put the
+   name next to the image. */
+.ht-colors { display: flex !important; flex-direction: row !important; flex-wrap: wrap !important; gap: 0.5rem 4px; margin: 0; padding: 0; --ht-w: 72px; --ht-h: 81px; --ht-accent: #E32A69; }
+.ht-sheet .ht-color { box-sizing: border-box !important; position: relative !important; display: flex !important; flex-direction: column !important; align-items: stretch !important; justify-content: flex-start !important; flex: 0 0 var(--ht-w) !important; width: var(--ht-w) !important; min-width: 0 !important; max-width: var(--ht-w) !important; height: auto !important; min-height: 0 !important; padding: 0 0 5px !important; margin: 0 !important; border: 0.5px solid #EFEFEF !important; border-radius: 5px !important; background: #fff !important; box-shadow: none !important; cursor: pointer; text-align: center !important; text-transform: none !important; letter-spacing: normal !important; line-height: normal !important; font-family: inherit; color: inherit; overflow: hidden !important; outline: none; gap: 0 !important; }
+.ht-sheet .ht-color:hover, .ht-sheet .ht-color.is-sel { border-color: var(--ht-accent) !important; }
+.ht-sheet .ht-color:focus-visible { box-shadow: 0 0 0 2px var(--ht-accent) !important; }
+.ht-sheet .ht-color .ht-swatch { position: relative !important; display: block !important; flex: 0 0 auto !important; width: 100% !important; height: var(--ht-h) !important; margin: 0 !important; padding: 0 !important; border: 0 !important; border-radius: 0 !important; background-color: #fff; background-size: cover; background-repeat: no-repeat; background-position: center top; }
+.ht-sheet .ht-color .ht-cname { display: block !important; flex: 0 0 auto !important; width: auto !important; max-width: calc(var(--ht-w) - 8px) !important; margin: 3px auto 0 !important; padding: 0 !important; font-size: 10px !important; font-weight: 600 !important; line-height: 1.3 !important; color: #6A6A6A; background: none !important; border-radius: 0 !important; white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; text-align: center !important; }
+.ht-sheet .ht-color.is-sel .ht-cname { color: #292929; }
 
 .ht-consent { display: flex; align-items: flex-start; justify-content: center; gap: 8px; margin: 4px 0 16px; font-size: 13px; line-height: 1.4; cursor: pointer; }
 .ht-consent input { width: 16px; height: 16px; margin: 1px 0 0; flex: none; accent-color: #E32A69; }
