@@ -16,6 +16,9 @@ const { editImage, checkSelfie, fetchImage, sniffMime } = require('./wigTryonOpe
 
 const MAX_SELFIE_BYTES = 10 * 1024 * 1024;
 const JOB_TTL_MS = 10 * 60 * 1000;
+// A checked selfie stays in memory 30 minutes after its LAST use (Hera 2026-11-05),
+// so the customer can try other wigs in the same visit without uploading again.
+const SELFIE_TTL_MS = 30 * 60 * 1000;
 
 // ─── Product data (Admin API, cached 5 min) ─────────────────────────────────
 const productCache = new Map(); // gid -> { at, data }
@@ -206,13 +209,13 @@ function startJob({ config, prepared, selfie, ctx }) {
 }
 
 // ─── Checked selfies waiting for generation (memory only) ──────────────────
-// After the selfie check passes, the photo waits here (max JOB_TTL_MS) and
+// After the selfie check passes, the photo waits here (SELFIE_TTL_MS after last use) and
 // /generate refers to it by selfieId — so the customer uploads once and a
 // generation can only start from a selfie that passed the check.
 const selfies = new Map();
 setInterval(() => {
   const now = Date.now();
-  for (const [id, x] of selfies) if (now - x.createdAt > JOB_TTL_MS) selfies.delete(id);
+  for (const [id, x] of selfies) if (now - x.createdAt > SELFIE_TTL_MS) selfies.delete(id);
 }, 60 * 1000).unref();
 
 function putSelfie(selfie, ownerKey) {
@@ -222,12 +225,20 @@ function putSelfie(selfie, ownerKey) {
 }
 // "Try another" (Hera 2026-11-05) re-uses the same checked selfie with
 // another colour, so a selfie is NOT removed when used: it stays until the
-// customer closes the window (discardSelfie) or JOB_TTL_MS after its last use.
+// customer removes it (discardSelfie) or SELFIE_TTL_MS after its last use. Closing the
+// window no longer removes it (2026-11-05: kept for other wigs in the same visit).
 function takeSelfie(id, ownerKey) {
   const x = selfies.get(String(id || ''));
   if (!x || x.ownerKey !== ownerKey) return null;
   x.createdAt = Date.now();
   return { buffer: x.buffer, mime: x.mime };
+}
+// Still there for this owner? (also counts as a use: restarts the 30 minutes)
+function hasSelfie(id, ownerKey) {
+  const x = selfies.get(String(id || ''));
+  if (!x || x.ownerKey !== ownerKey || Date.now() - x.createdAt > SELFIE_TTL_MS) return false;
+  x.createdAt = Date.now();
+  return true;
 }
 function discardSelfie(id, ownerKey) {
   const x = selfies.get(String(id || ''));
@@ -262,7 +273,7 @@ async function runSelfieCheck(config, selfie) {
 }
 
 module.exports = {
-  putSelfie, takeSelfie, discardSelfie, countCheck, runSelfieCheck,
+  putSelfie, takeSelfie, hasSelfie, discardSelfie, countCheck, runSelfieCheck,
   getProduct, searchProducts, colorValues, colorReference, decodeSelfie,
   prepare, startJob, getJob, MAX_SELFIE_BYTES,
 };

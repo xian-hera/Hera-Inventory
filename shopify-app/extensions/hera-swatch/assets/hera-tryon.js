@@ -17,11 +17,20 @@
   var D;
   try { D = JSON.parse(el.textContent); } catch (e) { return; }
   var T = D.t || {};
-  var tx = function (k) { return T[k] || (D.tEn && D.tEn[k]) || ''; };
+  // FALLBACK: texts added after the storefront data was last saved in the Hub.
+  var FALLBACK = D.lang === 'fr' ? { changePhoto: 'Changer de photo', removePhoto: 'Supprimer la photo' } : { changePhoto: 'Change photo', removePhoto: 'Remove photo' };
+  var tx = function (k) { return T[k] || (D.tEn && D.tEn[k]) || FALLBACK[k] || ''; };
   var log = function () { if (D.debug && window.console) console.log.apply(console, ['[Hera Try-on]'].concat([].slice.call(arguments))); };
   log('data', D);
 
   var PENDING_KEY = 'hera_tryon_open';
+  // Checked selfie kept for this visit (Hera 2026-11-05): sessionStorage = this browser
+  // tab only, cleared when the tab / browser is closed. The Hub keeps its copy 30 min
+  // after the last use; if that copy is gone, the kept photo is checked again silently.
+  var KEPT_KEY = 'hera_tryon_selfie';
+  function loadKept() { try { var k = JSON.parse(sessionStorage.getItem(KEPT_KEY) || 'null'); return k && k.id && k.data ? k : null; } catch (e) { return null; } }
+  function saveKept(id, data) { try { sessionStorage.setItem(KEPT_KEY, JSON.stringify({ id: id, data: data })); } catch (e) { /* storage full / blocked: works for this page only */ } }
+  function clearKept() { try { sessionStorage.removeItem(KEPT_KEY); } catch (e) { /* ignore */ } }
   var SESSION_KEY = 'hera_tryon_sid';
   var sid = (function () {
     try {
@@ -124,6 +133,11 @@
   function open() {
     if (!ov) build();
     if (!S.color) S.color = pickDefaultColor();
+    if (!S.selfieId) {
+      var k = loadKept();
+      // consent was given before that photo was uploaded in this visit
+      if (k) { S.selfieId = k.id; S.thumb = k.data; S.check = 'ok'; S.consent = true; }
+    }
     S.step = 'form';
     render();
     ov.style.display = 'flex';
@@ -138,8 +152,9 @@
     document.documentElement.classList.remove('ht-lock');
     clearTimeout(S.pollTimer);
     setTimeout(function () { ov.style.display = 'none'; }, 280);
-    if (S.selfieId) api('POST', '/discard-selfie', { selfie_id: S.selfieId, __keepalive: true }).catch(function () {});
-    S.selfieId = null; S.thumb = null; S.check = null; S.image = null; S.busy = false; S.step = 'form';
+    // The selfie is kept (other wigs in this visit) — only "Remove photo" deletes it.
+    S.image = null; S.busy = false; S.step = 'form';
+    if (S.check === 'bad') { S.check = null; S.thumb = null; }
   }
 
   function pickDefaultColor() {
@@ -149,9 +164,12 @@
   }
 
   function refreshStatus(precamera) {
-    return api('GET', '/status?product_id=' + D.productId + '&session_id=' + sid + (precamera ? '&check=precamera' : ''))
+    var kept = S.selfieId;
+    return api('GET', '/status?product_id=' + D.productId + '&session_id=' + sid + (precamera ? '&check=precamera' : '') + (kept ? '&selfie_id=' + encodeURIComponent(kept) : ''))
       .then(function (d) {
         if (d.__status !== 200) return;
+        // The Hub's copy expired (30 min / restart): check the kept photo again, silently.
+        if (kept && d.selfieValid === false && S.selfieId === kept && S.thumb && !S.checking) checkData(S.thumb, true);
         S.remaining = d.remaining;
         S.blocked = d.quota && !d.quota.ok ? d.quota.message : null;
         if (!d.enabled) S.blocked = S.blocked || tx('busy');
@@ -192,6 +210,8 @@
       + '<span class="ht-spin"></span>' + (S.check === 'ok' ? '<span class="ht-badge">&#10003;</span>' : S.check === 'bad' ? '<span class="ht-badge">!</span>' : '') + '</button>'
       + '<div class="ht-req">' + esc(tx('requirements'))
       + (S.checking ? '<div class="ht-status">' + esc(tx('checking')) + '</div>' : S.check === 'ok' ? '<div class="ht-status is-ok">' + esc(tx('selfieOk')) + '</div>' : '')
+      + (S.thumb && !S.checking ? '<div class="ht-links"><button type="button" class="ht-link ht-change">' + esc(tx('changePhoto')) + '</button>'
+        + '<button type="button" class="ht-link ht-remove">' + esc(tx('removePhoto')) + '</button></div>' : '')
       + '</div></div>'
       + '<input type="file" accept="image/*" class="ht-file" hidden></div>';
     if (tx('description')) h += '<div class="ht-sec"><div class="ht-desc">' + esc(tx('description')) + '</div></div>';
@@ -222,6 +242,10 @@
       if (S.blocked) { setAlert(S.blocked); return; }
       file.click();
     });
+    var ch = body.querySelector('.ht-change');
+    if (ch) ch.addEventListener('click', function () { if (!S.busy && !S.blocked) file.click(); else if (S.blocked) setAlert(S.blocked); });
+    var rm = body.querySelector('.ht-remove');
+    if (rm) rm.addEventListener('click', function () { if (!S.busy) { removeSelfie(); renderForm(); } });
     file.addEventListener('change', function () {
       var f = file.files && file.files[0];
       file.value = '';
@@ -237,7 +261,7 @@
     var ready = !S.blocked && !S.busy && !S.checking;
     foot.innerHTML = '<div class="ht-alert" role="alert">' + esc(a) + '</div>'
       + '<button type="button" class="ht-btn ht-go"' + (ready ? '' : ' disabled') + '>' + esc(tx('tryButton')) + '</button>';
-    foot.querySelector('.ht-go').addEventListener('click', submit);
+    foot.querySelector('.ht-go').addEventListener('click', function () { submit(false); });
   }
   function setAlert(t) {
     var a = foot.querySelector('.ht-alert');
@@ -282,29 +306,53 @@
     });
   }
 
+  function removeSelfie() {
+    if (S.selfieId) api('POST', '/discard-selfie', { selfie_id: S.selfieId, __keepalive: true }).catch(function () {});
+    clearKept();
+    S.selfieId = null; S.thumb = null; S.check = null;
+  }
+
   function onPhoto(f) {
-    S.check = null; S.selfieId = null; S.checking = true;
+    if (S.selfieId) removeSelfie(); // a new photo replaces the kept one
+    S.checking = true; S.check = null;
     setAlert('');
-    toJpeg(f).then(function (dataUrl) {
-      S.thumb = dataUrl;
-      renderForm();
-      return api('POST', '/check-selfie', { selfie: dataUrl, product_id: D.productId, color_name: S.color, session_id: sid });
-    }).then(function (d) {
-      S.checking = false;
-      if (d.__status === 200 && d.ok) { S.check = 'ok'; S.selfieId = d.selfieId; renderForm(); return; }
-      S.check = 'bad';
-      if (d.code === 'limit' || d.code === 'busy') { S.blocked = d.message; S.remaining = d.code === 'limit' ? 0 : S.remaining; updateLeft(); }
-      renderForm();
-      renderFoot(d.message || tx('uploadFirst'));
-    }).catch(function () {
-      S.checking = false; S.check = 'bad';
-      renderForm();
-      renderFoot(D.lang === 'fr' ? 'Impossible de lire cette photo. Veuillez en choisir une autre.' : 'This photo could not be read. Please choose another one.');
-    });
+    renderForm();
+    toJpeg(f).then(function (dataUrl) { return checkData(dataUrl, false); })
+      .catch(function () {
+        S.checking = false; S.check = 'bad';
+        renderForm();
+        renderFoot(D.lang === 'fr' ? 'Impossible de lire cette photo. Veuillez en choisir une autre.' : 'This photo could not be read. Please choose another one.');
+      });
+  }
+
+  // Sends a photo (JPEG data URL) to the selfie check. silent = re-check of the kept
+  // photo after the Hub's copy expired. Resolves true when the photo passed.
+  function checkData(dataUrl, silent) {
+    S.checking = true; S.thumb = dataUrl;
+    if (S.step === 'form') renderForm();
+    return api('POST', '/check-selfie', { selfie: dataUrl, product_id: D.productId, color_name: S.color, session_id: sid })
+      .then(function (d) {
+        S.checking = false;
+        if (d.__status === 200 && d.ok) {
+          S.check = 'ok'; S.selfieId = d.selfieId;
+          saveKept(d.selfieId, dataUrl);
+          if (S.step === 'form') renderForm();
+          return true;
+        }
+        S.selfieId = null; S.check = 'bad'; clearKept();
+        if (silent) S.thumb = null;
+        if (d.code === 'limit' || d.code === 'busy') { S.blocked = d.message; S.remaining = d.code === 'limit' ? 0 : S.remaining; updateLeft(); }
+        if (S.step === 'form') { renderForm(); renderFoot(d.message || tx('uploadFirst')); }
+        return false;
+      }, function () {
+        S.checking = false; S.check = silent ? 'ok' : 'bad';
+        if (S.step === 'form') { renderForm(); if (!silent) renderFoot(D.lang === 'fr' ? 'Erreur réseau. Veuillez réessayer.' : 'Network error. Please try again.'); }
+        return false;
+      });
   }
 
   // ─── Generate ───────────────────────────────────────────────────────────────
-  function submit() {
+  function submit(retried) {
     if (S.blocked) { setAlert(S.blocked); return; }
     if (D.colors && D.colors.length && !S.color) { setAlert(tx('chooseColorFirst')); return; }
     if (!S.consent) { setAlert(tx('consentFirst')); return; }
@@ -321,7 +369,16 @@
           poll(d.jobId, Date.now());
           return;
         }
-        if (d.code === 'selfie_expired') { S.selfieId = null; S.thumb = null; S.check = null; renderForm(); }
+        if (d.code === 'selfie_expired') {
+          // Hub copy gone: check the kept photo again, then try once more.
+          var data = S.thumb;
+          S.selfieId = null; clearKept();
+          if (data && retried !== true) {
+            checkData(data, true).then(function (ok) { if (ok) submit(true); });
+            return;
+          }
+          S.thumb = null; S.check = null; renderForm();
+        }
         if (d.code === 'limit' || d.code === 'busy') { S.blocked = d.message; if (d.code === 'limit') { S.remaining = 0; updateLeft(); } }
         renderFoot(d.message || '');
       })

@@ -285,7 +285,10 @@ proxyRouter.get('/status', async (req, res) => {
       eligible: null,
       quota: null,
       remaining: null,
+      selfieValid: null,
     };
+    // ?selfie_id= : is the selfie kept from earlier in this visit still on the server?
+    if (req.query.selfie_id) out.selfieValid = tryon.hasSelfie(req.query.selfie_id, ownerOf(req));
     if (!store.isOn(config)) return res.json(out);
     if (req.query.product_id) {
       const p = await tryon.getProduct(req.query.product_id).catch(() => null);
@@ -421,7 +424,7 @@ proxyRouter.post('/generate', async (req, res) => {
   }
 });
 
-// POST /discard-selfie { selfie_id } — the window was closed: forget the selfie now.
+// POST /discard-selfie { selfie_id } — the customer removed / replaced the photo: forget it now.
 proxyRouter.post('/discard-selfie', (req, res) => {
   tryon.discardSelfie((req.body || {}).selfie_id, ownerOf(req));
   res.json({ ok: true });

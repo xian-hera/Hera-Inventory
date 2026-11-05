@@ -30,6 +30,8 @@ const TEXTS = [
     { key: 'consentAfter', label: 'Consent — text after the link' },
     { key: 'requirements', label: 'Selfie requirements (next to the upload box)', multiline: 3 },
     { key: 'description', label: 'Description (below the upload box)', multiline: 3 },
+    { key: 'changePhoto', label: 'Link: change photo (shown once a selfie is kept)' },
+    { key: 'removePhoto', label: 'Link: remove photo' },
     { key: 'tryButton', label: 'Button' },
   ] },
   { group: 'Messages while choosing', items: [

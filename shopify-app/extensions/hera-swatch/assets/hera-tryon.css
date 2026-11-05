@@ -52,6 +52,8 @@
 .ht-spin { display: none; position: absolute; z-index: 1; width: 26px; height: 26px; border: 3px solid rgba(227, 42, 105, .25); border-top-color: #E32A69; border-radius: 50%; animation: ht-rot .8s linear infinite; }
 @keyframes ht-rot { to { transform: rotate(360deg); } }
 .ht-req { flex: 1; min-width: 0; font-size: 12px; line-height: 1.45; color: #333; white-space: pre-line; }
+.ht-links { display: flex; gap: 14px; margin-top: 8px; }
+.ht-link { padding: 0; margin: 0; border: 0; background: none; font-family: inherit; font-size: 12px; color: #E32A69; text-decoration: underline; cursor: pointer; min-width: 0; min-height: 0; box-shadow: none; }
 .ht-status { margin-top: 6px; font-size: 12px; font-weight: 600; }
 .ht-status.is-ok { color: #1f8a4c; }
 .ht-desc { font-size: 12px; line-height: 1.5; color: #444; white-space: pre-line; }
