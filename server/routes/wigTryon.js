@@ -296,6 +296,13 @@ proxyRouter.get('/status', async (req, res) => {
     if (req.query.product_id) {
       const p = await tryon.getProduct(req.query.product_id).catch(() => null);
       out.eligible = !!(p && store.isEligibleType(config, p.productType));
+      // Wig name + colours in English (default language), whatever the page language.
+      if (out.eligible) {
+        out.product = {
+          name: tryon.displayName(p),
+          colors: config.colorEnabled ? await tryon.storefrontColors(p).catch(() => []) : [],
+        };
+      }
     }
     if (config.requireLogin && !req.customerId) {
       out.quota = { ok: false, code: 'login_required', message: msg(config, 'loginRequired', req.lang) };

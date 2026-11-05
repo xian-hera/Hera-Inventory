@@ -104,6 +104,10 @@ const DEFAULT_CONFIG = {
   },
   // Widget texts, EN / FR.
   ui: {
+    // Header layout 2026-11-05 (Hera): small label above the wig name / above the number.
+    titleLabel: { en: 'Wig AI try on', fr: 'Essayage IA de perruque' },
+    leftLabel: { en: 'Try-ons left today', fr: "Essais restants aujourd'hui" },
+    // Not shown any more since the 2026-11-05 header layout (kept so saved texts aren't lost).
     titleSuffix: { en: 'Try on', fr: 'Essayage' },
     leftToday: { en: 'try-ons left today', fr: "essais restants aujourd'hui" },
     chooseColor: { en: 'Choose color', fr: 'Choisir la couleur' },

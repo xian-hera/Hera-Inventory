@@ -18,7 +18,9 @@
   try { D = JSON.parse(el.textContent); } catch (e) { return; }
   var T = D.t || {};
   // FALLBACK: texts added after the storefront data was last saved in the Hub.
-  var FALLBACK = D.lang === 'fr' ? { changePhoto: 'Changer de photo', removePhoto: 'Supprimer la photo' } : { changePhoto: 'Change photo', removePhoto: 'Remove photo' };
+  var FALLBACK = D.lang === 'fr'
+    ? { changePhoto: 'Changer de photo', removePhoto: 'Supprimer la photo', titleLabel: 'Essayage IA de perruque', leftLabel: "Essais restants aujourd'hui" }
+    : { changePhoto: 'Change photo', removePhoto: 'Remove photo', titleLabel: 'Wig AI try on', leftLabel: 'Try-ons left today' };
   var tx = function (k) { return T[k] || (D.tEn && D.tEn[k]) || FALLBACK[k] || ''; };
   var log = function () { if (D.debug && window.console) console.log.apply(console, ['[Hera Try-on]'].concat([].slice.call(arguments))); };
   log('data', D);
@@ -116,21 +118,26 @@
   }
 
   // ─── State ──────────────────────────────────────────────────────────────────
-  var S = { color: null, consent: false, selfieId: null, thumb: null, checking: false, check: null, remaining: null, blocked: null, busy: false, image: null, pollTimer: null, step: 'form' };
+  // colors: from the Hub (/status), English names — null until loaded.
+  var S = { colors: null, name: null, color: null, consent: false, selfieId: null, thumb: null, checking: false, check: null, remaining: null, blocked: null, busy: false, image: null, pollTimer: null, step: 'form' };
   var ov, sheet, body, foot, leftEl;
 
   function build() {
     ov = document.createElement('div');
     ov.className = 'ht-overlay';
     ov.innerHTML = '<div class="ht-sheet" role="dialog" aria-modal="true" aria-labelledby="ht-title">'
-      + '<div class="ht-head"><h2 class="ht-title" id="ht-title"></h2><span class="ht-left"></span>'
+      // Header (Hera 2026-11-05): small label + wig name on the left, small label + number on the right.
+      + '<div class="ht-head"><div class="ht-head-l"><span class="ht-lbl">' + esc(tx('titleLabel')) + '</span><h2 class="ht-title" id="ht-title"></h2></div>'
+      + '<div class="ht-head-r"><span class="ht-lbl">' + esc(tx('leftLabel')) + '</span><span class="ht-qty ht-left"></span></div>'
       + '<button type="button" class="ht-close" aria-label="Close">' + CLOSE_SVG + '</button></div>'
       + '<div class="ht-body"></div><div class="ht-foot"></div></div>';
     sheet = ov.querySelector('.ht-sheet');
     body = ov.querySelector('.ht-body');
     foot = ov.querySelector('.ht-foot');
     leftEl = ov.querySelector('.ht-left');
-    ov.querySelector('.ht-title').innerHTML = '<span class="ht-name">' + esc(titleCase(D.title)) + '</span><span class="ht-suffix">' + esc(tx('titleSuffix')) + '</span>';
+    // English wig name comes from the Hub; the page's (maybe translated) one is shown
+    // only on English pages until it arrives.
+    ov.querySelector('.ht-title').textContent = D.titleIsEnglish ? titleCase(D.title) : '';
     ov.querySelector('.ht-close').addEventListener('click', close);
     ov.addEventListener('click', function (e) { if (e.target === ov) close(); });
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && ov.classList.contains('is-open')) close(); });
@@ -139,7 +146,6 @@
 
   function open() {
     if (!ov) build();
-    if (!S.color) S.color = pickDefaultColor();
     if (!S.selfieId) {
       var k = loadKept();
       // consent was given before that photo was uploaded in this visit
@@ -165,8 +171,8 @@
   }
 
   function pickDefaultColor() {
-    if (!D.colors || !D.colors.length) return null;
-    for (var i = 0; i < D.colors.length; i++) if (D.colors[i].v === D.selected) return D.colors[i].v;
+    if (!S.colors || !S.colors.length) return null;
+    for (var i = 0; i < S.colors.length; i++) if (S.colors[i].i === D.selectedIndex) return S.colors[i].v;
     return null; // customer chooses (mock-up: "Choose color")
   }
 
@@ -174,18 +180,30 @@
     var kept = S.selfieId;
     return api('GET', '/status?product_id=' + D.productId + '&session_id=' + sid + (precamera ? '&check=precamera' : '') + (kept ? '&selfie_id=' + encodeURIComponent(kept) : ''))
       .then(function (d) {
-        if (d.__status !== 200) return;
+        if (d.__status !== 200) { if (S.colors === null) { S.colors = []; if (S.step === 'form') renderForm(); } return; }
         // The Hub's copy expired (30 min / restart): check the kept photo again, silently.
         if (kept && d.selfieValid === false && S.selfieId === kept && S.thumb && !S.checking) checkData(S.thumb, true);
         S.remaining = d.remaining;
+        if (d.product) {
+          if (d.product.name) { S.name = d.product.name; ov.querySelector('.ht-title').textContent = titleCase(S.name); }
+          var first = S.colors === null;
+          S.colors = d.product.colors || [];
+          if (!S.color || !S.colors.some(function (c) { return c.v === S.color; })) S.color = pickDefaultColor();
+          if (first && S.step === 'form') renderForm();
+        } else if (S.colors === null) {
+          S.colors = [];
+          if (S.step === 'form') renderForm();
+        }
         S.blocked = d.quota && !d.quota.ok ? d.quota.message : null;
         if (!d.enabled) S.blocked = S.blocked || tx('busy');
         updateLeft();
         if (S.step === 'form') renderFoot();
-      }).catch(function () {});
+      }).catch(function () {
+        if (S.colors === null) { S.colors = []; if (S.step === 'form') renderForm(); }
+      });
   }
   function updateLeft() {
-    leftEl.innerHTML = S.remaining == null ? '' : '<b>' + S.remaining + '</b>' + esc(tx('leftToday'));
+    leftEl.textContent = S.remaining == null ? '' : String(S.remaining);
   }
 
   // ─── Rendering ──────────────────────────────────────────────────────────────
@@ -206,9 +224,11 @@
 
   function renderForm() {
     var h = '';
-    if (D.colors && D.colors.length) {
+    if (S.colors === null) {
+      h += '<div class="ht-sec"><div class="ht-h"><span>' + esc(tx('chooseColor')) + '</span></div><div class="ht-desc">…</div></div>';
+    } else if (S.colors.length) {
       h += '<div class="ht-sec"><div class="ht-h"><span>' + esc(tx('chooseColor')) + '</span><span class="ht-sel">' + esc(S.color || '') + '</span></div><div class="ht-colors" role="radiogroup" style="' + swatchVars() + '">';
-      D.colors.forEach(function (c, i) {
+      S.colors.forEach(function (c, i) {
         var sel = c.v === S.color;
         h += '<button type="button" class="ht-color' + (sel ? ' is-sel' : '') + '" role="radio" aria-checked="' + sel + '" data-i="' + i + '">'
           + '<span class="ht-swatch"' + (c.img ? ' style="background-image:url(&quot;' + esc(c.img) + '&quot;);background-position:' + esc(c.pos || (D.swatchStyle && D.swatchStyle.pos) || 'center top') + '"' : '') + '></span>'
@@ -235,7 +255,7 @@
 
     [].forEach.call(body.querySelectorAll('.ht-color'), function (b) {
       b.addEventListener('click', function () {
-        var c = D.colors[+b.getAttribute('data-i')];
+        var c = S.colors[+b.getAttribute('data-i')];
         if (S.color !== c.v) { S.color = c.v; track('color_selected', { color_name: c.v }); }
         setAlert('');
         var keep = body.scrollTop;
@@ -369,7 +389,8 @@
   // ─── Generate ───────────────────────────────────────────────────────────────
   function submit(retried) {
     if (S.blocked) { setAlert(S.blocked); return; }
-    if (D.colors && D.colors.length && !S.color) { setAlert(tx('chooseColorFirst')); return; }
+    if (S.colors === null) return; // still loading
+    if (S.colors.length && !S.color) { setAlert(tx('chooseColorFirst')); return; }
     if (!S.consent) { setAlert(tx('consentFirst')); return; }
     if (!S.selfieId) { setAlert(tx('uploadFirst')); return; }
     S.busy = true;

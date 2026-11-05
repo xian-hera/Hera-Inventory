@@ -13,13 +13,13 @@
 }
 .ht-sheet *, .ht-sheet *::before, .ht-sheet *::after { box-sizing: border-box; }
 
-.ht-head { display: flex; align-items: center; gap: 12px; padding: 18px 20px 14px 24px; border-bottom: 1px solid #e6e6e6; flex: none; }
-.ht-title { flex: 1; min-width: 0; margin: 0; display: flex; font-size: 17px; font-weight: 700; line-height: 1.3; white-space: nowrap; }
-.ht-title .ht-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.ht-title .ht-suffix { flex: none; margin-left: .3em; }
-.ht-left { flex: none; font-size: 13px; color: #111; white-space: nowrap; }
-.ht-left b { font-weight: 700; margin-right: 4px; }
-.ht-close { flex: none; width: 36px; height: 36px; padding: 6px; margin: 0 -6px 0 0; border: 0; background: none; cursor: pointer; color: #111; display: flex; align-items: center; justify-content: center; min-width: 0; min-height: 0; box-shadow: none; }
+.ht-head { display: flex; align-items: flex-start; gap: 14px; padding: 18px 20px 16px 24px; border-bottom: 1px solid #e6e6e6; flex: none; }
+.ht-head-l { flex: 1; min-width: 0; }
+.ht-head-r { flex: none; text-align: right; }
+.ht-lbl { display: block; margin: 0 0 4px; font-size: 13px; font-weight: 400; line-height: 1.3; color: #111; white-space: nowrap; }
+.ht-title { margin: 0; font-size: 22px; font-weight: 700; line-height: 1.2; color: #111; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: break-word; }
+.ht-qty { display: block; font-size: 22px; font-weight: 700; line-height: 1.2; color: #111; min-height: 1.2em; }
+.ht-close { flex: none; align-self: center; width: 36px; height: 36px; padding: 6px; margin: 0 -6px 0 0; border: 0; background: none; cursor: pointer; color: #111; display: flex; align-items: center; justify-content: center; min-width: 0; min-height: 0; box-shadow: none; }
 .ht-close svg { width: 22px; height: 22px; display: block; }
 
 .ht-body { flex: 1 1 auto; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }

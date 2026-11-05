@@ -10,8 +10,9 @@
     - product.type must be in the Hub's product type list (case-insensitive;
       translated type names may be listed there too).
     - outputs the data the widget needs: product id / title, logged-in or not,
-      login URL, colour values (+ Swatch image via the hera_swatch metafields,
-      same hidden rule as Swatch: sold out AND custom.discontinued = true), texts.
+      login URL, position of the colour selected on the page, texts.
+      Wig name + colours (with Swatch images and the hidden rules) come from the Hub
+      in English via /status — never translated (Hera 2026-11-05).
   The icon and the window are drawn by assets/hera-tryon.js; styles in hera-tryon.css.
   All calls go to the Hub through the Shopify App Proxy ({{ proxyPath }}, e.g. /apps/hera-tryon).
 {%- endcomment -%}
@@ -80,19 +81,6 @@
       endfor
     endif
 
-    assign ht_lib = nil
-    if ht_pos > 0 and hs_cfg
-      assign ht_prefix = hs_cfg.vendorLibrary[product.vendor]
-      if ht_prefix
-        assign ht_libkey = 'lib_' | append: ht_prefix
-        assign ht_lib = app.metafields.hera_swatch[ht_libkey].value
-      endif
-    endif
-    assign ht_hide_dc = true
-    if hs_cfg and hs_cfg.hideDiscontinued == false
-      assign ht_hide_dc = false
-    endif
-    assign ht_opt_key = 'option' | append: ht_pos
     assign ht_idx = ht_pos | minus: 1
   endif
 -%}
@@ -102,6 +90,7 @@
 {
   "productId": {{ product.id | json }},
   "title": {{ ht_name | json }},
+  "titleIsEnglish": {% if ht_lang == 'en' %}true{% else %}false{% endif %},
   "lang": {{ ht_lang | json }},
   "loggedIn": {% if customer %}true{% else %}false{% endif %},
   "requireLogin": {{ ht.requireLogin | json }},
@@ -112,40 +101,31 @@
   "iconUrl": {% if ht.iconFile != blank %}{{ ht.iconFile | file_url | json }}{% else %}""{% endif %},
   "iconSize": {{ ht.iconSize | default: 48 }},
   "iconOffset": {{ ht.iconOffset | default: 12 }},
-  "colors": [
-    {%- if ht.colorEnabled and ht_pos > 0 -%}
-      {%- assign ht_first = true -%}
-      {%- for v in ht_opt.values -%}
-        {%- liquid
-          # Hidden (like Swatch 6.2.1) when EVERY variant with this colour is sold out AND discontinued.
-          assign ht_visible = false
-          for vr in product.variants
-            if vr[ht_opt_key] != v
-              continue
-            endif
-            if ht_hide_dc == false or vr.available or vr.metafields.custom.discontinued.value != true
-              assign ht_visible = true
-              break
-            endif
-          endfor
-          assign k = v | strip | upcase
-          assign c0 = k | slice: 0
-          if c0 == '#' or c0 == '@'
-            assign k = k | slice: 1, 500 | strip
-          endif
-          assign ht_e = nil
-          if ht_lib
-            assign ht_e = ht_lib.codes[k]
-          endif
-        -%}
-        {%- if ht_visible -%}
-          {% unless ht_first %},{% endunless %}{"v": {{ v | json }}, "img": {% if ht_e and ht_e.f != blank %}{{ ht_e.f | file_url | append: '&width=200' | json }}{% else %}null{% endif %}, "pos": {{ ht_e.p | default: 'center top' | json }}}
-          {%- assign ht_first = false -%}
-        {%- endif -%}
-      {%- endfor -%}
-    {%- endif -%}
-  ],
-  "selected": {%- if ht_pos > 0 -%}{{ product.selected_or_first_available_variant.options[ht_idx] | json }}{%- else -%}null{%- endif -%},
+  "swatchStyle": {
+    "w": {{ hs_cfg.style.cardWidth | default: 72 }},
+    "h": {{ hs_cfg.style.imageHeight | default: 81 }},
+    "accent": {{ hs_cfg.style.accentColor | default: '#E32A69' | json }},
+    "pos": {{ hs_cfg.style.imagePosition | default: 'center top' | json }}
+  },
+  {%- comment -%}
+    Colours come from the Hub (/status, Admin API = English) since 2026-11-05: on the
+    French store Liquid returns translated option values, which don't match the
+    Swatch codes. Here we only pass WHICH colour is selected on the page, as its
+    position in the colour option (the same in every language).
+  {%- endcomment -%}
+  "selectedIndex": {%- liquid
+    assign ht_sel_i = -1
+    if ht_pos > 0
+      assign ht_sel_v = product.selected_or_first_available_variant.options[ht_idx]
+      for v in ht_opt.values
+        if v == ht_sel_v
+          assign ht_sel_i = forloop.index0
+          break
+        endif
+      endfor
+    endif
+    echo ht_sel_i
+  -%},
   "t": {{ ht.ui[ht_lang] | json }},
   "tEn": {{ ht.ui.en | json }},
   "debug": {{ block.settings.debug | json }}

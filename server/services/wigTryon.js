@@ -31,7 +31,9 @@ const PRODUCT_QUERY = `
   query WigTryonProduct($id: ID!) {
     product(id: $id) {
       id title handle productType vendor status
+      wigName: metafield(namespace: "custom", key: "wig_name") { value }
       options { name values }
+      variants(first: 250) { nodes { availableForSale selectedOptions { name value } discontinued: metafield(namespace: "custom", key: "discontinued") { value } } }
       media(first: 50) { nodes { id mediaContentType ... on MediaImage { image { url width height altText } } } }
     }
   }`;
@@ -45,6 +47,13 @@ async function getProduct(id) {
   if (!p) return null;
   const data = {
     id: p.id, numericId: numId(p.id), title: p.title, handle: p.handle,
+    // Admin API = the store's default language (English) — never the French translation.
+    wigName: (p.wigName && String(p.wigName.value || '').trim()) || '',
+    variants: ((p.variants && p.variants.nodes) || []).map(v => ({
+      available: !!v.availableForSale,
+      discontinued: !!(v.discontinued && String(v.discontinued.value) === 'true'),
+      options: Object.fromEntries((v.selectedOptions || []).map(o => [o.name, o.value])),
+    })),
     productType: p.productType, vendor: p.vendor, status: p.status,
     options: p.options || [],
     media: ((p.media && p.media.nodes) || [])
@@ -272,7 +281,41 @@ async function runSelfieCheck(config, selfie) {
   }
 }
 
+// Colours shown in the window (2026-11-05). Built HERE from the Admin API, not in
+// Liquid: on the French store Liquid gives translated option values, which don't
+// match the Swatch codes (Hera: colour and wig names always stay in English).
+// Same rules as before: hidden when every variant with the colour is sold out AND
+// custom.discontinued (unless Swatch's hideDiscontinued is off), and only colours that
+// have a Swatch image. i = position in the product's colour option (to match the
+// colour selected on the page, whatever its language).
+async function storefrontColors(product) {
+  const { optionName, values } = await colorValues(product);
+  if (!optionName || !values.length) return [];
+  let hideDc = true;
+  try { hideDc = (await swatchStore.getConfig()).hideDiscontinued !== false; } catch (e) { /* default */ }
+  const lib = await swatchStore.libraryForVendor(product.vendor);
+  const imgs = {};
+  if (lib) {
+    const r = await pool.query(`
+      SELECT c.code_key, i.url, i.position FROM swatch_codes c JOIN swatch_images i ON i.id = c.image_id
+      WHERE c.library_id = $1 AND i.url IS NOT NULL`, [lib.id]);
+    for (const row of r.rows) imgs[row.code_key] = row;
+  }
+  const out = [];
+  values.forEach((v, i) => {
+    const vars = product.variants.filter(x => x.options[optionName] === v);
+    const visible = !vars.length || vars.some(x => !hideDc || x.available || !x.discontinued);
+    const img = imgs[codeKey(v)];
+    if (!visible || !img) return;
+    out.push({ v, i, img: `${img.url}${img.url.includes('?') ? '&' : '?'}width=200`, pos: img.position || null });
+  });
+  return out;
+}
+
+const displayName = (product) => product.wigName || product.title;
+
 module.exports = {
+  storefrontColors, displayName,
   putSelfie, takeSelfie, hasSelfie, discardSelfie, countCheck, runSelfieCheck,
   getProduct, searchProducts, colorValues, colorReference, decodeSelfie,
   prepare, startJob, getJob, MAX_SELFIE_BYTES,

@@ -18,8 +18,8 @@ export const DEFAULT_ICON = 'data:image/svg+xml;utf8,' + encodeURIComponent('<sv
 
 const TEXTS = [
   { group: 'Window header', items: [
-    { key: 'titleSuffix', label: 'After the wig name (“{Wig name} Try on”)' },
-    { key: 'leftToday', label: 'After the number (“3 try-ons left today”)' },
+    { key: 'titleLabel', label: 'Small label above the wig name (“Wig AI try on”)' },
+    { key: 'leftLabel', label: 'Small label above the number (“Try-ons left today”)' },
     { key: 'iconLabel', label: 'Icon name for screen readers / tooltip' },
   ] },
   { group: 'Choose colour & selfie', items: [
