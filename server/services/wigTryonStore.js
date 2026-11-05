@@ -123,6 +123,8 @@ const DEFAULT_CONFIG = {
     // Button while it can't be pressed yet (Hera 2026-11-05)
     btnChooseColor: { en: 'Choose Color', fr: 'Choisissez une couleur' },
     btnUploadSelfie: { en: 'Upload a Selfie', fr: 'Téléversez un selfie' },
+    // First-visit tip on the product page (shown once per browser). Empty = no tip.
+    tipText: { en: 'New! Tap here to try this wig on with AI.', fr: "Nouveau ! Touchez ici pour essayer cette perruque avec l'IA." },
     checking: { en: 'Checking your photo…', fr: 'Vérification de votre photo…' },
     selfieOk: { en: 'Photo looks good!', fr: 'La photo est parfaite !' },
     consentFirst: { en: 'Please accept the Privacy Policy first.', fr: "Veuillez d'abord accepter la politique de confidentialité." },
@@ -340,7 +342,7 @@ function hashIp(ip) {
 // Customer flow (Hera 2026-11-04): button → (login) → colour → consent → selfie
 // upload → selfie check → generation → download. The product photo is always
 // the product's first image, so there is no "photo selected" step any more.
-const CLIENT_EVENTS = ['button_click', 'login_completed', 'color_selected', 'consent_accepted', 'image_downloaded'];
+const CLIENT_EVENTS = ['button_click', 'login_completed', 'color_selected', 'consent_accepted', 'image_downloaded', 'tip_shown'];
 const SERVER_EVENTS = ['selfie_submitted', 'selfie_accepted', 'selfie_rejected', 'generation_success', 'generation_failed',
   'blocked_account_limit', 'blocked_ip_limit', 'blocked_global_limit'];
 const FUNNEL = ['button_click', 'login_completed', 'color_selected', 'consent_accepted',

@@ -14,6 +14,7 @@ const { queueState } = require('../services/wigTryonOpenAI');
 const { syncTryonMetafield } = require('../services/wigTryonShopify');
 const { gql } = require('../services/shopifyGql');
 const { getSetting } = require('../services/productData');
+const { pool } = require('../database/init');
 
 const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
 const errMsg = (e) => (e && e.message) || 'Something went wrong';
@@ -432,6 +433,23 @@ proxyRouter.post('/generate', async (req, res) => {
     console.error('[wig-tryon] generate:', e.message);
     res.status(500).json({ code: 'error', message: config ? msg(config, 'failed', req.lang) : 'Error' });
   }
+});
+
+// First-visit tip (2026-11-05): logged-in customers are remembered per ACCOUNT.
+// GET /tip -> { seen }   (guests: always false — the browser remembers them)
+// POST /tip-seen         (logged-in only; guests are a no-op)
+proxyRouter.get('/tip', async (req, res) => {
+  if (!req.customerId) return res.json({ seen: false, account: false });
+  try {
+    const r = await pool.query('SELECT 1 FROM wig_tryon_tip_seen WHERE customer_id = $1', [req.customerId]);
+    res.json({ seen: r.rows.length > 0, account: true });
+  } catch (e) { res.json({ seen: false, account: true }); }
+});
+proxyRouter.post('/tip-seen', async (req, res) => {
+  if (req.customerId) {
+    await pool.query('INSERT INTO wig_tryon_tip_seen (customer_id) VALUES ($1) ON CONFLICT DO NOTHING', [req.customerId]).catch(() => {});
+  }
+  res.json({ ok: true });
 });
 
 // POST /discard-selfie { selfie_id } — the customer removed / replaced the photo: forget it now.

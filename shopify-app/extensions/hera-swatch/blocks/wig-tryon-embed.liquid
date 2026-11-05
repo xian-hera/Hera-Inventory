@@ -93,6 +93,7 @@
   "titleIsEnglish": {% if ht_lang == 'en' %}true{% else %}false{% endif %},
   "lang": {{ ht_lang | json }},
   "loggedIn": {% if customer %}true{% else %}false{% endif %},
+  "customerKey": {% if customer %}{{ customer.id | json }}{% else %}null{% endif %},
   "requireLogin": {{ ht.requireLogin | json }},
   "loginUrl": {{ routes.account_login_url | json }},
   "proxyPath": {{ ht.proxyPath | default: '/apps/hera-tryon' | json }},

@@ -58,6 +58,7 @@ export const EVENT_LABEL = {
   generation_success: 'Generated',
   generation_failed: 'Generation failed',
   image_downloaded: 'Downloaded',
+  tip_shown: 'First-visit tip shown',
   blocked_account_limit: 'Blocked: account limit',
   blocked_ip_limit: 'Blocked: IP limit',
   blocked_global_limit: 'Blocked: daily total',

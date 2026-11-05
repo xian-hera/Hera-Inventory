@@ -19,8 +19,8 @@
   var T = D.t || {};
   // FALLBACK: texts added after the storefront data was last saved in the Hub.
   var FALLBACK = D.lang === 'fr'
-    ? { changePhoto: 'Changer de photo', removePhoto: 'Supprimer la photo', titleLabel: 'Essayage IA de perruque', leftLabel: "Essais restants aujourd'hui", btnChooseColor: 'Choisissez une couleur', btnUploadSelfie: 'Téléversez un selfie' }
-    : { changePhoto: 'Change photo', removePhoto: 'Remove photo', titleLabel: 'Wig AI try on', leftLabel: 'Try-ons left today', btnChooseColor: 'Choose Color', btnUploadSelfie: 'Upload a Selfie' };
+    ? { changePhoto: 'Changer de photo', removePhoto: 'Supprimer la photo', titleLabel: 'Essayage IA de perruque', leftLabel: "Essais restants aujourd'hui", btnChooseColor: 'Choisissez une couleur', btnUploadSelfie: 'Téléversez un selfie', tipText: "Nouveau ! Touchez ici pour essayer cette perruque avec l'IA." }
+    : { changePhoto: 'Change photo', removePhoto: 'Remove photo', titleLabel: 'Wig AI try on', leftLabel: 'Try-ons left today', btnChooseColor: 'Choose Color', btnUploadSelfie: 'Upload a Selfie', tipText: 'New! Tap here to try this wig on with AI.' };
   var tx = function (k) { return T[k] || (D.tEn && D.tEn[k]) || FALLBACK[k] || ''; };
   var log = function () { if (D.debug && window.console) console.log.apply(console, ['[Hera Try-on]'].concat([].slice.call(arguments))); };
   log('data', D);
@@ -85,6 +85,95 @@
   }
 
   // ─── Icon on the product photo ──────────────────────────────────────────────
+  // ─── First-visit tip (Hera 2026-11-05) ──────────────────────────────────────
+  // Shown ONCE: the first time a customer lands on a wig page, the whole page is
+  // dimmed, only the try-on icon stays bright, with one line of text. A tap anywhere
+  // closes it for good; a tap on the icon also opens the window. Empty text = no tip.
+  // Remembered per ACCOUNT for logged-in customers (Hub table wig_tryon_tip_seen, via
+  // the app proxy) and per BROWSER for guests (localStorage). Not shown when either
+  // says "seen" (a guest who saw it and then logs in doesn't get it again); when shown,
+  // both are recorded. The browser also caches "this account has seen it" so the Hub
+  // is asked at most once per account per browser.
+  var TIP_KEY = 'hera_tryon_tip_seen';
+  var TIP_ACCOUNT_KEY = 'hera_tryon_tip_seen_c_' + (D.customerKey || '');
+  function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return '1'; } }
+  function lsSet(k) { try { localStorage.setItem(k, '1'); return true; } catch (e) { return false; } }
+  function tipSeen() {
+    if (lsGet(TIP_KEY) === '1') return true;
+    return !!(D.loggedIn && D.customerKey && lsGet(TIP_ACCOUNT_KEY) === '1');
+  }
+  // Resolves true when the tip may be shown.
+  function tipAllowed() {
+    if (tipSeen()) return Promise.resolve(false);
+    if (!D.loggedIn) return Promise.resolve(true);
+    return api('GET', '/tip').then(function (d) {
+      if (d.__status !== 200) return false; // Hub unreachable: don't risk showing it twice
+      if (d.seen) { lsSet(TIP_ACCOUNT_KEY); return false; }
+      return true;
+    }, function () { return false; });
+  }
+  function markTipSeen() {
+    lsSet(TIP_KEY);
+    if (D.loggedIn) {
+      if (D.customerKey) lsSet(TIP_ACCOUNT_KEY);
+      api('POST', '/tip-seen', { __keepalive: true }).catch(function () {});
+    }
+  }
+
+  function showTip(icon) {
+    // An empty text saved in the Hub switches the tip off (so no fallback to the default here).
+    var tipText = Object.prototype.hasOwnProperty.call(T, 'tipText') ? T.tipText : tx('tipText');
+    if (!tipText || tipSeen() || (ov && ov.classList.contains('is-open'))) return;
+    if (!lsSet(TIP_KEY + '_probe')) return; // browser can't remember anything -> never show
+    markTipSeen();
+    var r0 = icon.getBoundingClientRect();
+    if (r0.top < 0 || r0.bottom > window.innerHeight) icon.scrollIntoView({ block: 'center' });
+    var pad = 6;
+    var ring = document.createElement('div');
+    ring.className = 'ht-tip-ring';
+    var msg = document.createElement('div');
+    msg.className = 'ht-tip-text';
+    msg.textContent = tipText;
+    var catcher = document.createElement('div');
+    catcher.className = 'ht-tip-catch';
+    catcher.setAttribute('role', 'dialog');
+    catcher.setAttribute('aria-label', tipText);
+    function place() {
+      var r = icon.getBoundingClientRect();
+      ring.style.left = (r.left - pad) + 'px';
+      ring.style.top = (r.top - pad) + 'px';
+      ring.style.width = (r.width + pad * 2) + 'px';
+      ring.style.height = (r.height + pad * 2) + 'px';
+      var below = r.bottom + 16;
+      msg.style.left = Math.max(12, Math.min(r.left - pad, window.innerWidth - 12 - Math.min(320, window.innerWidth - 24))) + 'px';
+      msg.style.maxWidth = Math.min(320, window.innerWidth - 24) + 'px';
+      msg.classList.toggle('is-above', below + 60 > window.innerHeight);
+      msg.style.top = (below + 60 > window.innerHeight ? Math.max(12, r.top - 16 - msg.offsetHeight) : below) + 'px';
+      msg.style.setProperty('--ht-arrow-x', Math.max(14, r.left + r.width / 2 - parseFloat(msg.style.left)) + 'px');
+    }
+    function done(e) {
+      var r = icon.getBoundingClientRect();
+      var onIcon = e && e.clientX >= r.left - pad && e.clientX <= r.right + pad && e.clientY >= r.top - pad && e.clientY <= r.bottom + pad;
+      [ring, msg, catcher].forEach(function (x) { x.remove(); });
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+      document.removeEventListener('keydown', onKey);
+      if (e) { e.preventDefault(); e.stopPropagation(); }
+      if (onIcon) onIconClick();
+    }
+    function onKey(e) { if (e.key === 'Escape') done(null); }
+    catcher.addEventListener('click', done);
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    document.addEventListener('keydown', onKey);
+    document.body.appendChild(ring);
+    document.body.appendChild(msg);
+    document.body.appendChild(catcher);
+    place();
+    requestAnimationFrame(place);
+    track('tip_shown');
+  }
+
   function placeIcon() {
     var host = null;
     var sels = [D.gallerySelector, 'media-gallery[id$="__main"]', '.product__media-wrapper'];
@@ -102,6 +191,12 @@
     b.innerHTML = iconHtml();
     b.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); onIconClick(); });
     host.appendChild(b);
+    // First-visit tip, once the page has settled a little.
+    if (!tipSeen()) {
+      tipAllowed().then(function (ok) {
+        if (ok) setTimeout(function () { if (b.isConnected && b.offsetWidth) showTip(b); }, 1200);
+      });
+    }
     return true;
   }
 

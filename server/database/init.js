@@ -1975,6 +1975,15 @@ const initDatabase = async () => {
       )
     `);
 
+    // Wig Try-on first-visit tip seen by a logged-in customer (2026-11-05, Hera):
+    // logged-in customers are remembered per account here; guests per browser (localStorage).
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS wig_tryon_tip_seen (
+        customer_id TEXT PRIMARY KEY,
+        seen_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+
     await client.query('COMMIT');
     console.log('✓ Database initialized successfully');
   } catch (e) {

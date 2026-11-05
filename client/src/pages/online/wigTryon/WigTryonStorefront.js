@@ -22,6 +22,9 @@ const TEXTS = [
     { key: 'leftLabel', label: 'Small label above the number (“Try-ons left today”)' },
     { key: 'iconLabel', label: 'Icon name for screen readers / tooltip' },
   ] },
+  { group: 'First-visit tip', items: [
+    { key: 'tipText', label: 'Shown once per customer browser next to the icon, page dimmed (empty = no tip)', multiline: 2 },
+  ] },
   { group: 'Choose colour & selfie', items: [
     { key: 'chooseColor', label: 'Choose colour title' },
     { key: 'uploadSelfie', label: 'Upload selfie title' },
