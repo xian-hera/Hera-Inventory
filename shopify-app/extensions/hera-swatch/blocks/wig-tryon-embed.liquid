@@ -35,6 +35,12 @@
   endif
 
   if ht_on
+    # Window title "{Wig name} Try on": product metafield custom.wig_name (Hera 2026-11-05),
+    # falls back to the product title when the metafield is empty.
+    assign ht_name = product.metafields.custom.wig_name.value | strip
+    if ht_name == blank
+      assign ht_name = product.title
+    endif
     assign ht_lang = 'en'
     if request.locale.iso_code == 'fr'
       assign ht_lang = 'fr'
@@ -95,7 +101,7 @@
 <script type="application/json" id="hera-tryon-data">
 {
   "productId": {{ product.id | json }},
-  "title": {{ product.title | json }},
+  "title": {{ ht_name | json }},
   "lang": {{ ht_lang | json }},
   "loggedIn": {% if customer %}true{% else %}false{% endif %},
   "requireLogin": {{ ht.requireLogin | json }},

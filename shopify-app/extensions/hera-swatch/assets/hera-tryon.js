@@ -52,6 +52,13 @@
   var CAM_SVG = '<svg viewBox="0 0 44 36" aria-hidden="true"><path d="M14 6l3-4h10l3 4h6a4 4 0 0 1 4 4v18a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V10a4 4 0 0 1 4-4z" fill="currentColor"/><circle cx="22" cy="18" r="7" fill="none" stroke="#fff" stroke-width="3"/><circle cx="37" cy="29" r="7" fill="currentColor" stroke="#fff" stroke-width="2"/><path d="M37 25v8M34 28l3-3 3 3" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round"/></svg>';
 
   function iconHtml() { return D.iconUrl ? '<img src="' + esc(D.iconUrl) + '" alt="">' : ICON_SVG; }
+  // Wig name in the window is always shown in Title Case (Hera 2026-11-05):
+  // "NUTIQUE ILLUZE LACE DUO FLIP-UP ALIA" -> "Nutique Illuze Lace Duo Flip-Up Alia".
+  // A letter is capitalised at the start and after a space, "-", "/" or "(";
+  // not after an apostrophe ("IT'S" -> "It's").
+  function titleCase(s) {
+    return String(s || '').toLowerCase().replace(/(^|[\s\-\/(])(\p{L})/gu, function (m, sep, ch) { return sep + ch.toUpperCase(); });
+  }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 
   // ─── Hub calls (App Proxy) ──────────────────────────────────────────────────
@@ -123,7 +130,7 @@
     body = ov.querySelector('.ht-body');
     foot = ov.querySelector('.ht-foot');
     leftEl = ov.querySelector('.ht-left');
-    ov.querySelector('.ht-title').innerHTML = '<span class="ht-name">' + esc(D.title) + '</span><span class="ht-suffix">' + esc(tx('titleSuffix')) + '</span>';
+    ov.querySelector('.ht-title').innerHTML = '<span class="ht-name">' + esc(titleCase(D.title)) + '</span><span class="ht-suffix">' + esc(tx('titleSuffix')) + '</span>';
     ov.querySelector('.ht-close').addEventListener('click', close);
     ov.addEventListener('click', function (e) { if (e.target === ov) close(); });
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && ov.classList.contains('is-open')) close(); });

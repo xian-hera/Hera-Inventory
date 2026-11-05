@@ -140,8 +140,10 @@ adminRouter.post('/check', async (req, res) => {
   try {
     const config = await store.getConfig();
     const selfie = tryon.decodeSelfie((req.body || {}).selfie);
-    const check = await tryon.runSelfieCheck({ ...config, selfieCheck: { ...config.selfieCheck, enabled: true } }, selfie);
-    await logCheck({ source: 'admin_test' }, config, check);
+    const cm = (req.body || {}).checkModel;
+    const runCfg = { ...config, selfieCheck: { ...config.selfieCheck, enabled: true, ...(cm ? { model: String(cm).slice(0, 60) } : {}) } };
+    const check = await tryon.runSelfieCheck(runCfg, selfie);
+    await logCheck({ source: 'admin_test' }, runCfg, check);
     res.json({ check });
   } catch (e) { res.status(400).json({ error: errMsg(e) }); }
 });
@@ -166,8 +168,9 @@ adminRouter.post('/test', async (req, res) => {
     const prepared = await tryon.prepare({ config, productId: b.productId, colorName: b.colorName || null, requireEligible: false });
     let check = null;
     if (b.runCheck !== false) {
-      check = await tryon.runSelfieCheck({ ...config, selfieCheck: { ...config.selfieCheck, enabled: true } }, selfie);
-      await logCheck({ source: 'admin_test', product: prepared.product, colorName: prepared.color && prepared.color.name }, config, check);
+      const ccfg = { ...config, selfieCheck: { ...config.selfieCheck, enabled: true, ...(b.checkModel ? { model: String(b.checkModel).slice(0, 60) } : {}) } };
+      check = await tryon.runSelfieCheck(ccfg, selfie);
+      await logCheck({ source: 'admin_test', product: prepared.product, colorName: prepared.color && prepared.color.name }, ccfg, check);
       if (!check.suitable) return res.json({ rejected: true, check });
     }
     // Optional per-test model / quality override, so settings can be compared without saving them.

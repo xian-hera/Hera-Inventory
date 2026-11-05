@@ -265,7 +265,7 @@ async function runSelfieCheck(config, selfie) {
   const t0 = Date.now();
   try {
     const r = await checkSelfie({ image: selfie, check, reasons: store.SELFIE_REASONS });
-    return { ...r, durationMs: Date.now() - t0 };
+    return { ...r, durationMs: Date.now() - t0, model: check.model };
   } catch (e) {
     console.error('[wig-tryon] selfie check failed:', e.message);
     return { suitable: !!check.failOpen, reason: check.failOpen ? 'ok' : 'check_failed', note: `check error: ${e.message}`, usage: {}, durationMs: Date.now() - t0, error: e.message };

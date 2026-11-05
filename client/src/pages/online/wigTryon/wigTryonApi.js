@@ -102,6 +102,18 @@ export function photoToJpeg(file, maxSide = 1536) {
 // shut down 2026-10-23). Any other name can still be saved in Settings.
 export const IMAGE_MODELS = ['gpt-image-2.5-sunburst', 'gpt-image-2.5-flare', 'gpt-image-2', 'gpt-image-1.5', 'gpt-image-1-mini'];
 
+// Vision models for the selfie check (/v1/responses), cheapest first (OpenAI docs, checked
+// 2026-11-05). Not listed: gpt-5-mini / gpt-5-nano (shut down 2026-12-11), gpt-4.1-nano (shut down).
+export const CHECK_MODELS = [
+  { value: 'gpt-6-luna', label: 'gpt-6-luna — cheapest, high-volume (default)' },
+  { value: 'gpt-5.6-luna', label: 'gpt-5.6-luna' },
+  { value: 'gpt-5.4-nano', label: 'gpt-5.4-nano (removed 2027-04-01)' },
+  { value: 'gpt-5.4-mini', label: 'gpt-5.4-mini' },
+  { value: 'gpt-6.1-terra', label: 'gpt-6.1-terra — stronger visual reasoning, ~10× luna price' },
+  { value: 'gpt-5.6-terra', label: 'gpt-5.6-terra' },
+  { value: 'gpt-4.1-mini', label: 'gpt-4.1-mini (removed 2027-01-14)' },
+];
+
 export const fmtTime = (iso) => (iso ? new Date(iso).toLocaleString() : '—');
 export const fmtMs = (ms) => (ms == null ? '—' : `${(ms / 1000).toFixed(1)} s`);
 export const fmtNum = (n) => (n == null ? '—' : Number(n).toLocaleString());

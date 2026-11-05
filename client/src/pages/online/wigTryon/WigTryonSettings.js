@@ -1,7 +1,7 @@
 // Online › Wig Try-on › Settings: switches, product types, OpenAI, limits, texts.
 import React, { useState } from 'react';
 import { Card, BlockStack, InlineStack, InlineGrid, Text, TextField, Checkbox, Select, Button, Banner } from '@shopify/polaris';
-import { api, IMAGE_MODELS } from './wigTryonApi';
+import { api, IMAGE_MODELS, CHECK_MODELS } from './wigTryonApi';
 
 const TEXTS = [
   { key: 'limitReached', label: 'Daily limit reached (account and IP — same text on purpose)' },
@@ -133,7 +133,18 @@ export default function WigTryonSettings({ config, defaults, reload, setBanner }
           <Text tone="subdued" variant="bodySm">After the customer uploads a selfie, an OpenAI vision model checks it before any try-on is used. A rejected selfie does not use a try-on; the customer sees the message for the reason below and can upload another one. The product photo is not checked (always the product's first image).</Text>
           <Checkbox label="Check selfies before generating" checked={f.selfieCheck.enabled} onChange={v => set('selfieCheck.enabled', v)} />
           <InlineGrid columns={{ xs: 1, md: 3 }} gap="300">
-            <TextField label="Model" value={f.selfieCheck.model} onChange={v => set('selfieCheck.model', v)} autoComplete="off" helpText="A small vision model, e.g. gpt-6-luna." />
+            {(() => {
+              const listed = CHECK_MODELS.some(m => m.value === f.selfieCheck.model);
+              return (
+                <BlockStack gap="200">
+                  <Select label="Model (selfie check)" value={listed ? f.selfieCheck.model : '__other'}
+                    onChange={v => set('selfieCheck.model', v === '__other' ? '' : v)}
+                    options={[...CHECK_MODELS, { value: '__other', label: 'Other (type the name)…' }]}
+                    helpText="A small vision model. Compare on Prompt & Test with “Check model (this test only)”." />
+                  {!listed && <TextField label="Model name" labelHidden placeholder="e.g. gpt-6-luna" value={f.selfieCheck.model} onChange={v => set('selfieCheck.model', v)} autoComplete="off" />}
+                </BlockStack>
+              );
+            })()}
             <Select label="Reasoning effort" value={f.selfieCheck.reasoningEffort} onChange={v => set('selfieCheck.reasoningEffort', v)}
               options={[{ label: 'Not sent', value: '' }, ...['none', 'minimal', 'low', 'medium', 'high'].map(v => ({ label: v, value: v }))]}
               helpText="Some models reject some values — use Check selfie only on Prompt & Test after changing." />
