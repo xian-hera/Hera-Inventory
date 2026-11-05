@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Page, Card, BlockStack, Text, Banner, Button, Modal } from '@shopify/polaris';
+import { Page, Card, BlockStack, Text, Banner, Button } from '@shopify/polaris';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { StatusBadge, TagPills } from '../shared/transferStatus';
 import { LineNote, LineNoteIcon, transferLineNoteApi } from '../shared/lineNote';
@@ -153,6 +153,34 @@ function ItemModal({ item, transferId, onClose, onChanged, setError }) {
               </>
             )}
           </div>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+// "All items picked" confirm — placed high like the item modal (not Polaris
+// Modal, which rises from the bottom on phones where Shopify's own bottom bar
+// could cover its buttons).
+function RtsConfirm({ submitting, onConfirm, onClose }) {
+  return createPortal(
+    <div
+      onClick={() => { if (!submitting) onClose(); }}
+      style={{ position: 'fixed', inset: 0, zIndex: 520, background: 'rgba(0,0,0,0.45)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', padding: '12vh 12px 0' }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="All items picked"
+        onClick={(e) => e.stopPropagation()}
+        style={{ width: 'min(420px, 100%)', background: '#fff', borderRadius: 14, padding: 16, boxSizing: 'border-box', boxShadow: '0 10px 30px rgba(0,0,0,0.25)' }}
+      >
+        <div style={{ fontSize: 16, fontWeight: 650, marginBottom: 8 }}>All items picked</div>
+        <div style={{ fontSize: 14, color: '#303030', marginBottom: 16 }}>Every line has been picked. Mark this transfer as Ready to Ship?</div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <Button onClick={onClose} disabled={submitting}>Not now</Button>
+          <Button variant="primary" onClick={onConfirm} loading={submitting}>Ready to Ship</Button>
         </div>
       </div>
     </div>,
@@ -330,17 +358,13 @@ function OnlineTransferPrepDetail() {
           <div style={{ height: 'var(--shopify-safe-area-inset-bottom, 80px)' }} />
         </BlockStack>
       </Page>
-      <Modal
-        open={askRts && !!editable}
-        onClose={() => setAskRts(false)}
-        title="All items picked"
-        primaryAction={{ content: 'Ready to Ship', loading: submitting, onAction: async () => { await readyToShip(); setAskRts(false); } }}
-        secondaryActions={[{ content: 'Not now', onAction: () => setAskRts(false) }]}
-      >
-        <Modal.Section>
-          <Text>Every line has been picked. Mark this transfer as Ready to Ship?</Text>
-        </Modal.Section>
-      </Modal>
+      {askRts && editable && (
+        <RtsConfirm
+          submitting={submitting}
+          onConfirm={async () => { await readyToShip(); setAskRts(false); }}
+          onClose={() => setAskRts(false)}
+        />
+      )}
       {open && editable && (
         <ItemModal item={open} transferId={transferId} onClose={() => setOpenId(null)} onChanged={load} setError={setError} />
       )}
