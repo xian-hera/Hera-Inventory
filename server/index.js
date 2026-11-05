@@ -74,6 +74,12 @@ app.use('/api/store-new-arrivals', require('./routes/storeNewArrivals').router);
 app.use('/api/online-tasks', require('./routes/onlineTasks')); // Online › Dashboard, 2026-10-01
 app.use('/api/swatch', require('./routes/swatch')); // Online › Swatch, 2026-10-01 (Phase 0: debug metafield only)
 app.use('/api/publication', require('./routes/publication')); // Online › Publication, 2026-10-15
+// Online › Wig Try-on, 2026-11-04 — claude/WIG_TRYON_FEATURE_SPEC.md.
+// /api/wig-tryon = Hub pages; /proxy/wig-tryon = storefront via the Shopify App Proxy
+// (herabeauty.ca/apps/hera-tryon/*), outside /api so it skips the admin session
+// middleware — every request is checked against Shopify's proxy signature instead.
+app.use('/api/wig-tryon', require('./routes/wigTryon').adminRouter);
+app.use('/proxy/wig-tryon', require('./routes/wigTryon').proxyRouter);
 
 // Serve static files in production
 if (process.env.NODE_ENV === 'production') {

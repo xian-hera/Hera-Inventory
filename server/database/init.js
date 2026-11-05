@@ -1912,6 +1912,69 @@ const initDatabase = async () => {
       )
     `);
 
+    // ── Online › Wig Try-on (2026-11-04, Hera) — claude/WIG_TRYON_FEATURE_SPEC.md
+    // Selfies and generated images are NEVER stored (memory only, see
+    // services/wigTryonJobs.js). These tables hold prompts, events and counters.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS wig_tryon_prompts (
+        version    INTEGER PRIMARY KEY,
+        template   TEXT NOT NULL,
+        note       TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    // One row per funnel step / generation / block. source: storefront | admin_test.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS wig_tryon_events (
+        id             SERIAL PRIMARY KEY,
+        source         TEXT NOT NULL DEFAULT 'storefront',
+        event_type     TEXT NOT NULL,
+        session_id     TEXT,
+        customer_id    TEXT,
+        ip_hash        TEXT,
+        product_id     TEXT,
+        product_title  TEXT,
+        vendor         TEXT,
+        color_name     TEXT,
+        prompt_version INTEGER,
+        model          TEXT,
+        duration_ms    INTEGER,
+        input_tokens   INTEGER,
+        output_tokens  INTEGER,
+        error_reason   TEXT,
+        created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    // detail = the selfie check's short note (2026-11-04, selfie check added).
+    await client.query(`ALTER TABLE wig_tryon_events ADD COLUMN IF NOT EXISTS detail TEXT`);
+    await client.query(`CREATE INDEX IF NOT EXISTS wig_tryon_events_created_idx ON wig_tryon_events (created_at)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS wig_tryon_events_type_idx ON wig_tryon_events (event_type, created_at)`);
+    // Daily counters (date = America/Toronto). Split per dimension so every
+    // primary key column is NOT NULL (spec §9 note).
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS wig_tryon_usage_customer (
+        usage_date  DATE NOT NULL,
+        customer_id TEXT NOT NULL,
+        count       INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (usage_date, customer_id)
+      )
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS wig_tryon_usage_ip (
+        usage_date DATE NOT NULL,
+        ip_hash    TEXT NOT NULL,
+        count      INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (usage_date, ip_hash)
+      )
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS wig_tryon_usage_global (
+        usage_date    DATE PRIMARY KEY,
+        count         INTEGER NOT NULL DEFAULT 0,
+        alert_sent_at TIMESTAMPTZ
+      )
+    `);
+
     await client.query('COMMIT');
     console.log('✓ Database initialized successfully');
   } catch (e) {

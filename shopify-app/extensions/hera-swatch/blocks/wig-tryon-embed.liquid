@@ -1,0 +1,166 @@
+{%- comment -%}
+  Hera Wig Try-on — App embed (Online › Wig Try-on, spec: claude/WIG_TRYON_FEATURE_SPEC.md §13)
+  Added 2026-11-05 to the existing theme extension (same app as Hera Swatch).
+
+  Server-side (here):
+    - product pages only; the Hub switch decides (app metafield hera_tryon.config):
+        mode 'live'    -> always
+        mode 'preview' -> only in the theme editor or on *.shopifypreview.com
+        mode 'off'     -> nothing is output
+    - product.type must be in the Hub's product type list (case-insensitive;
+      translated type names may be listed there too).
+    - outputs the data the widget needs: product id / title, logged-in or not,
+      login URL, colour values (+ Swatch image via the hera_swatch metafields,
+      same hidden rule as Swatch: sold out AND custom.discontinued = true), texts.
+  The icon and the window are drawn by assets/hera-tryon.js; styles in hera-tryon.css.
+  All calls go to the Hub through the Shopify App Proxy ({{ proxyPath }}, e.g. /apps/hera-tryon).
+{%- endcomment -%}
+{%- liquid
+  assign ht_on = false
+  assign ht = app.metafields.hera_tryon.config.value
+  if template.name == 'product' and product and ht and ht.version
+    if ht.mode == 'live'
+      assign ht_on = true
+    elsif ht.mode == 'preview'
+      if request.design_mode or request.host contains 'shopifypreview.com'
+        assign ht_on = true
+      endif
+    endif
+  endif
+  if ht_on
+    assign ht_type = product.type | strip | upcase
+    unless ht.types contains ht_type
+      assign ht_on = false
+    endunless
+  endif
+
+  if ht_on
+    assign ht_lang = 'en'
+    if request.locale.iso_code == 'fr'
+      assign ht_lang = 'fr'
+    endif
+
+    # Colour option: the Swatch rule's option for this product type, else Color / Colour / Couleur.
+    assign hs_cfg = app.metafields.hera_swatch.config.value
+    assign ht_opt = nil
+    assign ht_pos = 0
+    if hs_cfg and hs_cfg.rules
+      for rule in hs_cfg.rules
+        if ht_pos > 0
+          break
+        endif
+        unless rule.productTypes contains product.type
+          continue
+        endunless
+        assign want = rule.optionName | strip | downcase
+        for opt in product.options_with_values
+          assign have = opt.name | strip | downcase
+          if have == want
+            assign ht_opt = opt
+            assign ht_pos = forloop.index
+            break
+          endif
+        endfor
+      endfor
+    endif
+    if ht_pos == 0
+      for opt in product.options_with_values
+        assign have = opt.name | strip | downcase
+        if have == 'color' or have == 'colour' or have == 'couleur'
+          assign ht_opt = opt
+          assign ht_pos = forloop.index
+          break
+        endif
+      endfor
+    endif
+
+    assign ht_lib = nil
+    if ht_pos > 0 and hs_cfg
+      assign ht_prefix = hs_cfg.vendorLibrary[product.vendor]
+      if ht_prefix
+        assign ht_libkey = 'lib_' | append: ht_prefix
+        assign ht_lib = app.metafields.hera_swatch[ht_libkey].value
+      endif
+    endif
+    assign ht_hide_dc = true
+    if hs_cfg and hs_cfg.hideDiscontinued == false
+      assign ht_hide_dc = false
+    endif
+    assign ht_opt_key = 'option' | append: ht_pos
+    assign ht_idx = ht_pos | minus: 1
+  endif
+-%}
+{%- if ht_on -%}
+<link rel="stylesheet" href="{{ 'hera-tryon.css' | asset_url }}" media="all">
+<script type="application/json" id="hera-tryon-data">
+{
+  "productId": {{ product.id | json }},
+  "title": {{ product.title | json }},
+  "lang": {{ ht_lang | json }},
+  "loggedIn": {% if customer %}true{% else %}false{% endif %},
+  "requireLogin": {{ ht.requireLogin | json }},
+  "loginUrl": {{ routes.account_login_url | json }},
+  "proxyPath": {{ ht.proxyPath | default: '/apps/hera-tryon' | json }},
+  "privacyUrl": {{ ht.privacyUrl | default: '/policies/privacy-policy' | json }},
+  "gallerySelector": {{ ht.gallerySelector | json }},
+  "iconUrl": {% if ht.iconFile != blank %}{{ ht.iconFile | file_url | json }}{% else %}""{% endif %},
+  "iconSize": {{ ht.iconSize | default: 48 }},
+  "iconOffset": {{ ht.iconOffset | default: 12 }},
+  "colors": [
+    {%- if ht.colorEnabled and ht_pos > 0 -%}
+      {%- assign ht_first = true -%}
+      {%- for v in ht_opt.values -%}
+        {%- liquid
+          # Hidden (like Swatch 6.2.1) when EVERY variant with this colour is sold out AND discontinued.
+          assign ht_visible = false
+          for vr in product.variants
+            if vr[ht_opt_key] != v
+              continue
+            endif
+            if ht_hide_dc == false or vr.available or vr.metafields.custom.discontinued.value != true
+              assign ht_visible = true
+              break
+            endif
+          endfor
+          assign k = v | strip | upcase
+          assign c0 = k | slice: 0
+          if c0 == '#' or c0 == '@'
+            assign k = k | slice: 1, 500 | strip
+          endif
+          assign ht_e = nil
+          if ht_lib
+            assign ht_e = ht_lib.codes[k]
+          endif
+        -%}
+        {%- if ht_visible -%}
+          {% unless ht_first %},{% endunless %}{"v": {{ v | json }}, "img": {% if ht_e and ht_e.f != blank %}{{ ht_e.f | file_url | append: '&width=200' | json }}{% else %}null{% endif %}, "pos": {{ ht_e.p | default: 'center top' | json }}}
+          {%- assign ht_first = false -%}
+        {%- endif -%}
+      {%- endfor -%}
+    {%- endif -%}
+  ],
+  "selected": {%- if ht_pos > 0 -%}{{ product.selected_or_first_available_variant.options[ht_idx] | json }}{%- else -%}null{%- endif -%},
+  "t": {{ ht.ui[ht_lang] | json }},
+  "tEn": {{ ht.ui.en | json }},
+  "debug": {{ block.settings.debug | json }}
+}
+</script>
+<script src="{{ 'hera-tryon.js' | asset_url }}" defer></script>
+{%- endif -%}
+
+{% schema %}
+{
+  "name": "Hera Wig Try-on",
+  "target": "body",
+  "enabled_on": { "templates": ["product"] },
+  "settings": [
+    {
+      "type": "checkbox",
+      "id": "debug",
+      "label": "Debug log",
+      "info": "Prints the try-on data in the browser console.",
+      "default": false
+    }
+  ]
+}
+{% endschema %}

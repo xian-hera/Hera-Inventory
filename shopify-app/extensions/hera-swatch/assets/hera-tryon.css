@@ -1,0 +1,80 @@
+/* Hera Wig Try-on — storefront widget (2026-11-05, Hera's mock-ups). Prefix: .ht- */
+.ht-icon { position: absolute; z-index: 20; display: block; padding: 0; margin: 0; border: 0; background: none; cursor: pointer; line-height: 0; -webkit-tap-highlight-color: transparent; }
+.ht-icon img, .ht-icon svg { width: 100%; height: 100%; display: block; }
+.ht-icon:focus-visible { outline: 2px solid #E32A69; outline-offset: 2px; border-radius: 12px; }
+
+.ht-overlay { position: fixed; inset: 0; z-index: 2147482000; background: rgba(0, 0, 0, 0.45); display: flex; align-items: flex-end; justify-content: center; opacity: 0; transition: opacity .2s ease; }
+.ht-overlay.is-open { opacity: 1; }
+.ht-sheet { box-sizing: border-box; width: 100%; height: 70vh; height: 70dvh; min-height: min(560px, 92dvh); max-height: 92dvh; background: #fff; color: #111; border-radius: 22px 22px 0 0; display: flex; flex-direction: column; overflow: hidden; transform: translateY(100%); transition: transform .28s cubic-bezier(.2, .8, .2, 1); font-family: inherit; }
+.ht-overlay.is-open .ht-sheet { transform: translateY(0); }
+@media (min-width: 768px) {
+  .ht-overlay { align-items: center; }
+  .ht-sheet { width: 520px; height: auto; min-height: 600px; max-height: 88vh; border-radius: 22px; transform: translateY(24px); }
+}
+.ht-sheet *, .ht-sheet *::before, .ht-sheet *::after { box-sizing: border-box; }
+
+.ht-head { display: flex; align-items: center; gap: 12px; padding: 18px 20px 14px 24px; border-bottom: 1px solid #e6e6e6; flex: none; }
+.ht-title { flex: 1; min-width: 0; margin: 0; display: flex; font-size: 17px; font-weight: 700; line-height: 1.3; white-space: nowrap; }
+.ht-title .ht-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ht-title .ht-suffix { flex: none; margin-left: .3em; }
+.ht-left { flex: none; font-size: 13px; color: #111; white-space: nowrap; }
+.ht-left b { font-weight: 700; margin-right: 4px; }
+.ht-close { flex: none; width: 36px; height: 36px; padding: 6px; margin: 0 -6px 0 0; border: 0; background: none; cursor: pointer; color: #111; display: flex; align-items: center; justify-content: center; min-width: 0; min-height: 0; box-shadow: none; }
+.ht-close svg { width: 22px; height: 22px; display: block; }
+
+.ht-body { flex: 1 1 auto; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+.ht-sec { padding: 18px 24px; }
+.ht-sec + .ht-sec { border-top: 1px solid #e6e6e6; }
+.ht-h { display: flex; align-items: baseline; gap: 14px; margin: 0 0 12px; font-size: 16px; font-weight: 500; }
+.ht-sel { font-size: 12px; font-weight: 700; color: #E32A69; }
+
+.ht-colors { display: flex; gap: 5px; overflow-x: auto; padding: 2px 2px 6px; margin: 0 -2px; scrollbar-width: thin; }
+.ht-color { flex: 0 0 46px; width: 46px; padding: 0; margin: 0; border: 0; background: none; cursor: pointer; text-align: center; font-family: inherit; color: inherit; min-width: 0; min-height: 0; box-shadow: none; }
+.ht-color .ht-swatch { display: block; width: 46px; height: 54px; border: 1px solid #333; border-radius: 6px; background: #f4f4f4 center top / cover no-repeat; }
+.ht-color .ht-cname { display: block; margin-top: 3px; padding: 1px 2px; border-radius: 4px; font-size: 10px; font-weight: 600; line-height: 1.3; color: #333; letter-spacing: -.2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ht-color.is-sel .ht-swatch { border: 2px solid #E32A69; box-shadow: 0 0 0 2px rgba(227, 42, 105, .25); }
+.ht-color.is-sel .ht-cname { background: #E32A69; color: #fff; }
+.ht-color:focus-visible .ht-swatch { outline: 2px solid #E32A69; outline-offset: 2px; }
+
+.ht-consent { display: flex; align-items: flex-start; justify-content: center; gap: 8px; margin: 4px 0 16px; font-size: 13px; line-height: 1.4; cursor: pointer; }
+.ht-consent input { width: 16px; height: 16px; margin: 1px 0 0; flex: none; accent-color: #E32A69; }
+.ht-consent a { color: #2c6ecb; text-decoration: underline; }
+.ht-upload-row { display: flex; gap: 16px; align-items: flex-start; }
+.ht-upload { position: relative; flex: none; width: 128px; height: 96px; border: 1.5px solid #222; border-radius: 6px; background: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; overflow: hidden; padding: 0; margin: 0; min-width: 0; min-height: 0; box-shadow: none; color: #E32A69; }
+.ht-upload svg { width: 44px; height: 36px; }
+.ht-upload img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.ht-upload.is-disabled { opacity: .45; }
+.ht-upload .ht-badge { position: absolute; right: 6px; bottom: 6px; width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 13px; font-weight: 700; line-height: 1; }
+.ht-upload.is-ok .ht-badge { background: #1f8a4c; }
+.ht-upload.is-bad .ht-badge { background: #d72c0d; }
+.ht-upload.is-checking::after { content: ''; position: absolute; inset: 0; background: rgba(255, 255, 255, .55); }
+.ht-upload.is-checking .ht-spin { display: block; }
+.ht-spin { display: none; position: absolute; z-index: 1; width: 26px; height: 26px; border: 3px solid rgba(227, 42, 105, .25); border-top-color: #E32A69; border-radius: 50%; animation: ht-rot .8s linear infinite; }
+@keyframes ht-rot { to { transform: rotate(360deg); } }
+.ht-req { flex: 1; min-width: 0; font-size: 12px; line-height: 1.45; color: #333; white-space: pre-line; }
+.ht-status { margin-top: 6px; font-size: 12px; font-weight: 600; }
+.ht-status.is-ok { color: #1f8a4c; }
+.ht-desc { font-size: 12px; line-height: 1.5; color: #444; white-space: pre-line; }
+
+.ht-foot { flex: none; padding: 10px 24px calc(18px + env(safe-area-inset-bottom)); }
+.ht-alert { min-height: 20px; margin: 0 0 12px; text-align: center; font-size: 14px; line-height: 1.4; color: #E32A69; }
+.ht-alert:empty { margin: 0; min-height: 0; }
+.ht-btn { display: flex; align-items: center; justify-content: center; width: 100%; height: 56px; padding: 0 16px; margin: 0; border: 2px solid #E32A69; border-radius: 999px; background: #E32A69; color: #fff; font-family: inherit; font-size: 17px; font-weight: 600; cursor: pointer; min-width: 0; box-shadow: none; text-decoration: none; }
+.ht-btn[disabled] { opacity: .45; cursor: default; }
+.ht-btn.is-ghost { background: #fff; color: #E32A69; }
+.ht-btns { display: flex; gap: 12px; }
+.ht-btns .ht-btn:first-child { flex: 0 0 40%; }
+
+.ht-loading { padding: 64px 24px 72px; text-align: center; }
+.ht-loading p { margin: 0 0 28px; font-size: 16px; line-height: 1.5; white-space: pre-line; }
+.ht-loading .ht-logo { width: 120px; height: 120px; margin: 0 auto; animation: ht-pulse 1.6s ease-in-out infinite; }
+.ht-loading .ht-logo img, .ht-loading .ht-logo svg { width: 100%; height: 100%; display: block; }
+@keyframes ht-pulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(.92); opacity: .75; } }
+
+.ht-result { padding: 10px 24px 4px; }
+.ht-result .ht-sel { display: block; margin-bottom: 10px; }
+.ht-photo { height: calc(70vh - 150px); height: calc(70dvh - 150px); min-height: 240px; aspect-ratio: 2 / 3; max-width: 100%; margin: 0 auto; border-radius: 14px; background: #d6d6d8; overflow: hidden; }
+@media (min-width: 768px) { .ht-photo { height: min(520px, calc(88vh - 220px)); } }
+.ht-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+html.ht-lock, html.ht-lock body { overflow: hidden !important; }

@@ -31,6 +31,8 @@ const TABS = [
   { id: 'publication', label: 'Publication', path: '/online/publication' },
   // Transfer (2026-10-23, Hera) — Online (Fulfiller) transfers, Online is Admin; claude/FULFILLER_ONLINE_TRANSFER_SPEC.md
   { id: 'transfer', label: 'Transfer', path: '/online/transfer' },
+  // Wig Try-on (2026-11-04, Hera) — AI try-on admin; claude/WIG_TRYON_FEATURE_SPEC.md
+  { id: 'wig-tryon', label: 'Wig Try-on', path: '/online/wig-tryon' },
 ];
 
 // The PIN is checked once per visit to the Online section, not again on

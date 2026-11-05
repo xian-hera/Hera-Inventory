@@ -80,6 +80,8 @@ const OnlineDashboard = lazyWithReload(() => import(/* webpackChunkName: "online
 // Online › Publication — 2026-10-15, see claude/PUBLICATION_FEATURE_SPEC.md
 const OnlinePublication = lazyWithReload(() => import(/* webpackChunkName: "online" */ './pages/online/publication/OnlinePublication'));
 const OnlineTransfers = lazyWithReload(() => import(/* webpackChunkName: "online" */ './pages/online/OnlineTransfers'));
+// Wig Try-on (2026-11-04, Hera) — claude/WIG_TRYON_FEATURE_SPEC.md
+const OnlineWigTryon = lazyWithReload(() => import(/* webpackChunkName: "online" */ './pages/online/wigTryon/OnlineWigTryon'));
 const ProductDatabaseSettings = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/ProductDatabaseSettings'));
 const BuyerPOReceiving = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerPOReceiving'));
 const BuyerPOImportInvoice = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerPOImportInvoice'));
@@ -251,6 +253,7 @@ function App() {
           <Route path="/online/swatch" element={<OnlineHome tab="swatch"><OnlineSwatch inTabs /></OnlineHome>} />
           <Route path="/online/publication" element={<OnlineHome tab="publication"><OnlinePublication inTabs /></OnlineHome>} />
           <Route path="/online/transfer" element={<OnlineHome tab="transfer"><OnlineTransfers inTabs /></OnlineHome>} />
+          <Route path="/online/wig-tryon" element={<OnlineHome tab="wig-tryon"><OnlineWigTryon inTabs /></OnlineHome>} />
         </Routes>
           </Suspense>
         </PageErrorBoundary>
