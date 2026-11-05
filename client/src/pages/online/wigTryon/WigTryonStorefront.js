@@ -32,7 +32,9 @@ const TEXTS = [
     { key: 'description', label: 'Description (below the upload box)', multiline: 3 },
     { key: 'changePhoto', label: 'Link: change photo (shown once a selfie is kept)' },
     { key: 'removePhoto', label: 'Link: remove photo' },
-    { key: 'tryButton', label: 'Button' },
+    { key: 'btnChooseColor', label: 'Button before a colour is chosen (disabled)' },
+    { key: 'btnUploadSelfie', label: 'Button before the selfie passed the check (disabled)' },
+    { key: 'tryButton', label: 'Button when ready' },
   ] },
   { group: 'Messages while choosing', items: [
     { key: 'checking', label: 'While the selfie is checked' },

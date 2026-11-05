@@ -120,6 +120,9 @@ const DEFAULT_CONFIG = {
     changePhoto: { en: 'Change photo', fr: 'Changer de photo' },
     removePhoto: { en: 'Remove photo', fr: 'Supprimer la photo' },
     tryButton: { en: 'Try it out!', fr: "Essayer !" },
+    // Button while it can't be pressed yet (Hera 2026-11-05)
+    btnChooseColor: { en: 'Choose Color', fr: 'Choisissez une couleur' },
+    btnUploadSelfie: { en: 'Upload a Selfie', fr: 'Téléversez un selfie' },
     checking: { en: 'Checking your photo…', fr: 'Vérification de votre photo…' },
     selfieOk: { en: 'Photo looks good!', fr: 'La photo est parfaite !' },
     consentFirst: { en: 'Please accept the Privacy Policy first.', fr: "Veuillez d'abord accepter la politique de confidentialité." },

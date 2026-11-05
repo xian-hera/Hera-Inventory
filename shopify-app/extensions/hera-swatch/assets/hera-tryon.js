@@ -19,8 +19,8 @@
   var T = D.t || {};
   // FALLBACK: texts added after the storefront data was last saved in the Hub.
   var FALLBACK = D.lang === 'fr'
-    ? { changePhoto: 'Changer de photo', removePhoto: 'Supprimer la photo', titleLabel: 'Essayage IA de perruque', leftLabel: "Essais restants aujourd'hui" }
-    : { changePhoto: 'Change photo', removePhoto: 'Remove photo', titleLabel: 'Wig AI try on', leftLabel: 'Try-ons left today' };
+    ? { changePhoto: 'Changer de photo', removePhoto: 'Supprimer la photo', titleLabel: 'Essayage IA de perruque', leftLabel: "Essais restants aujourd'hui", btnChooseColor: 'Choisissez une couleur', btnUploadSelfie: 'Téléversez un selfie' }
+    : { changePhoto: 'Change photo', removePhoto: 'Remove photo', titleLabel: 'Wig AI try on', leftLabel: 'Try-ons left today', btnChooseColor: 'Choose Color', btnUploadSelfie: 'Upload a Selfie' };
   var tx = function (k) { return T[k] || (D.tEn && D.tEn[k]) || FALLBACK[k] || ''; };
   var log = function () { if (D.debug && window.console) console.log.apply(console, ['[Hera Try-on]'].concat([].slice.call(arguments))); };
   log('data', D);
@@ -152,10 +152,13 @@
       if (k) { S.selfieId = k.id; S.thumb = k.data; S.check = 'ok'; S.consent = true; }
     }
     S.step = 'form';
+    S.color = null; // never pre-selected (Hera 2026-11-05): the customer must choose
     render();
     ov.style.display = 'flex';
     document.documentElement.classList.add('ht-lock');
-    requestAnimationFrame(function () { ov.classList.add('is-open'); });
+    // Start at the top ("Choose color"): scrollTop can only be set once the window is visible.
+    body.scrollTop = 0;
+    requestAnimationFrame(function () { body.scrollTop = 0; ov.classList.add('is-open'); });
     refreshStatus();
   }
 
@@ -170,10 +173,11 @@
     if (S.check === 'bad') { S.check = null; S.thumb = null; }
   }
 
+  // No colour is pre-selected (Hera 2026-11-05, after customer tests: people pressed
+  // the button straight away). Kept as a function in case a default is wanted again;
+  // D.selectedIndex (colour selected on the page) is still passed by the Liquid.
   function pickDefaultColor() {
-    if (!S.colors || !S.colors.length) return null;
-    for (var i = 0; i < S.colors.length; i++) if (S.colors[i].i === D.selectedIndex) return S.colors[i].v;
-    return null; // customer chooses (mock-up: "Choose color")
+    return null;
   }
 
   function refreshStatus(precamera) {
@@ -250,8 +254,11 @@
       + '</div></div>'
       + '<input type="file" accept="image/*" class="ht-file" hidden></div>';
     if (tx('description')) h += '<div class="ht-sec"><div class="ht-desc">' + esc(tx('description')) + '</div></div>';
+    // Re-drawing keeps the scroll position (e.g. after the selfie check); only opening the
+    // window and "Try another" go back to the top.
+    var keepTop = body.scrollTop;
     body.innerHTML = h;
-    body.scrollTop = 0;
+    body.scrollTop = keepTop;
 
     [].forEach.call(body.querySelectorAll('.ht-color'), function (b) {
       b.addEventListener('click', function () {
@@ -293,9 +300,16 @@
     if (S.step !== 'form') return;
     var a = alertText != null ? alertText : (foot.querySelector('.ht-alert') ? foot.querySelector('.ht-alert').textContent : '');
     if (S.blocked) a = S.blocked;
+    // Step-by-step button (Hera 2026-11-05): "Choose Color" (disabled) -> "Upload a Selfie"
+    // (disabled) -> "Try it out!" once a colour is chosen AND the selfie passed the check.
+    var label = tx('tryButton');
     var ready = !S.blocked && !S.busy && !S.checking;
+    if (!S.blocked) {
+      if (S.colors === null || (S.colors.length && !S.color)) { label = tx('btnChooseColor'); ready = false; }
+      else if (!S.selfieId || S.check !== 'ok') { label = tx('btnUploadSelfie'); ready = false; }
+    }
     foot.innerHTML = '<div class="ht-alert" role="alert">' + esc(a) + '</div>'
-      + '<button type="button" class="ht-btn ht-go"' + (ready ? '' : ' disabled') + '>' + esc(tx('tryButton')) + '</button>';
+      + '<button type="button" class="ht-btn ht-go"' + (ready ? '' : ' disabled') + '>' + esc(label) + '</button>';
     foot.querySelector('.ht-go').addEventListener('click', function () { submit(false); });
   }
   function setAlert(t) {
@@ -317,6 +331,7 @@
     foot.querySelector('.ht-again').addEventListener('click', function () {
       S.step = 'form'; S.image = null;
       render();
+      body.scrollTop = 0;
       refreshStatus();
     });
   }
