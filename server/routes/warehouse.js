@@ -647,9 +647,12 @@ router.put('/schedule', async (req, res) => {
 // (Hera 2026-10-21): add Unscheduled tasks to a LOCKED day (one of the 7
 // past business days, or today after Go!), at the bottom of that half-day,
 // to record work that was done but never scheduled. Saved immediately.
+// Optional `index` (Drag Test, 2026-11-09): insert the tasks at that position
+// of the half-day (0 = top) instead of the bottom; the half-day is renumbered.
 router.post('/tasks/track-back', async (req, res) => {
   const ids = toIdList(req.body && req.body.ids);
   const { date, half } = req.body || {};
+  const index = Number.isInteger(req.body && req.body.index) && req.body.index >= 0 ? req.body.index : null;
   if (ids.length === 0) return res.status(400).json({ error: 'Nothing selected' });
   if (half !== 'AM' && half !== 'PM') return res.status(400).json({ error: 'Bad half-day' });
   const today = torontoToday();
@@ -659,6 +662,31 @@ router.post('/tasks/track-back', async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    if (index !== null) {
+      const cur = await client.query(
+        'SELECT id FROM wh_tasks WHERE removed_at IS NULL AND sched_date = $1::date AND sched_half = $2 ORDER BY sched_pos NULLS LAST, id',
+        [date, half]
+      );
+      const ok = await client.query('SELECT id FROM wh_tasks WHERE id = ANY($1) AND removed_at IS NULL AND sched_date IS NULL', [ids]);
+      const okSet = new Set(ok.rows.map(r => r.id));
+      const add = ids.filter(id => okSet.has(id));
+      const order = cur.rows.map(r => r.id);
+      order.splice(Math.min(index, order.length), 0, ...add);
+      const addSet = new Set(add);
+      for (let i = 0; i < order.length; i += 1) {
+        if (addSet.has(order[i])) {
+          await client.query(
+            `UPDATE wh_tasks SET sched_date = $2::date, sched_half = $3, sched_pos = $4, tracked_back = TRUE, updated_at = NOW(), sched_set_at = NOW()
+             WHERE id = $1`,
+            [order[i], date, half, i]
+          );
+        } else {
+          await client.query('UPDATE wh_tasks SET sched_pos = $2 WHERE id = $1', [order[i], i]);
+        }
+      }
+      await client.query('COMMIT');
+      return res.json({ added: add.length });
+    }
     const max = await client.query(
       'SELECT COALESCE(MAX(sched_pos), -1)::int AS m FROM wh_tasks WHERE removed_at IS NULL AND sched_date = $1::date AND sched_half = $2',
       [date, half]

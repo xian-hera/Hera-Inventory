@@ -20,7 +20,12 @@ export const WAREHOUSE_TABS = [
   { id: 'hq-transfers', label: 'HQ Transfers', path: '/warehouse/hq-transfers' },
   // Delivery (2026-10-23, Hera): page still empty, content to come.
   { id: 'delivery', label: 'Delivery', path: '/warehouse/delivery' },
+  // Drag Test (2026-11-09, Hera): temporary copy of the Schedule with drag
+  // and drop. Shown to whoever may open the Schedule (gate: 'schedule').
+  { id: 'drag-test', label: 'Drag Test', path: '/warehouse/drag-test', gate: 'schedule' },
 ];
+// The user-group tab a tab is allowed by (its own id, or `gate`).
+const gateOf = (id) => ((WAREHOUSE_TABS.find(t => t.id === id) || {}).gate || id);
 
 const BADGE_BASE = {
   display: 'inline-block', minWidth: 18, height: 18, lineHeight: '18px', padding: '0 5px',
@@ -33,7 +38,7 @@ function TabBar({ tab, badges, onSelect, allowedTabs }) {
   return (
     <div style={{ borderBottom: '1px solid #e1e3e5', marginBottom: 4 }}>
       <InlineStack gap="100" wrap>
-        {WAREHOUSE_TABS.filter(t => allowedTabs.includes(t.id)).map(t => {
+        {WAREHOUSE_TABS.filter(t => allowedTabs.includes(gateOf(t.id))).map(t => {
           const active = t.id === tab;
           const count = t.id === 'receive-shipments' ? badges.receiveShipments
             : t.id === 'hq-transfers' ? badges.hqDraft : 0;
@@ -74,7 +79,7 @@ function WarehouseShell({ tab = 'schedule', children }) {
   }, [loadBadges]);
 
   return (
-    <WarehouseGate tab={tab}>
+    <WarehouseGate tab={gateOf(tab)}>
       {({ allowedTabs, canSettings, resetUser }) => (
         <>
           <Page

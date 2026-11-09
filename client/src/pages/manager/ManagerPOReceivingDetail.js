@@ -3,7 +3,7 @@ import {
   Page, Layout, Card, Button, BlockStack, InlineStack, Text, TextField, Banner, Spinner
 } from '@shopify/polaris';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
-import { useDD, poEntries, DDList } from '../shared/ddPill';
+import { useDD, poEntries, poPb, DDList, PBOnlyPill, pbOnlyValue } from '../shared/ddPill';
 import { LineNote, LineNoteIcon, poLineNoteApi } from '../shared/lineNote';
 
 // Same keydown-buffer barcode-scanner listening pattern used by
@@ -484,6 +484,11 @@ function ManagerPOReceivingDetail() {
                   claude/SCHEDULER_FEATURE_SPEC.md §7); split PO → one per line. */}
               {poEntries(dd, invoiceId).length > 0 && (
                 <div style={{ marginTop: -8 }}><DDList full entries={poEntries(dd, invoiceId)} /></div>
+              )}
+              {/* No DD pill (PO delivered straight to the store, not through
+                  WH) → just the PB qty pill in the same place (2026-11-09, Hera). */}
+              {poEntries(dd, invoiceId).length === 0 && pbOnlyValue(poPb(dd, invoiceId)) && (
+                <div style={{ marginTop: -8 }}><PBOnlyPill pb={poPb(dd, invoiceId)} /></div>
               )}
               {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
 

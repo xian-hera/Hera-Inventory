@@ -105,9 +105,9 @@ export function DDFull({ entry, reserveCheck = false }) {
 // (never received / scheduled by WH) has no DD pill, so the Store PO list
 // shows just its PB qty, in the DD pill's place and style. Value = what
 // Purchasing typed (WH's corrected value if WH ever set one). Nothing → null.
+export const pbOnlyValue = (pb) => (pb ? (pb.whSet ? (pb.wh || null) : (pb.by || null)) : null);
 export function PBOnlyPill({ pb }) {
-  if (!pb) return null;
-  const v = pb.whSet ? (pb.wh || null) : (pb.by || null);
+  const v = pbOnlyValue(pb);
   if (!v) return null;
   return <span style={pillStyle(false)}><b>{v}</b></span>;
 }
