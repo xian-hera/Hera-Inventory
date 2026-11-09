@@ -7,7 +7,7 @@ import { useNavigate } from 'react-router-dom';
 // renders by ManagerLocationGate (2026-09-29) — replaces reading
 // localStorage 'managerLocation' directly. See client/src/accountMemory.js.
 import { getManagerLocation } from '../../accountMemory';
-import { useDD, poEntries, DDList } from '../shared/ddPill';
+import { useDD, poEntries, poPb, DDList, PBOnlyPill } from '../shared/ddPill';
 import { StatusTime } from '../shared/statusTime';
 
 // formatDate / formatDateCompact: not used since 2026-11-09 (the History
@@ -185,7 +185,11 @@ function ManagerPOReceiving() {
                         <div className="po-a-po">{inv.po_number || inv.invoice_number}</div>
                         <div className="po-a-sup">{inv.supplier_name}</div>
                         <div className="po-a-dd">
-                          <DDList full entries={poEntries(dd, inv.id)} />
+                          {/* No DD pill (PO delivered straight to the store, not
+                              through WH) → the PB qty pill alone (2026-11-09, Hera). */}
+                          {poEntries(dd, inv.id).length > 0
+                            ? <DDList full entries={poEntries(dd, inv.id)} />
+                            : <PBOnlyPill pb={poPb(dd, inv.id)} />}
                         </div>
                         <div className="po-a-qty">
                           <Text variant="bodySm" tone="subdued">Qty: {inv.total_quantity}</Text>

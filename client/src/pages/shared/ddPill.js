@@ -101,6 +101,17 @@ export function DDFull({ entry, reserveCheck = false }) {
   );
 }
 
+// PB pill alone (2026-11-09, Hera): a PO that goes straight to the store
+// (never received / scheduled by WH) has no DD pill, so the Store PO list
+// shows just its PB qty, in the DD pill's place and style. Value = what
+// Purchasing typed (WH's corrected value if WH ever set one). Nothing → null.
+export function PBOnlyPill({ pb }) {
+  if (!pb) return null;
+  const v = pb.whSet ? (pb.wh || null) : (pb.by || null);
+  if (!v) return null;
+  return <span style={pillStyle(false)}><b>{v}</b></span>;
+}
+
 // Several entries: full → one per line (column, tight); mini → side by side.
 export function DDList({ entries, full = false, direction }) {
   const list = Array.isArray(entries) ? entries : [];
