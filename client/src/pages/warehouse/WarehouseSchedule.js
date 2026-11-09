@@ -10,12 +10,25 @@ import {
   useLocationOrder, useToast, refreshWarehouseBadges, setScheduleDirty, confirmLeaveSchedule,
 } from './whShared';
 
+// Drag and drop (2026-11-09, Hera — claude/SCHEDULE_DRAG_TEST.md): tried on
+// a temporary "Drag Test" tab, then moved here. Same Save / Discard as the
+// rest of the page. See DRAG below:
+//   • press a card and move → the card (or every selected card, when the
+//     pressed one is selected — also across Unscheduled and the calendar)
+//     sticks to the mouse; the page turns compact (cards show only the
+//     location) and grey, places that can take the cards light up;
+//   • drop between two cards → inserted exactly there; on Unscheduled →
+//     unscheduled; anywhere else (or Esc) → cancelled, nothing changes;
+//   • today after Go! and the past days ask for a confirm first (past days =
+//     track back, saved at once, at the drop position);
+//   • weekends never take cards. No auto scroll (Hera).
+//
 // Warehouse › Schedule (2026-10-21, Hera — claude/SCHEDULER_FEATURE_SPEC.md).
 //
 // Cards: received POs (+ their splits), transfers, WH custom tasks. They are
 // placed on Morning / Afternoon of the next 7 business days (today first;
 // weekends are a narrow strip and can't take tasks) by "select, then Add
-// Here" — no drag and drop.
+// Here", or by drag and drop since 2026-11-09 (until then: no drag and drop).
 //
 // Placing / reordering / unscheduling only change a local draft until Save
 // (Discard throws the draft away). Split, Delete, Create task, track back
@@ -44,6 +57,33 @@ const HALF_PILL = {
 // messages ("Wed, Oct 21 · Morning").
 const HALVES = [{ id: 'AM', label: 'AM', name: 'Morning' }, { id: 'PM', label: 'PM', name: 'Afternoon' }];
 const PINK = '#e0336f';
+
+// DRAG (2026-11-09): while a drag is on, the page wrapper gets class dg-on.
+// Cards fold to the location pill (the first line and the number slide
+// away), half-days and columns get tighter, everything that can't take the
+// cards is greyed (dg-dim), places that can are lit (dg-target / dg-over).
+const DRAG_CSS = `
+  .tc { transition: padding .18s ease, opacity .15s ease; }
+  .tc-first { max-height: 48px; opacity: 1; overflow: hidden; transition: max-height .18s ease, opacity .12s ease; }
+  .dg-on .tc-first { max-height: 0; opacity: 0; }
+  .dg-on .tc { gap: 0 !important; padding-top: 3px !important; padding-bottom: 3px !important; }
+  .dg-on .tc-num { display: none; }
+  .dg-dim { transition: opacity .15s ease, filter .15s ease; }
+  .dg-on .dg-dim { opacity: .35; filter: grayscale(1); }
+  .dg-half { transition: padding .18s ease, background-color .12s ease, box-shadow .12s ease; }
+  .dg-on .dg-half { padding-top: 6px !important; padding-bottom: 6px !important; gap: 4px !important; }
+  .dg-on .dg-sec { min-height: 120px !important; }
+  .dg-on .dg-target { background: #eef6ff !important; box-shadow: inset 0 0 0 1.5px #a8d1ff; border-radius: 8px; }
+  .dg-on .dg-target.dg-over { background: #dbeafe !important; box-shadow: inset 0 0 0 2px #2c6ecb; }
+`;
+// Insert position line inside a lit half-day.
+const DropLine = () => (
+  <div aria-hidden="true" style={{ position: 'relative', height: 0 }}>
+    <div style={{ position: 'absolute', left: -2, right: -2, top: -3, height: 4, borderRadius: 2, background: '#2c6ecb' }} />
+    <div style={{ position: 'absolute', left: -6, top: -6, width: 10, height: 10, borderRadius: '50%', background: '#2c6ecb' }} />
+  </div>
+);
+const DRAG_START_PX = 5; // pointer must move this far before a press becomes a drag
 
 const slotKey = (date, half) => `${date}|${half}`;
 const WEEKDAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -166,7 +206,11 @@ const PICKUP_BORDER = '#e2ac0c';
 // the order number in front). `partnerLit` = the other card of the same
 // split transfer is hovered or selected → this one gets a glow in the pair
 // colour. `locked` = on a locked day and not tracked back → not selectable.
-function TaskCard({ task, selected, onToggle, onOpenNumber, order, compact, locked, partnerLit, onHoverPair }) {
+// Drag Test (2026-11-09): onPress = pointer down (may start a drag);
+// ghost = this card is being dragged (faded in its old place); noHover = no
+// hover box while dragging. The first line (class tc-first) and the number
+// (tc-num) fold away while dragging — see DRAG_CSS.
+function TaskCard({ task, selected, onToggle, onOpenNumber, order, compact, locked, partnerLit, onHoverPair, onPress, ghost, noHover, draggable }) {
   const fs = compact ? 12 : 13;
   const [hoverRect, setHoverRect] = useState(null);
   const route = cardRoute(task);
@@ -193,7 +237,7 @@ function TaskCard({ task, selected, onToggle, onOpenNumber, order, compact, lock
     second = (
       <>
         {locLine}
-        <LinkText onClick={() => onOpenNumber(task)}>{task.number}</LinkText>
+        <span className="tc-num"><LinkText onClick={() => onOpenNumber(task)}>{task.number}</LinkText></span>
       </>
     );
   } else if (task.kind === 'transfer') {
@@ -204,7 +248,7 @@ function TaskCard({ task, selected, onToggle, onOpenNumber, order, compact, lock
     const splitMark = pc
       ? <span style={{ marginLeft: 'auto', flex: 'none', paddingLeft: 4, fontSize: 11, fontWeight: 700, color: pc }}>{task.leg === 'pickup' ? '1/2' : '2/2'}</span>
       : null;
-    const number = <LinkText onClick={() => onOpenNumber(task)}>{task.number}</LinkText>;
+    const number = <span className="tc-num"><LinkText onClick={() => onOpenNumber(task)}>{task.number}</LinkText></span>;
     if (task.tag) {
       first = (
         <>
@@ -257,12 +301,16 @@ function TaskCard({ task, selected, onToggle, onOpenNumber, order, compact, lock
       tabIndex={0}
       aria-pressed={selected}
       aria-disabled={locked || undefined}
-      onMouseEnter={(e) => { setHoverRect(e.currentTarget.getBoundingClientRect()); if (pc && onHoverPair) onHoverPair(task.transferId); }}
+      className="tc"
+      data-card-id={task.id}
+      onPointerDown={onPress ? (e) => onPress(e, task) : undefined}
+      onMouseEnter={(e) => { if (!noHover) setHoverRect(e.currentTarget.getBoundingClientRect()); if (pc && onHoverPair) onHoverPair(task.transferId); }}
       onMouseLeave={() => { setHoverRect(null); if (pc && onHoverPair) onHoverPair(null); }}
       onClick={() => { if (!locked) onToggle(task.id); }}
       onKeyDown={(e) => { if (!locked && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onToggle(task.id); } }}
       style={{
-        position: 'relative', boxSizing: 'border-box', cursor: locked ? 'default' : 'pointer', textAlign: 'left',
+        position: 'relative', boxSizing: 'border-box', cursor: locked ? 'default' : draggable ? 'grab' : 'pointer', textAlign: 'left',
+        opacity: ghost ? 0.3 : 1, touchAction: 'none', userSelect: 'none',
         border: `${bw}px solid ${borderColor}`,
         borderLeft: pc ? `5px solid ${pc}` : `${bw}px solid ${borderColor}`,
         boxShadow: partnerLit && pc ? `0 0 0 3px ${pc}55` : 'none',
@@ -273,7 +321,7 @@ function TaskCard({ task, selected, onToggle, onOpenNumber, order, compact, lock
     >
       {first ? (
         <>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, paddingRight: selected ? 12 : 0 }}>
+          <div className="tc-first" style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, paddingRight: selected ? 12 : 0 }}>
             {order != null && <span style={{ color: '#6d7175', fontSize: 11, minWidth: 12, fontVariantNumeric: 'tabular-nums' }}>{order}</span>}
             {first}
           </div>
@@ -287,7 +335,7 @@ function TaskCard({ task, selected, onToggle, onOpenNumber, order, compact, lock
           {second}
         </div>
       )}
-      <HoverBox task={task} rect={hoverRect} />
+      {!noHover && <HoverBox task={task} rect={hoverRect} />}
       {selected && (
         <span aria-hidden="true" style={{
           position: 'absolute', top: -8, right: -8, width: 18, height: 18, borderRadius: '50%', background: PINK,
@@ -631,6 +679,142 @@ function WarehouseSchedule() {
 
   const toggle = (id) => setSel(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
 
+  // ── DRAG (2026-11-09, Hera) ──
+  // drag = { ids, anchor, fromCal, w, offX, offY, x, y, trayOk, editOk, lockedOk, target }
+  //   trayOk   — something dragged is on the calendar → Unscheduled takes it (= unschedule)
+  //   editOk   — current-view days take it (no tracked-back card in it)
+  //   lockedOk — past days take it (all dragged cards are Unscheduled → track back)
+  //   target   — { type: 'tray' } | { type: 'slot', key, locked, index } | null
+  const [drag, setDrag] = useState(null);
+  const dragRef = useRef(null);
+  dragRef.current = drag;
+  const pressRef = useRef(null);     // { x, y, task, rect } between pointer down and drag start
+  const suppressClick = useRef(false); // the click that follows a drop must not toggle a card
+  const lastPt = useRef({ x: 0, y: 0 });
+  // Can this card be picked up? Not: cards that went out with Go!, cards on
+  // a past day that were not tracked back.
+  const canDrag = (t) => !!t && !t.gone && (!lockedWhere[t.id] || !!t.trackedBack);
+  const toggleSafe = (id) => { if (suppressClick.current) return; toggle(id); };
+
+  const targetAt = (x, y, d) => {
+    const el = document.elementFromPoint(x, y);
+    const zone = el && el.closest ? el.closest('[data-drop]') : null;
+    if (!zone) return null;
+    const key = zone.getAttribute('data-drop');
+    if (key === 'tray') return d.trayOk ? { type: 'tray' } : null;
+    const locked = zone.getAttribute('data-locked') === '1';
+    if (locked ? !d.lockedOk : !d.editOk) return null;
+    const cards = [...zone.querySelectorAll('[data-card-id]')]
+      .filter(c => !d.ids.includes(Number(c.getAttribute('data-card-id'))));
+    let index = cards.length;
+    for (let i = 0; i < cards.length; i += 1) {
+      const r = cards[i].getBoundingClientRect();
+      if (y < r.top + (r.height / 2)) { index = i; break; }
+    }
+    return { type: 'slot', key, locked, index };
+  };
+
+  // Window listeners call into the latest render through this ref.
+  const live = useRef({});
+  live.current.beginDrag = (e) => {
+    const p = pressRef.current;
+    if (!p) return;
+    const t = p.task;
+    const isPast = !!(dataRef.current && dataRef.current.view === 'past');
+    const ids = sel.includes(t.id) ? sel.filter(id => canDrag(byId[id])) : [t.id];
+    const tracked = ids.filter(id => lockedWhere[id]);
+    const onCal = ids.filter(id => where[id]);
+    const un = ids.filter(id => !where[id] && !lockedWhere[id]);
+    const d = {
+      ids, anchor: t.id, fromCal: !!(where[t.id] || lockedWhere[t.id]), w: p.rect.width,
+      offX: p.x - p.rect.left, offY: p.y - p.rect.top, x: e.clientX, y: e.clientY,
+      trayOk: onCal.length + tracked.length > 0,
+      editOk: tracked.length === 0 && !isPast, lockedOk: un.length === ids.length && isPast,
+      target: null,
+    };
+    pressRef.current = null;
+    try { window.getSelection().removeAllRanges(); } catch (err) { /* ignore */ }
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'grabbing';
+    setDrag(d);
+  };
+  live.current.move = (e) => {
+    lastPt.current = { x: e.clientX, y: e.clientY };
+    const p = pressRef.current;
+    if (p && !dragRef.current) {
+      if (Math.hypot(e.clientX - p.x, e.clientY - p.y) >= DRAG_START_PX) live.current.beginDrag(e);
+      return;
+    }
+    if (!dragRef.current) return;
+    setDrag(prev => (prev ? { ...prev, x: e.clientX, y: e.clientY, target: targetAt(e.clientX, e.clientY, prev) } : prev));
+  };
+  live.current.end = (drop) => {
+    window.removeEventListener('pointermove', live.current.onMove);
+    window.removeEventListener('pointerup', live.current.onUp);
+    pressRef.current = null;
+    const d = dragRef.current;
+    document.body.style.userSelect = '';
+    document.body.style.cursor = '';
+    if (!d) return;
+    suppressClick.current = true;
+    setTimeout(() => { suppressClick.current = false; }, 0);
+    setDrag(null);
+    if (drop) {
+      // the target is re-read at the drop point (the page may have changed under the mouse)
+      const target = targetAt(lastPt.current.x, lastPt.current.y, d);
+      if (target) live.current.drop({ ...d, target });
+    }
+  };
+  live.current.onMove = (e) => live.current.move(e);
+  live.current.onUp = () => live.current.end(true);
+
+  const onPress = (e, task) => {
+    if (e.button !== 0 || busy || saving || !canDrag(task)) return;
+    pressRef.current = { x: e.clientX, y: e.clientY, task, rect: e.currentTarget.getBoundingClientRect() };
+    lastPt.current = { x: e.clientX, y: e.clientY };
+    window.addEventListener('pointermove', live.current.onMove);
+    window.addEventListener('pointerup', live.current.onUp);
+  };
+  // Esc cancels; scrolling (wheel) re-checks what is under the mouse.
+  useEffect(() => {
+    if (!drag) return undefined;
+    const key = (e) => { if (e.key === 'Escape') { e.preventDefault(); live.current.end(false); } };
+    const scroll = () => setDrag(prev => (prev ? { ...prev, target: targetAt(lastPt.current.x, lastPt.current.y, prev) } : prev));
+    window.addEventListener('keydown', key);
+    window.addEventListener('scroll', scroll, true);
+    return () => { window.removeEventListener('keydown', key); window.removeEventListener('scroll', scroll, true); };
+  }, [!!drag]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => { document.body.style.userSelect = ''; document.body.style.cursor = ''; }, []);
+
+  live.current.drop = async (d) => {
+    const t = d.target;
+    const n = d.ids.length;
+    const nTxt = n === 1 ? '1 task' : `${n} tasks`;
+    if (t.type === 'tray') {
+      await unscheduleIds(d.ids);
+      setSel(prev => prev.filter(id => !d.ids.includes(id)));
+      return;
+    }
+    const [date, half] = t.key.split('|');
+    const label = `${longDay(date)} · ${(HALVES.find(h => h.id === half) || {}).name}`;
+    if (t.locked) {
+      if (!window.confirm(`Track back ${nTxt} to ${label}?\n\nThis is a past day — it is saved at once.`)) return;
+      await trackBackIds(d.ids, date, half, label, t.index);
+      return;
+    }
+    if (date === data.today && data.goneToday && d.ids.some(id => !(where[id] && where[id].key.startsWith(`${date}|`)))) {
+      if (!window.confirm(`Today's trucks have already gone (Go!).\n\nAdd ${nTxt} to ${label} anyway?`)) return;
+    }
+    const next = {};
+    Object.entries(slotsRef.current).forEach(([k, list]) => { next[k] = list.filter(id => !d.ids.includes(id)); });
+    const list = next[t.key] || [];
+    const at = Math.min(t.index, list.length);
+    next[t.key] = [...list.slice(0, at), ...d.ids, ...list.slice(at)];
+    setSlots(next);
+    setSel(prev => prev.filter(id => !d.ids.includes(id)));
+    showToast(`${nTxt} moved to ${label}`);
+  };
+
   // Add Here on an editable half-day: draft move.
   const place = (key, label) => {
     if (sel.length === 0) return;
@@ -644,18 +828,21 @@ function WarehouseSchedule() {
   };
 
   // Add Here on a locked half-day: track back (saved at once).
-  const trackBack = async (date, half, label) => {
-    const ids = selUn.map(t => t.id);
+  const trackBack = async (date, half, label) => trackBackIds(selUn.map(t => t.id), date, half, label);
+  // index (Drag Test): insert position in that half-day; none = at the bottom.
+  const trackBackIds = async (idsIn, date, half, label, index) => {
+    const ids = idsIn.filter(id => byId[id] && !where[id] && !lockedWhere[id]);
     if (ids.length === 0) return;
     setBusy(true);
     setError('');
     try {
       const r = await fetch('/api/warehouse/tasks/track-back', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, date, half }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(index == null ? { ids, date, half } : { ids, date, half, index }),
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || 'Failed to track back');
-      setSel([]);
+      setSel(prev => prev.filter(id => !ids.includes(id)));
       await load({ keepDraft: true });
       showToast(`${d.added === 1 ? '1 task' : `${d.added} tasks`} tracked back to ${label}`);
     } catch (e) {
@@ -676,9 +863,10 @@ function WarehouseSchedule() {
 
   // Draft-unschedule what is on editable days; tracked-back tasks on locked
   // days are taken off at once (server). They stay selected.
-  const unschedule = async () => {
-    const editIds = selEdit.map(t => t.id);
-    const trackedIds = selTracked.map(t => t.id);
+  const unschedule = async () => unscheduleIds(sel);
+  const unscheduleIds = async (ids) => {
+    const editIds = ids.filter(id => where[id]);
+    const trackedIds = ids.filter(id => lockedWhere[id] && byId[id] && byId[id].trackedBack);
     if (editIds.length) {
       const next = {};
       Object.entries(slots).forEach(([k, list]) => { next[k] = list.filter(id => !editIds.includes(id)); });
@@ -896,19 +1084,28 @@ function WarehouseSchedule() {
         selected={sel.includes(id)}
         // gone = went out with Go! → fixed (2026-10-23)
         locked={(isLockedDay && !t.trackedBack) || t.gone}
+        draggable={canDrag(t)}
+        onPress={onPress}
+        ghost={!!drag && drag.ids.includes(id)}
+        noHover={!!drag}
         partnerLit={t.kind === 'transfer' && t.leg && litPairs.has(t.transferId) && !sel.includes(id)}
         onHoverPair={setHoverPair}
-        onToggle={toggle}
+        onToggle={toggleSafe}
         onOpenNumber={openNumber}
       />
     );
   };
+  const dimIf = (on) => (drag && on ? 'dg-dim' : undefined);
 
   return (
     <Page>
-      <div style={{ position: 'relative', left: '50%', transform: 'translateX(-50%)', width: `min(${CONTENT_W}px, calc(100vw - 32px))` }}>
+      <style>{DRAG_CSS}</style>
+      {/* Drag: grey veil over the whole screen (the content block is painted above it) */}
+      {drag && <div aria-hidden="true" style={{ position: 'fixed', inset: 0, zIndex: 0, background: 'rgba(0,0,0,0.14)', pointerEvents: 'none' }} />}
+      <div className={drag ? 'dg-on' : undefined} style={{ position: 'relative', left: '50%', transform: 'translateX(-50%)', width: `min(${CONTENT_W}px, calc(100vw - 32px))` }}>
         <BlockStack gap="300">
           {/* Header */}
+          <div className={dimIf(true)}>
           <InlineStack align="space-between" blockAlign="start" gap="300" wrap>
             <BlockStack gap="100">
               {/* no "Schedule" title under the tab bar (2026-10-23, Hera — same as HQ Transfers) */}
@@ -937,6 +1134,7 @@ function WarehouseSchedule() {
               </InlineStack>
             )}
           </InlineStack>
+          </div>
 
           {error && (
             <Banner tone="critical" onDismiss={() => setError('')}
@@ -947,6 +1145,7 @@ function WarehouseSchedule() {
           {notice && <Banner tone={notice.tone} onDismiss={() => setNotice(null)}>{notice.text}</Banner>}
 
           {/* Unscheduled — title, filters and buttons outside the card */}
+          <div className={dimIf(true)}>
           <InlineStack align="space-between" blockAlign="end" gap="200" wrap>
             {/* One list again (2026-10-23, Hera) — the Delivery / Pickup tabs of
                 2026-10-22 were removed; pickup cards are amber instead. */}
@@ -961,8 +1160,14 @@ function WarehouseSchedule() {
               <Button onClick={() => setCreateOpen(true)}>Create task</Button>
             </InlineStack>
           </InlineStack>
+          </div>
 
-          <div style={{ background: '#fff', borderRadius: 12, boxShadow: '0 1px 0 rgba(0,0,0,0.07), 0 0 0 1px rgba(0,0,0,0.08)', padding: 14 }}>
+          {/* Unscheduled = drop target "unschedule" while dragging cards from the calendar */}
+          <div
+            data-drop="tray"
+            className={drag ? (drag.trayOk ? `dg-target${drag.target && drag.target.type === 'tray' ? ' dg-over' : ''}` : 'dg-dim') : undefined}
+            style={{ background: '#fff', borderRadius: 12, boxShadow: '0 1px 0 rgba(0,0,0,0.07), 0 0 0 1px rgba(0,0,0,0.08)', padding: 14, transition: 'padding .18s ease' }}
+          >
             {tray.length === 0 ? (
               <Text tone="subdued">{unscheduled.length === 0 ? 'No unscheduled tasks.' : 'No unscheduled tasks match.'}</Text>
             ) : (
@@ -974,8 +1179,12 @@ function WarehouseSchedule() {
                     selected={sel.includes(t.id)}
                     partnerLit={t.kind === 'transfer' && t.leg && litPairs.has(t.transferId) && !sel.includes(t.id)}
                     onHoverPair={setHoverPair}
-                    onToggle={toggle}
+                    onToggle={toggleSafe}
                     onOpenNumber={openNumber}
+                    draggable={canDrag(t)}
+                    onPress={onPress}
+                    ghost={!!drag && drag.ids.includes(t.id)}
+                    noHover={!!drag}
                   />
                 ))}
               </div>
@@ -983,7 +1192,7 @@ function WarehouseSchedule() {
           </div>
 
           {/* Action bar — empty while nothing is selected (Hera 2026-10-21) */}
-          <div style={{
+          <div className={dimIf(true)} style={{
             minHeight: 52, boxSizing: 'border-box', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10,
             padding: '8px 14px', borderRadius: 12,
             background: hasSel ? '#e0f2fe' : '#fff', border: `1px solid ${hasSel ? '#a8d1ff' : '#e1e3e5'}`,
@@ -1004,15 +1213,17 @@ function WarehouseSchedule() {
           </div>
 
           {/* Calendar — Past 7 days / Current 7 days toggle at the top left */}
+          <div className={dimIf(true)}>
           <InlineStack>
             <Button onClick={switchView} disabled={saving || busy}>{past ? 'Current 7 Days' : 'Past 7 Days'}</Button>
           </InlineStack>
+          </div>
           <div style={{ overflowX: 'auto' }}>
             <div style={{ minWidth: 980, display: 'grid', gridTemplateColumns: gridCols, gap: 8, alignItems: 'stretch' }}>
               {columns.map(col => {
                 if (col.weekend) {
                   return (
-                    <div key={col.key} style={{ borderRadius: 12, background: '#c9cccf', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '14px 0', minHeight: 300 }}>
+                    <div key={col.key} className={dimIf(true)} style={{ borderRadius: 12, background: '#c9cccf', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '14px 0', minHeight: 300 }}>
                       <span style={{ writingMode: 'vertical-rl', color: '#303030', fontSize: 12, fontWeight: 650, letterSpacing: 0.3 }}>{col.label}</span>
                     </div>
                   );
@@ -1020,11 +1231,11 @@ function WarehouseSchedule() {
                 const p = dateParts(col.date);
                 const isLockedDay = lockedSet.has(col.date);
                 return (
-                  <section key={col.key} aria-label={longDay(col.date)} style={{
+                  <section key={col.key} aria-label={longDay(col.date)} className="dg-sec" style={{
                     background: isLockedDay ? '#fafafa' : '#fff', borderRadius: 12, border: '1px solid #c9cccf',
                     display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 300,
                   }}>
-                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, padding: '8px 10px 6px', borderBottom: '1px solid #e1e3e5' }}>
+                    <div className={dimIf(true)} style={{ display: 'flex', alignItems: 'baseline', gap: 6, padding: '8px 10px 6px', borderBottom: '1px solid #e1e3e5' }}>
                       <span style={{ fontWeight: 700, fontSize: 14 }}>{p.dow}</span>
                       <span style={{ color: '#303030' }}>{mmdd(col.date)}</span>
                       {col.date === data.today && !data.goneToday && <span style={{ marginLeft: 'auto', fontSize: 11, color: '#6d7175' }}>Today</span>}
@@ -1042,10 +1253,20 @@ function WarehouseSchedule() {
                       // Add Here: editable day → draft move (anything except
                       // tracked-back tasks); locked day → track back
                       // (Unscheduled tasks only).
-                      const showAdd = hasSel && (isLockedDay ? allUnscheduled : selTracked.length === 0);
+                      const showAdd = !drag && hasSel && (isLockedDay ? allUnscheduled : selTracked.length === 0);
                       const label = `${longDay(col.date)} · ${h.name}`;
+                      // drag: can this half-day take the dragged cards? where is the insert line?
+                      const canTake = !!drag && (isLockedDay ? drag.lockedOk : drag.editOk);
+                      const over = canTake && drag.target && drag.target.type === 'slot' && drag.target.key === key;
+                      const lineAt = over ? drag.target.index : -1;
+                      let nth = 0; // position among the cards that are not being dragged
                       return (
-                        <div key={h.id} style={{
+                        <div
+                          key={h.id}
+                          data-drop={key}
+                          data-locked={isLockedDay ? '1' : '0'}
+                          className={`dg-half${drag ? (canTake ? ` dg-target${over ? ' dg-over' : ''}` : ' dg-dim') : ''}`}
+                          style={{
                           display: 'flex', flexDirection: 'column', gap: 6, padding: 8,
                           // 2× space above and below the Morning / Afternoon line (2026-10-22)
                           ...(hi === 0 ? { paddingBottom: 16 } : { paddingTop: 16 }),
@@ -1059,7 +1280,13 @@ function WarehouseSchedule() {
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <span style={HALF_PILL}>{h.label}</span>
                           </div>
-                          {vis.map((id, i) => renderCard(id, i, isLockedDay))}
+                          {vis.map((id, i) => {
+                            const dragged = !!drag && drag.ids.includes(id);
+                            const line = !dragged && nth === lineAt ? <DropLine key={`line-${id}`} /> : null;
+                            if (!dragged) nth += 1;
+                            return line ? [line, renderCard(id, i, isLockedDay)] : renderCard(id, i, isLockedDay);
+                          })}
+                          {lineAt >= 0 && lineAt >= nth && <DropLine />}
                           {ids.length === 0 && !showAdd && <span style={{ fontSize: 12, color: '#8a8a8a' }}>No tasks</span>}
                           {showAdd && (
                             <button
@@ -1084,6 +1311,29 @@ function WarehouseSchedule() {
         </BlockStack>
       </div>
 
+      {/* The dragged card(s), stuck to the mouse — full card, a stack when several.
+          It hangs just right of / below the pointer so the insert line under
+          the pointer stays visible. */}
+      {drag && byId[drag.anchor] && createPortal(
+        <div style={{
+          position: 'fixed', left: drag.x + 14, top: drag.y + 10, width: drag.w, zIndex: 800,
+          pointerEvents: 'none', transform: 'rotate(1.5deg)',
+        }}>
+          {drag.ids.length > 2 && <div style={{ position: 'absolute', inset: 0, transform: 'translate(10px, 10px)', background: '#fff', border: '1px solid #c9cccf', borderRadius: 10 }} />}
+          {drag.ids.length > 1 && <div style={{ position: 'absolute', inset: 0, transform: 'translate(5px, 5px)', background: '#fff', border: '1px solid #c9cccf', borderRadius: 10 }} />}
+          <div style={{ position: 'relative', borderRadius: 10, boxShadow: '0 14px 30px rgba(0,0,0,0.28)' }}>
+            <TaskCard task={byId[drag.anchor]} compact={drag.fromCal} selected={false} noHover onToggle={() => {}} onOpenNumber={() => {}} />
+          </div>
+          {drag.ids.length > 1 && (
+            <span style={{
+              position: 'absolute', top: -10, right: -10, minWidth: 22, height: 22, padding: '0 6px', boxSizing: 'border-box',
+              borderRadius: 11, background: PINK, color: '#fff', fontSize: 12, fontWeight: 700, lineHeight: '22px', textAlign: 'center',
+              boxShadow: '0 0 0 2px #fff',
+            }}>{drag.ids.length}</span>
+          )}
+        </div>,
+        document.body
+      )}
       <CreateTaskModal
         open={createOpen}
         onClose={() => setCreateOpen(false)}

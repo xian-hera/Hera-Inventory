@@ -106,8 +106,6 @@ const WarehouseSchedule = lazyWithReload(() => import(/* webpackChunkName: "ware
 const WarehouseReceiveShipments = lazyWithReload(() => import(/* webpackChunkName: "warehouse" */ './pages/warehouse/WarehouseReceiveShipments'));
 const WarehouseSettings = lazyWithReload(() => import(/* webpackChunkName: "warehouse" */ './pages/warehouse/WarehouseSettings'));
 const WarehouseDelivery = lazyWithReload(() => import(/* webpackChunkName: "warehouse" */ './pages/warehouse/WarehouseDelivery'));
-// Drag Test (2026-11-09, Hera): a copy of the Schedule with drag and drop, to try before it replaces the Schedule.
-const WarehouseScheduleDragTest = lazyWithReload(() => import(/* webpackChunkName: "warehouse" */ './pages/warehouse/WarehouseScheduleDragTest'));
 const ManagerTransferHome = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerTransferHome'));
 const ManagerTransferSendingDetail = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerTransferSendingDetail'));
 const ManagerTransferReceivingDetail = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerTransferReceivingDetail'));
@@ -201,7 +199,6 @@ function App() {
           <Route path="/warehouse/receive-shipments" element={<WarehouseShell tab="receive-shipments"><WarehouseReceiveShipments /></WarehouseShell>} />
           <Route path="/warehouse/hq-transfers" element={<WarehouseShell tab="hq-transfers"><WarehouseHome inTabs section="hq" /></WarehouseShell>} />
           <Route path="/warehouse/delivery" element={<WarehouseShell tab="delivery"><WarehouseDelivery /></WarehouseShell>} />
-          <Route path="/warehouse/drag-test" element={<WarehouseShell tab="drag-test"><WarehouseScheduleDragTest /></WarehouseShell>} />
           <Route path="/warehouse/settings" element={<WarehouseSettings />} />
           {/* Receiving to HQ (改动二) — fixed "receiving" segment registered
               before the :transferId route so it can't be shadowed. */}

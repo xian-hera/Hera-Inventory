@@ -20,11 +20,11 @@ export const WAREHOUSE_TABS = [
   { id: 'hq-transfers', label: 'HQ Transfers', path: '/warehouse/hq-transfers' },
   // Delivery (2026-10-23, Hera): page still empty, content to come.
   { id: 'delivery', label: 'Delivery', path: '/warehouse/delivery' },
-  // Drag Test (2026-11-09, Hera): temporary copy of the Schedule with drag
-  // and drop. Shown to whoever may open the Schedule (gate: 'schedule').
-  { id: 'drag-test', label: 'Drag Test', path: '/warehouse/drag-test', gate: 'schedule' },
+  // (2026-11-09) The temporary "Drag Test" tab was removed — its drag and drop
+  // is now part of the Schedule tab.
 ];
-// The user-group tab a tab is allowed by (its own id, or `gate`).
+// The user-group tab a tab is allowed by (its own id, or `gate`) — kept for
+// any later tab that shares another tab's permission.
 const gateOf = (id) => ((WAREHOUSE_TABS.find(t => t.id === id) || {}).gate || id);
 
 const BADGE_BASE = {
