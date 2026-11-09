@@ -5,7 +5,8 @@ import React, { useEffect, useState } from 'react';
 // from the Warehouse Schedule (POST /api/warehouse/dd, saved schedule only).
 //
 // Two forms:
-//   full (MA) — PB pill "2 P" + DD pill "TUE. AM. 4th. OCT 02"
+//   full (MA) — DD pill "TUE. AM. 4th. OCT 02" + PB pill "2 P" (PB after the
+//               date since 2026-11-09, Hera; was PB first)
 //               (unscheduled: "TBD"; no PB qty → no PB pill; transfers have
 //               no PB). 4th = this store's place among the different stores
 //               on that half-day's schedule.
@@ -71,7 +72,9 @@ export function DDMini({ entry }) {
   return <span style={pillStyle(entry.past)}>{ddDateText(entry.date)}</span>;
 }
 
-// Full: [2 P] [TUE. AM. 4th. OCT 02] / [2 P] [TBD].
+// Full: [TUE. AM. 4th. OCT 02] [2 P] / [TBD] [2 P] — the date pill first,
+// PB after it (2026-11-09, Hera; was [2 P] first). Store PO list, PO detail,
+// Store Dashboard.
 export function DDFull({ entry, reserveCheck = false }) {
   if (!entry) return null;
   const pb = entry.pbCount && entry.pbUnit ? `${entry.pbCount} ${entry.pbUnit}` : null;
@@ -92,8 +95,8 @@ export function DDFull({ entry, reserveCheck = false }) {
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>
       <Check entry={entry} reserve={reserveCheck} />
-      {pb && <span style={pillStyle(entry.state === 'scheduled' && entry.past)}><b>{pb}</b></span>}
       {main}
+      {pb && <span style={pillStyle(entry.state === 'scheduled' && entry.past)}><b>{pb}</b></span>}
     </span>
   );
 }

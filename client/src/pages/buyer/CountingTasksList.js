@@ -9,6 +9,7 @@ import DateRangeFilter from '../../components/DateRangeFilter';
 import { useLocationMap } from '../shared/locationMap';
 import { useGroupContext } from '../../userGroup'; // Purchasing user groups, 2026-10-09
 import { useProductTypes } from '../../productTypes'; // central type list, 2026-10-21
+import { statusTimeText } from '../shared/statusTime'; // Date = time of the current status, 2026-11-09
 
 // Location list: comes from the shared location map (pages/shared/locationMap.js,
 // 2026-09-24). The hardcoded 19-code LOCATIONS constant that used to live here
@@ -42,6 +43,10 @@ function typeDisplay(type) {
   return TYPE_LABEL_MAP[type] || type;
 }
 
+// Not used since 2026-11-09: the Date column shows when the row got its
+// current status, "HH:MM, Oct. 12" (shared/statusTime.js). Kept per the
+// project's no-silent-delete rule.
+// eslint-disable-next-line no-unused-vars
 function formatDate(dateStr) {
   if (!dateStr) return '';
   const d = new Date(dateStr);
@@ -296,7 +301,7 @@ function CountingTasksList() {
                               <td style={{ ...tdStyle, whiteSpace: 'normal', wordBreak: 'break-word', maxWidth: '160px' }}>{typesDisplay}</td>
                               <td style={tdStyle}>{task.location}</td>
                               <td style={tdStyle}>{task.inaccurate_count > 0 ? String(task.inaccurate_count) : ''}</td>
-                              <td style={tdStyle}>{formatDate(task.created_at)}</td>
+                              <td style={tdStyle}>{statusTimeText(task.status_changed_at || task.created_at)}</td>
                               <td style={tdStyle}>{getStatusBadge(task.status)}</td>
                             </tr>
                           );

@@ -9,7 +9,11 @@ import { StatusBadge, HoldBadge, TagPills } from '../shared/transferStatus';
 // localStorage 'managerLocation' directly. See client/src/accountMemory.js.
 import { getManagerLocation } from '../../accountMemory';
 import { useDD, transferEntries, DDList, useIsPhoneWidth } from '../shared/ddPill';
+import { StatusTime } from '../shared/statusTime';
 
+// Not used since 2026-11-09 (the History row's date moved next to the status
+// pill as the status time); kept per the project's no-silent-delete rule.
+// eslint-disable-next-line no-unused-vars
 function formatDate(dateStr) {
   if (!dateStr) return '';
   const d = new Date(dateStr);
@@ -167,8 +171,11 @@ function ManagerTransferHome() {
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', columnGap: 8, rowGap: 6 }}>
         <span style={{ fontWeight: 600, textDecoration: 'underline' }}>{h.shopify_transfer_name || '—'}</span>
         <TagPills tags={h.transfer_tags} />
-        <Text tone="subdued" variant="bodySm">{formatDate(h.created_at)}</Text>
+        {/* 2026-11-09 (Hera): the date after the tags (when this History row
+            was written) is gone; instead, left of the status pill, when the
+            transfer got its current status, "HH:MM, Oct. 12". */}
         <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <StatusTime value={h.transfer_status_at || h.created_at} />
           {/* Archived = Purchasing committed it → the store sees a green
               "Committed" pill, never "Archived" (2026-10-27, Hera). */}
           {h.transfer_status === 'archived' ? (

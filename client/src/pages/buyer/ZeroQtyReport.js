@@ -9,6 +9,7 @@ import DateRangeFilter from '../../components/DateRangeFilter';
 import { useLocationMap } from '../shared/locationMap';
 import { useGroupContext } from '../../userGroup'; // Purchasing user groups, 2026-10-09
 import { useProductTypes } from '../../productTypes'; // central type list, 2026-10-21
+import { statusTimeText } from '../shared/statusTime'; // Date = time of the current status, 2026-11-09
 
 // Location list: comes from the shared location map (pages/shared/locationMap.js,
 // 2026-09-24) with HQ filtered out — this page's hardcoded list never
@@ -62,6 +63,10 @@ const GROUP_BORDER = '1px solid #202223';
 const TABLE_H_PAD = 16;
 const TOTAL_COLUMNS = 9; // checkbox + Type/Location/Date/Name/SKU/System/Actual/action
 
+// Not used since 2026-11-09: the Date column shows when the row got its
+// current status, "HH:MM, Oct. 12" (shared/statusTime.js). Kept per the
+// project's no-silent-delete rule.
+// eslint-disable-next-line no-unused-vars
 function formatDate(dateStr) {
   if (!dateStr) return '';
   const d = new Date(dateStr);
@@ -378,7 +383,7 @@ function ZeroQtyReport() {
                               {/* 改动一：显示 type 而非 department */}
                               <td style={tdStyle}>{typeDisplay(report.type) || '-'}</td>
                               <td style={tdStyle}>{report.location || '-'}</td>
-                              <td style={tdStyle}>{formatDate(report.submitted_at)}</td>
+                              <td style={tdStyle}>{statusTimeText(report.status_changed_at || report.committed_at || report.submitted_at)}</td>
                               <td style={{ ...tdStyle, maxWidth: '200px', wordBreak: 'break-word', whiteSpace: 'normal' }}>{report.name || '-'}</td>
                               <td style={tdStyle}>{report.barcode || '-'}</td>
                               <td style={tdStyle}>{report.soh ?? '-'}</td>

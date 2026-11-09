@@ -47,11 +47,45 @@ router.get('/buyer', async (req, res) => {
       // Table may not exist yet
     }
 
+    // Purchase Orders (2026-11-09, Hera): invoices in Pending or Store
+    // counted — same group rule as the PO list (the supplier's carried types,
+    // see GET /api/po-invoices/pending).
+    let poAttention = 0;
+    try {
+      const poRes = await pool.query(
+        `SELECT COUNT(*) FROM po_invoices i JOIN po_suppliers s ON s.id = i.supplier_id
+          WHERE i.status IN ('pending', 'store_counted')${groupFilter ? ` AND ${arrayVisibleSql('s.types_carrying', 1)}` : ''}`,
+        gParams
+      );
+      poAttention = parseInt(poRes.rows[0].count);
+    } catch (e) {
+      console.error('badges: PO count failed:', e.message);
+    }
+
+    // Transfers (2026-11-09, Hera): Reviewing (stored 'pending'), Counted,
+    // Not counted — same rows / group rule as Purchasing's Transfers list
+    // (Online / Fulfiller transfers excluded; tags whose types all belong to
+    // other groups hidden, see GET /api/transfers/ongoing).
+    let transferAttention = 0;
+    try {
+      const trRes = await pool.query(
+        `SELECT COUNT(*) FROM transfers
+          WHERE status IN ('pending', 'counted', 'not_counted')
+            AND COALESCE(source, 'hub') <> 'fulfiller'${groupFilter ? ` AND ${arrayVisibleSql('tags', 1)}` : ''}`,
+        groupFilter ? [groupFilter.hiddenTags] : []
+      );
+      transferAttention = parseInt(trRes.rows[0].count);
+    } catch (e) {
+      console.error('badges: transfer count failed:', e.message);
+    }
+
     res.json({
       weeklyReviewing:      parseInt(weeklyRes.rows[0].count),
       zeroLowReviewing:     parseInt(zeroLowRes.rows[0].count),
       stockLossesReviewing: parseInt(stockLossesRes.rows[0].count),
       priceChangeAlert,
+      poAttention,
+      transferAttention,
     });
   } catch (e) {
     console.error('GET /api/badges/buyer error:', e);

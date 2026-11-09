@@ -47,7 +47,12 @@ router.get('/', async (req, res) => {
         ARRAY_AGG(DISTINCT ls.location) FILTER (WHERE ls.status = 'pending') AS unfinished_locations,
         (SELECT row_to_json(x) FROM (SELECT rt.task_no, rt.scheduled_at, rt.status FROM price_change_tasks rt
            WHERE rt.id = t.reverse_task_id) x) AS reverse_task,
-        (SELECT ro.task_no FROM price_change_tasks ro WHERE ro.id = t.reverse_of) AS reverse_of_no
+        (SELECT ro.task_no FROM price_change_tasks ro WHERE ro.id = t.reverse_of) AS reverse_of_no,
+        -- Type column on Purchasing's Published / Archived lists (2026-11-09, Hera):
+        -- the product types of the task's items (skipped items left out).
+        (SELECT ARRAY_AGG(DISTINCT it.product_type ORDER BY it.product_type) FROM price_change_items it
+           WHERE it.task_id = t.id AND COALESCE(it.product_type, '') <> ''
+             AND (it.apply_status IS NULL OR it.apply_status = 'done')) AS item_types
       FROM price_change_tasks t
       LEFT JOIN price_change_items i ON i.task_id = t.id
       LEFT JOIN price_change_location_status ls ON ls.task_id = t.id
@@ -317,11 +322,13 @@ router.post('/scheduled', async (req, res) => {
     )).rows[0];
     for (const it of items) {
       await client.query(
-        `INSERT INTO price_change_items (task_id, sku, name, barcode, price, variant_id, product_id, product_type, csv_price, apply_status, wig_number)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', $10)`,
+        `INSERT INTO price_change_items (task_id, sku, name, barcode, price, variant_id, product_id, product_type, csv_price, apply_status, wig_number, supplier_costs)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', $10, $11)`,
         [t.id, it.sku, it.name || null, it.barcode || null, it.csvPrice || null, it.variantId, it.productId, it.productType || null, it.csvPrice || null,
           // Only a WIG item of a Discontinued task carries a Wig Number.
-          (taskType === 'discontinued' && String(it.productType || '').toLowerCase() === 'wig' && String(it.wigNumber || '').trim()) ? String(it.wigNumber).trim() : null]
+          (taskType === 'discontinued' && String(it.productType || '').toLowerCase() === 'wig' && String(it.wigNumber || '').trim()) ? String(it.wigNumber).trim() : null,
+          // Regular: supplier costs from the CSV (2026-11-09) → custom.supplier_X_cost when the task runs.
+          (taskType === 'regular' && it.supplierCosts && typeof it.supplierCosts === 'object' && Object.keys(it.supplierCosts).length) ? JSON.stringify(it.supplierCosts) : null]
       );
     }
     await client.query('COMMIT');
@@ -461,7 +468,10 @@ router.get('/archived', async (req, res) => {
     const gSql = groupFilter ? `AND ${arrayVisibleSql('t.product_types', 1)}` : '';
     const r = await pool.query(`
       SELECT t.*,
-        (SELECT COUNT(*)::int FROM price_change_items i WHERE i.task_id = t.id AND (i.apply_status IS NULL OR i.apply_status = 'done')) AS item_count
+        (SELECT COUNT(*)::int FROM price_change_items i WHERE i.task_id = t.id AND (i.apply_status IS NULL OR i.apply_status = 'done')) AS item_count,
+        (SELECT ARRAY_AGG(DISTINCT it.product_type ORDER BY it.product_type) FROM price_change_items it
+           WHERE it.task_id = t.id AND COALESCE(it.product_type, '') <> ''
+             AND (it.apply_status IS NULL OR it.apply_status = 'done')) AS item_types
       FROM price_change_tasks t WHERE t.status = 'archived' ${gSql}
       ORDER BY COALESCE(t.archived_at, t.created_at) DESC
     `, gParams);

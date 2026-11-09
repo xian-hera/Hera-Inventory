@@ -191,7 +191,7 @@ router.get('/manager-recent', async (req, res) => {
     const { location } = req.query;
     if (!location) return res.status(400).json({ error: 'location required' });
     const result = await pool.query(
-      `SELECT id, barcode, name, reason_label, reason_detail, soh, adjustment, status, submitted_at, committed_at
+      `SELECT id, barcode, name, reason_label, reason_detail, soh, adjustment, status, submitted_at, committed_at, status_changed_at
          FROM stock_losses
         WHERE location = $1 AND status IN ('reviewing', 'committed', 'archived')
           AND submitted_at >= NOW() - INTERVAL '30 days'

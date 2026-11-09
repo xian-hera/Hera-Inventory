@@ -8,7 +8,12 @@ import { useNavigate } from 'react-router-dom';
 // localStorage 'managerLocation' directly. See client/src/accountMemory.js.
 import { getManagerLocation } from '../../accountMemory';
 import { useDD, poEntries, DDList } from '../shared/ddPill';
+import { StatusTime } from '../shared/statusTime';
 
+// formatDate / formatDateCompact: not used since 2026-11-09 (the History
+// date is now the time of the current status, "HH:MM, Oct. 12" — see
+// shared/statusTime.js); kept per the project's no-silent-delete rule.
+// eslint-disable-next-line no-unused-vars
 function formatDate(dateStr) {
   if (!dateStr) return '';
   const d = new Date(dateStr);
@@ -21,6 +26,7 @@ function formatDate(dateStr) {
 // narrow phone screen the year is rarely useful and its 5 extra characters
 // were part of what pushed this row's columns into wrapping onto their own
 // lines (see the flex row below). Only a genuinely past/future year keeps it.
+// eslint-disable-next-line no-unused-vars
 function formatDateCompact(dateStr) {
   if (!dateStr) return '';
   const d = new Date(dateStr);
@@ -207,7 +213,8 @@ function ManagerPOReceiving() {
                 already submitted; see comment on the `history` state above. */}
             <Card>
               <BlockStack gap="200">
-                {/* No card title any more (2026-10-22, Hera; was "History in past 15 days"). */}
+                {/* Card title "History" again (2026-11-09, Hera — same as Transfers; none 2026-10-22 … 11-09, was "History in past 15 days"). */}
+                <Text variant="headingSm">History</Text>
                 {historyLoading ? (
                   <InlineStack align="center"><Spinner /></InlineStack>
                 ) : history.length === 0 ? (
@@ -236,11 +243,14 @@ function ManagerPOReceiving() {
                           <div className="po-a-sup">{h.summary?.supplier_name}</div>
                           <div className="po-a-rest">
                           <div className="po-a-date">
+                            {/* When the PO got its current status (Submitted /
+                                Committed), "HH:MM, Oct. 12" (2026-11-09, Hera;
+                                was the submit date+time). */}
                             <span className="po-date-desktop">
-                              <Text variant="bodySm" tone="subdued" alignment="center">{formatDate(h.created_at)}</Text>
+                              <StatusTime value={h.label_at || h.created_at} />
                             </span>
                             <span className="po-date-mobile">
-                              <Text variant="bodySm" tone="subdued">{formatDateCompact(h.created_at)}</Text>
+                              <StatusTime value={h.label_at || h.created_at} />
                             </span>
                           </div>
                           <div className="po-a-status">

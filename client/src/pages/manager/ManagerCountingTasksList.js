@@ -8,6 +8,7 @@ import { useNavigate } from 'react-router-dom';
 // renders by ManagerLocationGate (2026-09-29) — replaces reading
 // localStorage 'managerLocation' directly. See client/src/accountMemory.js.
 import { getManagerLocation } from '../../accountMemory';
+import { StatusTime } from '../shared/statusTime';
 
 // (2026-10-22, Hera) The Types / Date filter card was removed — the list
 // always shows every counting task of this location. Its 9-type option list
@@ -109,7 +110,9 @@ function ManagerCountingTasksList() {
         {h.ref_no}
       </Button>,
       <div style={{ whiteSpace: 'normal', wordBreak: 'break-word', maxWidth: '160px' }}>{typesDisplay}</div>,
-      formatDate(h.created_at),
+      // Date = when the task got its current status (Submitted, Committed …),
+      // "HH:MM, Oct. 12" (2026-11-09, Hera; was the submit date+time).
+      <StatusTime key="t" value={h.label_at || h.created_at} />,
       // "Committed" in light green (2026-10-22, Hera; was "Committed by buyer").
       <span style={{
         display: 'inline-block', padding: '4px 12px', borderRadius: '999px',
@@ -137,7 +140,7 @@ function ManagerCountingTasksList() {
                 <div style={{ overflowX: 'hidden' }}>
                   <DataTable
                     columnContentTypes={['text','text','text','text','text']}
-                    headings={['No.', 'Types', '', 'Date', 'Progress']}
+                    headings={['No.', 'Type' /* was 'Types' (2026-11-09, Hera), also in History */, '', 'Date', 'Progress']}
                     rows={rows}
                   />
                 </div>
@@ -148,14 +151,15 @@ function ManagerCountingTasksList() {
                 already submitted; see comment on the `history` state above. */}
             <Card>
               <BlockStack gap="300">
-                {/* No card title any more (2026-10-27, Hera; was "History in past 15 days"). Kept 30 days since 2026-10-28 (was 15). */}
+                {/* Card title "History" again (2026-11-09, Hera — same as Transfers; none 2026-10-27 … 11-09, was "History in past 15 days"). Kept 30 days since 2026-10-28 (was 15). */}
+                <Text variant="headingSm">History</Text>
                 {historyLoading ? <Spinner /> : history.length === 0 ? (
                   <Text tone="subdued">No submitted tasks in the past 30 days.</Text>
                 ) : (
                   <div style={{ overflowX: 'hidden' }}>
                     <DataTable
                       columnContentTypes={['text','text','text','text']}
-                      headings={['No.', 'Types', 'Date', 'Status']}
+                      headings={['No.', 'Type', 'Date', 'Status']}
                       rows={historyRows}
                     />
                   </div>

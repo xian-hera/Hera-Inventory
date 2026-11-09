@@ -13,6 +13,7 @@ import { decodeCsvBuffer, cleanCell, UNREADABLE_CHAR } from './importProducts/im
 // claude/PRICE_CHANGE_SCHEDULE_REVERSE_SPEC.md
 import ScheduledTasksCard, { ScheduledTaskModal } from './priceChange/ScheduledTasksCard';
 import { TaskTypeLabel, excludedText, formatToronto, money, legacyLabel } from '../shared/priceChangeShared';
+import { statusTimeText } from '../shared/statusTime'; // "HH:MM, Oct. 12" (2026-11-09)
 
 // The old "Upload CSV → Publish" flow on this page (labels only, no price
 // change in Shopify) is replaced by Create Task (2026-10-08, Hera). Kept,
@@ -323,6 +324,13 @@ function BuyerPriceChange() {
     setSelectedTaskIds(selectedTaskIds.length === tasks.length ? [] : tasks.map(t => t.id));
   };
 
+  // Type column (2026-11-09, Hera): every product type the task's items have
+  // (from the items; the task's own type list for tasks without per-item types).
+  const itemTypesCell = (t) => {
+    const list = (Array.isArray(t.item_types) && t.item_types.length ? t.item_types : (t.product_types || [])).filter(Boolean);
+    return <div key="types" style={{ whiteSpace: 'normal', minWidth: 80, maxWidth: 200 }}>{list.length ? list.join(', ') : '-'}</div>;
+  };
+
   const taskRows = tasks.map(task => {
     const unfinished = task.unfinished_locations?.filter(Boolean) || [];
     const rev = task.reverse_task; // its reverse, waiting in Scheduled Tasks
@@ -337,6 +345,7 @@ function BuyerPriceChange() {
         )}
         {task.reverse_of_no && <Text variant="bodySm" tone="subdued">Reverse of {task.reverse_of_no}</Text>}
       </BlockStack>,
+      itemTypesCell(task),
       <TaskTypeLabel type={task.task_type} fallback={task.label_type || ''} />,
       String(task.item_count || 0),
       unfinished.length > 0
@@ -474,14 +483,14 @@ function BuyerPriceChange() {
 
                 {tasksLoading ? <Spinner /> : (
                   <DataTable
-                    columnContentTypes={['text','text','text','text','text']}
+                    columnContentTypes={['text','text','text','text','text','text']}
                     headings={[
                       <Checkbox
                         checked={selectedTaskIds.length === tasks.length && tasks.length > 0}
                         indeterminate={selectedTaskIds.length > 0 && selectedTaskIds.length < tasks.length}
                         onChange={toggleTaskSelectAll}
                       />,
-                      'Task', 'Task type', 'Items', 'Unfinished Locations',
+                      'Task', 'Type', 'Task type', 'Items', 'Unfinished Locations',
                     ]}
                     rows={taskRows}
                   />
@@ -498,14 +507,16 @@ function BuyerPriceChange() {
                   <Text tone="subdued">No archived tasks.</Text>
                 ) : (
                   <DataTable
-                    columnContentTypes={['text','text','text','text','text']}
-                    headings={['Task', 'Task type', 'Items', 'Published', 'Archived']}
+                    columnContentTypes={['text','text','text','text','text','text']}
+                    headings={['Task', 'Type', 'Task type', 'Items', 'Published', 'Archived']}
                     rows={archived.map(t => [
                       <Button variant="plain" onClick={() => openTaskDetail(t)}>{t.task_no}</Button>,
+                      itemTypesCell(t),
                       <TaskTypeLabel type={t.task_type} fallback={t.label_type || ''} />,
                       String(t.item_count || 0),
-                      formatToronto(t.published_at || t.created_at),
-                      formatToronto(t.archived_at || t.created_at),
+                      // "HH:MM, Oct. 12", 24-hour (2026-11-09, Hera; was formatToronto)
+                      statusTimeText(t.published_at || t.created_at),
+                      statusTimeText(t.archived_at || t.created_at),
                     ])}
                   />
                 )}

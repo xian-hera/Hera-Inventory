@@ -9,6 +9,7 @@ import { fetchLocationMap } from '../shared/locationMap';
 // renders by ManagerLocationGate (2026-09-29) — replaces reading
 // localStorage 'managerLocation' directly. See client/src/accountMemory.js.
 import { getManagerLocation } from '../../accountMemory';
+import { StatusTime } from '../shared/statusTime';
 
 // ─── Built-in reasons ─────────────────────────────────────────────────────────
 const BUILT_IN_REASONS = [
@@ -865,15 +866,31 @@ function ManagerStockLosses() {
             </Card>
 
             {/* History — submitted in the past 30 days, Submitted / Committed (2026-10-28, Hera) */}
+            {/* 2026-11-09 (Hera): card title "History"; a Date column right of
+                Status — when the entry got that status ("HH:MM, Oct. 12"). */}
             <Card>
+              <BlockStack gap="300">
+              <Text variant="headingSm">History</Text>
               {recentLoading ? (
                 <InlineStack align="center"><Spinner /></InlineStack>
               ) : recent.length === 0 ? (
                 <Text tone="subdued" alignment="center">Nothing submitted in the past 30 days.</Text>
               ) : (
-                <div>
-                  <div style={{
-                    display: 'grid', gridTemplateColumns: '1fr 60px 60px 104px',
+                <div className="msl-hist">
+                  {/* Desktop: Date is its own column right of Status; phone:
+                      the date sits under the Status pill (2026-11-09). */}
+                  <style>{`
+                    .msl-hist .msl-row { grid-template-columns: minmax(0, 1fr) 60px 60px 104px 112px; }
+                    .msl-hist .msl-under { display: none; margin-top: 4px; }
+                    @media (max-width: 767px) {
+                      .msl-hist .msl-row { grid-template-columns: minmax(0, 1fr) 46px 32px 90px; column-gap: 6px !important; }
+                      .msl-hist .msl-datecol { display: none; }
+                      .msl-hist .msl-under { display: block; }
+                      .msl-hist .msl-pill { padding: 4px 8px !important; }
+                    }
+                  `}</style>
+                  <div className="msl-row" style={{
+                    display: 'grid',
                     gap: '8px', padding: '8px 0', borderBottom: '1px solid #e1e3e5',
                     fontSize: '12px', fontWeight: '600', color: '#6d7175',
                   }}>
@@ -881,20 +898,19 @@ function ManagerStockLosses() {
                     <span>System</span>
                     <span>Qty</span>
                     <span>Status</span>
+                    <span className="msl-datecol">Date</span>
                   </div>
                   {recent.map(r => {
                     const committed = r.status === 'committed' || r.status === 'archived';
-                    const d = r.submitted_at ? new Date(r.submitted_at) : null;
-                    const months = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
                     return (
-                      <div key={r.id} style={{
-                        display: 'grid', gridTemplateColumns: '1fr 60px 60px 104px',
+                      <div key={r.id} className="msl-row" style={{
+                        display: 'grid',
                         gap: '8px', padding: '10px 0', borderBottom: '1px solid #f1f1f1', alignItems: 'start',
                       }}>
                         <div>
                           <div style={{ fontSize: '14px', fontWeight: '500', wordBreak: 'break-word' }}>{r.name || '-'}</div>
                           <div style={{ fontSize: '12px', color: '#6d7175' }}>
-                            {r.barcode}{d ? ` · ${months[d.getMonth()]}.${String(d.getDate()).padStart(2, '0')}` : ''}
+                            {r.barcode}{/* submit date after the SKU removed 2026-11-09 (Hera) — only the Date column */}
                           </div>
                           <div style={{ fontSize: '12px', color: '#6d7175', marginTop: '2px' }}>
                             {r.reason_label}{r.reason_detail && ` · ${r.reason_detail}`}
@@ -903,17 +919,24 @@ function ManagerStockLosses() {
                         <div style={{ fontSize: '14px' }}>{r.soh ?? '—'}</div>
                         <div style={{ fontSize: '14px', color: '#d72c0d', fontWeight: '600' }}>{r.adjustment}</div>
                         <div>
-                          <span style={{
+                          <span className="msl-pill" style={{
                             display: 'inline-block', padding: '4px 12px', borderRadius: '999px', whiteSpace: 'nowrap',
                             background: committed ? '#CDFEE1' : '#E1E3E5', color: committed ? '#0C5132' : '#3F4448',
                             fontSize: '13px', fontWeight: 600,
                           }}>{committed ? 'Committed' : 'Submitted'}</span>
+                          <div className="msl-under">
+                            <StatusTime value={r.status_changed_at || (committed ? r.committed_at : r.submitted_at)} style={{ fontSize: 12 }} />
+                          </div>
+                        </div>
+                        <div className="msl-datecol" style={{ paddingTop: 3 }}>
+                          <StatusTime value={r.status_changed_at || (committed ? r.committed_at : r.submitted_at)} />
                         </div>
                       </div>
                     );
                   })}
                 </div>
               )}
+              </BlockStack>
             </Card>
           </BlockStack>
         </Layout.Section>

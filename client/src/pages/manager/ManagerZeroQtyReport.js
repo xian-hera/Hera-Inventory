@@ -10,6 +10,7 @@ import FulfilCountInfo from '../shared/FulfilCountInfo';
 // renders by ManagerLocationGate (2026-09-29) — replaces reading
 // localStorage 'managerLocation' directly. See client/src/accountMemory.js.
 import { getManagerLocation } from '../../accountMemory';
+import { StatusTime } from '../shared/statusTime';
 
 function computePOH(scanHistory, soh) {
   if (!scanHistory || scanHistory.length === 0) return null;
@@ -42,6 +43,9 @@ function resolveKey(e) {
 
 // "OCT.23" — submitted date in the recent list (2026-10-27).
 const SHORT_MONTHS = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+// Not used since 2026-11-09 (Hera: the History shows only one date+time, the
+// Date column); kept per the project's no-silent-delete rule.
+// eslint-disable-next-line no-unused-vars
 function shortDate(v) {
   if (!v) return '';
   const d = new Date(v);
@@ -464,33 +468,69 @@ function ManagerZeroQtyReport() {
             </Card>
 
             {/* Submitted in the past 30 days (15 until 2026-10-28) — status Submitted / Committed (2026-10-27). */}
+            {/* 2026-11-09 (Hera): card title "History"; new Adjust column
+                (Actual − System, e.g. System 2 / Actual 0 → -2) and, right of
+                Status, when the entry got that status ("HH:MM, Oct. 12"). */}
             <Card>
+              <BlockStack gap="300">
+              <Text variant="headingSm">History</Text>
               {recentLoading ? (
                 <InlineStack align="center"><Spinner /></InlineStack>
               ) : recent.length === 0 ? (
                 <Text tone="subdued" alignment="center">Nothing submitted in the past 30 days.</Text>
               ) : (
-                <DataTable
-                  columnContentTypes={['text', 'numeric', 'numeric', 'text']}
-                  headings={['Name / SKU', 'System', 'Actual', 'Status']}
-                  rows={recent.map(r => {
+                // A CSS grid instead of the DataTable (2026-11-09): with the
+                // Adjust and Date columns the DataTable no longer fit a phone
+                // and scrolled sideways. Phone: the date sits under the
+                // Status pill (still the right-most column).
+                <div className="mzq-hist">
+                  <style>{`
+                    .mzq-hist .mzq-row { display: grid; grid-template-columns: minmax(0, 1fr) 64px 64px 64px 104px 112px; column-gap: 16px; align-items: start; }
+                    .mzq-hist .mzq-num { text-align: right; font-size: 14px; }
+                    .mzq-hist .mzq-under { display: none; margin-top: 4px; }
+                    .mzq-hist .mzq-pill { display: inline-block; padding: 4px 12px; border-radius: 999px; white-space: nowrap; font-size: 13px; font-weight: 600; }
+                    @media (max-width: 767px) {
+                      .mzq-hist .mzq-row { grid-template-columns: minmax(0, 1fr) 46px 42px 44px 90px; column-gap: 6px; }
+                      .mzq-hist .mzq-datecol { display: none; }
+                      .mzq-hist .mzq-under { display: block; }
+                      .mzq-hist .mzq-pill { padding: 4px 8px; }
+                    }
+                  `}</style>
+                  <div className="mzq-row" style={{ padding: '8px 0', borderBottom: '1px solid #e1e3e5', fontSize: '12px', fontWeight: 600, color: '#6d7175' }}>
+                    <span>Name / SKU</span>
+                    <span className="mzq-num" style={{ fontSize: '12px' }}>System</span>
+                    <span className="mzq-num" style={{ fontSize: '12px' }}>Actual</span>
+                    <span className="mzq-num" style={{ fontSize: '12px' }}>Adjust</span>
+                    <span>Status</span>
+                    <span className="mzq-datecol">Date</span>
+                  </div>
+                  {recent.map(r => {
                     const committed = r.status === 'committed' || r.status === 'archived';
-                    return [
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ fontSize: '14px', fontWeight: '500', wordBreak: 'break-word', whiteSpace: 'normal' }}>{r.name || '-'}</div>
-                        <div style={{ fontSize: '12px', color: '#6d7175', wordBreak: 'break-all' }}>{r.barcode || '-'} · {shortDate(r.submitted_at)}</div>
-                      </div>,
-                      r.soh ?? '-',
-                      r.poh ?? '-',
-                      <span style={{
-                        display: 'inline-block', padding: '4px 12px', borderRadius: '999px', whiteSpace: 'nowrap',
-                        background: committed ? '#CDFEE1' : '#E1E3E5', color: committed ? '#0C5132' : '#3F4448',
-                        fontSize: '13px', fontWeight: 600,
-                      }}>{committed ? 'Committed' : 'Submitted'}</span>,
-                    ];
+                    // Adjust = Actual − System (System 2, Actual 0 → -2)
+                    const adjust = (r.soh == null || r.poh == null) ? null : Number(r.poh) - Number(r.soh);
+                    const when = r.status_changed_at || (committed ? r.committed_at : r.submitted_at);
+                    return (
+                      <div key={r.id} className="mzq-row" style={{ padding: '10px 0', borderBottom: '1px solid #f1f1f1' }}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontSize: '14px', fontWeight: '500', wordBreak: 'break-word', whiteSpace: 'normal' }}>{r.name || '-'}</div>
+                          <div style={{ fontSize: '12px', color: '#6d7175', wordBreak: 'break-all' }}>{r.barcode || '-'}</div>{/* submit date after the SKU removed 2026-11-09 (Hera) */}
+                        </div>
+                        <div className="mzq-num">{r.soh ?? '-'}</div>
+                        <div className="mzq-num">{r.poh ?? '-'}</div>
+                        <div className="mzq-num">{adjust == null ? '-' : (adjust > 0 ? `+${adjust}` : String(adjust))}</div>
+                        <div>
+                          <span className="mzq-pill" style={{
+                            background: committed ? '#CDFEE1' : '#E1E3E5', color: committed ? '#0C5132' : '#3F4448',
+                          }}>{committed ? 'Committed' : 'Submitted'}</span>
+                          <div className="mzq-under"><StatusTime value={when} style={{ fontSize: 12 }} /></div>
+                        </div>
+                        <div className="mzq-datecol" style={{ paddingTop: 3 }}><StatusTime value={when} /></div>
+                      </div>
+                    );
                   })}
-                />
+                </div>
               )}
+              </BlockStack>
             </Card>
           </BlockStack>
         </Layout.Section>

@@ -9,6 +9,7 @@ import DateRangeFilter from '../../components/DateRangeFilter';
 import { useLocationMap } from '../shared/locationMap';
 import { useGroupContext } from '../../userGroup'; // Purchasing user groups, 2026-10-09
 import { useProductTypes } from '../../productTypes'; // central type list, 2026-10-21
+import { statusTimeText } from '../shared/statusTime'; // Date = time of the current status, 2026-11-09
 
 // Location list: comes from the shared location map (pages/shared/locationMap.js,
 // 2026-09-24). The hardcoded 19-code LOCATIONS constant that used to live here
@@ -29,6 +30,10 @@ const BUILT_IN_REASONS = [
   { key: 'other',             label: 'Other',      sub: null },
 ];
 
+// Not used since 2026-11-09: the Date column shows when the row got its
+// current status, "HH:MM, Oct. 12" (shared/statusTime.js). Kept per the
+// project's no-silent-delete rule.
+// eslint-disable-next-line no-unused-vars
 function formatDate(dateStr) {
   if (!dateStr) return '';
   const d = new Date(dateStr);
@@ -289,7 +294,7 @@ function BuyerStockLosses() {
       />,
       entry.product_type || '-',
       entry.location || '-',
-      formatDate(entry.submitted_at),
+      statusTimeText(entry.status_changed_at || entry.submitted_at), // time of the current status (2026-11-09, Hera)
       <div>
         <div style={{ fontSize: '13px', fontWeight: '500', wordBreak: 'break-word' }}>
           {entry.name || '-'}

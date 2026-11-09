@@ -86,19 +86,22 @@ router.get('/', async (req, res) => {
     const isTransfer = String(kind).startsWith('transfer_');
     const result = await pool.query(
       isTransfer
-        ? `SELECT h.id, h.ref_no, h.label, h.summary, h.created_at,
-                  t.id AS transfer_id, COALESCE(t.shopify_transfer_name, h.detail->>'shopify_transfer_name') AS shopify_transfer_name,
+        ? `SELECT h.id, h.ref_no, h.label, h.summary, h.created_at, h.label_at,
+                  t.id AS transfer_id, t.status_changed_at AS transfer_status_at, COALESCE(t.shopify_transfer_name, h.detail->>'shopify_transfer_name') AS shopify_transfer_name,
                   t.status AS transfer_status, t.on_hold AS transfer_on_hold, t.tags AS transfer_tags
            FROM manager_history h
            LEFT JOIN transfers t ON t.transfer_no = h.ref_no
            WHERE h.kind = $1 AND h.location = $2
            ORDER BY h.created_at DESC`
-        : `SELECT id, ref_no, label, summary, created_at
+        : `SELECT id, ref_no, label, summary, created_at, label_at
            FROM manager_history
            WHERE kind = $1 AND location = $2
            ORDER BY created_at DESC`,
       [kind, location]
     );
+    // label_at / transfer_status_at (2026-11-09, Hera): when the row got its
+    // current label / the transfer its current status — see
+    // database/statusTimes.js.
     // Rows written before 2026-10-28 still say 'Waiting for buyer review' —
     // shown as 'Submitted' now (Hera).
     res.json(result.rows.map(r => (r.label === 'Waiting for buyer review' ? { ...r, label: 'Submitted' } : r)));

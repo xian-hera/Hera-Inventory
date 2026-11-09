@@ -40,6 +40,8 @@ function BuyerHome() {
     zeroLow: 0,
     stockLosses: 0,
     priceChangeAlert: false,
+    po: 0,
+    transfers: 0,
   });
 
   useEffect(() => {
@@ -51,6 +53,10 @@ function BuyerHome() {
           zeroLow: data.zeroLowReviewing || 0,
           stockLosses: data.stockLossesReviewing || 0,
           priceChangeAlert: data.priceChangeAlert || false,
+          // 2026-11-09 (Hera): POs in Pending / Store counted; transfers in
+          // Reviewing / Counted / Not counted — counted within the user's group.
+          po: data.poAttention || 0,
+          transfers: data.transferAttention || 0,
         });
       })
       .catch(() => {});
@@ -93,12 +99,18 @@ function BuyerHome() {
 
             {/* PO Receiving */}
             <Button size="large" fullWidth onClick={() => navigate('/buyer/po-receiving')}>
-              Purchase Orders
+              <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                Purchase Orders
+                <Badge count={badges.po} />
+              </span>
             </Button>
 
             {/* Transfers (2026-10-15, Hera: was "Transfer") */}
             <Button size="large" fullWidth onClick={() => navigate('/buyer/transfer')}>
-              Transfers
+              <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                Transfers
+                <Badge count={badges.transfers} />
+              </span>
             </Button>
 
             {/* Price Change — shown as "Label Print" (2026-10-26, Hera) */}

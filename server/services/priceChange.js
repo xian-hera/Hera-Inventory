@@ -182,6 +182,18 @@ const variantName = (v) => {
   return vt && vt !== 'Default Title' ? `${v.product.title} — ${vt}` : v.product.title;
 };
 
+// ─── Supplier costs (REG, 2026-11-09, Hera) ──────────────────────────────────
+// CSV columns supplier_a_cost / supplier_b_cost / supplier_c_cost (underscores
+// or spaces) → variant metafields custom.supplier_X_cost (number_decimal),
+// written when the task runs. Empty cells change nothing. A value that is not
+// a number (after dropping "$", "," and spaces) skips the row.
+const COST_KEYS = ['a', 'b', 'c'];
+function cleanCost(v) {
+  const s = String(v == null ? '' : v).replace(/[$,\s]/g, '');
+  if (!/^\d+(\.\d+)?$|^\.\d+$/.test(s)) return null;
+  return String(Number(s));
+}
+
 // ─── Process (Upload CSV step) ───────────────────────────────────────────────
 // rows: [{ row, sku, price, wigNumber }] (price '' / undefined = not given;
 // wigNumber is read only for WIG items of a Discontinued task)
@@ -208,7 +220,20 @@ async function processRows({ productTypes, taskType, rows }) {
     // labelOnly (2026-10-26, Hera): the row came without any Price column
     // (SKU-only CSV, or a SKU added by hand) — a Regular task then changes
     // nothing in Shopify and only sends the SKU to the stores to print.
-    candidates.push({ row: r.row, sku, csvPrice, wigNumber: String(r.wigNumber == null ? '' : r.wigNumber).trim(), labelOnly: !!r.labelOnly && csvPrice === null });
+    // Supplier costs: Regular tasks only.
+    let supplierCosts = null;
+    if (taskType === 'regular' && r.supplierCosts && typeof r.supplierCosts === 'object') {
+      let bad = null;
+      for (const k of COST_KEYS) {
+        const raw = String(r.supplierCosts[k] == null ? '' : r.supplierCosts[k]).trim();
+        if (!raw) continue;
+        const v = cleanCost(raw);
+        if (v === null) { bad = `supplier_${k}_cost "${raw}" is not a number`; break; }
+        (supplierCosts || (supplierCosts = {}))[k] = v;
+      }
+      if (bad) { skipped.push({ row: r.row, sku, reason: bad }); continue; }
+    }
+    candidates.push({ row: r.row, sku, csvPrice, wigNumber: String(r.wigNumber == null ? '' : r.wigNumber).trim(), labelOnly: !!r.labelOnly && csvPrice === null, supplierCosts });
   }
 
   const found = await findBySku(candidates.map(c => c.sku));
@@ -239,6 +264,7 @@ async function processRows({ productTypes, taskType, rows }) {
       rule: rule ? { percent: rule.percent, cents: rule.cents } : null,
       wigNumber: needsWig ? c.wigNumber : '',
       labelOnly,
+      supplierCosts: c.supplierCosts, // null when none
     });
   }
   // Variants of one product share one custom.wig_number: if the CSV gives
@@ -382,6 +408,26 @@ async function writeWigNumbers(sets) {
   return errors;
 }
 
+async function writeSupplierCosts(sets) {
+  // sets: [{ itemId, variantId, key, value }] — variant custom.supplier_X_cost
+  // (Regular tasks, 2026-11-09). Returns Map itemId → error.
+  const errors = new Map();
+  for (let i = 0; i < sets.length; i += 25) {
+    const batch = sets.slice(i, i + 25);
+    try {
+      const data = await gql(
+        `mutation($m: [MetafieldsSetInput!]!) { metafieldsSet(metafields: $m) { metafields { id } userErrors { field message } } }`,
+        { m: batch.map(b => ({ ownerId: b.variantId, namespace: 'custom', key: `supplier_${b.key}_cost`, type: 'number_decimal', value: b.value })) }
+      );
+      const msg = userErrorText(data.metafieldsSet);
+      if (msg) batch.forEach(b => errors.set(b.itemId, `Supplier cost not set — ${msg}`));
+    } catch (e) {
+      batch.forEach(b => errors.set(b.itemId, `Supplier cost not set — ${e.message}`));
+    }
+  }
+  return errors;
+}
+
 // price / compare_at_price are the store-facing columns of the original
 // (hand-made) table — their type may be NUMERIC, so they get their own
 // parameters ($10, $11) instead of sharing the TEXT ones.
@@ -441,6 +487,15 @@ async function applyTask(taskId) {
     }
   };
   const planned = new Map(); // itemId → fields
+  // Regular: supplier costs from the CSV (2026-11-09) — safe to repeat.
+  const costSets = [];
+  const queueCosts = (it) => {
+    if (task.reverse_of || task.task_type !== 'regular' || !it.supplier_costs) return;
+    for (const k of COST_KEYS) {
+      const v = it.supplier_costs[k];
+      if (v != null && String(v).trim() !== '') costSets.push({ itemId: it.id, variantId: it.variant_id, key: k, value: String(v) });
+    }
+  };
 
   for (const it of items) {
     const cur = state.get(it.variant_id);
@@ -461,6 +516,7 @@ async function applyTask(taskId) {
         // Emptying is safe to repeat — make sure it happened.
         if (task.task_type === 'discontinued' && !task.reverse_of) queueClears(it, cur);
         queueWig(it, cur); // safe to repeat
+        queueCosts(it); // safe to repeat
         continue;
       }
       if (!isNew && !isOld) { await skipItem(it.id, 'Changed in Shopify while the price change was running — not changed'); continue; }
@@ -523,6 +579,7 @@ async function applyTask(taskId) {
     if (f.newName && cur.name !== f.newName) nameSet.push({ itemId: it.id, variantId: it.variant_id, value: f.newName, type: cur.nameType });
     if (f.setDiscontinued && task.task_type === 'discontinued' && !task.reverse_of) queueClears(it, cur);
     queueWig(it, cur);
+    queueCosts(it);
     if (f.restoreDiscontinued) {
       if (f.restoreValue == null) metaDel.push({ itemId: it.id, variantId: it.variant_id });
       else metaSet.push({ itemId: it.id, variantId: it.variant_id, value: String(f.restoreValue) });
@@ -549,10 +606,16 @@ async function applyTask(taskId) {
   for (const [id, msg] of wigErrors) {
     if (!planned.has(id)) await pool.query(`UPDATE price_change_items SET apply_note = $2 WHERE id = $1`, [id, msg]);
   }
+  // Supplier costs only for SKUs whose price write worked (label-only rows
+  // have no price write).
+  const costErrors = await writeSupplierCosts(costSets.filter(c => !priceErrors.has(c.itemId)));
+  for (const [id, msg] of costErrors) {
+    if (!planned.has(id)) await pool.query(`UPDATE price_change_items SET apply_note = $2 WHERE id = $1`, [id, msg]);
+  }
   for (const [id, f] of planned) {
     if (priceErrors.has(id)) await setItem(id, { ...f, status: 'failed', note: `Not changed — ${priceErrors.get(id)}` });
     else {
-      const note = [f.labelOnly ? 'Label only' : null, metaErrors.get(id), nameErrors.get(id), clearErrors.get(id), wigErrors.get(id)].filter(Boolean).join(' · ') || null;
+      const note = [f.labelOnly ? 'Label only' : null, metaErrors.get(id), nameErrors.get(id), clearErrors.get(id), wigErrors.get(id), costErrors.get(id)].filter(Boolean).join(' · ') || null;
       // A name that could not be written is not recorded as the new name.
       const nameFailed = nameErrors.has(id);
       await setItem(id, { ...f, newName: nameFailed ? null : f.newName, status: 'done', note, nameWritten: !!f.newName && !nameFailed });

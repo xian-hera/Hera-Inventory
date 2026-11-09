@@ -1385,6 +1385,10 @@ const initDatabase = async () => {
       // WIG + Discontinued: CSV "Wig Number" → product metafield
       // custom.wig_number, written when the task runs (2026-10-15, Hera).
       'wig_number TEXT',
+      // Regular: CSV supplier_a/b/c_cost → variant metafields
+      // custom.supplier_X_cost, written when the task runs (2026-11-09, Hera).
+      // { a: '12.5', c: '3' } — only the non-empty cells.
+      'supplier_costs JSONB',
     ]) await client.query(`ALTER TABLE price_change_items ADD COLUMN IF NOT EXISTS ${col}`);
     // Stores mark the WIG part of a task Done separately ('main' / 'wig').
     await client.query("ALTER TABLE price_change_location_status ADD COLUMN IF NOT EXISTS part TEXT NOT NULL DEFAULT 'main'");
@@ -1983,6 +1987,10 @@ const initDatabase = async () => {
         seen_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `);
+
+    // "Time of the current status" columns + triggers (2026-11-09, Hera) —
+    // see database/statusTimes.js.
+    await require('./statusTimes').ensureStatusTimes(client);
 
     await client.query('COMMIT');
     console.log('✓ Database initialized successfully');

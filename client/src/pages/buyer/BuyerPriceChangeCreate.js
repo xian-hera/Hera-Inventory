@@ -51,6 +51,8 @@ function BuyerPriceChangeCreate() {
 
   // ── Upload ──
   const [fileName, setFileName] = useState('');
+  // REG: supplier cost columns found in the CSV, e.g. ['a', 'c'] (2026-11-09)
+  const [costCols, setCostCols] = useState([]);
   const [csvRows, setCsvRows] = useState(null); // [{ row, sku, price }]
   const [processing, setProcessing] = useState(false);
   const [result, setResult] = useState(null); // { items, skipped }
@@ -95,7 +97,7 @@ function BuyerPriceChangeCreate() {
 
   const startReady = types.length > 0 && locations.length > 0 && !!taskType;
 
-  const resetUpload = () => { setFileName(''); setCsvRows(null); setResult(null); setShowSkipped(false); setManualRows([]); };
+  const resetUpload = () => { setFileName(''); setCostCols([]); setCsvRows(null); setResult(null); setShowSkipped(false); setManualRows([]); };
   const resetPublish = () => {
     setDate(''); setTime(''); setReverseOn(false); setRevDate(''); setRevTime(''); setRevType(''); setNote('');
   };
@@ -124,6 +126,17 @@ function BuyerPriceChangeCreate() {
       const needWig = taskType === 'discontinued' && (types || []).some(t => String(t).toLowerCase() === 'wig');
       const wigCol = head.indexOf('wig number');
       if (needWig && wigCol === -1) { setError("WIG Discontinued tasks need a 'Wig Number' column in the CSV."); return; }
+      // REG (2026-11-09, Hera): "supplier_a_cost" / "supplier a cost" (a, b
+      // or c; underscores or spaces) → variant metafield
+      // custom.supplier_X_cost when the task runs. Empty cells: nothing.
+      const costIdx = {};
+      if (taskType === 'regular') {
+        head.forEach((h, i) => {
+          const m = /^supplier[\s_]+([abc])[\s_]+cost$/.exec(h.replace(/\s+/g, ' '));
+          if (m && costIdx[m[1]] === undefined) costIdx[m[1]] = i;
+        });
+      }
+      const costKeys = Object.keys(costIdx).sort();
       const rows = [];
       for (let i = hi + 1; i < all.length; i++) {
         const cells = all[i] || [];
@@ -135,10 +148,16 @@ function BuyerPriceChangeCreate() {
         // still "No price".
         if (priceCol === -1) r.labelOnly = true;
         if (needWig) r.wigNumber = cleanCell(cells[wigCol]).trim();
+        if (costKeys.length) {
+          const costs = {};
+          costKeys.forEach(k => { const v = cleanCell(cells[costIdx[k]]).trim(); if (v) costs[k] = v; });
+          if (Object.keys(costs).length) r.supplierCosts = costs;
+        }
         rows.push(r);
       }
       if (!rows.length) { setError('No SKUs found in the CSV.'); return; }
       setCsvRows(rows);
+      setCostCols(costKeys);
       setFileName(f.name);
     };
     reader.readAsArrayBuffer(f);
@@ -236,6 +255,7 @@ function BuyerPriceChangeCreate() {
 
   const typeOptions = [{ label: 'Choose', value: '' }, ...TASK_TYPES.map(t => ({ label: t.label, value: t.value }))];
   const labelOnlyCount = result ? result.items.filter(it => it.labelOnly).length : 0;
+  const costItemCount = result ? result.items.filter(it => it.supplierCosts && Object.keys(it.supplierCosts).length).length : 0;
   const skippedList = useMemo(() => (result ? result.skipped : []), [result]);
 
   return (
@@ -308,6 +328,11 @@ function BuyerPriceChangeCreate() {
                   </Tooltip>
                   <input ref={fileRef} type="file" accept=".csv,text/csv" style={{ display: 'none' }} onChange={onFile} />
                   {fileName && <Text tone="subdued">{fileName} added</Text>}
+                  {costCols.length > 0 && (
+                    <Tooltip content={`Values in these columns are written to the variant metafield ${costCols.map(k => `custom.supplier_${k}_cost`).join(', ')}; empty cells change nothing.`}>
+                      <Text tone="subdued">Supplier cost: {costCols.map(k => k.toUpperCase()).join(', ')}</Text>
+                    </Tooltip>
+                  )}
                   {manualRows.length > 0 && (
                     <Tooltip content={manualRows.map(r => r.sku).join(', ')}>
                       <Text tone="subdued">{manualRows.length} SKU{manualRows.length === 1 ? '' : 's'} added by hand</Text>
@@ -330,6 +355,7 @@ function BuyerPriceChangeCreate() {
               <Text fontWeight="medium">
                 Processed, {result.items.length} Rows will be updated
                 {labelOnlyCount > 0 && ` (${labelOnlyCount === result.items.length ? 'all' : labelOnlyCount} label only)`}
+                {costItemCount > 0 && `, supplier cost for ${costItemCount}`}
               </Text>
               {result.skipped.length > 0 && (
                 <Button variant="plain" tone="critical" onClick={() => setShowSkipped(v => !v)}>
