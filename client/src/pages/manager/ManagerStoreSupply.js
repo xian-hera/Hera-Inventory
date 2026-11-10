@@ -209,13 +209,18 @@ function ManagerStoreSupply() {
                         <div className="ss-grid">
                           {g.items.map(it => {
                             const isAdded = added.has(it.id);
+                            // Out of Stock (2026-11-10, Hera): greyed like an added
+                            // item, "Out of Stock" instead of the pack size, can't
+                            // be requested; the server lists them last.
+                            const out = it.status === 'out_of_stock';
+                            const grey = isAdded || out;
                             return (
-                              <div key={it.id} style={{ ...CARD, ...(isAdded ? { background: 'transparent', borderColor: '#e1e3e5' } : {}) }}>
-                                <div style={{ flex: 1, minWidth: 0, color: isAdded ? '#8a8a8a' : '#303030' }}>
+                              <div key={it.id} style={{ ...CARD, ...(grey ? { background: 'transparent', borderColor: '#e1e3e5' } : {}) }}>
+                                <div style={{ flex: 1, minWidth: 0, color: grey ? '#8a8a8a' : '#303030' }}>
                                   <div style={{ fontWeight: 700, fontSize: 15, wordBreak: 'break-word' }}>{it.name}</div>
-                                  <div style={{ fontSize: 12, color: isAdded ? '#b5b5b5' : '#8a8a8a' }}>{subLine(it.packSize, it.max)}</div>
+                                  <div style={{ fontSize: 12, color: grey ? '#b5b5b5' : '#8a8a8a' }}>{out ? 'Out of Stock' : subLine(it.packSize, it.max)}</div>
                                 </div>
-                                {isAdded ? (
+                                {out ? null : isAdded ? (
                                   <span style={{ color: '#8a8a8a', fontSize: 14 }}>Added</span>
                                 ) : (
                                   <button type="button" aria-label={`Add ${it.name}`}

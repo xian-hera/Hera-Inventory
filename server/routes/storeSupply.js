@@ -9,7 +9,8 @@
 //   PUT    /settings/next   { mode, weeks, next }
 //   GET    /items                            → { groups: [{ id, name, items: [...] }] }
 //   POST   /groups { name } · PATCH /groups/:id { name } · DELETE /groups/:id · POST /groups/:id/move { dir }
-//   POST   /items { groupId, name, packSize, max } · PATCH /items/:id { name?, packSize?, max?, inventory? }
+//   POST   /items { groupId, name, packSize, max } · PATCH /items/:id { name?, packSize?, max?, inventory?, status?, heraStock? }
+//          (status: 'available' | 'archived'; Out of Stock is set by the system — see refreshItemStatus)
 //   DELETE /items/:id · POST /items/:id/move { dir }
 // Store:
 //   GET    /store?location=MTL01             → deadline, last submission, items, this cycle's request
@@ -84,12 +85,17 @@ router.put('/settings/next', async (req, res) => {
 async function loadGroups(db = pool) {
   const g = await db.query('SELECT id, name FROM supply_groups ORDER BY sort_order, id');
   const i = await db.query(
-    `SELECT id, group_id, name, pack_size, max_qty, inventory_qty FROM supply_items ORDER BY sort_order, id`
+    `SELECT id, group_id, name, pack_size, max_qty, inventory_qty, status, hera_stock FROM supply_items ORDER BY sort_order, id`
   );
   const byGroup = new Map(g.rows.map(r => [r.id, { id: r.id, name: r.name, items: [] }]));
   i.rows.forEach(r => {
     const grp = byGroup.get(r.group_id);
-    if (grp) grp.items.push({ id: r.id, groupId: r.group_id, name: r.name, packSize: r.pack_size || '', max: r.max_qty, inventory: r.inventory_qty });
+    if (grp) {
+      grp.items.push({
+        id: r.id, groupId: r.group_id, name: r.name, packSize: r.pack_size || '', max: r.max_qty, inventory: r.inventory_qty,
+        status: r.status || 'available', heraStock: !!r.hera_stock,
+      });
+    }
   });
   return [...byGroup.values()];
 }
@@ -200,9 +206,27 @@ router.patch('/items/:id', async (req, res) => {
       if (!Number.isInteger(n) || n < 0) return res.status(400).json({ error: 'Qty must be a whole number of 0 or more.' });
       params.push(n); sets.push(`inventory_qty = $${params.length}`);
     }
+    if ('status' in b) {
+      if (b.status !== 'available' && b.status !== 'archived') return res.status(400).json({ error: 'Status must be Available or Archived.' });
+      params.push(b.status); sets.push(`status = $${params.length}`);
+    }
+    if ('heraStock' in b) { params.push(!!b.heraStock); sets.push(`hera_stock = $${params.length}`); }
     if (!sets.length) return res.status(400).json({ error: 'Nothing to change.' });
     await pool.query(`UPDATE supply_items SET ${sets.join(', ')}, updated_at = NOW() WHERE id = $1`, params);
-    res.json({ groups: await loadGroups() });
+    await SS.refreshItemStatus(pool, [Number(req.params.id)]);
+    // Available asked for, but Hera Stock + no stock keeps it Out of Stock.
+    const now = (await pool.query('SELECT status FROM supply_items WHERE id = $1', [req.params.id])).rows[0];
+    const notice = b.status === 'available' && now && now.status === 'out_of_stock'
+      ? 'This item has no stock and Hera Stock is on, so it stays Out of Stock. Add stock in Inventory or uncheck Hera Stock.' : null;
+    // Out of Stock / Archived items leave every Store draft.
+    if (now && now.status !== 'available') {
+      await pool.query(
+        `DELETE FROM supply_request_lines l USING supply_requests r
+          WHERE l.request_id = r.id AND r.status = 'draft' AND l.item_id = $1`,
+        [req.params.id]
+      );
+    }
+    res.json({ groups: await loadGroups(), notice });
   } catch (e) { fail(res, e, 'PATCH /api/store-supply/items/:id'); }
 });
 
@@ -254,7 +278,12 @@ function storeLocation(req) {
 // (lowered) Max are cut back and flagged `capped`.
 async function storeView(location) {
   const s = await SS.getSettings();
-  const groups = await loadGroups();
+  // Stores don't see Archived items; Out of Stock ones go to the bottom of
+  // their group (2026-11-10, Hera).
+  const groups = (await loadGroups()).map(g => ({
+    ...g,
+    items: [...g.items.filter(i => i.status === 'available'), ...g.items.filter(i => i.status === 'out_of_stock')],
+  }));
   const lastRes = await pool.query(
     `SELECT submitted_at, auto_submitted FROM supply_requests
       WHERE location = $1 AND submitted_at IS NOT NULL ORDER BY submitted_at DESC LIMIT 1`,
@@ -267,7 +296,7 @@ async function storeView(location) {
   let lines = [];
   if (r) {
     const l = await pool.query(
-      `SELECT l.id, l.item_id, l.item_name, l.pack_size, l.qty, i.name AS live_name, i.pack_size AS live_pack, i.max_qty
+      `SELECT l.id, l.item_id, l.item_name, l.pack_size, l.qty, i.name AS live_name, i.pack_size AS live_pack, i.max_qty, i.status AS live_status
          FROM supply_request_lines l LEFT JOIN supply_items i ON i.id = l.item_id
         WHERE l.request_id = $1 ORDER BY l.sort_order, l.id`,
       [r.id]
@@ -275,6 +304,10 @@ async function storeView(location) {
     if (r.status === 'draft') {
       for (const x of l.rows) {
         if (x.item_id == null) continue;
+        if (x.live_status && x.live_status !== 'available') {
+          await pool.query('DELETE FROM supply_request_lines WHERE id = $1', [x.id]);
+          continue;
+        }
         let qty = x.qty;
         let capped = false;
         if (x.max_qty && qty > x.max_qty) {
@@ -311,7 +344,8 @@ async function saveDraft(client, location, linesIn, submit) {
   );
   if (ex.rows[0] && ex.rows[0].status !== 'draft') return { status: 409, error: 'You have already submitted a request for this cycle.' };
   const ids = [...new Set((Array.isArray(linesIn) ? linesIn : []).map(l => posInt(l && l.itemId)).filter(Boolean))];
-  const items = ids.length ? (await client.query('SELECT id, name, pack_size, max_qty FROM supply_items WHERE id = ANY($1)', [ids])).rows : [];
+  // only Available items can be requested (2026-11-10)
+  const items = ids.length ? (await client.query(`SELECT id, name, pack_size, max_qty FROM supply_items WHERE id = ANY($1) AND status = 'available'`, [ids])).rows : [];
   const byId = new Map(items.map(i => [i.id, i]));
   const lines = [];
   for (const l of (Array.isArray(linesIn) ? linesIn : [])) {

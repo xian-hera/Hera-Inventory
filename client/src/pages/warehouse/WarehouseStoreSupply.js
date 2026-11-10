@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Page, BlockStack, InlineStack, Text, Button, Banner, Modal, TextField, Select } from '@shopify/polaris';
 import { useNavigate, useParams } from 'react-router-dom';
-import { api, deadlineText, packText, Switch, QtyEditor, DeadlinePicker } from './supplyShared';
+import { api, deadlineText, packText, Switch, QtyEditor, DeadlinePicker, StatusDot, STATUS_TEXT } from './supplyShared';
 
 // Warehouse › Store Supply (2026-11-09, Hera — claude/STORE_SUPPLY_SPEC.md).
 // Sub-tabs: Shopping List · Supply Requests · Supply Management · Inventory.
@@ -168,11 +168,45 @@ function addDaysIso(iso, n) {
 
 // ── Supply Management ───────────────────────────────────────────────────────
 
-function ItemCard({ item, selected, editing, onSelect, onEdit, onSave, onDelete }) {
+// Status (2026-11-10, Hera): a yellow (Out of Stock) / grey (Archived) dot
+// before the name, its name on hover. A selected card shows, on hover, a
+// box above it: Available / Archive (the current one pressed and not
+// clickable) and the Hera Stock checkbox (no stock → Out of Stock by itself).
+const STATUS_CSS = `
+  .ssm-card .ssm-tip, .ssm-card .ssm-pop { display: none; }
+  .ssm-card:hover .ssm-tip, .ssm-card:hover .ssm-pop { display: block; }
+`;
+function StatusPopover({ item, onChange }) {
+  const btn = (label, active, onClick) => (
+    <button type="button" disabled={active} onClick={(e) => { e.stopPropagation(); onClick(); }}
+      style={{
+        display: 'block', width: '100%', font: 'inherit', fontSize: 13, fontWeight: 600, padding: '6px 10px', borderRadius: 8,
+        border: `1.5px solid ${active ? '#303030' : '#c9cccf'}`, background: active ? '#303030' : '#fff',
+        color: active ? '#fff' : '#303030', cursor: active ? 'default' : 'pointer',
+      }}>{label}</button>
+  );
+  return (
+    <div className="ssm-pop" onClick={(e) => e.stopPropagation()}
+      style={{ position: 'absolute', left: 0, bottom: '100%', paddingBottom: 6, zIndex: 30 }}>
+      <div style={{ width: 160, background: '#fff', border: '1px solid #c9cccf', borderRadius: 10, boxShadow: '0 6px 18px rgba(0,0,0,0.15)', padding: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {item.status === 'out_of_stock' && <span style={{ fontSize: 12, color: '#8a6200', fontWeight: 600 }}>Out of Stock</span>}
+        {btn('Available', item.status === 'available', () => onChange({ status: 'available' }))}
+        {btn('Archive', item.status === 'archived', () => onChange({ status: 'archived' }))}
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer', marginTop: 2 }}>
+          <input type="checkbox" checked={!!item.heraStock} onChange={(e) => onChange({ heraStock: e.target.checked })} />
+          Hera Stock
+        </label>
+      </div>
+    </div>
+  );
+}
+
+function ItemCard({ item, selected, editing, onSelect, onEdit, onSave, onDelete, onStatus }) {
   const field = editing && editing.id === item.id ? editing.kind : null;
   const click = (kind) => (e) => { e.stopPropagation(); onSelect(); onEdit(kind); };
   return (
     <div
+      className="ssm-card"
       onClick={(e) => { e.stopPropagation(); onSelect(); }}
       style={{
         position: 'relative', background: '#fff', borderRadius: 12, padding: '10px 12px', minHeight: 70, boxSizing: 'border-box',
@@ -180,7 +214,15 @@ function ItemCard({ item, selected, editing, onSelect, onEdit, onSave, onDelete 
       }}
     >
       {selected && <span style={{ position: 'absolute', top: 4, right: 6 }}><XButton label="Delete item" onClick={onDelete} /></span>}
-      <div style={{ paddingRight: selected ? 18 : 0 }}>
+      {selected
+        ? <StatusPopover item={item} onChange={onStatus} />
+        : STATUS_TEXT[item.status] && (
+          <div className="ssm-tip" style={{ position: 'absolute', left: 0, bottom: '100%', paddingBottom: 4, zIndex: 30, pointerEvents: 'none' }}>
+            <span style={{ background: '#303030', color: '#fff', fontSize: 12, borderRadius: 6, padding: '3px 8px', whiteSpace: 'nowrap' }}>{STATUS_TEXT[item.status]}</span>
+          </div>
+        )}
+      <div style={{ paddingRight: selected ? 18 : 0, display: 'flex', alignItems: 'center' }}>
+        <StatusDot status={item.status} />
         {field === 'name'
           ? <InlineEdit value={item.name} bold fontSize={15} onSave={(v) => onSave(v === null ? null : { name: v })} />
           : <span onClick={click('name')} style={{ fontWeight: 700, fontSize: 15, wordBreak: 'break-word' }}>{item.name}</span>}
@@ -203,7 +245,7 @@ function ItemCard({ item, selected, editing, onSelect, onEdit, onSave, onDelete 
   );
 }
 
-function SupplyManagement({ setError }) {
+function SupplyManagement({ setError, setNotice }) {
   const [settings, setSettings] = useState(null);
   const [groups, setGroups] = useState(null);
   const [sel, setSel] = useState({ groupId: null, itemId: null });
@@ -235,7 +277,13 @@ function SupplyManagement({ setError }) {
 
   const run = async (method, url, body) => {
     setError('');
-    try { const d = await api(method, url, body); if (d.groups) setGroups(d.groups); return d; } catch (e) { setError(e.message); return null; }
+    setNotice('');
+    try {
+      const d = await api(method, url, body);
+      if (d.groups) setGroups(d.groups);
+      if (d.notice) setNotice(d.notice);
+      return d;
+    } catch (e) { setError(e.message); return null; }
   };
   const saveItem = async (id, change) => { setEditing(null); if (change) await run('PATCH', `/items/${id}`, change); };
 
@@ -243,6 +291,7 @@ function SupplyManagement({ setError }) {
 
   return (
     <BlockStack gap="500">
+      <style>{STATUS_CSS}</style>
       <Deadlines settings={settings} onSaved={setSettings} setError={setError} />
 
       <InlineStack align="end">
@@ -301,6 +350,7 @@ function SupplyManagement({ setError }) {
                             if (change && 'name' in change && !change.name) { setEditing(null); return; }
                             saveItem(it.id, change);
                           }}
+                          onStatus={(change) => run('PATCH', `/items/${it.id}`, change)}
                           onDelete={async () => {
                             if (!window.confirm(`Delete “${it.name}”?`)) return;
                             await run('DELETE', `/items/${it.id}`);
@@ -376,21 +426,25 @@ function Inventory({ setError }) {
   if (!groups) return <Text tone="subdued">Loading...</Text>;
   const rows = groups.flatMap(g => g.items.map(it => ({ ...it, group: g.name })));
   const TH = { textAlign: 'left', fontWeight: 500, color: '#6d7175', fontSize: 13, padding: '10px 12px', borderBottom: '1px solid #c9cccf' };
-  const TD = { padding: '8px 12px', borderBottom: '1px solid #e1e3e5', fontSize: 14, verticalAlign: 'middle' };
+  const TD = { padding: '6px 12px', height: 44, boxSizing: 'border-box', borderBottom: '1px solid #e1e3e5', fontSize: 14, verticalAlign: 'middle' };
+  // Qty column (2026-11-10): wide enough for − [qty] + from the start (the
+  // buttons are only hidden), and kept off the right edge.
+  const QTY_COL = { width: 150, paddingRight: 28, textAlign: 'center' };
   return (
     <div style={{ background: '#fff', borderRadius: 12, border: '2px solid #c9cccf', padding: '6px 12px', overflowX: 'auto' }}>
       {rows.length === 0 ? <div style={{ padding: 12 }}><Text tone="subdued">No items yet — add them in Supply Management.</Text></div> : (
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
-            <tr><th style={TH}>Title</th><th style={TH}>Pack Size</th><th style={TH}>Group</th><th style={{ ...TH, textAlign: 'right' }}>Qty</th></tr>
+            {/* "Title" → "Name" (2026-11-10, Hera) */}
+            <tr><th style={TH}>Name</th><th style={TH}>Pack Size</th><th style={TH}>Group</th><th style={{ ...TH, ...QTY_COL }}>Qty</th></tr>
           </thead>
           <tbody>
             {rows.map(r => (
               <tr key={r.id}>
-                <td style={TD}>{r.name}</td>
+                <td style={TD} title={STATUS_TEXT[r.status] || undefined}><StatusDot status={r.status} />{r.name}</td>
                 <td style={{ ...TD, color: r.packSize ? '#303030' : '#b5b5b5' }}>{r.packSize || '—'}</td>
                 <td style={TD}>{r.group}</td>
-                <td style={{ ...TD, textAlign: 'right' }}>
+                <td style={{ ...TD, ...QTY_COL }}>
                   <QtyEditor value={r.inventory} min={0} onCommit={async (n) => {
                     setError('');
                     try { const d = await api('PATCH', `/items/${r.id}`, { inventory: n }); setGroups(d.groups); } catch (e) { setError(e.message); }
@@ -413,13 +467,16 @@ function WarehouseStoreSupply() {
   const sub = SUBTABS.some(t => t.id === params.sub) ? params.sub : DEFAULT_SUB;
   const [error, setErrorState] = useState('');
   const setError = useCallback((m) => setErrorState(m), []);
+  const [notice, setNoticeState] = useState('');
+  const setNotice = useCallback((m) => setNoticeState(m), []);
   return (
     <Page>
       <div style={{ position: 'relative', left: '50%', transform: 'translateX(-50%)', width: `min(${CONTENT_W}px, calc(100vw - 32px))` }}>
         <BlockStack gap="400">
-          <SubTabs sub={sub} onSelect={(id) => { setErrorState(''); navigate(`/warehouse/store-supply/${id}`); }} />
+          <SubTabs sub={sub} onSelect={(id) => { setErrorState(''); setNoticeState(''); navigate(`/warehouse/store-supply/${id}`); }} />
           {error && <Banner tone="critical" onDismiss={() => setErrorState('')}>{error}</Banner>}
-          {sub === 'management' && <SupplyManagement setError={setError} />}
+          {notice && <Banner tone="warning" onDismiss={() => setNoticeState('')}>{notice}</Banner>}
+          {sub === 'management' && <SupplyManagement setError={setError} setNotice={setNotice} />}
           {sub === 'inventory' && <Inventory setError={setError} />}
           {(sub === 'shopping-list' || sub === 'requests') && (
             <div style={{ background: '#fff', borderRadius: 12, border: '2px solid #c9cccf', padding: 20 }}>

@@ -96,6 +96,22 @@ function nextError(current, next) {
   return null;
 }
 
+// Item status rule (2026-11-10, Hera): archived stays archived (WH's
+// choice); otherwise Out of Stock exactly when Hera Stock is on and the
+// inventory is 0 or less, else Available. Call after anything that changes
+// inventory_qty / hera_stock / status (ids = items to re-check; none = all).
+async function refreshItemStatus(db, ids) {
+  const where = Array.isArray(ids) ? 'WHERE id = ANY($1)' : '';
+  await db.query(
+    `UPDATE supply_items SET status = CASE
+        WHEN status = 'archived' THEN 'archived'
+        WHEN hera_stock AND inventory_qty <= 0 THEN 'out_of_stock'
+        ELSE 'available' END
+      ${where}`,
+    Array.isArray(ids) ? [ids] : []
+  );
+}
+
 let timer = null;
 function startCycleJob() {
   if (timer) return;
@@ -105,5 +121,5 @@ function startCycleJob() {
 
 module.exports = {
   TZ, torontoToday, isoDate, addDays, daysBetween, isWeekend, clampWeeks,
-  getSettings, saveSettings, rollCycle, nextError, startCycleJob,
+  getSettings, saveSettings, rollCycle, nextError, startCycleJob, refreshItemStatus,
 };

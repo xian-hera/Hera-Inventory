@@ -70,6 +70,15 @@ async function ensureStoreSupplyTables(client) {
     )
   `);
   await client.query('CREATE INDEX IF NOT EXISTS idx_supply_lines_request ON supply_request_lines (request_id)');
+  // Item status (2026-11-10, Hera):
+  //   'available'    — Stores can request it;
+  //   'out_of_stock' — shown greyed to Stores, can't be requested. Set by the
+  //                    system only: Hera Stock is on and inventory is 0
+  //                    (back to available when stock comes back);
+  //   'archived'     — WH's own; Stores don't see it.
+  // hera_stock = "Hera Stock" checkbox. See services/storeSupply.refreshItemStatus.
+  await client.query(`ALTER TABLE supply_items ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'available'`);
+  await client.query(`ALTER TABLE supply_items ADD COLUMN IF NOT EXISTS hera_stock BOOLEAN NOT NULL DEFAULT FALSE`);
   await client.query('CREATE INDEX IF NOT EXISTS idx_supply_requests_deadline ON supply_requests (deadline)');
 }
 

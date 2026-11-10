@@ -72,6 +72,9 @@ const ROUND = {
 
 // Qty shown as plain text; a tap opens − [qty] + (bigger on phones). Leaving
 // it (tap elsewhere / Enter) saves; Esc cancels. min / max are enforced.
+// The − / + buttons always take their space (hidden while not editing) and
+// the number sits in a box of the input's size, so opening the editor
+// never moves other columns or changes the row height (2026-11-10, Hera).
 export function QtyEditor({ value, onCommit, min = 0, max = null, big = false, renderValue }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(String(value ?? ''));
@@ -80,6 +83,7 @@ export function QtyEditor({ value, onCommit, min = 0, max = null, big = false, r
   useEffect(() => { if (!editing) setDraft(String(value ?? '')); }, [value, editing]);
   const clamp = (n) => Math.max(min, max != null ? Math.min(max, n) : n);
   const finish = () => {
+    if (!editing) return;
     setEditing(false);
     if (cancelRef.current) { cancelRef.current = false; return; }
     const n = parseInt(draft, 10);
@@ -89,37 +93,58 @@ export function QtyEditor({ value, onCommit, min = 0, max = null, big = false, r
   };
   const step = (d) => setDraft(s => String(clamp((parseInt(s, 10) || 0) + d)));
   const size = big ? 34 : 26;
-  if (!editing) {
-    return (
-      <button
-        type="button"
-        onClick={(e) => { e.stopPropagation(); setEditing(true); }}
-        style={{ border: 'none', background: 'none', padding: big ? '8px 10px' : '2px 6px', margin: 0, font: 'inherit', fontSize: big ? 16 : 14, cursor: 'pointer', minWidth: 40, textAlign: 'right' }}
-      >{renderValue ? renderValue(value) : value}</button>
-    );
-  }
+  const box = {
+    width: big ? 56 : 48, height: big ? 36 : 28, boxSizing: 'border-box', margin: 0, padding: 0,
+    font: 'inherit', fontSize: big ? 16 : 14, borderRadius: 8, textAlign: 'center',
+  };
+  const roundBtn = (label, d) => (
+    <button type="button" aria-label={label} tabIndex={editing ? 0 : -1} aria-hidden={!editing}
+      onMouseDown={(e) => e.preventDefault()} onClick={() => step(d)}
+      style={{ ...ROUND, width: size, height: size, lineHeight: `${size}px`, visibility: editing ? 'visible' : 'hidden' }}>
+      {d < 0 ? '−' : '+'}
+    </button>
+  );
   return (
     <span
       ref={boxRef}
       onClick={(e) => e.stopPropagation()}
       onBlur={(e) => { if (!boxRef.current || !boxRef.current.contains(e.relatedTarget)) finish(); }}
-      style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 6, verticalAlign: 'middle' }}
     >
-      <button type="button" aria-label="Less" onMouseDown={(e) => e.preventDefault()} onClick={() => step(-1)} style={{ ...ROUND, width: size, height: size, lineHeight: `${size}px` }}>−</button>
-      <input
-        autoFocus
-        inputMode="numeric"
-        value={draft}
-        onChange={(e) => setDraft(e.target.value.replace(/[^0-9]/g, ''))}
-        onFocus={(e) => e.target.select()}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') e.currentTarget.blur();
-          if (e.key === 'Escape') { cancelRef.current = true; e.currentTarget.blur(); }
-        }}
-        style={{ width: big ? 56 : 48, font: 'inherit', fontSize: big ? 16 : 14, padding: big ? '6px 8px' : '3px 6px', border: '1px solid #c9cccf', borderRadius: 8, textAlign: 'center' }}
-      />
-      <button type="button" aria-label="More" onMouseDown={(e) => e.preventDefault()} onClick={() => step(1)} style={{ ...ROUND, width: size, height: size, lineHeight: `${size}px` }}>+</button>
+      {roundBtn('Less', -1)}
+      {editing ? (
+        <input
+          autoFocus
+          inputMode="numeric"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value.replace(/[^0-9]/g, ''))}
+          onFocus={(e) => e.target.select()}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') e.currentTarget.blur();
+            if (e.key === 'Escape') { cancelRef.current = true; e.currentTarget.blur(); }
+          }}
+          style={{ ...box, border: '1px solid #c9cccf', background: '#fff' }}
+        />
+      ) : (
+        <button type="button" onClick={() => setEditing(true)} style={{ ...box, border: '1px solid transparent', background: 'none', cursor: 'pointer' }}>
+          {renderValue ? renderValue(value) : value}
+        </button>
+      )}
+      {roundBtn('More', 1)}
     </span>
+  );
+}
+
+// Item status dot (2026-11-10): yellow = Out of Stock, grey = Archived; the
+// name of the status shows on hover. Nothing for Available.
+export const STATUS_TEXT = { out_of_stock: 'Out of Stock', archived: 'Archived' };
+export function StatusDot({ status }) {
+  if (status !== 'out_of_stock' && status !== 'archived') return null;
+  return (
+    <span title={STATUS_TEXT[status]} aria-label={STATUS_TEXT[status]} style={{
+      display: 'inline-block', width: 9, height: 9, borderRadius: '50%', flex: '0 0 auto', marginRight: 6, verticalAlign: 'middle',
+      background: status === 'out_of_stock' ? '#e2ac0c' : '#8a8a8a', position: 'relative', top: -1,
+    }} />
   );
 }
 
