@@ -11,6 +11,9 @@ import FulfilCountInfo from '../shared/FulfilCountInfo';
 // localStorage 'managerLocation' directly. See client/src/accountMemory.js.
 import { getManagerLocation } from '../../accountMemory';
 import { StatusTime } from '../shared/statusTime';
+// High-placed confirm dialog (Polaris Modal rises from the bottom on phones,
+// where Shopify's bar can cover its buttons) — shared with Store Supply.
+import { ConfirmBox } from '../warehouse/supplyShared';
 
 function computePOH(scanHistory, soh) {
   if (!scanHistory || scanHistory.length === 0) return null;
@@ -62,6 +65,8 @@ function ManagerZeroQtyReport() {
   const [selectedIds, setSelectedIds]   = useState([]);
   const [error, setError]               = useState('');
   const [submitting, setSubmitting]     = useState(false);
+  // Submit Selected / Submit All ask first (2026-11-10, Hera): ids waiting for the confirm.
+  const [confirmIds, setConfirmIds]     = useState(null);
   const [loadingItems, setLoadingItems] = useState(true);
 
   const [popupData, setPopupData]               = useState(null);
@@ -427,7 +432,7 @@ function ManagerZeroQtyReport() {
                     Delete All
                   </button>
                   <button disabled={selectedIds.length === 0 || submitting}
-                    onClick={() => handleSubmitItems(selectedIds)}
+                    onClick={() => setConfirmIds(selectedIds)}
                     style={{ flex: '1 1 auto', padding: '8px 12px', borderRadius: '8px',
                       border: '1px solid #c9cccf',
                       background: selectedIds.length === 0 ? '#f6f6f7' : 'white',
@@ -437,7 +442,7 @@ function ManagerZeroQtyReport() {
                     Submit Selected
                   </button>
                   <button disabled={items.length === 0 || submitting}
-                    onClick={() => handleSubmitItems(items.map(i => i.id))}
+                    onClick={() => setConfirmIds(items.map(i => i.id))}
                     style={{ flex: '1 1 auto', padding: '8px 12px', borderRadius: '8px',
                       border: 'none',
                       background: items.length === 0 ? '#f6f6f7' : '#008060',
@@ -662,6 +667,32 @@ function ManagerZeroQtyReport() {
           </div>
         </div>
       )}
+      {/* Confirm for Submit Selected / Submit All (2026-11-10, Hera). Items
+          marked "Correct" are not submitted (same as before). */}
+      {(() => {
+        if (!confirmIds) return null;
+        const chosen = items.filter(i => confirmIds.includes(i.id));
+        const n = chosen.filter(i => !isMarkedCorrect(i)).length;
+        const skipped = chosen.length - n;
+        const all = confirmIds.length === items.length;
+        return (
+          <ConfirmBox
+            open
+            title={all ? 'Submit All Items?' : 'Submit Selected Items?'}
+            confirmLabel="Submit"
+            busy={submitting}
+            onCancel={() => setConfirmIds(null)}
+            onConfirm={async () => { await handleSubmitItems(confirmIds); setConfirmIds(null); }}
+          >
+            {n === 0
+              ? 'The chosen items are all marked “Correct” — there is nothing to submit.'
+              : <>
+                  {`${n} ${n === 1 ? 'item' : 'items'} will be submitted. Please check the counts first — submitted items can’t be changed.`}
+                  {skipped > 0 && <div style={{ marginTop: 6, color: '#616161' }}>{`${skipped} marked “Correct” ${skipped === 1 ? 'is' : 'are'} not submitted.`}</div>}
+                </>}
+          </ConfirmBox>
+        );
+      })()}
       {/* Bottom safe area (2026-09-24, Hera): keeps the last content above
           Shopify's native bottom buttons on Android; same 80px spacer as the
           other manager pages, on every device. */}
