@@ -177,12 +177,20 @@ function ManagerTransferHome() {
         <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
           <StatusTime value={h.transfer_status_at || h.created_at} />
           {/* Archived = Purchasing committed it → the store sees a green
-              "Committed" pill, never "Archived" (2026-10-27, Hera). */}
-          {h.transfer_status === 'archived' ? (
+              "Committed" pill, never "Archived" (2026-10-27, Hera). An Online
+              (Fulfiller) transfer is archived when Fulfiller has received it
+              → the same green pill reads "Received" (2026-11-09, Hera). A
+              transfer deleted in Hub since → grey "Deleted". */}
+          {h.transfer_gone ? (
+            <span style={{
+              display: 'inline-block', padding: '4px 12px', borderRadius: 999, background: '#E1E3E5',
+              color: '#3F4448', fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap',
+            }}>Deleted</span>
+          ) : h.transfer_status === 'archived' ? (
             <span style={{
               display: 'inline-block', padding: '4px 12px', borderRadius: 999, background: '#CDFEE1',
               color: '#0C5132', fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap',
-            }}>Committed</span>
+            }}>{h.transfer_source === 'fulfiller' ? 'Received' : 'Committed'}</span>
           ) : h.transfer_status && <StatusBadge status={h.transfer_status} />}
           {h.transfer_on_hold && <HoldBadge />}
         </span>

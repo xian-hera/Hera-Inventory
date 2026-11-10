@@ -267,6 +267,11 @@ function ManagerHome() {
               Demo Wig
             </Button>
 
+            {/* Store Supply (2026-11-09, Hera — claude/STORE_SUPPLY_SPEC.md) */}
+            <Button size="large" fullWidth onClick={() => handleNavigate('/manager/store-supply')}>
+              Store Supply
+            </Button>
+
             <Button size="large" fullWidth onClick={() => handleNavigate('/manager/employee-cap')}>
               Employee Cap
             </Button>

@@ -86,9 +86,14 @@ router.get('/', async (req, res) => {
     const isTransfer = String(kind).startsWith('transfer_');
     const result = await pool.query(
       isTransfer
+        // tags / source fall back to the snapshot when the transfer was
+        // deleted since; transfer_gone = it no longer exists (2026-11-09).
         ? `SELECT h.id, h.ref_no, h.label, h.summary, h.created_at, h.label_at,
                   t.id AS transfer_id, t.status_changed_at AS transfer_status_at, COALESCE(t.shopify_transfer_name, h.detail->>'shopify_transfer_name') AS shopify_transfer_name,
-                  t.status AS transfer_status, t.on_hold AS transfer_on_hold, t.tags AS transfer_tags
+                  t.status AS transfer_status, t.on_hold AS transfer_on_hold,
+                  COALESCE(t.tags, ARRAY(SELECT jsonb_array_elements_text(CASE WHEN jsonb_typeof(h.detail->'tags') = 'array' THEN h.detail->'tags' ELSE '[]'::jsonb END))) AS transfer_tags,
+                  COALESCE(t.source, h.detail->>'source', 'hub') AS transfer_source,
+                  (t.id IS NULL) AS transfer_gone
            FROM manager_history h
            LEFT JOIN transfers t ON t.transfer_no = h.ref_no
            WHERE h.kind = $1 AND h.location = $2

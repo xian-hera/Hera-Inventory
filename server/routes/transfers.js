@@ -1825,6 +1825,10 @@ async function dispatchOne(id, asBuyer) {
           shopify_transfer_name: transfer.shopify_transfer_name || null, // shown instead of transfer_no (2026-10-22)
           from_location: transfer.from_location,
           to_location: transfer.to_location,
+          // tags + source kept in the snapshot (2026-11-09, Hera): the History
+          // still shows the Online pill if the transfer is deleted later.
+          tags: transfer.tags || [],
+          source: transfer.source || 'hub',
           items,
         },
       });
@@ -1953,6 +1957,8 @@ router.post('/:id/submit-count', async (req, res) => {
           shopify_transfer_name: transfer.shopify_transfer_name || null, // shown instead of transfer_no (2026-10-22)
           from_location: transfer.from_location,
           to_location: transfer.to_location,
+          tags: transfer.tags || [], // snapshot (2026-11-09)
+          source: transfer.source || 'hub',
           items,
         },
       });

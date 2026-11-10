@@ -22,6 +22,7 @@ export const WH_TAB_PATHS = {
   'receive-shipments': '/warehouse/receive-shipments',
   'hq-transfers': '/warehouse/hq-transfers',
   delivery: '/warehouse/delivery',
+  'store-supply': '/warehouse/store-supply', // 2026-11-09 (Hera)
   settings: '/warehouse/settings',
 };
 export const WH_TAB_LABELS = {
@@ -29,6 +30,7 @@ export const WH_TAB_LABELS = {
   'receive-shipments': 'Receive Shipments',
   'hq-transfers': 'HQ Transfers',
   delivery: 'Delivery',
+  'store-supply': 'Store Supply',
   settings: 'Settings',
 };
 export const WH_ALL_TABS = Object.keys(WH_TAB_PATHS);

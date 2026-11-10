@@ -1428,7 +1428,8 @@ router.post('/delivery/done', async (req, res) => {
 // never answer 401: no account → { identified: false } and the page falls
 // back to localStorage.
 const { getAccountId } = require('../accountAuth');
-const WH_GROUP_TABS = ['schedule', 'receive-shipments', 'hq-transfers', 'delivery', 'settings'];
+// 'store-supply' added 2026-11-09 (Hera — Store Supply tab)
+const WH_GROUP_TABS = ['schedule', 'receive-shipments', 'hq-transfers', 'delivery', 'store-supply', 'settings'];
 const WH_GROUPS_MAX = 3;
 
 async function readWhGroups() {

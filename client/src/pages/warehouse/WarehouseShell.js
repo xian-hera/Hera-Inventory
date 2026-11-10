@@ -20,6 +20,9 @@ export const WAREHOUSE_TABS = [
   { id: 'hq-transfers', label: 'HQ Transfers', path: '/warehouse/hq-transfers' },
   // Delivery (2026-10-23, Hera): page still empty, content to come.
   { id: 'delivery', label: 'Delivery', path: '/warehouse/delivery' },
+  // Store Supply (2026-11-09, Hera — claude/STORE_SUPPLY_SPEC.md); its own
+  // sub-tabs are /warehouse/store-supply/:sub.
+  { id: 'store-supply', label: 'Store Supply', path: '/warehouse/store-supply' },
   // (2026-11-09) The temporary "Drag Test" tab was removed — its drag and drop
   // is now part of the Schedule tab.
 ];

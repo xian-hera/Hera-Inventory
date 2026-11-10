@@ -106,6 +106,9 @@ const WarehouseSchedule = lazyWithReload(() => import(/* webpackChunkName: "ware
 const WarehouseReceiveShipments = lazyWithReload(() => import(/* webpackChunkName: "warehouse" */ './pages/warehouse/WarehouseReceiveShipments'));
 const WarehouseSettings = lazyWithReload(() => import(/* webpackChunkName: "warehouse" */ './pages/warehouse/WarehouseSettings'));
 const WarehouseDelivery = lazyWithReload(() => import(/* webpackChunkName: "warehouse" */ './pages/warehouse/WarehouseDelivery'));
+// Store Supply (2026-11-09, Hera — claude/STORE_SUPPLY_SPEC.md): WH tab + the Store's request page
+const WarehouseStoreSupply = lazyWithReload(() => import(/* webpackChunkName: "warehouse" */ './pages/warehouse/WarehouseStoreSupply'));
+const ManagerStoreSupply = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerStoreSupply'));
 const ManagerTransferHome = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerTransferHome'));
 const ManagerTransferSendingDetail = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerTransferSendingDetail'));
 const ManagerTransferReceivingDetail = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerTransferReceivingDetail'));
@@ -199,6 +202,8 @@ function App() {
           <Route path="/warehouse/receive-shipments" element={<WarehouseShell tab="receive-shipments"><WarehouseReceiveShipments /></WarehouseShell>} />
           <Route path="/warehouse/hq-transfers" element={<WarehouseShell tab="hq-transfers"><WarehouseHome inTabs section="hq" /></WarehouseShell>} />
           <Route path="/warehouse/delivery" element={<WarehouseShell tab="delivery"><WarehouseDelivery /></WarehouseShell>} />
+          <Route path="/warehouse/store-supply" element={<WarehouseShell tab="store-supply"><WarehouseStoreSupply /></WarehouseShell>} />
+          <Route path="/warehouse/store-supply/:sub" element={<WarehouseShell tab="store-supply"><WarehouseStoreSupply /></WarehouseShell>} />
           <Route path="/warehouse/settings" element={<WarehouseSettings />} />
           {/* Receiving to HQ (改动二) — fixed "receiving" segment registered
               before the :transferId route so it can't be shadowed. */}
@@ -220,6 +225,7 @@ function App() {
           <Route path="/manager/zero-qty-report" element={<ManagerLocationGate><ManagerZeroQtyReport /></ManagerLocationGate>} />
           <Route path="/manager/stock-losses" element={<ManagerLocationGate><ManagerStockLosses /></ManagerLocationGate>} />
           <Route path="/manager/wig-demo" element={<ManagerLocationGate><ManagerWigDemo /></ManagerLocationGate>} />
+          <Route path="/manager/store-supply" element={<ManagerLocationGate><ManagerStoreSupply /></ManagerLocationGate>} />
           <Route path="/manager/restock-plan" element={<ManagerLocationGate><ManagerRestockTasks /></ManagerLocationGate>} />
           <Route path="/manager/restock-plan/:taskId" element={<ManagerLocationGate><ManagerRestockPlan /></ManagerLocationGate>} />
           <Route path="/manager/label-print" element={<ManagerLocationGate><ManagerLabelPrintTasks /></ManagerLocationGate>} />

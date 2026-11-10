@@ -1992,6 +1992,12 @@ const initDatabase = async () => {
     // see database/statusTimes.js.
     await require('./statusTimes').ensureStatusTimes(client);
 
+    // Store Supply tables (2026-11-09, Hera) — see database/storeSupplySchema.js.
+    await require('./storeSupplySchema').ensureStoreSupplyTables(client);
+
+    // Transfer History rows keep tags / source (2026-11-09) — see database/historyTransferSnapshot.js.
+    await require('./historyTransferSnapshot').backfillHistoryTransferSnapshot(client);
+
     await client.query('COMMIT');
     console.log('✓ Database initialized successfully');
   } catch (e) {
