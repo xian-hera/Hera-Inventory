@@ -1,15 +1,17 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Page, BlockStack, InlineStack, Text, Banner, Card, Button } from '@shopify/polaris';
+import { Page, BlockStack, InlineStack, Text, Banner, Card } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import { getManagerLocation } from '../../accountMemory';
-import { api, deadlineText, shortDate, ConfirmBox, SUBDUED } from '../warehouse/supplyShared';
+import { api, deadlineText, shortDate, SUBDUED } from '../warehouse/supplyShared';
 
 // Store › Tasks › Store Supply (2026-11-09, Hera — claude/STORE_SUPPLY_SPEC.md).
 // Left: WH's items by group (collapsible), + adds one to Selected. Right:
-// Selected with − / + qty (Max enforced) and ×. The list is a draft saved on
-// the server (one per store, shared by every device) until Submit Request.
-// After submitting, the page shows what was sent until the deadline closes;
-// a draft still open when the deadline closes is submitted automatically.
+// Request with − / + qty (Max enforced) and ×. The list is a draft saved on
+// the server (one per store, shared by every device). Since 2026-11-10
+// (Hera) there is no Submit Request button: the draft is submitted
+// automatically when the deadline closes (services/storeSupply.rollCycle), so
+// the store can keep adding until then. A request submitted earlier (before
+// this change) is still shown read-only until the deadline closes.
 // Look (2026-11-10, Hera): same as the other Hub pages — Polaris Card /
 // Text / Button, 13 px text, thin card borders (not the mockup's sizes).
 
@@ -87,8 +89,6 @@ function ManagerStoreSupply() {
   const [open, setOpen] = useState({});          // group id → expanded
   const [error, setError] = useState('');
   const [saveState, setSaveState] = useState(''); // '' | 'saving' | 'saved'
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
   const saveTimer = useRef(null);
   const pending = useRef(null);
 
@@ -121,18 +121,6 @@ function ManagerStoreSupply() {
     setSaveState('saving');
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(flush, 600);
-  };
-
-  const submit = async () => {
-    setSubmitting(true);
-    setError('');
-    clearTimeout(saveTimer.current);
-    pending.current = null;
-    try {
-      apply(await api('POST', '/store/submit', { location, lines: lines.map(l => ({ itemId: l.itemId, qty: l.qty })) }));
-      setConfirmOpen(false);
-    } catch (e) { setError(e.message); setConfirmOpen(false); if (e.status === 409) load(); }
-    finally { setSubmitting(false); }
   };
 
   const back = () => { flush(); navigate('/manager?tab=tasks'); };
@@ -250,13 +238,14 @@ function ManagerStoreSupply() {
 
             {/* Selected */}
             <BlockStack gap="200">
-              <InlineStack align="space-between" blockAlign="center">
+              {/* "Selected" → "Request", no Submit Request button (2026-11-10, Hera) */}
+              <BlockStack gap="100">
                 <InlineStack gap="200" blockAlign="center">
-                  <Text variant="headingMd" as="span">Selected</Text>
+                  <Text variant="headingMd" as="span">Request</Text>
                   {saveState && <span style={{ fontSize: 12, color: SUBDUED }}>{saveState === 'saving' ? 'Saving...' : 'Saved'}</span>}
                 </InlineStack>
-                <Button variant="primary" disabled={lines.length === 0} onClick={() => setConfirmOpen(true)}>Submit Request</Button>
-              </InlineStack>
+                <Text as="p" tone="subdued">Full request will be submitted automatically at the deadline. If you have urgent need, contact warehouse directly.</Text>
+              </BlockStack>
               {lines.length === 0 ? (
                 <Text tone="subdued">Nothing selected yet. Tap + on an item to add it.</Text>
               ) : (
@@ -273,14 +262,6 @@ function ManagerStoreSupply() {
         )}
       </BlockStack>
 
-      <ConfirmBox open={confirmOpen} title="Submit Request?" busy={submitting}
-        onConfirm={submit} onCancel={() => setConfirmOpen(false)}>
-        {/* red first line added 2026-11-10 (Hera) */}
-        <div style={{ color: RED, fontWeight: 600, marginBottom: 6 }}>
-          You can only submit ONCE in this deadline. If you might have more requests, don’t submit it now.
-        </div>
-        Please check that every item and quantity is correct. Once submitted, the request can’t be changed.
-      </ConfirmBox>
       <div className="mobile-bottom-safe-area" aria-hidden="true" />
     </Page>
   );
