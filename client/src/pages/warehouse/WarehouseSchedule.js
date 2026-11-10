@@ -155,6 +155,7 @@ const pairColor = (transferId) => PAIR_COLORS[Math.abs(Number(transferId) || 0) 
 //                     route "{from} ➔ {to}" (locations bold)
 //   custom          → Title + Note
 //   supply          → Store Supply items "name ×qty" (2026-11-10)
+//   online_boxes    → Online Boxes (Fulfiller) rows "code · dimension ×qty" (2026-11-10)
 // "Tracked back" is added under any box that is shown. Rendered in a portal
 // with fixed position so the calendar's scroll box and the page's centring
 // transform can't clip or shift it.
@@ -172,6 +173,19 @@ function HoverBox({ task, rect }) {
     );
   } else if (task.kind === 'transfer') {
     if (task.leg) body = <div><b>{task.from}</b> ➔ <b>{task.to}</b></div>;
+  } else if (task.kind === 'online_boxes') {
+    body = (
+      <>
+        <div style={{ fontWeight: 700, marginBottom: 2 }}>Online Boxes</div>
+        {(task.items || []).map((it, i) => (
+          <div key={i} style={{ display: 'flex', gap: 10, justifyContent: 'space-between' }}>
+            <span>{it.code}{it.dimension ? <span style={{ color: '#6d7175' }}> · {it.dimension}</span> : null}</span>
+            <b style={{ flex: 'none' }}>×{it.quantity}</b>
+          </div>
+        ))}
+        {task.note && <div style={{ whiteSpace: 'pre-wrap', marginTop: 4, color: '#6d7175' }}>{task.note}</div>}
+      </>
+    );
   } else if (task.kind === 'supply') {
     body = (
       <>
@@ -296,6 +310,10 @@ function TaskCard({ task, selected, onToggle, onOpenNumber, order, compact, lock
   } else if (task.kind === 'supply') {
     // Store Supply (2026-11-10, Hera): line 1 "Supply", line 2 the location.
     first = <span style={{ fontWeight: 700 }}>Supply</span>;
+    second = <LocPill name={where} />;
+  } else if (task.kind === 'online_boxes') {
+    // Online Boxes from Fulfiller (2026-11-10, Hera): line 1 "Online Boxes", line 2 the location.
+    first = <span style={{ fontWeight: 700 }}>Online Boxes</span>;
     second = <LocPill name={where} />;
   } else {
     // Custom: the pickup truck moved up to line 1 after the title, like
@@ -688,7 +706,7 @@ function WarehouseSchedule() {
   const slotLen = singleScheduled ? (slots[singleScheduled.key] || []).length : 0;
   // Store Supply tasks can't be deleted (2026-11-10, Hera).
   const canDelete = selTasks.length > 0 && selUn.length + selTracked.length === selTasks.length
-    && !selTasks.some(t => t.kind === 'supply');
+    && !selTasks.some(t => t.kind === 'supply' || t.kind === 'online_boxes'); // Online Boxes: Fulfiller cancels them
   // Partner highlight: the other card of a split transfer that is hovered / selected.
   const litPairs = useMemo(() => {
     const s = new Set(selTasks.filter(t => t.kind === 'transfer' && t.leg).map(t => t.transferId));
@@ -1174,7 +1192,7 @@ function WarehouseSchedule() {
             </InlineStack>
             <InlineStack gap="200" blockAlign="end" wrap>
               <InlineStack gap="100">
-                {filterBtn('all', 'All')}{filterBtn('po', 'PO')}{filterBtn('transfer', 'Transfer')}{filterBtn('supply', 'Store Supply')}{filterBtn('custom', 'Other')}
+                {filterBtn('all', 'All')}{filterBtn('po', 'PO')}{filterBtn('transfer', 'Transfer')}{filterBtn('supply', 'Store Supply')}{filterBtn('online_boxes', 'Online Boxes')}{filterBtn('custom', 'Other')}
               </InlineStack>
               <Button onClick={() => setCreateOpen(true)}>Create task</Button>
             </InlineStack>

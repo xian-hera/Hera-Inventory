@@ -1994,6 +1994,7 @@ const initDatabase = async () => {
 
     // Store Supply tables (2026-11-09, Hera) — see database/storeSupplySchema.js.
     await require('./storeSupplySchema').ensureStoreSupplyTables(client);
+    await require('./onlineBoxesSchema').ensureOnlineBoxesColumns(client); // Fulfiller Online Boxes, 2026-11-10
 
     // Transfer History rows keep tags / source (2026-11-09) — see database/historyTransferSnapshot.js.
     await require('./historyTransferSnapshot').backfillHistoryTransferSnapshot(client);

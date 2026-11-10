@@ -438,14 +438,17 @@ if (timer.unref) timer.unref();
 
 const integrationRouter = express.Router();
 
-integrationRouter.use((req, res, next) => {
+// Key check for every Fulfiller call. Named + exported (2026-11-10) so the
+// Online Boxes router (routes/onlineBoxes.js) uses the very same check.
+function integrationAuth(req, res, next) {
   const expected = process.env.HUB_INTEGRATION_KEY || '';
   if (!expected) return res.status(503).json({ error: 'Integration is not configured on Hub (HUB_INTEGRATION_KEY).' });
   const got = String(req.get('X-Hub-Integration-Key') || '');
   const a = Buffer.from(got); const b = Buffer.from(expected);
   if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return res.status(401).json({ error: 'Bad integration key' });
   next();
-});
+}
+integrationRouter.use(integrationAuth);
 
 // GET /api/integration/schedule
 integrationRouter.get('/schedule', async (req, res) => {
@@ -820,4 +823,6 @@ module.exports = {
   integrationRouter, adminRouter, checkOnlineAnchors, scheduleView, rowsFor, sendPending,
   // 2026-10-24: messages sent from transfers.js / warehouse.js
   notifyReadyToShip, notifyPickedUp,
+  // 2026-11-10: used by routes/onlineBoxes.js (Online Boxes)
+  integrationAuth, enqueue, locationNameFor,
 };

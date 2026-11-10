@@ -491,6 +491,14 @@ async function loadSchedule(db, view = 'current') {
       // Can't be split or deleted.
       return { ...base, from: HQ, to: w.to_location || '', items: supplyLines[w.id] || [] };
     }
+    if (w.kind === 'online_boxes') {
+      // Online Boxes from Fulfiller (2026-11-10): HQ → store; hover lists the
+      // boxes. Can't be split or deleted (Fulfiller cancels it).
+      return {
+        ...base, from: HQ, to: w.to_location || '', requestId: w.ob_request_id,
+        items: Array.isArray(w.ob_items) ? w.ob_items : [], note: w.ob_note || '',
+      };
+    }
     return {
       ...base,
       type: w.custom_type || '',
@@ -641,6 +649,7 @@ router.put('/schedule', async (req, res) => {
     await client.query('COMMIT');
     // An Online pickup whose stop is gone now → Fulfiller must re-assign (2026-10-23)
     await require('./onlineTransfers').checkOnlineAnchors();
+    await require('./onlineBoxes').notifyOnlineBoxes(); // Online Boxes date → Fulfiller (2026-11-10)
     res.json(await loadSchedule(pool));
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
@@ -695,6 +704,7 @@ router.post('/tasks/track-back', async (req, res) => {
       // A Store Supply task tracked back has left HQ → Inventory (2026-11-10).
       await SS.applySupplyInventory(client, add, true);
       await client.query('COMMIT');
+      await require('./onlineBoxes').notifyOnlineBoxes(); // Online Boxes date → Fulfiller (2026-11-10)
       return res.json({ added: add.length });
     }
     const max = await client.query(
@@ -713,6 +723,7 @@ router.post('/tasks/track-back', async (req, res) => {
     }
     await SS.applySupplyInventory(client, ids, true); // Store Supply: left HQ → Inventory (2026-11-10)
     await client.query('COMMIT');
+    await require('./onlineBoxes').notifyOnlineBoxes(); // Online Boxes date → Fulfiller (2026-11-10)
     res.json({ added });
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
@@ -737,6 +748,7 @@ router.post('/tasks/untrack', async (req, res) => {
     );
     // Store Supply taken off a past day → its qty goes back to Inventory (2026-11-10).
     await SS.applySupplyInventory(pool, r.rows.map(x => x.id), false);
+    await require('./onlineBoxes').notifyOnlineBoxes(); // Online Boxes date → Fulfiller (2026-11-10)
     await require('./onlineTransfers').checkOnlineAnchors(); // stop gone → Fulfiller re-assigns (2026-10-23)
     res.json({ moved: r.rowCount });
   } catch (e) {
@@ -892,6 +904,9 @@ router.post('/tasks/delete', async (req, res) => {
       if (t.kind === 'supply') {
         // Store Supply tasks can't be deleted (2026-11-10, Hera).
         throw Object.assign(new Error('Store Supply tasks can’t be deleted.'), { status: 400 });
+      } else if (t.kind === 'online_boxes') {
+        // Online Boxes: only Fulfiller can cancel them (2026-11-10, Hera).
+        throw Object.assign(new Error('Online Boxes can’t be deleted here — Fulfiller cancels them.'), { status: 400 });
       } else if (t.kind === 'custom') {
         await client.query('DELETE FROM wh_tasks WHERE id = $1', [id]);
       } else if (t.kind === 'transfer') {
@@ -1028,7 +1043,7 @@ router.post('/tasks/:id/split', async (req, res) => {
 // The store a card goes to (or picks up from) — the "location" of the card.
 const CARD_STORE_SQL = `CASE
   WHEN w.kind = 'po' THEN i.location
-  WHEN w.kind = 'supply' THEN w.to_location
+  WHEN w.kind IN ('supply', 'online_boxes') THEN w.to_location
   WHEN w.kind = 'custom' THEN (CASE WHEN COALESCE(w.from_location, 'HQ') = 'HQ' THEN w.to_location ELSE w.from_location END)
   WHEN w.leg = 'pickup' THEN tr.from_location
   WHEN w.leg = 'deliver' THEN tr.to_location
@@ -1213,6 +1228,7 @@ router.get('/store-custom', async (req, res) => {
 const deliveryRole = (w) => {
   if (w.kind === 'po') return { role: 'deliver', store: w.po_location || w.to_location };
   if (w.kind === 'supply') return { role: 'deliver', store: w.to_location }; // Store Supply (2026-11-10)
+  if (w.kind === 'online_boxes') return { role: 'deliver', store: w.to_location }; // Online Boxes (2026-11-10)
   if (w.kind === 'custom') {
     const from = w.from_location || HQ;
     return from === HQ ? { role: 'deliver', store: w.to_location } : { role: 'pickup', store: from };
@@ -1305,6 +1321,7 @@ function buildStops(rows, online = []) {
     number: w.kind === 'po' ? `${w.po_number || ''}${w.split_no ? `-${w.split_no}` : ''}`
       : w.kind === 'transfer' ? (w.shopify_transfer_name || w.transfer_no || '')
       : w.kind === 'supply' ? 'Supply'
+      : w.kind === 'online_boxes' ? 'Online Boxes'
       : (w.custom_title || ''),
     online: false,
     delivered: !!w.delivered_at, picked: !!w.picked_at,
@@ -1382,7 +1399,7 @@ router.post('/delivery/done', async (req, res) => {
     const failed = [];
     let done = 0;
     for (const w of rows) {
-      const number = w.shopify_transfer_name || w.transfer_no || w.po_number || w.custom_title || (w.kind === 'supply' ? 'Supply' : String(w.id));
+      const number = w.shopify_transfer_name || w.transfer_no || w.po_number || w.custom_title || (w.kind === 'supply' ? 'Supply' : w.kind === 'online_boxes' ? 'Online Boxes' : String(w.id));
       try {
         if (w.kind === 'transfer') {
           const { dispatchOne } = require('./transfers'); // Shopify client lives there

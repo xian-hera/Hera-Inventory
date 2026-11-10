@@ -65,6 +65,9 @@ app.use('/api/warehouse', require('./routes/warehouse')); // Warehouse Scheduler
 app.use('/api/store-supply', require('./routes/storeSupply')); // Warehouse › Store Supply + Store request page, 2026-11-09
 // Online (Fulfiller) transfers, 2026-10-23 — claude/FULFILLER_ONLINE_TRANSFER_SPEC.md.
 // /api/integration = server-to-server for Fulfiller (own key check); /api/online-transfers = Hub pages.
+// Online Boxes (2026-11-10, claude/FULFILLER_ONLINE_BOXES.md) — before the
+// general /api/integration router; same key check.
+app.use('/api/integration/online-boxes', require('./routes/onlineBoxes').router);
 app.use('/api/integration', require('./routes/onlineTransfers').integrationRouter);
 app.use('/api/online-transfers', require('./routes/onlineTransfers').adminRouter);
 app.use('/api/manager-history', require('./routes/managerHistory').router);

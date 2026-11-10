@@ -106,9 +106,10 @@ async function ensureStoreSupplyTables(client) {
   const kc = await client.query(
     `SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conrelid = 'wh_tasks'::regclass AND conname = 'wh_tasks_kind_check'`
   );
-  if (!kc.rows.length || !kc.rows[0].def.includes('supply')) {
+  // 'online_boxes' added 2026-11-10 (Fulfiller Online Boxes — onlineBoxesSchema.js).
+  if (!kc.rows.length || !kc.rows[0].def.includes('supply') || !kc.rows[0].def.includes('online_boxes')) {
     await client.query('ALTER TABLE wh_tasks DROP CONSTRAINT IF EXISTS wh_tasks_kind_check');
-    await client.query(`ALTER TABLE wh_tasks ADD CONSTRAINT wh_tasks_kind_check CHECK (kind IN ('po', 'transfer', 'custom', 'supply'))`);
+    await client.query(`ALTER TABLE wh_tasks ADD CONSTRAINT wh_tasks_kind_check CHECK (kind IN ('po', 'transfer', 'custom', 'supply', 'online_boxes'))`);
   }
   await client.query('ALTER TABLE wh_tasks ADD COLUMN IF NOT EXISTS supply_request_id INTEGER REFERENCES supply_requests(id) ON DELETE CASCADE');
   await client.query('ALTER TABLE wh_tasks ADD COLUMN IF NOT EXISTS supply_deducted_at TIMESTAMPTZ');
