@@ -80,6 +80,39 @@ async function ensureStoreSupplyTables(client) {
   await client.query(`ALTER TABLE supply_items ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'available'`);
   await client.query(`ALTER TABLE supply_items ADD COLUMN IF NOT EXISTS hera_stock BOOLEAN NOT NULL DEFAULT FALSE`);
   await client.query('CREATE INDEX IF NOT EXISTS idx_supply_requests_deadline ON supply_requests (deadline)');
+  // Step 2 (2026-11-10): a closed batch is finished when its shopping is done
+  // (the Store Supply tasks come from its approved requests). Closed batches
+  // not finished yet together form the Current Batch.
+  await client.query('ALTER TABLE supply_deadlines ADD COLUMN IF NOT EXISTS finished_at TIMESTAMPTZ');
+  // The Shopping List's own state, one row per item (only one list exists at
+  // a time — the Current Batch's): WH's changed Qty to Buy (buy_qty, valid
+  // while the requested total is still base_requested) and Bought (bought_qty
+  // = the qty when it was checked). Cleared when shopping is finished.
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS supply_shopping (
+      item_id        INTEGER PRIMARY KEY REFERENCES supply_items(id) ON DELETE CASCADE,
+      buy_qty        INTEGER,
+      base_requested INTEGER,
+      bought         BOOLEAN NOT NULL DEFAULT FALSE,
+      bought_qty     INTEGER,
+      updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  // Step 3 (2026-11-10): Store Supply tasks on the WH Schedule — wh_tasks
+  // kind 'supply', one per approved request (with something to deliver) of a
+  // finished batch (services/storeSupply.ensureSupplyTasks). From HQ to the
+  // store (to_location); can't be split or deleted. supply_deducted_at = its
+  // quantities were taken off Inventory (Go!, or tracked back to a past day).
+  const kc = await client.query(
+    `SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conrelid = 'wh_tasks'::regclass AND conname = 'wh_tasks_kind_check'`
+  );
+  if (!kc.rows.length || !kc.rows[0].def.includes('supply')) {
+    await client.query('ALTER TABLE wh_tasks DROP CONSTRAINT IF EXISTS wh_tasks_kind_check');
+    await client.query(`ALTER TABLE wh_tasks ADD CONSTRAINT wh_tasks_kind_check CHECK (kind IN ('po', 'transfer', 'custom', 'supply'))`);
+  }
+  await client.query('ALTER TABLE wh_tasks ADD COLUMN IF NOT EXISTS supply_request_id INTEGER REFERENCES supply_requests(id) ON DELETE CASCADE');
+  await client.query('ALTER TABLE wh_tasks ADD COLUMN IF NOT EXISTS supply_deducted_at TIMESTAMPTZ');
+  await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_wh_tasks_supply ON wh_tasks (supply_request_id) WHERE kind = 'supply'`);
 }
 
 module.exports = { ensureStoreSupplyTables };

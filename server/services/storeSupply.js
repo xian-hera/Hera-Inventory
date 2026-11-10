@@ -112,6 +112,69 @@ async function refreshItemStatus(db, ids) {
   );
 }
 
+// ── Store Supply tasks on the WH Schedule (step 3, 2026-11-10) ─────────────
+// One wh_tasks row (kind 'supply', HQ → the store) per approved request of a
+// finished batch that has something to deliver (an all-zero request is just
+// done). Idempotent: called when shopping finishes and whenever the Schedule
+// / Store Dashboard loads, so batches finished before step 3 get theirs too.
+async function ensureSupplyTasks(db = pool) {
+  const r = await db.query(
+    `INSERT INTO wh_tasks (kind, supply_request_id, to_location, from_location)
+     SELECT 'supply', r.id, r.location, 'HQ'
+       FROM supply_requests r JOIN supply_deadlines d ON d.deadline = r.deadline
+      WHERE d.finished_at IS NOT NULL AND r.status = 'approved'
+        AND EXISTS (SELECT 1 FROM supply_request_lines l WHERE l.request_id = r.id AND COALESCE(l.approved_qty, l.qty) > 0)
+        AND NOT EXISTS (SELECT 1 FROM wh_tasks w WHERE w.kind = 'supply' AND w.supply_request_id = r.id)
+     ON CONFLICT DO NOTHING`
+  );
+  return r.rowCount;
+}
+
+// The items of Store Supply tasks: { [taskId]: [{ itemId, name, packSize, qty }] }
+// (qty = the approved qty; lines approved at 0 are left out).
+async function supplyTaskLines(db, taskIds) {
+  const out = {};
+  if (!taskIds.length) return out;
+  const r = await db.query(
+    `SELECT w.id AS task_id, l.item_id, l.item_name, l.pack_size, COALESCE(l.approved_qty, l.qty) AS qty
+       FROM wh_tasks w JOIN supply_request_lines l ON l.request_id = w.supply_request_id
+       LEFT JOIN supply_items i ON i.id = l.item_id LEFT JOIN supply_groups g ON g.id = i.group_id
+      WHERE w.id = ANY($1) AND w.kind = 'supply' AND COALESCE(l.approved_qty, l.qty) > 0
+      ORDER BY g.sort_order NULLS LAST, i.sort_order NULLS LAST, l.sort_order, l.id`,
+    [taskIds]
+  );
+  r.rows.forEach(x => {
+    (out[x.task_id] = out[x.task_id] || []).push({ itemId: x.item_id, name: x.item_name, packSize: x.pack_size || '', qty: x.qty });
+  });
+  return out;
+}
+
+// Inventory for Store Supply tasks that left HQ (Go!, or tracked back to a
+// past day): take = true → inventory −= qty (not below 0) once per task;
+// take = false (taken off a past day again) → the qty goes back.
+// Non-supply ids are ignored. Items deleted since are skipped.
+async function applySupplyInventory(db, taskIds, take) {
+  if (!taskIds.length) return 0;
+  const tasks = (await db.query(
+    `UPDATE wh_tasks SET supply_deducted_at = ${take ? 'NOW()' : 'NULL'}
+      WHERE id = ANY($1) AND kind = 'supply' AND supply_deducted_at IS ${take ? 'NULL' : 'NOT NULL'}
+      RETURNING id`,
+    [taskIds]
+  )).rows.map(x => x.id);
+  if (!tasks.length) return 0;
+  const lines = await supplyTaskLines(db, tasks);
+  const sums = new Map();
+  Object.values(lines).flat().forEach(l => { if (l.itemId != null) sums.set(l.itemId, (sums.get(l.itemId) || 0) + l.qty); });
+  for (const [itemId, q] of sums) {
+    await db.query(
+      `UPDATE supply_items SET inventory_qty = ${take ? 'GREATEST(0, inventory_qty - $2)' : 'inventory_qty + $2'}, updated_at = NOW() WHERE id = $1`,
+      [itemId, q]
+    );
+  }
+  await refreshItemStatus(db, [...sums.keys()]);
+  return tasks.length;
+}
+
 let timer = null;
 function startCycleJob() {
   if (timer) return;
@@ -122,4 +185,5 @@ function startCycleJob() {
 module.exports = {
   TZ, torontoToday, isoDate, addDays, daysBetween, isWeekend, clampWeeks,
   getSettings, saveSettings, rollCycle, nextError, startCycleJob, refreshItemStatus,
+  ensureSupplyTasks, supplyTaskLines, applySupplyInventory,
 };

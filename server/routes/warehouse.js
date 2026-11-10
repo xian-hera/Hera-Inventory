@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { pool } = require('../database/init');
+const SS = require('../services/storeSupply'); // Store Supply tasks (2026-11-10)
 
 // Warehouse Scheduler + Receive Shipments (2026-10-21, Hera).
 // Full spec: claude/SCHEDULER_FEATURE_SPEC.md in the project knowledge base.
@@ -416,6 +417,7 @@ const SYNC_PO_STATUSES = ['pending', 'sent_to_store'];
 // fixed, new cards can still be added and sent with another Go!.)
 async function loadSchedule(db, view = 'current') {
   const today = torontoToday();
+  await SS.ensureSupplyTasks(db); // Store Supply tasks of finished batches (2026-11-10)
   const past = view === 'past';
   const days = past ? pastWindow(today) : businessWindow(today);
   const goneToday = await isGoneToday(db, today);
@@ -442,6 +444,7 @@ async function loadSchedule(db, view = 'current') {
     getSetting(db, 'wh_schedule_version', 0),
   ]);
   const mappedTags = new Set(tagRes.rows.map(r => r.tag));
+  const supplyLines = await SS.supplyTaskLines(db, rowsRes.rows.filter(w => w.kind === 'supply').map(w => w.id));
   const tasks = rowsRes.rows.map(w => {
     const base = {
       id: w.id,
@@ -482,6 +485,11 @@ async function loadSchedule(db, view = 'current') {
         from: w.tr_from || '',
         to: w.tr_to || '',
       };
+    }
+    if (w.kind === 'supply') {
+      // Store Supply (2026-11-10): HQ → store; hover lists the items.
+      // Can't be split or deleted.
+      return { ...base, from: HQ, to: w.to_location || '', items: supplyLines[w.id] || [] };
     }
     return {
       ...base,
@@ -684,6 +692,8 @@ router.post('/tasks/track-back', async (req, res) => {
           await client.query('UPDATE wh_tasks SET sched_pos = $2 WHERE id = $1', [order[i], i]);
         }
       }
+      // A Store Supply task tracked back has left HQ → Inventory (2026-11-10).
+      await SS.applySupplyInventory(client, add, true);
       await client.query('COMMIT');
       return res.json({ added: add.length });
     }
@@ -701,6 +711,7 @@ router.post('/tasks/track-back', async (req, res) => {
       );
       if (r.rowCount) { pos += 1; added += 1; }
     }
+    await SS.applySupplyInventory(client, ids, true); // Store Supply: left HQ → Inventory (2026-11-10)
     await client.query('COMMIT');
     res.json({ added });
   } catch (e) {
@@ -721,9 +732,11 @@ router.post('/tasks/untrack', async (req, res) => {
   try {
     const r = await pool.query(
       `UPDATE wh_tasks SET sched_date = NULL, sched_half = NULL, sched_pos = NULL, tracked_back = FALSE, updated_at = NOW()
-       WHERE id = ANY($1) AND removed_at IS NULL AND tracked_back = TRUE`,
+       WHERE id = ANY($1) AND removed_at IS NULL AND tracked_back = TRUE RETURNING id`,
       [ids]
     );
+    // Store Supply taken off a past day → its qty goes back to Inventory (2026-11-10).
+    await SS.applySupplyInventory(pool, r.rows.map(x => x.id), false);
     await require('./onlineTransfers').checkOnlineAnchors(); // stop gone → Fulfiller re-assigns (2026-10-23)
     res.json({ moved: r.rowCount });
   } catch (e) {
@@ -787,10 +800,12 @@ router.post('/go', async (req, res) => {
       }
     }
     await pool.query('UPDATE wh_go_days SET results = $2 WHERE day = $1::date', [today, JSON.stringify(results)]);
-    await pool.query(
-      'UPDATE wh_tasks SET gone_at = NOW() WHERE removed_at IS NULL AND sched_date = $1::date AND gone_at IS NULL',
+    const goneNow = await pool.query(
+      'UPDATE wh_tasks SET gone_at = NOW() WHERE removed_at IS NULL AND sched_date = $1::date AND gone_at IS NULL RETURNING id',
       [today]
     );
+    // Store Supply tasks that went out → Inventory −= their qty (2026-11-10).
+    try { await SS.applySupplyInventory(pool, goneNow.rows.map(x => x.id), true); } catch (e) { console.error('Go! store supply inventory failed:', e.message); }
     res.json(results);
   } catch (e) {
     console.error('POST /api/warehouse/go error:', e);
@@ -874,7 +889,10 @@ router.post('/tasks/delete', async (req, res) => {
       // tasks that are Unscheduled in its draft, and a saved placement simply
       // goes away with the task (2026-10-21 review — refusing forced a Save of
       // the whole draft first).
-      if (t.kind === 'custom') {
+      if (t.kind === 'supply') {
+        // Store Supply tasks can't be deleted (2026-11-10, Hera).
+        throw Object.assign(new Error('Store Supply tasks can’t be deleted.'), { status: 400 });
+      } else if (t.kind === 'custom') {
         await client.query('DELETE FROM wh_tasks WHERE id = $1', [id]);
       } else if (t.kind === 'transfer') {
         // Both cards of a store → store transfer go together (Hera 2026-10-21).
@@ -1010,6 +1028,7 @@ router.post('/tasks/:id/split', async (req, res) => {
 // The store a card goes to (or picks up from) — the "location" of the card.
 const CARD_STORE_SQL = `CASE
   WHEN w.kind = 'po' THEN i.location
+  WHEN w.kind = 'supply' THEN w.to_location
   WHEN w.kind = 'custom' THEN (CASE WHEN COALESCE(w.from_location, 'HQ') = 'HQ' THEN w.to_location ELSE w.from_location END)
   WHEN w.leg = 'pickup' THEN tr.from_location
   WHEN w.leg = 'deliver' THEN tr.to_location
@@ -1035,7 +1054,7 @@ async function computeDD({ poIds = [], transferIds = [], customIds = [] }) {
          WHERE w.removed_at IS NULL
            AND ((w.kind = 'po' AND w.po_invoice_id = ANY($1::int[]))
              OR (w.kind = 'transfer' AND w.transfer_id = ANY($2::int[]))
-             OR (w.kind = 'custom' AND w.id = ANY($3::int[])))`,
+             OR (w.kind IN ('custom', 'supply') AND w.id = ANY($3::int[])))`, // supply: Store Dashboard (2026-11-10)
         [poIds, transferIds, customIds]
       ),
       poIds.length ? pool.query(
@@ -1096,8 +1115,9 @@ async function computeDD({ poIds = [], transferIds = [], customIds = [] }) {
       entry.pbCount = t.kind === 'po' ? t.pb_count : null;
       entry.pbUnit = t.kind === 'po' ? t.pb_unit : null;
       entry.delivered = t.kind === 'po' && !!t.delivered_at;
-      const bucket = t.kind === 'po' ? out.pos : t.kind === 'custom' ? out.custom : out.transfers;
-      const id = t.kind === 'po' ? t.po_invoice_id : t.kind === 'custom' ? t.id : t.transfer_id;
+      const own = t.kind === 'custom' || t.kind === 'supply'; // by task id (supply: 2026-11-10)
+      const bucket = t.kind === 'po' ? out.pos : own ? out.custom : out.transfers;
+      const id = t.kind === 'po' ? t.po_invoice_id : own ? t.id : t.transfer_id;
       if (!bucket[id]) bucket[id] = { entries: [] };
       bucket[id].entries.push(entry);
     }
@@ -1137,24 +1157,35 @@ router.post('/dd', async (req, res) => {
 // GET /api/warehouse/store-custom?location=MTL01 (2026-10-22, Hera — Store ›
 // Dashboard › Incoming Delivery): WH custom tasks going to this store that
 // carry a DD — unscheduled (TBD) or scheduled today or later.
-// → [{ id, type, title, entry }]
+// Also (2026-11-10, Store Supply step 3) the store's Store Supply tasks not
+// delivered yet: type 'Store Supply', title = "{n} items", kind 'supply'.
+// → [{ id, kind, type, title, entry }]
 router.get('/store-custom', async (req, res) => {
   const location = String(req.query.location || '').trim();
   if (!location) return res.status(400).json({ error: 'location required' });
   try {
     const today = torontoToday();
+    await SS.ensureSupplyTasks(pool);
     const r = await pool.query(
-      `SELECT id, custom_type, custom_title FROM wh_tasks
-        WHERE kind = 'custom' AND removed_at IS NULL AND to_location = $1
+      `SELECT id, kind, custom_type, custom_title FROM wh_tasks
+        WHERE removed_at IS NULL AND to_location = $1
+          AND (kind = 'custom' OR (kind = 'supply' AND delivered_at IS NULL))
           AND (sched_date IS NULL OR sched_date >= $2::date)
         ORDER BY sched_date NULLS LAST, sched_half, sched_pos, id`,
       [location, today]
     );
     const dd = await computeDD({ customIds: r.rows.map(x => x.id) });
-    res.json(r.rows.map(x => ({
-      id: x.id, type: x.custom_type || 'Custom', title: x.custom_title || '',
-      entry: ((dd.custom[x.id] || {}).entries || [])[0] || null,
-    })).filter(x => x.entry));
+    const lines = await SS.supplyTaskLines(pool, r.rows.filter(x => x.kind === 'supply').map(x => x.id));
+    res.json(r.rows.map(x => {
+      const n = (lines[x.id] || []).length;
+      return {
+        id: x.id,
+        kind: x.kind,
+        type: x.kind === 'supply' ? 'Store Supply' : (x.custom_type || 'Custom'),
+        title: x.kind === 'supply' ? `${n} ${n === 1 ? 'item' : 'items'}` : (x.custom_title || ''),
+        entry: ((dd.custom[x.id] || {}).entries || [])[0] || null,
+      };
+    }).filter(x => x.entry));
   } catch (e) {
     console.error('GET /api/warehouse/store-custom error:', e);
     res.status(500).json({ error: e.message });
@@ -1181,6 +1212,7 @@ router.get('/store-custom', async (req, res) => {
 // pressed again.
 const deliveryRole = (w) => {
   if (w.kind === 'po') return { role: 'deliver', store: w.po_location || w.to_location };
+  if (w.kind === 'supply') return { role: 'deliver', store: w.to_location }; // Store Supply (2026-11-10)
   if (w.kind === 'custom') {
     const from = w.from_location || HQ;
     return from === HQ ? { role: 'deliver', store: w.to_location } : { role: 'pickup', store: from };
@@ -1272,6 +1304,7 @@ function buildStops(rows, online = []) {
     id: w.id, kind: w.kind,
     number: w.kind === 'po' ? `${w.po_number || ''}${w.split_no ? `-${w.split_no}` : ''}`
       : w.kind === 'transfer' ? (w.shopify_transfer_name || w.transfer_no || '')
+      : w.kind === 'supply' ? 'Supply'
       : (w.custom_title || ''),
     online: false,
     delivered: !!w.delivered_at, picked: !!w.picked_at,
@@ -1349,7 +1382,7 @@ router.post('/delivery/done', async (req, res) => {
     const failed = [];
     let done = 0;
     for (const w of rows) {
-      const number = w.shopify_transfer_name || w.transfer_no || w.po_number || w.custom_title || String(w.id);
+      const number = w.shopify_transfer_name || w.transfer_no || w.po_number || w.custom_title || (w.kind === 'supply' ? 'Supply' : String(w.id));
       try {
         if (w.kind === 'transfer') {
           const { dispatchOne } = require('./transfers'); // Shopify client lives there

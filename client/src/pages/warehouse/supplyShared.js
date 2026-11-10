@@ -38,6 +38,17 @@ export async function api(method, url, body) {
 // "1 = 9 bottles" (nothing when the pack size is empty)
 export const packText = (packSize) => (packSize ? `1 = ${packSize}` : '');
 
+// Hub look (2026-11-10, Hera: follow the existing pages, not the mockups):
+// white box like Polaris Card / the Schedule's Unscheduled box (no thick
+// border), 13 px body text, 12 px secondary text.
+export const HUB_BOX = { background: '#fff', borderRadius: 12, boxShadow: '0 1px 0 rgba(0,0,0,0.07), 0 0 0 1px rgba(0,0,0,0.08)' };
+export const SUBDUED = '#616161';
+// Small buttons / toggles — same as the Schedule's filter buttons.
+export const smallBtnStyle = (active = false) => ({
+  font: 'inherit', fontSize: 13, padding: '5px 12px', minHeight: 32, borderRadius: 8, cursor: 'pointer',
+  border: `1px solid ${active ? '#303030' : '#c9cccf'}`, background: active ? '#303030' : '#fff', color: active ? '#fff' : '#303030',
+});
+
 // On / off switch with only the current option's name next to it — same
 // look as the Pallet / Box switch (Receive Shipments).
 export function Switch({ on, onChange, label, disabled }) {
@@ -60,14 +71,15 @@ export function Switch({ on, onChange, label, disabled }) {
           borderRadius: '50%', background: 'white', transition: 'left 0.15s',
         }} />
       </button>
-      <span style={{ fontSize: 14, fontWeight: 700, color: '#303030' }}>{label}</span>
+      {/* plain label, like the Pallet / Box switch (2026-11-10: was bold) */}
+      <span style={{ fontSize: 14, color: '#303030' }}>{label}</span>
     </span>
   );
 }
 
 const ROUND = {
-  width: 26, height: 26, borderRadius: '50%', border: 'none', background: '#e3e3e3', color: '#303030',
-  fontSize: 18, lineHeight: '26px', padding: 0, cursor: 'pointer', flex: '0 0 auto', touchAction: 'manipulation',
+  width: 24, height: 24, borderRadius: '50%', border: 'none', background: '#e3e3e3', color: '#303030',
+  fontSize: 15, lineHeight: '24px', padding: 0, cursor: 'pointer', flex: '0 0 auto', touchAction: 'manipulation',
 };
 
 // Qty shown as plain text; a tap opens − [qty] + (bigger on phones). Leaving
@@ -92,10 +104,11 @@ export function QtyEditor({ value, onCommit, min = 0, max = null, big = false, r
     if (v !== Number(value)) onCommit(v);
   };
   const step = (d) => setDraft(s => String(clamp((parseInt(s, 10) || 0) + d)));
-  const size = big ? 34 : 26;
+  // Sizes reduced to the Hub's (2026-11-10, Hera); `big` = a little larger for phones.
+  const size = big ? 28 : 24;
   const box = {
-    width: big ? 56 : 48, height: big ? 36 : 28, boxSizing: 'border-box', margin: 0, padding: 0,
-    font: 'inherit', fontSize: big ? 16 : 14, borderRadius: 8, textAlign: 'center',
+    width: big ? 48 : 44, height: big ? 30 : 26, boxSizing: 'border-box', margin: 0, padding: 0,
+    font: 'inherit', fontSize: 13, borderRadius: 8, textAlign: 'center',
   };
   const roundBtn = (label, d) => (
     <button type="button" aria-label={label} tabIndex={editing ? 0 : -1} aria-hidden={!editing}
@@ -123,7 +136,7 @@ export function QtyEditor({ value, onCommit, min = 0, max = null, big = false, r
             if (e.key === 'Enter') e.currentTarget.blur();
             if (e.key === 'Escape') { cancelRef.current = true; e.currentTarget.blur(); }
           }}
-          style={{ ...box, border: '1px solid #c9cccf', background: '#fff' }}
+          style={{ ...box, border: '1px solid #8a8a8a', background: '#fff' }}
         />
       ) : (
         <button type="button" onClick={() => setEditing(true)} style={{ ...box, border: '1px solid transparent', background: 'none', cursor: 'pointer' }}>
@@ -156,9 +169,10 @@ export function ConfirmBox({ open, title, children, confirmLabel = 'Confirm', ca
     <div onClick={() => { if (!busy) onCancel(); }}
       style={{ position: 'fixed', inset: 0, zIndex: 520, background: 'rgba(0,0,0,0.45)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', padding: '12vh 12px 0' }}>
       <div role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}
-        style={{ width: 'min(440px, 100%)', background: '#fff', borderRadius: 14, padding: 16, boxSizing: 'border-box', boxShadow: '0 10px 30px rgba(0,0,0,0.25)' }}>
-        <div style={{ fontSize: 16, fontWeight: 650, marginBottom: 8 }}>{title}</div>
-        <div style={{ fontSize: 14, color: '#303030', marginBottom: 16 }}>{children}</div>
+        style={{ width: 'min(440px, 100%)', background: '#fff', borderRadius: 12, padding: 16, boxSizing: 'border-box', boxShadow: '0 10px 30px rgba(0,0,0,0.25)' }}>
+        {/* Polaris Modal sizes: title headingMd, body 13 px (2026-11-10) */}
+        <div style={{ fontSize: 14, fontWeight: 650, marginBottom: 8 }}>{title}</div>
+        <div style={{ fontSize: 13, color: '#303030', marginBottom: 16 }}>{children}</div>
         <InlineStack align="end" gap="200">
           {cancelLabel && <Button onClick={onCancel} disabled={busy}>{cancelLabel}</Button>}
           <Button variant="primary" onClick={onConfirm} loading={busy}>{confirmLabel}</Button>

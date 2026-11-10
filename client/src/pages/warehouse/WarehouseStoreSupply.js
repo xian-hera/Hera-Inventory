@@ -1,58 +1,61 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Page, BlockStack, InlineStack, Text, Button, Banner, Modal, TextField, Select } from '@shopify/polaris';
+import { Page, BlockStack, InlineStack, Text, Button, Banner, Modal, TextField, Select, Card, Tabs } from '@shopify/polaris';
 import { useNavigate, useParams } from 'react-router-dom';
-import { api, deadlineText, packText, Switch, QtyEditor, DeadlinePicker, StatusDot, STATUS_TEXT } from './supplyShared';
+import { api, deadlineText, packText, Switch, QtyEditor, DeadlinePicker, StatusDot, STATUS_TEXT, HUB_BOX, SUBDUED } from './supplyShared';
+import { SupplyRequests, ShoppingList } from './WarehouseSupplyBatch';
 
 // Warehouse › Store Supply (2026-11-09, Hera — claude/STORE_SUPPLY_SPEC.md).
 // Sub-tabs: Shopping List · Supply Requests · Supply Management · Inventory.
 // Step 1 builds Supply Management (deadlines + items) and Inventory; Shopping
 // List and Supply Requests come in step 2.
+// Step 2 (2026-11-10): Supply Requests and Shopping List — WarehouseSupplyBatch.js.
 
 const CONTENT_W = 1280; // same width as the Schedule tab
+// Order 2026-11-10 (Hera): Supply Management moved after Inventory.
 const SUBTABS = [
   { id: 'shopping-list', label: 'Shopping List' },
   { id: 'requests', label: 'Supply Requests' },
-  { id: 'management', label: 'Supply Management' },
   { id: 'inventory', label: 'Inventory' },
+  { id: 'management', label: 'Supply Management' },
 ];
-const DEFAULT_SUB = 'management'; // until Shopping List is built (step 2)
+// Opening the tab without a sub-tab (2026-11-10, Hera): Shopping List when it
+// has items, else Supply Requests when the Current Batch has requests, else
+// Inventory — see GET /api/store-supply/overview. (Was always Supply
+// Management while only step 1 existed.)
+const DEFAULT_SUB = 'inventory';
 
 const PILL = { display: 'inline-block', padding: '1px 9px', borderRadius: 999, fontSize: 12, fontWeight: 600, lineHeight: '18px' };
 const GREEN = '#008060';
 const RED_X = '#d72c0d';
 
+// Polaris Tabs (2026-11-10, Hera: same look as the other Hub pages; was
+// custom bold pill buttons).
 function SubTabs({ sub, onSelect }) {
   return (
-    <InlineStack gap="100" wrap>
-      {SUBTABS.map(t => {
-        const active = t.id === sub;
-        return (
-          <button key={t.id} type="button" onClick={() => onSelect(t.id)} style={{
-            border: 'none', background: active ? '#e3e3e3' : 'transparent', cursor: 'pointer', padding: '7px 14px',
-            borderRadius: 999, fontSize: 14, fontWeight: active ? 700 : 450, color: '#303030',
-          }}>{t.label}</button>
-        );
-      })}
-    </InlineStack>
+    <Tabs
+      tabs={SUBTABS.map(t => ({ id: `ss-${t.id}`, content: t.label }))}
+      selected={Math.max(0, SUBTABS.findIndex(t => t.id === sub))}
+      onSelect={(i) => onSelect(SUBTABS[i].id)}
+    />
   );
 }
 
 const XButton = ({ onClick, label }) => (
   <button type="button" aria-label={label} title={label} onClick={(e) => { e.stopPropagation(); onClick(); }}
-    style={{ border: 'none', background: 'none', color: RED_X, fontSize: 18, fontWeight: 700, lineHeight: 1, cursor: 'pointer', padding: 2 }}>×</button>
+    style={{ border: 'none', background: 'none', color: RED_X, fontSize: 16, fontWeight: 600, lineHeight: 1, cursor: 'pointer', padding: 2 }}>×</button>
 );
 
 const ArrowBtn = ({ dir, disabled, onClick }) => (
   <button type="button" aria-label={dir < 0 ? 'Move up' : 'Move down'} disabled={disabled}
     onClick={(e) => { e.stopPropagation(); onClick(); }}
     style={{
-      width: 26, height: 26, borderRadius: 6, border: '1.5px solid #c9cccf', background: '#fff', padding: 0,
-      color: disabled ? '#d0d0d0' : '#303030', cursor: disabled ? 'default' : 'pointer', fontSize: 15, lineHeight: '22px',
+      width: 24, height: 24, borderRadius: 6, border: '1px solid #c9cccf', background: '#fff', padding: 0,
+      color: disabled ? '#d0d0d0' : '#303030', cursor: disabled ? 'default' : 'pointer', fontSize: 13, lineHeight: '22px',
     }}>{dir < 0 ? '↑' : '↓'}</button>
 );
 
 // Inline text edit: saves on blur / Enter, Esc cancels.
-function InlineEdit({ value, onSave, placeholder, width = '100%', fontSize = 14, bold, numeric }) {
+function InlineEdit({ value, onSave, placeholder, width = '100%', fontSize = 13, bold, numeric }) {
   const [v, setV] = useState(value || '');
   const cancel = useRef(false);
   return (
@@ -69,8 +72,8 @@ function InlineEdit({ value, onSave, placeholder, width = '100%', fontSize = 14,
       }}
       onBlur={() => { if (cancel.current) { cancel.current = false; onSave(null); return; } onSave(v.trim()); }}
       style={{
-        width, boxSizing: 'border-box', font: 'inherit', fontSize, fontWeight: bold ? 700 : 400, padding: '3px 6px',
-        border: '1.5px solid #c9cccf', borderRadius: 6, background: '#fff',
+        width, boxSizing: 'border-box', font: 'inherit', fontSize, fontWeight: bold ? 600 : 400, padding: '2px 6px',
+        border: '1px solid #8a8a8a', borderRadius: 6, background: '#fff',
       }}
     />
   );
@@ -82,21 +85,21 @@ function NextControls({ mode, weeks, next, current, onChange, busy }) {
   const auto = mode === 'auto';
   return (
     <InlineStack gap="300" blockAlign="center" wrap>
-      <span style={{ fontSize: 20, fontWeight: 700 }}>{next ? deadlineText(next) : '—'}</span>
+      <Text variant="headingMd" as="span">{next ? deadlineText(next) : '—'}</Text>
       {!auto && <DeadlinePicker value={next} afterIso={current} onPick={(iso) => onChange({ mode: 'manual', next: iso })} label="Choose the Next Deadline" />}
       <InlineStack gap="150" blockAlign="center">
         <Switch on={auto} label={auto ? 'Auto' : 'Manual'} disabled={busy}
           onChange={(on) => onChange(on ? { mode: 'auto', weeks } : { mode: 'manual', next })} />
         {auto ? (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: '#6d7175', fontSize: 13 }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: SUBDUED, fontSize: 13 }}>
             Repeat every
             <input type="number" min={1} max={9} value={weeks} disabled={busy}
               onChange={(e) => { const n = Math.min(9, Math.max(1, parseInt(e.target.value, 10) || 1)); onChange({ mode: 'auto', weeks: n }); }}
-              style={{ width: 48, font: 'inherit', fontSize: 14, padding: '3px 6px', border: '1.5px solid #c9cccf', borderRadius: 6, color: '#303030' }} />
+              style={{ width: 44, font: 'inherit', fontSize: 13, padding: '2px 6px', border: '1px solid #8a8a8a', borderRadius: 6, color: '#303030' }} />
             weeks
           </span>
         ) : (
-          <span style={{ color: '#6d7175', fontSize: 13 }}>Select date manually</span>
+          <span style={{ color: SUBDUED, fontSize: 13 }}>Select date manually</span>
         )}
       </InlineStack>
     </InlineStack>
@@ -115,16 +118,16 @@ function Deadlines({ settings, onSaved, setError }) {
   if (!settings.setUp) {
     const nextShown = setup.mode === 'auto' && setup.current ? addDaysIso(setup.current, setup.weeks * 7) : setup.next;
     return (
-      <div style={{ background: '#fff', borderRadius: 12, border: '2px solid #c9cccf', padding: 16 }}>
+      <Card>
         <BlockStack gap="300">
           <Text variant="headingSm" as="h3">Set Up Deadlines</Text>
           <InlineStack gap="300" blockAlign="center">
-            <span style={{ color: '#6d7175', fontSize: 13, minWidth: 110 }}>Current Deadline</span>
-            <span style={{ fontSize: 20, fontWeight: 700 }}>{setup.current ? deadlineText(setup.current) : '—'}</span>
+            <span style={{ color: SUBDUED, fontSize: 13, minWidth: 110 }}>Current Deadline</span>
+            <Text variant="headingMd" as="span">{setup.current ? deadlineText(setup.current) : '—'}</Text>
             <DeadlinePicker value={setup.current} afterIso={addDaysIso(settings.today, -1)} onPick={(iso) => setSetup(s => ({ ...s, current: iso }))} label="Choose the Current Deadline" />
           </InlineStack>
           <InlineStack gap="300" blockAlign="center">
-            <span style={{ color: '#6d7175', fontSize: 13, minWidth: 110 }}>Next Deadline</span>
+            <span style={{ color: SUBDUED, fontSize: 13, minWidth: 110 }}>Next Deadline</span>
             <NextControls mode={setup.mode} weeks={setup.weeks} next={nextShown} current={setup.current || settings.today}
               onChange={(c) => setSetup(s => ({ ...s, ...c }))} busy={busy} />
           </InlineStack>
@@ -133,21 +136,21 @@ function Deadlines({ settings, onSaved, setError }) {
               onClick={() => put('/settings/setup', setup)}>Save</Button>
           </InlineStack>
         </BlockStack>
-      </div>
+      </Card>
     );
   }
   return (
     <InlineStack gap="300" blockAlign="stretch" wrap>
-      <div style={{ background: '#e3e3e3', borderRadius: 12, padding: '10px 16px', minWidth: 190 }}>
+      <div style={{ background: '#e3e3e3', borderRadius: 12, padding: '10px 16px', minWidth: 170 }}>
         <InlineStack gap="300" blockAlign="center">
-          <span style={{ color: '#6d7175', fontSize: 12 }}>Current Deadline</span>
+          <span style={{ color: SUBDUED, fontSize: 12 }}>Current Deadline</span>
           <span style={{ ...PILL, background: GREEN, color: '#fff' }}>Open</span>
         </InlineStack>
-        <div style={{ fontSize: 20, marginTop: 6 }}>{deadlineText(settings.current)}</div>
+        <div style={{ marginTop: 6 }}><Text variant="headingMd" as="span">{deadlineText(settings.current)}</Text></div>
       </div>
-      <div style={{ background: '#fff', borderRadius: 12, border: '2px solid #c9cccf', padding: '10px 16px' }}>
+      <div style={{ ...HUB_BOX, padding: '10px 16px' }}>
         <InlineStack gap="300" blockAlign="center">
-          <span style={{ color: '#6d7175', fontSize: 12 }}>Next Deadline</span>
+          <span style={{ color: SUBDUED, fontSize: 12 }}>Next Deadline</span>
           <span style={{ ...PILL, background: '#e3e3e3', color: '#303030' }}>Incoming</span>
         </InlineStack>
         <div style={{ marginTop: 6 }}>
@@ -180,15 +183,17 @@ function StatusPopover({ item, onChange }) {
   const btn = (label, active, onClick) => (
     <button type="button" disabled={active} onClick={(e) => { e.stopPropagation(); onClick(); }}
       style={{
-        display: 'block', width: '100%', font: 'inherit', fontSize: 13, fontWeight: 600, padding: '6px 10px', borderRadius: 8,
-        border: `1.5px solid ${active ? '#303030' : '#c9cccf'}`, background: active ? '#303030' : '#fff',
-        color: active ? '#fff' : '#303030', cursor: active ? 'default' : 'pointer',
+        display: 'block', width: '100%', font: 'inherit', fontSize: 13, fontWeight: 450, padding: '4px 10px', borderRadius: 8,
+        // current status (2026-11-10, Hera): light grey fill like the Current
+        // Deadline box, dark grey label, not clickable; the other one stays white.
+        border: `1px solid ${active ? '#e3e3e3' : '#c9cccf'}`, background: active ? '#e3e3e3' : '#fff',
+        color: active ? '#616161' : '#303030', cursor: active ? 'default' : 'pointer',
       }}>{label}</button>
   );
   return (
     <div className="ssm-pop" onClick={(e) => e.stopPropagation()}
       style={{ position: 'absolute', left: 0, bottom: '100%', paddingBottom: 6, zIndex: 30 }}>
-      <div style={{ width: 160, background: '#fff', border: '1px solid #c9cccf', borderRadius: 10, boxShadow: '0 6px 18px rgba(0,0,0,0.15)', padding: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div style={{ width: 150, background: '#fff', border: '1px solid #c9cccf', borderRadius: 10, boxShadow: '0 6px 18px rgba(0,0,0,0.15)', padding: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
         {item.status === 'out_of_stock' && <span style={{ fontSize: 12, color: '#8a6200', fontWeight: 600 }}>Out of Stock</span>}
         {btn('Available', item.status === 'available', () => onChange({ status: 'available' }))}
         {btn('Archive', item.status === 'archived', () => onChange({ status: 'archived' }))}
@@ -209,8 +214,10 @@ function ItemCard({ item, selected, editing, onSelect, onEdit, onSave, onDelete,
       className="ssm-card"
       onClick={(e) => { e.stopPropagation(); onSelect(); }}
       style={{
-        position: 'relative', background: '#fff', borderRadius: 12, padding: '10px 12px', minHeight: 70, boxSizing: 'border-box',
-        border: `2px solid ${selected ? GREEN : '#c9cccf'}`, cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 4,
+        // Same card as the Schedule's task cards (2026-11-10, Hera): 1 px
+        // border, 2 px only while selected, 13 px text.
+        position: 'relative', background: '#fff', borderRadius: 10, padding: selected ? '6px 9px' : '7px 10px', minHeight: 58, boxSizing: 'border-box',
+        border: `${selected ? 2 : 1}px solid ${selected ? GREEN : '#c9cccf'}`, cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 2, fontSize: 13,
       }}
     >
       {selected && <span style={{ position: 'absolute', top: 4, right: 6 }}><XButton label="Delete item" onClick={onDelete} /></span>}
@@ -224,17 +231,17 @@ function ItemCard({ item, selected, editing, onSelect, onEdit, onSave, onDelete,
       <div style={{ paddingRight: selected ? 18 : 0, display: 'flex', alignItems: 'center' }}>
         <StatusDot status={item.status} />
         {field === 'name'
-          ? <InlineEdit value={item.name} bold fontSize={15} onSave={(v) => onSave(v === null ? null : { name: v })} />
-          : <span onClick={click('name')} style={{ fontWeight: 700, fontSize: 15, wordBreak: 'break-word' }}>{item.name}</span>}
+          ? <InlineEdit value={item.name} bold onSave={(v) => onSave(v === null ? null : { name: v })} />
+          : <span onClick={click('name')} style={{ fontWeight: 600, wordBreak: 'break-word' }}>{item.name}</span>}
       </div>
-      <div style={{ fontSize: 12, color: '#8a8a8a', minHeight: 18 }}>
+      <div style={{ fontSize: 12, color: SUBDUED, minHeight: 18 }}>
         {field === 'pack'
           ? <InlineEdit value={item.packSize} placeholder="Pack size" fontSize={12} width="80%" onSave={(v) => onSave(v === null ? null : { packSize: v })} />
           : (item.packSize
             ? <span onClick={click('pack')}>{packText(item.packSize)}</span>
             : selected && <span onClick={click('pack')} style={{ color: '#b5b5b5' }}>Pack size</span>)}
       </div>
-      <div style={{ position: 'absolute', right: 10, bottom: 6, fontSize: 12, color: '#6d7175' }}>
+      <div style={{ position: 'absolute', right: 10, bottom: 6, fontSize: 12, color: SUBDUED }}>
         {field === 'max'
           ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>Max <InlineEdit value={item.max == null ? '' : String(item.max)} numeric fontSize={12} width={56} placeholder="None" onSave={(v) => onSave(v === null ? null : { max: v })} /></span>
           : (item.max != null
@@ -290,7 +297,7 @@ function SupplyManagement({ setError, setNotice }) {
   if (!settings || !groups) return <Text tone="subdued">Loading...</Text>;
 
   return (
-    <BlockStack gap="500">
+    <BlockStack gap="400">
       <style>{STATUS_CSS}</style>
       <Deadlines settings={settings} onSaved={setSettings} setError={setError} />
 
@@ -305,28 +312,30 @@ function SupplyManagement({ setError, setNotice }) {
             const gSel = sel.groupId === g.id;
             const selItem = gSel && sel.itemId ? g.items.findIndex(x => x.id === sel.itemId) : -1;
             return (
-              <div key={g.id} data-sg="1" style={{ position: 'relative', paddingLeft: 44 }}
+              <div key={g.id} data-sg="1" style={{ position: 'relative', paddingLeft: 36 }}
                 onClick={() => setSel({ groupId: g.id, itemId: null })}>
                 {gSel && (
-                  <div style={{ position: 'absolute', left: 0, top: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div style={{ position: 'absolute', left: 0, top: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
                     <ArrowBtn dir={-1} disabled={gi === 0} onClick={() => run('POST', `/groups/${g.id}/move`, { dir: -1 })} />
                     <ArrowBtn dir={1} disabled={gi === groups.length - 1} onClick={() => run('POST', `/groups/${g.id}/move`, { dir: 1 })} />
                   </div>
                 )}
                 <div style={{
-                  position: 'relative', borderRadius: 14, padding: 16, cursor: 'pointer',
-                  background: gSel ? '#fff' : 'transparent', border: `2px solid ${gSel ? '#c9cccf' : 'transparent'}`,
+                  // selected group = white Hub box (was a 2 px border, 2026-11-10)
+                  position: 'relative', borderRadius: 12, padding: 12, cursor: 'pointer',
+                  ...(gSel ? HUB_BOX : { background: 'transparent' }),
                 }}>
                   {gSel && <span style={{ position: 'absolute', top: 8, right: 12 }}><XButton label="Delete group" onClick={async () => {
                     if (g.items.length > 0) { setNotEmpty(true); return; }
                     await run('DELETE', `/groups/${g.id}`);
                     setSel({ groupId: null, itemId: null });
                   }} /></span>}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, minHeight: 28 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, minHeight: 26 }}>
                     {editing && editing.kind === 'group' && editing.id === g.id
-                      ? <div style={{ width: 280 }}><InlineEdit value={g.name} fontSize={17} onSave={async (v) => { setEditing(null); if (v) await run('PATCH', `/groups/${g.id}`, { name: v }); }} /></div>
-                      : <span onClick={(e) => { e.stopPropagation(); setSel({ groupId: g.id, itemId: null }); setEditing({ kind: 'group', id: g.id }); }}
-                          style={{ fontSize: 17, fontWeight: 500 }}>{g.name}</span>}
+                      ? <div style={{ width: 260 }}><InlineEdit value={g.name} fontSize={14} bold onSave={async (v) => { setEditing(null); if (v) await run('PATCH', `/groups/${g.id}`, { name: v }); }} /></div>
+                      : <span onClick={(e) => { e.stopPropagation(); setSel({ groupId: g.id, itemId: null }); setEditing({ kind: 'group', id: g.id }); }}>
+                          <Text variant="headingMd" as="span">{g.name}</Text>
+                        </span>}
                     {selItem >= 0 && (
                       <span style={{ display: 'inline-flex', gap: 6 }}>
                         <ArrowBtn dir={-1} disabled={selItem === 0} onClick={() => run('POST', `/items/${sel.itemId}/move`, { dir: -1 })} />
@@ -337,7 +346,7 @@ function SupplyManagement({ setError, setNotice }) {
                   {g.items.length === 0 ? (
                     <Text tone="subdued">No items in this group.</Text>
                   ) : (
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 16 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 10 }}>
                       {g.items.map(it => (
                         <ItemCard
                           key={it.id}
@@ -368,7 +377,7 @@ function SupplyManagement({ setError, setNotice }) {
       </div>
 
       <InlineStack>
-        <div style={{ paddingLeft: 44 }}><Button onClick={() => setGroupOpen(true)}>Add Group</Button></div>
+        <div style={{ paddingLeft: 36 }}><Button onClick={() => setGroupOpen(true)}>Add Group</Button></div>
       </InlineStack>
 
       {addOpen && <AddItemModal groups={groups} defaultGroup={sel.groupId} onClose={() => setAddOpen(false)}
@@ -425,13 +434,14 @@ function Inventory({ setError }) {
   useEffect(() => { api('GET', '/items').then(d => setGroups(d.groups)).catch(e => setError(e.message)); }, [setError]);
   if (!groups) return <Text tone="subdued">Loading...</Text>;
   const rows = groups.flatMap(g => g.items.map(it => ({ ...it, group: g.name })));
-  const TH = { textAlign: 'left', fontWeight: 500, color: '#6d7175', fontSize: 13, padding: '10px 12px', borderBottom: '1px solid #c9cccf' };
-  const TD = { padding: '6px 12px', height: 44, boxSizing: 'border-box', borderBottom: '1px solid #e1e3e5', fontSize: 14, verticalAlign: 'middle' };
+  // Hub table look (2026-11-10): 12 px grey headers, 13 px rows.
+  const TH = { textAlign: 'left', fontWeight: 550, color: SUBDUED, fontSize: 12, padding: '8px 12px', borderBottom: '1px solid #e3e3e3' };
+  const TD = { padding: '4px 12px', height: 40, boxSizing: 'border-box', borderBottom: '1px solid #f1f1f1', fontSize: 13, verticalAlign: 'middle' };
   // Qty column (2026-11-10): wide enough for − [qty] + from the start (the
   // buttons are only hidden), and kept off the right edge.
-  const QTY_COL = { width: 150, paddingRight: 28, textAlign: 'center' };
+  const QTY_COL = { width: 140, paddingRight: 28, textAlign: 'center' };
   return (
-    <div style={{ background: '#fff', borderRadius: 12, border: '2px solid #c9cccf', padding: '6px 12px', overflowX: 'auto' }}>
+    <div style={{ ...HUB_BOX, padding: '4px 8px', overflowX: 'auto' }}>
       {rows.length === 0 ? <div style={{ padding: 12 }}><Text tone="subdued">No items yet — add them in Supply Management.</Text></div> : (
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
@@ -464,11 +474,20 @@ function Inventory({ setError }) {
 function WarehouseStoreSupply() {
   const navigate = useNavigate();
   const params = useParams();
-  const sub = SUBTABS.some(t => t.id === params.sub) ? params.sub : DEFAULT_SUB;
+  const sub = SUBTABS.some(t => t.id === params.sub) ? params.sub : null;
+  useEffect(() => {
+    if (sub) return undefined;
+    let gone = false;
+    api('GET', '/overview')
+      .then(d => { if (!gone) navigate(`/warehouse/store-supply/${d.shoppingCount > 0 ? 'shopping-list' : d.currentBatchCount > 0 ? 'requests' : 'inventory'}`, { replace: true }); })
+      .catch(() => { if (!gone) navigate(`/warehouse/store-supply/${DEFAULT_SUB}`, { replace: true }); });
+    return () => { gone = true; };
+  }, [sub, navigate]);
   const [error, setErrorState] = useState('');
   const setError = useCallback((m) => setErrorState(m), []);
   const [notice, setNoticeState] = useState('');
   const setNotice = useCallback((m) => setNoticeState(m), []);
+  if (!sub) return <Page><Text tone="subdued">Loading...</Text></Page>;
   return (
     <Page>
       <div style={{ position: 'relative', left: '50%', transform: 'translateX(-50%)', width: `min(${CONTENT_W}px, calc(100vw - 32px))` }}>
@@ -478,11 +497,8 @@ function WarehouseStoreSupply() {
           {notice && <Banner tone="warning" onDismiss={() => setNoticeState('')}>{notice}</Banner>}
           {sub === 'management' && <SupplyManagement setError={setError} setNotice={setNotice} />}
           {sub === 'inventory' && <Inventory setError={setError} />}
-          {(sub === 'shopping-list' || sub === 'requests') && (
-            <div style={{ background: '#fff', borderRadius: 12, border: '2px solid #c9cccf', padding: 20 }}>
-              <Text tone="subdued">Coming in the next step.</Text>
-            </div>
-          )}
+          {sub === 'requests' && <SupplyRequests setError={setError} />}
+          {sub === 'shopping-list' && <ShoppingList setError={setError} />}
         </BlockStack>
       </div>
     </Page>

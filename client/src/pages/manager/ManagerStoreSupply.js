@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Page, BlockStack, InlineStack, Text, Banner, Spinner } from '@shopify/polaris';
+import { Page, BlockStack, InlineStack, Text, Banner, Card, Button } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import { getManagerLocation } from '../../accountMemory';
-import { api, deadlineText, shortDate, ConfirmBox } from '../warehouse/supplyShared';
+import { api, deadlineText, shortDate, ConfirmBox, SUBDUED } from '../warehouse/supplyShared';
 
 // Store › Tasks › Store Supply (2026-11-09, Hera — claude/STORE_SUPPLY_SPEC.md).
 // Left: WH's items by group (collapsible), + adds one to Selected. Right:
@@ -10,35 +10,38 @@ import { api, deadlineText, shortDate, ConfirmBox } from '../warehouse/supplySha
 // the server (one per store, shared by every device) until Submit Request.
 // After submitting, the page shows what was sent until the deadline closes;
 // a draft still open when the deadline closes is submitted automatically.
+// Look (2026-11-10, Hera): same as the other Hub pages — Polaris Card /
+// Text / Button, 13 px text, thin card borders (not the mockup's sizes).
 
-const GREEN = '#008060';
+const GREEN = '#40d37f'; // + button (2026-11-10, Hera; was #008060)
 const RED = '#d72c0d';
 
 const subLine = (packSize, max, maxRed) => {
   const parts = [];
   if (packSize) parts.push(<span key="p">1 = {packSize}</span>);
-  if (max != null) parts.push(<span key="m" style={maxRed ? { color: RED, fontWeight: 700 } : undefined}>Max {max}</span>);
+  if (max != null) parts.push(<span key="m" style={maxRed ? { color: RED, fontWeight: 600 } : undefined}>Max {max}</span>);
   return parts.length ? parts.reduce((acc, p, i) => (i ? [...acc, <span key={`d${i}`}> · </span>, p] : [p]), []) : null;
 };
 
 const ROUND = {
-  width: 28, height: 28, borderRadius: '50%', border: 'none', padding: 0, fontSize: 17, lineHeight: '28px',
+  width: 26, height: 26, borderRadius: '50%', border: 'none', padding: 0, fontSize: 15, lineHeight: '26px',
   cursor: 'pointer', flex: '0 0 auto', touchAction: 'manipulation',
 };
 
 function Chevron({ open }) {
   return (
-    <span aria-hidden="true" style={{ ...ROUND, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: '#b5b5b5', cursor: 'pointer' }}>
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#303030" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+    <span aria-hidden="true" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 24, height: 24, flex: '0 0 auto' }}>
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke={SUBDUED} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         {open ? <path d="M3 9l4-4 4 4" /> : <path d="M3 5l4 4 4-4" />}
       </svg>
     </span>
   );
 }
 
+// Item card: like the Schedule's task cards — 1 px border, 13 px text.
 const CARD = {
-  position: 'relative', background: '#fff', border: '2px solid #c9cccf', borderRadius: 14, padding: '10px 12px',
-  boxSizing: 'border-box', minHeight: 66, display: 'flex', alignItems: 'center', gap: 10,
+  position: 'relative', background: '#fff', border: '1px solid #c9cccf', borderRadius: 10, padding: '8px 10px',
+  boxSizing: 'border-box', minHeight: 52, display: 'flex', alignItems: 'center', gap: 8, fontSize: 13,
 };
 
 function SelectedCard({ line, onQty, onRemove }) {
@@ -54,12 +57,12 @@ function SelectedCard({ line, onQty, onRemove }) {
   };
   return (
     // name on top; pack size / Max bottom-left, qty bottom-right
-    <div style={{ ...CARD, flexDirection: 'column', alignItems: 'stretch', gap: 6 }}>
+    <div style={{ ...CARD, flexDirection: 'column', alignItems: 'stretch', gap: 4 }}>
       <button type="button" aria-label="Remove" onClick={onRemove}
-        style={{ position: 'absolute', top: 2, right: 6, border: 'none', background: 'none', color: RED, fontSize: 17, fontWeight: 700, cursor: 'pointer', padding: 2, lineHeight: 1 }}>×</button>
-      <div style={{ fontWeight: 700, fontSize: 15, wordBreak: 'break-word', paddingRight: 18 }}>{line.name}</div>
+        style={{ position: 'absolute', top: 2, right: 4, border: 'none', background: 'none', color: RED, fontSize: 16, fontWeight: 600, cursor: 'pointer', padding: 2, lineHeight: 1 }}>×</button>
+      <div style={{ fontWeight: 600, wordBreak: 'break-word', paddingRight: 18 }}>{line.name}</div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-      <div style={{ fontSize: 12, color: '#8a8a8a', minWidth: 0 }}>{subLine(line.packSize, line.max, atMax || line.capped)}</div>
+      <div style={{ fontSize: 12, color: SUBDUED, minWidth: 0 }}>{subLine(line.packSize, line.max, atMax || line.capped)}</div>
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flex: '0 0 auto' }}>
         <button type="button" aria-label="Less" disabled={line.qty <= 1} onClick={() => onQty(line.qty - 1)}
           style={{ ...ROUND, background: line.qty <= 1 ? '#efefef' : '#e3e3e3', color: line.qty <= 1 ? '#c4c4c4' : '#303030' }}>−</button>
@@ -67,7 +70,7 @@ function SelectedCard({ line, onQty, onRemove }) {
           onChange={(e) => setTxt(e.target.value.replace(/[^0-9]/g, ''))}
           onBlur={(e) => commit(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
-          style={{ width: 44, textAlign: 'center', font: 'inherit', fontSize: 17, fontWeight: 700, padding: '4px 2px', border: '2px solid #c9cccf', borderRadius: 8 }} />
+          style={{ width: 40, textAlign: 'center', font: 'inherit', fontSize: 13, fontWeight: 600, padding: '3px 2px', border: '1px solid #8a8a8a', borderRadius: 8 }} />
         <button type="button" aria-label="More" disabled={atMax} onClick={() => onQty(line.qty + 1)}
           style={{ ...ROUND, background: atMax ? '#efefef' : '#e3e3e3', color: atMax ? '#c4c4c4' : '#303030' }}>+</button>
       </span>
@@ -138,7 +141,7 @@ function ManagerStoreSupply() {
     return <Page title="Store Supply" backAction={{ onAction: back }}><Banner tone="warning">Please select a location on Manager Home first.</Banner></Page>;
   }
   if (!view) {
-    return <Page title="Store Supply" backAction={{ onAction: back }}>{error ? <Banner tone="critical">{error}</Banner> : <InlineStack align="center"><Spinner /></InlineStack>}</Page>;
+    return <Page title="Store Supply" backAction={{ onAction: back }}>{error ? <Banner tone="critical">{error}</Banner> : <InlineStack align="center"><Text tone="subdued">Loading...</Text></InlineStack>}</Page>;
   }
 
   const last = view.lastSubmission;
@@ -148,28 +151,30 @@ function ManagerStoreSupply() {
   return (
     <Page title="Store Supply" backAction={{ onAction: back }}>
       <style>{`
-        .ss-cols { display: grid; grid-template-columns: minmax(0, 1fr) 1px minmax(0, 1fr); column-gap: 28px; align-items: start; }
-        .ss-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+        .ss-cols { display: grid; grid-template-columns: minmax(0, 1fr) 1px minmax(0, 1fr); column-gap: 20px; align-items: start; }
+        .ss-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
         @media (max-width: 767px) {
-          .ss-cols { grid-template-columns: minmax(0, 1fr); row-gap: 24px; }
+          .ss-cols { grid-template-columns: minmax(0, 1fr); row-gap: 20px; }
           .ss-divider { display: none; }
           .ss-grid { grid-template-columns: minmax(0, 1fr); }
         }
       `}</style>
-      <BlockStack gap="500">
-        {/* Deadline bar */}
-        <div style={{ background: '#e3e3e3', borderRadius: 10, padding: '12px 16px' }}>
-          <InlineStack gap="200" blockAlign="center">
-            <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="#2c6ecb" strokeWidth="1.6" aria-hidden="true">
-              <rect x="3" y="4.5" width="14" height="12.5" rx="2" /><path d="M3 8.5h14M7 2.5v4M13 2.5v4" />
-            </svg>
-            <span style={{ fontSize: 13 }}>Current Deadline</span>
-            <span style={{ fontWeight: 700 }}>{view.setUp ? deadlineText(view.deadline) : '—'}</span>
-          </InlineStack>
-          <div style={{ fontSize: 13, marginTop: 6 }}>
-            Last Submission {last ? shortDate(last.at) : '—'}{last && last.auto ? ', automatically submitted due to cycle close.' : ''}
-          </div>
-        </div>
+      <BlockStack gap="400">
+        {/* Deadline bar — a Polaris Card (2026-11-10, was a big grey box) */}
+        <Card>
+          <BlockStack gap="100">
+            <InlineStack gap="200" blockAlign="center">
+              <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="#2c6ecb" strokeWidth="1.6" aria-hidden="true">
+                <rect x="3" y="4.5" width="14" height="12.5" rx="2" /><path d="M3 8.5h14M7 2.5v4M13 2.5v4" />
+              </svg>
+              <Text as="span">Current Deadline</Text>
+              <Text as="span" fontWeight="semibold">{view.setUp ? deadlineText(view.deadline) : '—'}</Text>
+            </InlineStack>
+            <Text as="p" tone="subdued">
+              Last Submission {last ? shortDate(last.at) : '—'}{last && last.auto ? ', automatically submitted due to cycle close.' : ''}
+            </Text>
+          </BlockStack>
+        </Card>
 
         {error && <Banner tone="critical" onDismiss={() => setError('')}>{error}</Banner>}
 
@@ -180,12 +185,12 @@ function ManagerStoreSupply() {
             <Banner tone="success">You have already submitted a request for this cycle. You can make a new one after the deadline.</Banner>
             <div className="ss-grid">
               {view.request.lines.map(l => (
-                <div key={`${l.itemId}-${l.name}`} style={{ ...CARD, minHeight: 56 }}>
+                <div key={`${l.itemId}-${l.name}`} style={CARD}>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 700, fontSize: 15 }}>{l.name}</div>
-                    <div style={{ fontSize: 12, color: '#8a8a8a' }}>{l.packSize ? `1 = ${l.packSize}` : ''}</div>
+                    <div style={{ fontWeight: 600 }}>{l.name}</div>
+                    <div style={{ fontSize: 12, color: SUBDUED }}>{l.packSize ? `1 = ${l.packSize}` : ''}</div>
                   </div>
-                  <span style={{ fontSize: 17, fontWeight: 700 }}>{l.qty}</span>
+                  <span style={{ fontWeight: 600 }}>{l.qty}</span>
                 </div>
               ))}
             </div>
@@ -198,10 +203,10 @@ function ManagerStoreSupply() {
               {view.groups.map(g => {
                 const isOpen = !!open[g.id];
                 return (
-                  <BlockStack key={g.id} gap="300">
+                  <BlockStack key={g.id} gap="200">
                     <button type="button" onClick={() => setOpen(o => ({ ...o, [g.id]: !o[g.id] }))}
-                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', border: 'none', background: 'none', padding: '4px 0', cursor: 'pointer', font: 'inherit', textAlign: 'left' }}>
-                      <span style={{ fontSize: 18, fontWeight: 600 }}>{g.name}</span>
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', border: 'none', borderBottom: '1px solid #e3e3e3', background: 'none', padding: '4px 0', cursor: 'pointer', font: 'inherit', textAlign: 'left', color: '#303030' }}>
+                      <Text variant="headingMd" as="span">{g.name}</Text>
                       <Chevron open={isOpen} />
                     </button>
                     {isOpen && (
@@ -215,17 +220,20 @@ function ManagerStoreSupply() {
                             const out = it.status === 'out_of_stock';
                             const grey = isAdded || out;
                             return (
-                              <div key={it.id} style={{ ...CARD, ...(grey ? { background: 'transparent', borderColor: '#e1e3e5' } : {}) }}>
+                              <div key={it.id} style={{ ...CARD, ...(grey ? { background: 'transparent', borderColor: '#e3e3e3' } : {}) }}>
                                 <div style={{ flex: 1, minWidth: 0, color: grey ? '#8a8a8a' : '#303030' }}>
-                                  <div style={{ fontWeight: 700, fontSize: 15, wordBreak: 'break-word' }}>{it.name}</div>
-                                  <div style={{ fontSize: 12, color: grey ? '#b5b5b5' : '#8a8a8a' }}>{out ? 'Out of Stock' : subLine(it.packSize, it.max)}</div>
+                                  <div style={{ fontWeight: 600, wordBreak: 'break-word' }}>{it.name}</div>
+                                  <div style={{ fontSize: 12, color: grey ? '#b5b5b5' : SUBDUED }}>{out ? 'Out of Stock' : subLine(it.packSize, it.max)}</div>
                                 </div>
                                 {out ? null : isAdded ? (
-                                  <span style={{ color: '#8a8a8a', fontSize: 14 }}>Added</span>
+                                  <span style={{ color: '#8a8a8a', fontSize: 12 }}>Added</span>
                                 ) : (
                                   <button type="button" aria-label={`Add ${it.name}`}
                                     onClick={() => change([...lines, { itemId: it.id, name: it.name, packSize: it.packSize, max: it.max, qty: 1 }])}
-                                    style={{ ...ROUND, width: 34, height: 34, background: GREEN, color: '#fff', fontSize: 24, lineHeight: '34px', fontWeight: 700 }}>+</button>
+                                    // an SVG plus, centred exactly in the circle (the text "+" sat low)
+                                    style={{ ...ROUND, width: 28, height: 28, background: GREEN, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                                    <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v12M2 8h12" stroke="#fff" strokeWidth="2.6" strokeLinecap="round" /></svg>
+                                  </button>
                                 )}
                               </div>
                             );
@@ -238,20 +246,16 @@ function ManagerStoreSupply() {
               })}
             </BlockStack>
 
-            <div className="ss-divider" style={{ background: '#8a8a8a', alignSelf: 'stretch', minHeight: 200 }} />
+            <div className="ss-divider" style={{ background: '#e3e3e3', alignSelf: 'stretch', minHeight: 200 }} />
 
             {/* Selected */}
-            <BlockStack gap="300">
+            <BlockStack gap="200">
               <InlineStack align="space-between" blockAlign="center">
                 <InlineStack gap="200" blockAlign="center">
-                  <span style={{ fontSize: 18, fontWeight: 600 }}>Selected</span>
-                  {saveState && <span style={{ fontSize: 12, color: '#8a8a8a' }}>{saveState === 'saving' ? 'Saving...' : 'Saved'}</span>}
+                  <Text variant="headingMd" as="span">Selected</Text>
+                  {saveState && <span style={{ fontSize: 12, color: SUBDUED }}>{saveState === 'saving' ? 'Saving...' : 'Saved'}</span>}
                 </InlineStack>
-                <button type="button" disabled={lines.length === 0} onClick={() => setConfirmOpen(true)}
-                  style={{
-                    border: 'none', borderRadius: 10, padding: '9px 14px', fontSize: 14, fontWeight: 650, cursor: lines.length ? 'pointer' : 'default',
-                    background: lines.length ? '#303030' : '#d4d4d4', color: lines.length ? '#fff' : '#8a8a8a',
-                  }}>Submit Request</button>
+                <Button variant="primary" disabled={lines.length === 0} onClick={() => setConfirmOpen(true)}>Submit Request</Button>
               </InlineStack>
               {lines.length === 0 ? (
                 <Text tone="subdued">Nothing selected yet. Tap + on an item to add it.</Text>
@@ -271,6 +275,10 @@ function ManagerStoreSupply() {
 
       <ConfirmBox open={confirmOpen} title="Submit Request?" busy={submitting}
         onConfirm={submit} onCancel={() => setConfirmOpen(false)}>
+        {/* red first line added 2026-11-10 (Hera) */}
+        <div style={{ color: RED, fontWeight: 600, marginBottom: 6 }}>
+          You can only submit ONCE in this deadline. If you might have more requests, don’t submit it now.
+        </div>
         Please check that every item and quantity is correct. Once submitted, the request can’t be changed.
       </ConfirmBox>
       <div className="mobile-bottom-safe-area" aria-hidden="true" />
