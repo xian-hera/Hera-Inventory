@@ -82,6 +82,8 @@ const OnlinePublication = lazyWithReload(() => import(/* webpackChunkName: "onli
 const OnlineTransfers = lazyWithReload(() => import(/* webpackChunkName: "online" */ './pages/online/OnlineTransfers'));
 // Wig Try-on (2026-11-04, Hera) — claude/WIG_TRYON_FEATURE_SPEC.md
 const OnlineWigTryon = lazyWithReload(() => import(/* webpackChunkName: "online" */ './pages/online/wigTryon/OnlineWigTryon'));
+// Keyboard Test (2026-11-12, Hera) — TEMPORARY test page, remove after testing
+const OnlineKeyboardTest = lazyWithReload(() => import(/* webpackChunkName: "online" */ './pages/online/OnlineKeyboardTest'));
 const ProductDatabaseSettings = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/ProductDatabaseSettings'));
 const BuyerPOReceiving = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerPOReceiving'));
 const BuyerPOImportInvoice = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerPOImportInvoice'));
@@ -260,6 +262,7 @@ function App() {
           <Route path="/online/publication" element={<OnlineHome tab="publication"><OnlinePublication inTabs /></OnlineHome>} />
           <Route path="/online/transfer" element={<OnlineHome tab="transfer"><OnlineTransfers inTabs /></OnlineHome>} />
           <Route path="/online/wig-tryon" element={<OnlineHome tab="wig-tryon"><OnlineWigTryon inTabs /></OnlineHome>} />
+          <Route path="/online/keyboard-test" element={<OnlineHome tab="keyboard-test"><OnlineKeyboardTest /></OnlineHome>} />
         </Routes>
           </Suspense>
         </PageErrorBoundary>
