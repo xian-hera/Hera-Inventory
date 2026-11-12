@@ -296,6 +296,35 @@ function PopupD({ close, metrics, min, pct }) {
     </div>, document.body);
 }
 
+// F / G — Ruler (2026-11-12, after Hera's Android results: inside the
+// Shopify Android app Hub is in an iframe whose size never changes when the
+// keyboard opens, so the page can't read the keyboard). A full-screen ruler
+// with the page's own y positions; Hera reads which numbers she can still see.
+//   F — text box at the TOP: where does the keyboard start?
+//   G — text box at the BOTTOM: does Android move the page up to show it
+//       (like the Online PIN box), and how far?
+function Ruler({ close, inputAt }) {
+  const ref = useRef(null);
+  const [h, setH] = useState(window.innerHeight);
+  useEffect(() => { ref.current && ref.current.focus(); setH(window.innerHeight); }, []);
+  const marks = [];
+  for (let y = 0; y <= h; y += 20) marks.push(y);
+  return createPortal(
+    <div style={{ position: 'fixed', inset: 0, background: '#fff', zIndex: 1000 }}>
+      {marks.map(y => (
+        <div key={y} style={{ position: 'absolute', left: 0, right: 0, top: y, borderTop: `1px solid ${y % 100 === 0 ? '#d72c0d' : '#c9cccf'}` }}>
+          <span style={{ position: 'absolute', left: 6, top: 1, fontSize: 12, fontWeight: y % 100 === 0 ? 700 : 400, color: y % 100 === 0 ? '#d72c0d' : '#616161' }}>{y}</span>
+          <span style={{ position: 'absolute', right: 6, top: 1, fontSize: 12, fontWeight: y % 100 === 0 ? 700 : 400, color: y % 100 === 0 ? '#d72c0d' : '#616161' }}>{y}</span>
+        </div>
+      ))}
+      <div style={{ position: 'absolute', left: 60, right: 60, [inputAt]: 24, display: 'flex', gap: 8 }}>
+        <input ref={ref} inputMode="numeric" placeholder="Tap here" autoComplete="off"
+          style={{ flex: 1, minWidth: 0, padding: '10px 12px', fontSize: 16, border: '2px solid #2c6ecb', borderRadius: 8, boxSizing: 'border-box', background: '#fff' }} />
+        <button type="button" onClick={close} aria-label="Close" style={{ border: '1px solid #c9cccf', background: '#fff', borderRadius: 8, padding: '0 12px', fontSize: 16 }}>✕</button>
+      </div>
+    </div>, document.body);
+}
+
 // E — standard Polaris Modal.
 function PopupE({ close, metrics, min }) {
   const [v, setV] = useState('');
@@ -322,6 +351,8 @@ const TESTS = [
   ['C', 'C · Top of Screen'],
   ['D', 'D · Top, Short While Typing'],
   ['E', 'E · Polaris Modal'],
+  ['F', 'F · Ruler, Box at Top'],
+  ['G', 'G · Ruler, Box at Bottom'],
 ];
 
 function OnlineKeyboardTest() {
@@ -386,7 +417,7 @@ function OnlineKeyboardTest() {
         <Card>
           <BlockStack gap="300">
             <InlineStack align="space-between" blockAlign="center" gap="200">
-              <Text variant="headingSm" as="h3">Results ({REC.results.length} of 5 Tests Done)</Text>
+              <Text variant="headingSm" as="h3">Results ({REC.results.length} Tests Done)</Text>
               <InlineStack gap="200">
                 <Button onClick={clearAll}>Clear</Button>
                 <Button variant="primary" onClick={copy}>Copy All Results</Button>
@@ -403,6 +434,8 @@ function OnlineKeyboardTest() {
       {open === 'C' && <PopupC {...props} />}
       {open === 'D' && <PopupD {...props} pct={pct} />}
       {open === 'E' && <PopupE {...props} />}
+      {open === 'F' && <Ruler close={close} inputAt="top" />}
+      {open === 'G' && <Ruler close={close} inputAt="bottom" />}
       <div style={{ height: 'var(--shopify-safe-area-inset-bottom, 80px)' }} aria-hidden="true" />
     </Page>
   );
