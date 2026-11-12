@@ -4,6 +4,7 @@ import {
 } from '@shopify/polaris';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { useDD, poEntries, poPb, DDList, PBOnlyPill, pbOnlyValue } from '../shared/ddPill';
+import CountPills from '../shared/CountPills'; // count history as pills (2026-11-12)
 import { LineNote, LineNoteIcon, LineNoteButton, LineNoteText, poLineNoteApi } from '../shared/lineNote'; // eslint-disable-line no-unused-vars
 // Hub number keypad (2026-11-12, Hera): the count box is marked
 // data-hub-keypad; the one keypad (components/NumberKeypad.js, mounted in
@@ -750,13 +751,9 @@ function ManagerPOReceivingDetail() {
 
                 {countHistory(popupItem).length > 0 && (
                   <BlockStack gap="100">
-                    <Text variant="bodySm" tone="subdued">Count history</Text>
-                    {countHistory(popupItem).map((h, i) => (
-                      <InlineStack key={i} gap="200" blockAlign="center">
-                        <TallyBars count={1} />
-                        <Text>{h.type === 'correct' ? 'Correct' : String(h.value)}</Text>
-                      </InlineStack>
-                    ))}
+                    {/* was "Count history" + one tally line per count; now one pill
+                        per count, green ✓ for Correct (2026-11-12, Hera) */}
+                    <CountPills history={countHistory(popupItem)} />
                     <InlineStack align="space-between" blockAlign="center">
                       <Text variant="bodySm" tone="subdued">
                         Total {popupItem.store_count === null || popupItem.store_count === undefined ? 0 : popupItem.store_count}

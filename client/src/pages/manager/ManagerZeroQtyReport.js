@@ -6,6 +6,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { fetchLocationMap } from '../shared/locationMap';
 import FulfilCountInfo from '../shared/FulfilCountInfo';
+import CountPills from '../shared/CountPills'; // count history as pills (2026-11-12)
 // Store location: remembered per Shopify account, loaded before this page
 // renders by ManagerLocationGate (2026-09-29) — replaces reading
 // localStorage 'managerLocation' directly. See client/src/accountMemory.js.
@@ -567,13 +568,8 @@ function ManagerZeroQtyReport() {
                     </div>
                     {popupScanHistory.length > 0 && (
                       <BlockStack gap="100">
-                        {popupScanHistory.map((s, i) => (
-                          <InlineStack key={i} gap="200">
-                            <span style={{ width: '8px', height: '8px', borderRadius: '50%',
-                              background: 'black', display: 'inline-block', marginTop: '6px' }} />
-                            <Text>{s.type === 'correct' ? 'correct' : `counted ${s.value}`}</Text>
-                          </InlineStack>
-                        ))}
+                        {/* one pill per count, green ✓ for Correct (2026-11-12, Hera) */}
+                        <CountPills history={popupScanHistory} />
                         <Text variant="bodySm" tone="subdued">
                           total count {computePOH(popupScanHistory, popupSoh)}
                         </Text>

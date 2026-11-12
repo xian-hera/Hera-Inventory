@@ -6,6 +6,7 @@ import {
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { fetchLocationMap } from '../shared/locationMap';
 import FulfilCountInfo from '../shared/FulfilCountInfo';
+import CountPills from '../shared/CountPills'; // count history as pills (2026-11-12)
 import { LineNote, LineNoteIcon, LineNoteButton, LineNoteText, taskLineNoteApi } from '../shared/lineNote'; // eslint-disable-line no-unused-vars
 import useKeyboardInset from '../../components/useKeyboardInset';
 // Hub number keypad (2026-11-12, Hera): count + Type in SKU boxes are marked
@@ -905,15 +906,8 @@ function ManagerTaskDetail() {
 
                 {(popupItem.scan_history || []).length > 0 && (
                   <BlockStack gap="100">
-                    {popupItem.scan_history.map((s, i) => (
-                      <InlineStack key={i} gap="200">
-                        <span style={{
-                          width: '8px', height: '8px', borderRadius: '50%',
-                          background: 'black', display: 'inline-block', marginTop: '6px',
-                        }} />
-                        <Text>{s.type === 'correct' ? 'correct' : `counted ${s.value}`}</Text>
-                      </InlineStack>
-                    ))}
+                    {/* one pill per count, green ✓ for Correct (2026-11-12, Hera) */}
+                    <CountPills history={popupItem.scan_history} />
                     <Text variant="bodySm" tone="subdued">
                       total count {computePOH(popupItem.scan_history, popupItem.soh ?? popupSoh)}
                     </Text>
