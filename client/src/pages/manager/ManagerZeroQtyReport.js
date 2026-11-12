@@ -14,6 +14,9 @@ import { StatusTime } from '../shared/statusTime';
 // High-placed confirm dialog (Polaris Modal rises from the bottom on phones,
 // where Shopify's bar can cover its buttons) — shared with Store Supply.
 import { ConfirmBox } from '../warehouse/supplyShared';
+// Hub number keypad (2026-11-12, Hera): count + Type in SKU boxes, when
+// Online › Settings › Number Keypad is on (touch devices only).
+import NumberKeypad, { useNumberKeypad, KEYPAD_POPUP } from '../../components/NumberKeypad';
 
 function computePOH(scanHistory, soh) {
   if (!scanHistory || scanHistory.length === 0) return null;
@@ -67,6 +70,9 @@ function ManagerZeroQtyReport() {
   const [submitting, setSubmitting]     = useState(false);
   // Submit Selected / Submit All ask first (2026-11-10, Hera): ids waiting for the confirm.
   const [confirmIds, setConfirmIds]     = useState(null);
+  const keypad   = useNumberKeypad();
+  const countRef = useRef(null);
+  const skuRef   = useRef(null);
   const [loadingItems, setLoadingItems] = useState(true);
 
   const [popupData, setPopupData]               = useState(null);
@@ -383,6 +389,7 @@ function ManagerZeroQtyReport() {
     transform: 'translateY(-50%)', maxHeight: 'calc(100vh - 176px)', overflowY: 'auto',
     background: 'white', borderRadius: '12px', padding: '24px',
     maxWidth: '480px', margin: '0 auto', zIndex: 1001,
+    ...(keypad ? { ...KEYPAD_POPUP, padding: '20px' } : {}), // no phone keyboard → use the height
   };
 
   return (
@@ -574,7 +581,8 @@ function ManagerZeroQtyReport() {
                     )}
                     <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                       <input
-                        inputMode="numeric"
+                        ref={countRef}
+                        inputMode={keypad ? 'none' : 'numeric'}
                         placeholder="Input your count"
                         value={countInput}
                         onChange={e => setCountInput(e.target.value)}
@@ -588,8 +596,11 @@ function ManagerZeroQtyReport() {
                         onFocus={e => { e.target.style.borderColor = '#005bd3'; }}
                         onBlur={e => { e.target.style.borderColor = '#c9cccf'; }}
                       />
-                      <Button onClick={handleSubmitCount} disabled={!countInput}>Submit</Button>
+                      {!keypad && <Button onClick={handleSubmitCount} disabled={!countInput}>Submit</Button>}
                     </div>
+                    {/* OK = Submit (2026-11-12) */}
+                    {keypad && <NumberKeypad inputRef={countRef} value={countInput} onChange={setCountInput}
+                      onOk={handleSubmitCount} okDisabled={!countInput} />}
                     {popupSoh === null ? (
                       <div style={{ background: '#f6f6f7', borderRadius: '12px', padding: '16px',
                         textAlign: 'center', fontSize: '14px', color: '#d72c0d' }}>
@@ -639,8 +650,9 @@ function ManagerZeroQtyReport() {
               {skuError && <Banner tone="critical" onDismiss={() => setSkuError('')}>{skuError}</Banner>}
               <div style={{ marginBottom: '4px', fontSize: '14px', color: '#202223', fontWeight: '500' }}>SKU</div>
               <input
+                ref={skuRef}
                 value={skuInput}
-                inputMode="numeric"
+                inputMode={keypad ? 'none' : 'numeric'}
                 onChange={e => { setSkuInput(e.target.value); setSkuError(''); }}
                 onKeyDown={e => { if (e.key === 'Enter') handleSkuSearch(); }}
                 autoComplete="off"
@@ -654,6 +666,12 @@ function ManagerZeroQtyReport() {
                 onFocus={e => { e.target.style.borderColor = '#005bd3'; }}
                 onBlur={e => { e.target.style.borderColor = '#c9cccf'; }}
               />
+              {keypad ? (
+                // OK = Search (2026-11-12)
+                <NumberKeypad inputRef={skuRef} value={skuInput} allowNegative={false}
+                  onChange={(v) => { setSkuInput(v); setSkuError(''); }}
+                  onOk={handleSkuSearch} okDisabled={!skuInput.trim() || skuSearching} />
+              ) : (
               <Button
                 variant="primary"
                 onClick={handleSkuSearch}
@@ -663,6 +681,7 @@ function ManagerZeroQtyReport() {
               >
                 Search
               </Button>
+              )}
             </BlockStack>
           </div>
         </div>

@@ -33,9 +33,6 @@ const TABS = [
   { id: 'transfer', label: 'Transfer', path: '/online/transfer' },
   // Wig Try-on (2026-11-04, Hera) — AI try-on admin; claude/WIG_TRYON_FEATURE_SPEC.md
   { id: 'wig-tryon', label: 'Wig Try-on', path: '/online/wig-tryon' },
-  // Keyboard Test (2026-11-12, Hera) — TEMPORARY: popup vs soft keyboard in the
-  // Shopify mobile app (pages/online/OnlineKeyboardTest.js). Remove after testing.
-  { id: 'keyboard-test', label: 'Keyboard Test', path: '/online/keyboard-test' },
 ];
 
 // The PIN is checked once per visit to the Online section, not again on

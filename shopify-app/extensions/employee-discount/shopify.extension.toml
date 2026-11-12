@@ -1,0 +1,24 @@
+# Employee Discount (2026-11-12, Hera — claude/EMPLOYEE_DISCOUNT.md).
+# Shopify Discount Function: staff with the "employee" customer tag get the
+# employee rate (18 %) on what they buy, gift cards excluded, but only on the
+# part still under their season cap. Hub (Operation › Employee Cap) creates
+# the automatic discount, keeps its settings in the discount's
+# "function-configuration" metafield and writes each employee's spent amount
+# to the customer metafield $app.employee_cap.
+api_version = "2026-07"
+
+[[extensions]]
+name = "t:name"
+handle = "employee-discount"
+type = "function"
+uid = "59090309-28e4-4ad2-a5bf-a65c2353f61a"
+description = "t:description"
+
+  [[extensions.targeting]]
+  target = "cart.lines.discounts.generate.run"
+  input_query = "src/cart_lines_discounts_generate_run.graphql"
+  export = "cart-lines-discounts-generate-run"
+
+  [extensions.build]
+  command = ""
+  path = "dist/function.wasm"

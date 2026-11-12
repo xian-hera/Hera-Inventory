@@ -27,6 +27,10 @@ app.use('/api/birthday', birthdayRoute);
 // (currently uses JSON body, but keeping it early in case HMAC verification is added later)
 app.use('/api/employees/webhook/connecteam', require('./routes/employees'));
 
+// Shopify app webhooks (orders/paid, orders/cancelled, refunds/create) for the
+// Employee Discount, 2026-11-12 — raw body for the HMAC check, so before express.json().
+app.use('/webhooks/shopify', require('./routes/shopifyWebhooks'));
+
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 

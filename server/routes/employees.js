@@ -9,29 +9,49 @@ const { getSession } = require('../shopify');
 
 const SHOPIFY_STORE = process.env.SHOP;
 const EMPLOYEE_TAG  = 'employee';
+// Employee Discount (2026-11-12) — Shopify discount + customer cap metafields.
+const ED = require('../services/employeeDiscount');
 
 // ─── Season helpers ───────────────────────────────────────────────────────────
 
+// Seasons follow Toronto time (2026-11-12, Hera): was UTC, so an order on
+// the evening of Dec 31 / Mar 31 / … (Toronto) fell into the next season. The
+// employee discount Function decides the season by the shop's local date, so
+// both must agree.
+const SEASON_TZ = 'America/Toronto';
+
+function torontoYMD(date) {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: SEASON_TZ, year: 'numeric', month: '2-digit', day: '2-digit' })
+    .formatToParts(date).reduce((o, p) => { o[p.type] = p.value; return o; }, {});
+  return { y: Number(parts.year), m: Number(parts.month), d: Number(parts.day) };
+}
+
+// The instant of 00:00 Toronto time on y-m-d.
+function torontoMidnight(y, m, d) {
+  const guess = Date.UTC(y, m - 1, d, 12);
+  const p = new Intl.DateTimeFormat('en-US', { timeZone: SEASON_TZ, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+    .formatToParts(new Date(guess)).reduce((o, x) => { o[x.type] = x.value; return o; }, {});
+  const wall = Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day), Number(p.hour), Number(p.minute));
+  const offset = wall - guess; // Toronto − UTC, e.g. −5 h
+  return new Date(Date.UTC(y, m - 1, d) - offset);
+}
+
 function getSeason(date) {
-  const d = date || new Date();
-  const y = d.getFullYear();
-  const m = d.getMonth() + 1;
+  const { y, m } = torontoYMD(date || new Date());
   const s = m <= 3 ? 1 : m <= 6 ? 2 : m <= 9 ? 3 : 4;
   return `${y}-S${s}`;
 }
 
+// start = 00:00 Toronto on the season's first day; end = 1 ms before the next
+// season starts.
 function seasonDateRange(seasonStr) {
   const [year, sq] = seasonStr.split('-S');
   const y = parseInt(year, 10);
   const s = parseInt(sq, 10);
-  const starts = [[1,1],[4,1],[7,1],[10,1]];
-  const ends   = [[3,31],[6,30],[9,30],[12,31]];
-  const [sm, sd] = starts[s - 1];
-  const [em, ed] = ends[s - 1];
-  return {
-    start: new Date(`${y}-${String(sm).padStart(2,'0')}-${String(sd).padStart(2,'0')}T00:00:00Z`),
-    end:   new Date(`${y}-${String(em).padStart(2,'0')}-${String(ed).padStart(2,'0')}T23:59:59Z`),
-  };
+  const startMonth = [1, 4, 7, 10][s - 1];
+  const start = torontoMidnight(y, startMonth, 1);
+  const next  = s === 4 ? torontoMidnight(y + 1, 1, 1) : torontoMidnight(y, startMonth + 3, 1);
+  return { start, end: new Date(next.getTime() - 1) };
 }
 
 function prevSeason(seasonStr) {
@@ -297,6 +317,11 @@ async function upsertEmployee(connecteamUser, branchFieldId, opts = {}) {
 function hasEmployeeDiscount(order) {
   const apps = order.discount_applications || [];
   return apps.some(app => {
+    // Rule 3 (2026-11-12): Hub's automatic "Employee Discount" (Shopify
+    // discount Function) — any value, it may be a fixed amount when only part
+    // of the order was under the cap.
+    if (app.title === ED.TITLE && app.type !== 'manual') return true;
+
     if (app.type !== 'manual' || app.value_type !== 'percentage') return false;
 
     // Rule 1: order-level discount, any percentage value
@@ -308,12 +333,35 @@ function hasEmployeeDiscount(order) {
   });
 }
 
-async function fetchCustomerPurchaseTotal(shopifyCustomerId, startDate, endDate, taxMode) {
+// Amount of one order that counts toward the cap (2026-11-12, Hera): the
+// price BEFORE discounts and before tax, gift cards left out, returns taken
+// off — Σ line price × quantity still kept. (Was the order's subtotal after
+// discounts, before or after tax per the "cap_tax_mode" setting, which is no
+// longer used.)
+function capAmountOfOrder(order) {
+  const refunded = {};
+  for (const r of order.refunds || []) {
+    for (const rl of r.refund_line_items || []) {
+      refunded[rl.line_item_id] = (refunded[rl.line_item_id] || 0) + Number(rl.quantity || 0);
+    }
+  }
+  let sum = 0;
+  for (const li of order.line_items || []) {
+    if (li.gift_card) continue;
+    const qty = li.current_quantity != null
+      ? Number(li.current_quantity)
+      : Math.max(0, Number(li.quantity || 0) - (refunded[li.id] || 0));
+    sum += parseFloat(li.price || 0) * qty;
+  }
+  return sum;
+}
+
+async function fetchCustomerPurchaseTotal(shopifyCustomerId, startDate, endDate) {
   let total = 0;
   const url = `/orders.json?customer_id=${shopifyCustomerId}&status=any`
     + `&created_at_min=${startDate.toISOString()}`
     + `&created_at_max=${endDate.toISOString()}`
-    + `&limit=250&fields=subtotal_price,total_price,current_subtotal_price,current_total_price,financial_status,discount_applications`;
+    + `&limit=250&fields=subtotal_price,total_price,current_subtotal_price,current_total_price,financial_status,discount_applications,line_items,refunds`;
 
   const data   = await shopifyFetch(url);
   const orders = data.orders || [];
@@ -325,10 +373,9 @@ async function fetchCustomerPurchaseTotal(shopifyCustomerId, startDate, endDate,
     // 用 current_* 字段（退货/换货/编辑后的实际净额），而非订单原始金额，
     // 否则已退货但未产生 refund（如 exchange）的商品会被重复计入。
     // ?? 做兜底：极少数情况下 Shopify 未返回 current_* 字段时，退回原始金额。
-    const amount = taxMode === 'before_tax'
-      ? parseFloat(order.current_subtotal_price ?? order.subtotal_price ?? 0)
-      : parseFloat(order.current_total_price   ?? order.total_price   ?? 0);
-    total += amount;
+    // (Was current_subtotal_price / current_total_price by cap_tax_mode —
+    // replaced 2026-11-12 by the price before discounts, see capAmountOfOrder.)
+    total += capAmountOfOrder(order);
   }
 
   return Math.round(total * 100) / 100;
@@ -350,8 +397,10 @@ router.get('/settings', async (req, res) => {
 });
 
 // PUT /api/employees/settings
+// (cap_tax_mode is no longer accepted — the cap always counts the price
+// before discounts and tax, 2026-11-12.)
 router.put('/settings', async (req, res) => {
-  const { cap_amount, cap_tax_mode } = req.body;
+  const { cap_amount } = req.body;
   try {
     if (cap_amount !== undefined) {
       await pool.query(`
@@ -360,14 +409,15 @@ router.put('/settings', async (req, res) => {
         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
       `, [JSON.stringify({ value: Number(cap_amount) })]);
     }
-    if (cap_tax_mode !== undefined) {
-      await pool.query(`
-        INSERT INTO employee_settings (key, value, updated_at)
-        VALUES ('cap_tax_mode', $1, NOW())
-        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
-      `, [JSON.stringify({ value: cap_tax_mode })]);
+    // A new cap goes to the Shopify discount's settings too (2026-11-12).
+    let warning = null;
+    if (cap_amount !== undefined) {
+      try {
+        const s = await ED.getDiscountSettings();
+        if (s.discountId) await ED.syncDiscount();
+      } catch (e) { warning = `Saved, but the Shopify discount was not updated: ${e.message}`; }
     }
-    res.json({ ok: true });
+    res.json({ ok: true, warning });
   } catch (e) {
     console.error('PUT /employees/settings:', e);
     res.status(500).json({ error: e.message });
@@ -545,11 +595,6 @@ router.post('/tag-check', async (req, res) => {
 router.post('/refresh', async (req, res) => {
   const { scope = 'all' } = req.body;
   try {
-    const settingsRes = await pool.query(
-      `SELECT key, value FROM employee_settings WHERE key = 'cap_tax_mode'`
-    );
-    const taxMode = settingsRes.rows[0]?.value?.value || 'before_tax';
-
     let empQuery, empParams;
     if (scope === 'all') {
       empQuery  = `SELECT id, shopify_customer_id FROM employees WHERE status = 'active' AND shopify_customer_id IS NOT NULL`;
@@ -565,14 +610,16 @@ router.post('/refresh', async (req, res) => {
     const currentSeason = getSeason(new Date());
     const seasons       = [currentSeason, prevSeason(currentSeason)];
     let   refreshed     = 0;
+    const capRows       = []; // this season's spend → customer metafields (Employee Discount)
 
     for (const emp of employees) {
       for (const season of seasons) {
         try {
           const { start, end } = seasonDateRange(season);
           const total = await fetchCustomerPurchaseTotal(
-            emp.shopify_customer_id, start, end, taxMode
+            emp.shopify_customer_id, start, end
           );
+          if (season === currentSeason) capRows.push({ customerId: emp.shopify_customer_id, season, spent: total });
           await pool.query(`
             INSERT INTO employee_purchases (employee_id, season, total_amount, last_refreshed_at)
             VALUES ($1, $2, $3, NOW())
@@ -594,7 +641,13 @@ router.post('/refresh', async (req, res) => {
       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
     `, [settingKey, JSON.stringify({ refreshed_at: new Date().toISOString() })]);
 
-    res.json({ ok: true, refreshed, scope });
+    // Employee Discount: the discount Function reads each employee's spend
+    // from her customer metafield (2026-11-12).
+    let warning = null;
+    try { await ED.writeCapMetafields(capRows); }
+    catch (e) { warning = `Spend refreshed, but it could not be sent to Shopify for the discount: ${e.message}`; }
+
+    res.json({ ok: true, refreshed, scope, warning });
   } catch (e) {
     console.error('POST /employees/refresh:', e);
     res.status(500).json({ error: e.message });
@@ -656,6 +709,65 @@ router.post('/relink', async (req, res) => {
   }
 });
 
+// ─── Employee Discount (2026-11-12, Hera — claude/EMPLOYEE_DISCOUNT.md) ──────
+
+// GET /api/employees/discount → { enabled, rate, combine, cap, discountId, shopifyStatus, error }
+router.get('/discount', async (req, res) => {
+  try {
+    const s = await ED.getDiscountSettings();
+    let shopifyStatus = null;
+    let error = null;
+    try { const d = await ED.readDiscount(s.discountId); shopifyStatus = d ? d.status : null; }
+    catch (e) { error = e.message; }
+    res.json({ ...s, shopifyStatus, error });
+  } catch (e) {
+    console.error('GET /employees/discount:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PUT /api/employees/discount { enabled?, rate?, combine? } — saved in Hub,
+// then the Shopify discount is created / updated / turned on or off.
+router.put('/discount', async (req, res) => {
+  try {
+    await ED.saveDiscountSettings(req.body || {});
+    let sync = null;
+    let error = null;
+    try { sync = await ED.syncDiscount(); } catch (e) { error = e.message; }
+    const s = await ED.getDiscountSettings();
+    res.json({ ...s, shopifyStatus: sync ? sync.status : null, error });
+  } catch (e) {
+    if (e.status) return res.status(e.status).json({ error: e.message });
+    console.error('PUT /employees/discount:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Recount one customer's spend of the current season (if she is an active
+// employee) and send it to her customer metafield. Called by the Shopify
+// order webhooks (routes/shopifyWebhooks.js). Returns the new total or null.
+async function recomputeEmployeeSpend(shopifyCustomerId) {
+  if (!shopifyCustomerId) return null;
+  const r = await pool.query(
+    `SELECT id, shopify_customer_id FROM employees WHERE shopify_customer_id = $1 AND status = 'active' LIMIT 1`,
+    [String(shopifyCustomerId)]
+  );
+  const emp = r.rows[0];
+  if (!emp) return null;
+  const season = getSeason(new Date());
+  const { start, end } = seasonDateRange(season);
+  const total = await fetchCustomerPurchaseTotal(emp.shopify_customer_id, start, end);
+  await pool.query(`
+    INSERT INTO employee_purchases (employee_id, season, total_amount, last_refreshed_at)
+    VALUES ($1, $2, $3, NOW())
+    ON CONFLICT (employee_id, season) DO UPDATE SET
+      total_amount      = EXCLUDED.total_amount,
+      last_refreshed_at = NOW()
+  `, [emp.id, season, total]);
+  await ED.writeCapMetafields([{ customerId: emp.shopify_customer_id, season, spent: total }]);
+  return total;
+}
+
 // ─── Connecteam Webhook ───────────────────────────────────────────────────────
 
 router.post('/webhook/connecteam', async (req, res) => {
@@ -678,10 +790,14 @@ router.post('/webhook/connecteam', async (req, res) => {
       }
     }
 
+    // Archived / restored events carry only the id: data = [{ "id": 9063791 }]
+    // (Connecteam docs, users webhook). Until 2026-11-12 this read
+    // entry.userId, which those events don't have, so every archive / restore
+    // was silently ignored — archived staff stayed active with the employee tag.
     else if (eventType === 'user_archived') {
-      const entries = body?.data || [];
+      const entries = Array.isArray(body?.data) ? body.data : [];
       for (const entry of entries) {
-        const userId = entry?.userId ?? entry;
+        const userId = entry?.id ?? entry?.userId ?? (typeof entry === 'object' ? null : entry);
         if (!userId) continue;
         const row = await pool.query(
           `SELECT id, shopify_customer_id FROM employees WHERE connecteam_user_id = $1`,
@@ -701,9 +817,9 @@ router.post('/webhook/connecteam', async (req, res) => {
     }
 
     else if (eventType === 'user_restored') {
-      const entries = body?.data || [];
+      const entries = Array.isArray(body?.data) ? body.data : [];
       for (const entry of entries) {
-        const userId = entry?.userId ?? entry;
+        const userId = entry?.id ?? entry?.userId ?? (typeof entry === 'object' ? null : entry);
         if (!userId) continue;
         const row = await pool.query(
           `SELECT id, shopify_customer_id FROM employees WHERE connecteam_user_id = $1`,
@@ -728,3 +844,5 @@ router.post('/webhook/connecteam', async (req, res) => {
 });
 
 module.exports = router;
+module.exports.recomputeEmployeeSpend = recomputeEmployeeSpend; // Shopify order webhooks (2026-11-12)
+module.exports.shopifyFetch = shopifyFetch;

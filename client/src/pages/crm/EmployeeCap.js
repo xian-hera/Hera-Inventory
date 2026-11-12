@@ -5,6 +5,64 @@ import {
 } from '@shopify/polaris';
 import { useNavigate } from 'react-router-dom';
 import { useLocationMap } from '../shared/locationMap';
+import { Switch } from '../warehouse/supplyShared';
+
+// Employee Discount card (2026-11-12, Hera — claude/EMPLOYEE_DISCOUNT.md):
+// turns the Shopify automatic "Employee Discount" on / off, its rate and
+// whether it combines with other discounts. The cap above is the discount's
+// cap too. Every change is sent to Shopify at once (PUT /api/employees/discount).
+const STATUS_LABEL = { ACTIVE: 'Active in Shopify', EXPIRED: 'Off in Shopify', SCHEDULED: 'Scheduled in Shopify' };
+function EmployeeDiscountCard({ capAmount, onError }) {
+  const [d, setD] = useState(null);          // GET /api/employees/discount
+  const [rateInput, setRateInput] = useState('');
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    fetch('/api/employees/discount').then(r => r.json())
+      .then(x => { setD(x); setRateInput(String(x.rate ?? 18)); })
+      .catch(e => onError(e.message));
+  }, [onError]);
+  const save = async (change) => {
+    setSaving(true);
+    try {
+      const res = await fetch('/api/employees/discount', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(change),
+      });
+      const x = await res.json();
+      if (!res.ok) throw new Error(x.error || 'Failed to save');
+      setD(x);
+      setRateInput(String(x.rate));
+      if (x.error) onError(`Saved in Hub, but Shopify said: ${x.error}`);
+    } catch (e) { onError(e.message); } finally { setSaving(false); }
+  };
+  if (!d) return <Card><Text tone="subdued">Loading...</Text></Card>;
+  const statusText = d.shopifyStatus ? (STATUS_LABEL[d.shopifyStatus] || d.shopifyStatus) : 'Not created in Shopify yet';
+  const rateChanged = rateInput !== '' && Number(rateInput) !== Number(d.rate);
+  return (
+    <Card>
+      <BlockStack gap="300">
+        <InlineStack align="space-between" blockAlign="center" gap="200">
+          <Text variant="headingMd" as="h2">Employee Discount</Text>
+          <Text variant="bodySm" tone="subdued">{statusText}</Text>
+        </InlineStack>
+        <Text variant="bodySm" tone="subdued">
+          {`${d.rate}% off everything except gift cards for active employees (customer tag “employee”), online and in POS. Only the part of a purchase under the $${capAmount} season cap is discounted. In POS, add the employee as the customer of the sale.`}
+        </Text>
+        <InlineStack gap="600" blockAlign="center" wrap>
+          <Switch on={d.enabled} disabled={saving} label={d.enabled ? 'On' : 'Off'} onChange={(on) => save({ enabled: on })} />
+          <Switch on={d.combine} disabled={saving}
+            label={d.combine ? 'Combines with other discounts' : 'Doesn’t combine with other discounts'}
+            onChange={(on) => save({ combine: on })} />
+          <InlineStack gap="200" blockAlign="center">
+            <div style={{ width: 90 }}>
+              <TextField label="Rate" labelHidden value={rateInput} onChange={setRateInput} type="number" suffix="%" autoComplete="off" />
+            </div>
+            <Button size="slim" disabled={!rateChanged || saving} onClick={() => save({ rate: Number(rateInput) })}>Save Rate</Button>
+          </InlineStack>
+        </InlineStack>
+      </BlockStack>
+    </Card>
+  );
+}
 
 // Branch list: comes from the shared location map (pages/shared/locationMap.js,
 // 2026-09-24). The hardcoded 19-code BRANCHES constant that used to live here
@@ -16,6 +74,7 @@ function EmployeeCap() {
 
   // ── settings state ────────────────────────────────────────────────────────
   const [capAmount,    setCapAmount]    = useState(600);
+  // eslint-disable-next-line no-unused-vars -- kept; no longer shown (cap = before discount & tax, 2026-11-12)
   const [capTaxMode,   setCapTaxMode]   = useState('before_tax');
   const [editingCap,   setEditingCap]   = useState(false);
   const [capInput,     setCapInput]     = useState('');
@@ -157,11 +216,13 @@ function EmployeeCap() {
     if (isNaN(val) || val <= 0) return;
     setSavingCap(true);
     try {
-      await fetch('/api/employees/settings', {
+      const res = await fetch('/api/employees/settings', {
         method:  'PUT',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ cap_amount: val }),
       });
+      const data = await res.json().catch(() => ({}));
+      if (data.warning) setError(data.warning); // cap not sent to the Shopify discount (2026-11-12)
       setCapAmount(val);
       setEditingCap(false);
       await loadEmployees(1);
@@ -219,6 +280,7 @@ function EmployeeCap() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Refresh failed');
+      if (data.warning) setError(data.warning); // spend not sent to Shopify for the discount (2026-11-12)
       await Promise.all([loadSettings(), loadEmployees(page)]);
     } catch (e) {
       setError(e.message);
@@ -324,8 +386,11 @@ function EmployeeCap() {
                         <Text variant="headingMd" fontWeight="bold">
                           Cap ${capAmount}
                         </Text>
+                        {/* 2026-11-12 (Hera): the cap counts the price before
+                            discounts and tax, gift cards excluded — the
+                            Before / After tax setting is no longer used. */}
                         <Text variant="bodySm" tone="subdued">
-                          {capTaxMode === 'before_tax' ? 'Before tax' : 'After tax'}
+                          Before discount &amp; tax · gift cards excluded
                         </Text>
                       </BlockStack>
                       <Button size="slim" onClick={handleEditCap}>Edit</Button>
@@ -335,6 +400,9 @@ function EmployeeCap() {
 
               </InlineStack>
             </Card>
+
+            {/* ── Employee Discount (2026-11-12) ── */}
+            <EmployeeDiscountCard capAmount={capAmount} onError={setError} />
 
             {/* ── Card 2: Tag Check ── */}
             <Card>

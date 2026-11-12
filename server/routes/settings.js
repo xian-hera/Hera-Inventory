@@ -265,4 +265,36 @@ router.put('/fulfillment-location', async (req, res) => {
   }
 });
 
+// ─── Number keypad (2026-11-12, Hera) ───────────────────────────────────────
+// Online › Settings switch: number-only boxes on the Store (MA) pages use
+// Hub's own keypad ({ useKeypad: true }) or the phone's keyboard (false,
+// default). app_settings key 'number_keypad'. Read by every page that has
+// such a box (client: components/NumberKeypad.js).
+router.get('/number-keypad', async (req, res) => {
+  try {
+    const { rows } = await pool.query(`SELECT value FROM app_settings WHERE key = 'number_keypad'`);
+    const v = rows[0]?.value || {};
+    res.json({ useKeypad: v.useKeypad === true });
+  } catch (e) {
+    console.error('GET /api/settings/number-keypad error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.put('/number-keypad', async (req, res) => {
+  try {
+    const value = { useKeypad: !!(req.body && req.body.useKeypad) };
+    await pool.query(
+      `INSERT INTO app_settings (key, value)
+       VALUES ('number_keypad', $1)
+       ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()`,
+      [JSON.stringify(value)]
+    );
+    res.json(value);
+  } catch (e) {
+    console.error('PUT /api/settings/number-keypad error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = router;

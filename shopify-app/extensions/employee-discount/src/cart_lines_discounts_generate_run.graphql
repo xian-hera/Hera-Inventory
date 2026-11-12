@@ -1,0 +1,39 @@
+query CartInput {
+  cart {
+    buyerIdentity {
+      customer {
+        isEmployee: hasAnyTag(tags: ["employee"])
+        capInfo: metafield(namespace: "$app", key: "employee_cap") {
+          jsonValue
+        }
+      }
+    }
+    lines {
+      id
+      cost {
+        subtotalAmount {
+          amount
+        }
+      }
+      merchandise {
+        __typename
+        ... on ProductVariant {
+          product {
+            isGiftCard
+          }
+        }
+      }
+    }
+  }
+  discount {
+    discountClasses
+    config: metafield(namespace: "$app", key: "function-configuration") {
+      jsonValue
+    }
+  }
+  shop {
+    localTime {
+      date
+    }
+  }
+}

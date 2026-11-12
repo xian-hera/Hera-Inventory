@@ -8,6 +8,9 @@ import { fetchLocationMap } from '../shared/locationMap';
 import FulfilCountInfo from '../shared/FulfilCountInfo';
 import { LineNote, LineNoteIcon, taskLineNoteApi } from '../shared/lineNote';
 import useKeyboardInset from '../../components/useKeyboardInset';
+// Hub number keypad (2026-11-12, Hera): count + Type in SKU boxes, when
+// Online › Settings › Number Keypad is on (touch devices only).
+import NumberKeypad, { useNumberKeypad, KEYPAD_POPUP } from '../../components/NumberKeypad';
 // Store location: remembered per Shopify account, loaded before this page
 // renders by ManagerLocationGate (2026-09-29) — replaces reading
 // localStorage 'managerLocation' directly. See client/src/accountMemory.js.
@@ -111,7 +114,11 @@ function ManagerTaskDetail() {
   const [completingScan, setCompletingScan]           = useState(false);
   // Keep the Scan / Type-in-SKU popups inside the visible area when the
   // soft keyboard opens (2026-09-24, Hera — trial page).
-  useKeyboardInset(!!popupItem || showSkuInput);
+  const keypad = useNumberKeypad();
+  const countRef = useRef(null);
+  const skuRef = useRef(null);
+  // No phone keyboard in keypad mode → no keyboard room to keep.
+  useKeyboardInset(!keypad && (!!popupItem || showSkuInput));
 
   const barcodeBuffer = useRef('');
   const barcodeTimer  = useRef(null);
@@ -815,6 +822,7 @@ function ManagerTaskDetail() {
               transform: 'translateY(-50%)', maxHeight: 'var(--kb-avail-h, calc(100vh - 176px))', overflowY: 'auto',
               background: 'white', borderRadius: '12px', padding: '24px',
               maxWidth: '400px', margin: '0 auto', zIndex: 1001,
+              ...(keypad ? KEYPAD_POPUP : {}),
             }}>
               <button
                 onClick={() => { setShowSkuInput(false); setSkuInput(''); setSkuError(''); }}
@@ -833,7 +841,8 @@ function ManagerTaskDetail() {
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: '14px', color: '#202223', fontWeight: '500', marginBottom: '4px' }}>SKU</div>
                     <input
-                      inputMode="numeric"
+                      ref={skuRef}
+                      inputMode={keypad ? 'none' : 'numeric'}
                       value={skuInput}
                       onChange={e => { setSkuInput(e.target.value); setSkuError(''); }}
                       onKeyDown={e => { if (e.key === 'Enter') handleSkuSearch(); }}
@@ -848,7 +857,7 @@ function ManagerTaskDetail() {
                       onBlur={e => { e.target.style.borderColor = '#c9cccf'; }}
                     />
                   </div>
-                  <button
+                  {!keypad && <button
                     onClick={handleSkuSearch}
                     disabled={!skuInput.trim()}
                     style={{
@@ -860,8 +869,11 @@ function ManagerTaskDetail() {
                     }}
                   >
                     Search
-                  </button>
+                  </button>}
                 </div>
+                {/* OK = Search (2026-11-12) */}
+                {keypad && <NumberKeypad inputRef={skuRef} value={skuInput} allowNegative={false}
+                  onChange={(v) => { setSkuInput(v); setSkuError(''); }} onOk={handleSkuSearch} okDisabled={!skuInput.trim()} />}
               </BlockStack>
             </div>
           </div>
@@ -878,6 +890,7 @@ function ManagerTaskDetail() {
               transform: 'translateY(-50%)', maxHeight: 'var(--kb-avail-h, calc(100vh - 176px))', overflowY: 'auto',
               background: 'white', borderRadius: '12px', padding: '24px',
               maxWidth: '480px', margin: '0 auto', zIndex: 1001,
+              ...(keypad ? { ...KEYPAD_POPUP, padding: '20px' } : {}),
             }}>
               <button onClick={closePopup} style={{
                 position: 'absolute', top: '12px', right: '12px',
@@ -911,7 +924,8 @@ function ManagerTaskDetail() {
 
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                   <input
-                    inputMode="numeric"
+                    ref={countRef}
+                    inputMode={keypad ? 'none' : 'numeric'}
                     placeholder="Input your count"
                     value={countInput}
                     onChange={e => { setCountInput(e.target.value); setCountWarning(''); }}
@@ -924,8 +938,11 @@ function ManagerTaskDetail() {
                     onFocus={e => { e.target.style.borderColor = '#005bd3'; }}
                     onBlur={e => { e.target.style.borderColor = '#c9cccf'; }}
                   />
-                  <Button onClick={handleSubmitCount} disabled={!countInput}>Submit</Button>
+                  {!keypad && <Button onClick={handleSubmitCount} disabled={!countInput}>Submit</Button>}
                 </div>
+                {/* OK = Submit (2026-11-12) */}
+                {keypad && <NumberKeypad inputRef={countRef} value={countInput}
+                  onChange={(v) => { setCountInput(v); setCountWarning(''); }} onOk={handleSubmitCount} okDisabled={!countInput} />}
 
                 {countWarning && (
                   <div style={{ background: '#fff4f4', borderRadius: '8px', padding: '10px 14px',

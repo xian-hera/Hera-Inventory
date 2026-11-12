@@ -9,6 +9,9 @@ import { fetchLocationMap } from '../shared/locationMap';
 // renders by ManagerLocationGate (2026-09-29) — replaces reading
 // localStorage 'managerLocation' directly. See client/src/accountMemory.js.
 import { getManagerLocation } from '../../accountMemory';
+// Hub number keypad (2026-11-12, Hera): restock qty + Add by SKU boxes, when
+// Online › Settings › Number Keypad is on (touch devices only).
+import NumberKeypad, { useNumberKeypad, KEYPAD_POPUP } from '../../components/NumberKeypad';
 
 function resolveKey(e) {
   if (e.key && e.key !== 'Unidentified' && e.key.length === 1) return e.key;
@@ -62,6 +65,9 @@ function ManagerRestockPlan() {
 
   const [showAddByTyping, setShowAddByTyping] = useState(false);
   const [skuInput, setSkuInput]               = useState('');
+  const keypad     = useNumberKeypad();
+  const restockRef = useRef(null);
+  const skuRef     = useRef(null);
   const [skuSearching, setSkuSearching]       = useState(false);
   const [skuError, setSkuError]               = useState('');
 
@@ -403,7 +409,8 @@ function ManagerRestockPlan() {
           background: 'rgba(0,0,0,0.6)', zIndex: 1000 }}>
           <div style={{ position: 'fixed', top: '50%', left: '16px', right: '16px',
             transform: 'translateY(-50%)', maxHeight: 'calc(100vh - 176px)', overflowY: 'auto', background: 'white', borderRadius: '12px', padding: '24px',
-            maxWidth: '480px', margin: '0 auto', zIndex: 1001 }}>
+            maxWidth: '480px', margin: '0 auto', zIndex: 1001,
+            ...(keypad ? { ...KEYPAD_POPUP, padding: '20px' } : {}) /* no phone keyboard → use the height */ }}>
             {loadingSoh ? <InlineStack align="center"><Spinner /></InlineStack> : (
               <>
                 <button onClick={closePopup} style={{ position: 'absolute', top: '12px', right: '12px',
@@ -418,7 +425,8 @@ function ManagerRestockPlan() {
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: '14px', color: '#202223', fontWeight: '500', marginBottom: '4px' }}>Restock quantity</div>
                       <input
-                        inputMode="numeric"
+                        ref={restockRef}
+                        inputMode={keypad ? 'none' : 'numeric'}
                         placeholder="Input restock quantity"
                         value={restockInput}
                         onChange={e => setRestockInput(e.target.value)}
@@ -430,8 +438,11 @@ function ManagerRestockPlan() {
                         onBlur={e => { e.target.style.borderColor = '#c9cccf'; }}
                       />
                     </div>
-                    <Button variant="primary" onClick={handleSave} disabled={restockInput === ''}>Save</Button>
+                    {!keypad && <Button variant="primary" onClick={handleSave} disabled={restockInput === ''}>Save</Button>}
                   </div>
+                  {/* OK = Save (2026-11-12) */}
+                  {keypad && <NumberKeypad inputRef={restockRef} value={restockInput} allowNegative={false}
+                    onChange={setRestockInput} onOk={handleSave} okDisabled={restockInput === ''} />}
                   <div style={{ background: popupSoh === null ? '#fff4f4' : '#f6f6f7',
                     borderRadius: '8px', padding: '12px 16px', textAlign: 'center' }}>
                     {popupSoh === null
@@ -464,7 +475,8 @@ function ManagerRestockPlan() {
           background: 'rgba(0,0,0,0.6)', zIndex: 1000 }}>
           <div style={{ position: 'fixed', top: '50%', left: '16px', right: '16px',
             transform: 'translateY(-50%)', maxHeight: 'calc(100vh - 176px)', overflowY: 'auto', background: 'white', borderRadius: '12px', padding: '24px',
-            maxWidth: '400px', margin: '0 auto', zIndex: 1001 }}>
+            maxWidth: '400px', margin: '0 auto', zIndex: 1001,
+            ...(keypad ? KEYPAD_POPUP : {}) }}>
             <button onClick={() => setShowAddByTyping(false)} style={{ position: 'absolute',
               top: '12px', right: '12px', background: 'none', border: 'none',
               fontSize: '20px', cursor: 'pointer' }}>✕</button>
@@ -474,7 +486,7 @@ function ManagerRestockPlan() {
               <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: '14px', color: '#202223', fontWeight: '500', marginBottom: '4px' }}>SKU</div>
-                  <input inputMode="numeric" value={skuInput}
+                  <input ref={skuRef} inputMode={keypad ? 'none' : 'numeric'} value={skuInput}
                     onChange={e => { setSkuInput(e.target.value); setSkuError(''); }}
                     onKeyDown={e => { if (e.key === 'Enter') handleSkuSearch(); }}
                     autoComplete="off" autoFocus placeholder="Enter exact SKU"
@@ -485,8 +497,12 @@ function ManagerRestockPlan() {
                     onBlur={e => { e.target.style.borderColor = '#c9cccf'; }}
                   />
                 </div>
-                <Button onClick={handleSkuSearch} loading={skuSearching} disabled={!skuInput.trim()}>Search</Button>
+                {!keypad && <Button onClick={handleSkuSearch} loading={skuSearching} disabled={!skuInput.trim()}>Search</Button>}
               </div>
+              {/* OK = Search (2026-11-12) */}
+              {keypad && <NumberKeypad inputRef={skuRef} value={skuInput} allowNegative={false}
+                onChange={(v) => { setSkuInput(v); setSkuError(''); }}
+                onOk={handleSkuSearch} okDisabled={!skuInput.trim() || skuSearching} />}
             </BlockStack>
           </div>
         </div>

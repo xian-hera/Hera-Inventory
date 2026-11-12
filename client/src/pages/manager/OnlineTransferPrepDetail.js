@@ -4,6 +4,9 @@ import { Page, Card, BlockStack, Text, Banner, Button } from '@shopify/polaris';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { StatusBadge, TagPills } from '../shared/transferStatus';
 import { LineNote, LineNoteIcon, transferLineNoteApi } from '../shared/lineNote';
+// Hub number keypad (2026-11-12, Hera): Qty box of the item modal, when
+// Online › Settings › Number Keypad is on (touch devices only).
+import NumberKeypad, { useNumberKeypad } from '../../components/NumberKeypad';
 
 // Store › Online transfer (2026-10-23, Hera — claude/FULFILLER_ONLINE_TRANSFER_SPEC.md).
 // The from-store prepares an Online (Fulfiller) transfer here instead of the
@@ -70,6 +73,8 @@ function ItemModal({ item, transferId, onClose, onChanged, setError }) {
   const fullGreen = picked && Number(item.qty_loaded) === req;
   const [qty, setQty] = useState(picked && !fullGreen ? String(item.qty_loaded) : '0');
   const [busy, setBusy] = useState(false);
+  const keypad = useNumberKeypad();
+  const qtyRef = useRef(null);
   const post = async (url, body) => {
     const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const d = await r.json().catch(() => ({}));
@@ -94,7 +99,7 @@ function ItemModal({ item, transferId, onClose, onChanged, setError }) {
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        style={{ width: 'min(560px, 100%)', maxHeight: '84vh', overflowY: 'auto', background: '#fff', borderRadius: 14, padding: 16, boxSizing: 'border-box', boxShadow: '0 10px 30px rgba(0,0,0,0.25)' }}
+        style={{ width: 'min(560px, 100%)', maxHeight: keypad ? 'calc(100vh - 4vh - 104px)' : '84vh', overflowY: 'auto', background: '#fff', borderRadius: 14, padding: 16, boxSizing: 'border-box', boxShadow: '0 10px 30px rgba(0,0,0,0.25)' }}
       >
         <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -110,15 +115,17 @@ function ItemModal({ item, transferId, onClose, onChanged, setError }) {
           </div>
           <button type="button" aria-label="Close" onClick={onClose} style={{ border: 'none', background: 'transparent', fontSize: 22, lineHeight: 1, cursor: 'pointer', color: '#6d7175' }}>×</button>
         </div>
-        <div style={{ margin: '12px 0', width: '100%', aspectRatio: '1 / 1', background: '#f1f1f1', borderRadius: 8, overflow: 'hidden' }}>
+        {/* keypad mode: picture kept lower so the keypad fits on the screen (2026-11-12) */}
+        <div style={{ margin: '12px 0', width: '100%', aspectRatio: '1 / 1', background: '#f1f1f1', borderRadius: 8, overflow: 'hidden', ...(keypad ? { aspectRatio: 'auto', height: 160 } : {}) }}>
           {item.image_url && <img src={item.image_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} />}
         </div>
         <div style={{ display: 'flex', gap: 12, alignItems: 'stretch', flexWrap: 'wrap' }}>
           <div style={{ flex: '1 1 130px', display: 'flex', flexDirection: 'column', gap: 8 }}>
             <div style={{ display: 'flex', gap: 8 }}>
               <input
-                type="number"
-                inputMode="numeric"
+                ref={qtyRef}
+                type={keypad ? 'text' : 'number'}
+                inputMode={keypad ? 'none' : 'numeric'}
                 min="0"
                 value={qty}
                 onChange={(e) => setQty(e.target.value.replace(/[^0-9]/g, ''))}
@@ -126,7 +133,7 @@ function ItemModal({ item, transferId, onClose, onChanged, setError }) {
                 aria-label="Qty"
                 style={{ width: 64, minWidth: 0, font: 'inherit', fontSize: 16, padding: '6px 8px', border: '1px solid #c9cccf', borderRadius: 8 }}
               />
-              <Button onClick={() => pick(parseInt(qty || '0', 10))} disabled={busy}>Picked</Button>
+              {!keypad && <Button onClick={() => pick(parseInt(qty || '0', 10))} disabled={busy}>Picked</Button>}
             </div>
             <LineNote note={item.line_note} onSave={async (t) => { await noteApi.save(t); await onChanged(); }} onDelete={async () => { await noteApi.remove(); await onChanged(); }} />
           </div>
@@ -154,6 +161,14 @@ function ItemModal({ item, transferId, onClose, onChanged, setError }) {
             )}
           </div>
         </div>
+        {/* Keypad under both columns; its OK button = Picked (2026-11-12) */}
+        {keypad && (
+          <div style={{ marginTop: 12 }}>
+            <NumberKeypad inputRef={qtyRef} value={qty} allowNegative={false} okLabel="Picked"
+              onChange={(v) => setQty(v.replace(/[^0-9]/g, ''))}
+              onOk={() => pick(parseInt(qty || '0', 10))} okDisabled={busy} />
+          </div>
+        )}
       </div>
     </div>,
     document.body

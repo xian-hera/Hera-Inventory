@@ -5,6 +5,9 @@ import {
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { useDD, poEntries, poPb, DDList, PBOnlyPill, pbOnlyValue } from '../shared/ddPill';
 import { LineNote, LineNoteIcon, poLineNoteApi } from '../shared/lineNote';
+// Hub number keypad (2026-11-12, Hera): count box, when Online › Settings ›
+// Number Keypad is on (touch devices only).
+import NumberKeypad, { useNumberKeypad, KEYPAD_POPUP } from '../../components/NumberKeypad';
 
 // Same keydown-buffer barcode-scanner listening pattern used by
 // ManagerTaskDetail.js / ManagerRestockPlan.js — kept as its own local copy
@@ -70,6 +73,8 @@ function ManagerPOReceivingDetail() {
 
   const [popupItem, setPopupItem] = useState(null);
   const [countInput, setCountInput] = useState('');
+  const keypad = useNumberKeypad();
+  const countRef = useRef(null);
   const [countError, setCountError] = useState('');
   const [savingCount, setSavingCount] = useState(false);
 
@@ -680,6 +685,7 @@ function ManagerPOReceivingDetail() {
               transform: 'translateY(-50%)', maxHeight: 'calc(100vh - 176px)', overflowY: 'auto',
               background: 'white', borderRadius: '12px', padding: '24px',
               maxWidth: '480px', margin: '0 auto', zIndex: 1001,
+              ...(keypad ? { ...KEYPAD_POPUP, padding: '20px' } : {}), // no phone keyboard → use the height
             }}>
               <button onClick={closePopup} style={{
                 position: 'absolute', top: '12px', right: '12px',
@@ -710,7 +716,8 @@ function ManagerPOReceivingDetail() {
                 </div>
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                   <input
-                    inputMode="numeric"
+                    ref={countRef}
+                    inputMode={keypad ? 'none' : 'numeric'}
                     placeholder="Input your count"
                     value={countInput}
                     onChange={e => { setCountInput(e.target.value); setCountError(''); }}
@@ -723,8 +730,12 @@ function ManagerPOReceivingDetail() {
                     onFocus={e => { e.target.style.borderColor = '#005bd3'; }}
                     onBlur={e => { e.target.style.borderColor = '#c9cccf'; }}
                   />
-                  <Button onClick={handleSubmitCount} loading={savingCount}>Submit</Button>
+                  {!keypad && <Button onClick={handleSubmitCount} loading={savingCount}>Submit</Button>}
                 </div>
+                {/* OK = Submit (2026-11-12) */}
+                {keypad && <NumberKeypad inputRef={countRef} value={countInput} allowNegative={false}
+                  onChange={(v) => { setCountInput(v); setCountError(''); }}
+                  onOk={handleSubmitCount} okDisabled={!countInput || savingCount} />}
 
                 {countError && (
                   <div style={{ background: '#fff4f4', borderRadius: '8px', padding: '10px 14px',

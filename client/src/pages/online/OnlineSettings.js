@@ -5,6 +5,8 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { logoutPin } from '../../accountMemory';
 import { useLocationMap } from '../shared/locationMap';
+import { Switch } from '../warehouse/supplyShared';
+import { setNumberKeypadSetting } from '../../components/NumberKeypad';
 
 // Online Settings — same style, similar functionality as CRMSettings.js
 // (2026-09-21, Hera): Set PIN + Log out only, no "Sync Employees from
@@ -58,6 +60,38 @@ function OnlineSettings() {
     })();
     return () => { cancelled = true; };
   }, []);
+
+  // ── Number keypad switch (2026-11-12, Hera) ────────────────────────────────
+  // Number-only boxes on the Store pages: Hub's own keypad, or the phone's
+  // keyboard. Saved at once (GET/PUT /api/settings/number-keypad).
+  const [keypad, setKeypad]           = useState(null); // null = loading
+  const [keypadSaving, setKeypadSaving] = useState(false);
+  const [keypadMsg, setKeypadMsg]     = useState(null);
+  useEffect(() => {
+    fetch('/api/settings/number-keypad').then(r => r.json())
+      .then(d => setKeypad(!!d.useKeypad))
+      .catch(() => { setKeypad(false); setKeypadMsg({ tone: 'critical', text: 'Failed to load.' }); });
+  }, []);
+  const saveKeypad = async (on) => {
+    setKeypadSaving(true);
+    setKeypadMsg(null);
+    const before = keypad;
+    setKeypad(on);
+    try {
+      const res = await fetch('/api/settings/number-keypad', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ useKeypad: on }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Failed to save.');
+      setKeypad(!!data.useKeypad);
+      setNumberKeypadSetting(!!data.useKeypad); // pages opened after this use the new choice
+    } catch (e) {
+      setKeypad(before);
+      setKeypadMsg({ tone: 'critical', text: e.message });
+    } finally {
+      setKeypadSaving(false);
+    }
+  };
 
   const saveFulfil = async () => {
     setFulfilSaving(true);
@@ -234,6 +268,26 @@ function OnlineSettings() {
                       Save
                     </Button>
                   </>
+                )}
+              </BlockStack>
+            </Card>
+            <Card>
+              <BlockStack gap="300">
+                <Text variant="headingMd" as="h2">Number Keypad</Text>
+                {keypadMsg && <Banner tone={keypadMsg.tone} onDismiss={() => setKeypadMsg(null)}>{keypadMsg.text}</Banner>}
+                {keypad === null ? (
+                  <Text tone="subdued">Loading...</Text>
+                ) : (
+                  <BlockStack gap="200">
+                    <Switch on={keypad} disabled={keypadSaving}
+                      label={keypad ? 'Hub Keypad' : 'Phone Keyboard'}
+                      onChange={saveKeypad} />
+                    <Text tone="subdued">
+                      {keypad
+                        ? 'Number boxes on Store pages show Hub’s own keypad on phones and tablets.'
+                        : 'Number boxes on Store pages use the phone’s own keyboard.'}
+                    </Text>
+                  </BlockStack>
                 )}
               </BlockStack>
             </Card>
