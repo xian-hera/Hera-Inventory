@@ -46,11 +46,85 @@ function readMetrics() {
   };
 }
 
+// ── Recorder (2026-11-12): every test opened is recorded from open to close —
+// lowest / highest of each number while it was open, where the popup and the
+// text box were while typing, and the events — so Hera can run all five and
+// copy one text with every result. Kept in a module object (no re-renders).
+const REC = { cur: null, results: [] };
+const NUM_KEYS = ['innerH', 'clientH', 'vvH', 'vvTop', 'scrollY'];
+function rectOf(sel) {
+  const el = document.querySelector(sel);
+  if (!el) return null;
+  const r = el.getBoundingClientRect();
+  return { top: Math.round(r.top), bottom: Math.round(r.bottom), h: Math.round(r.height) };
+}
+function recStart(test) {
+  const x = readMetrics();
+  REC.cur = { test, start: x, lo: { ...x }, hi: { ...x }, focusSeen: false, typing: null, events: [] };
+}
+function recSample(type) {
+  const c = REC.cur;
+  if (!c) return;
+  const x = readMetrics();
+  NUM_KEYS.forEach(k => {
+    if (x[k] == null) return;
+    if (c.lo[k] == null || x[k] < c.lo[k]) c.lo[k] = x[k];
+    if (c.hi[k] == null || x[k] > c.hi[k]) c.hi[k] = x[k];
+  });
+  if (x.focused) {
+    c.focusSeen = true;
+    // "while typing" snapshot = the moment with the smallest visible / window height
+    const size = Math.min(x.vvH == null ? Infinity : x.vvH, x.innerH);
+    if (!c.typing || size <= c.typing.size) {
+      const input = document.activeElement.getBoundingClientRect();
+      c.typing = {
+        size, m: x,
+        panel: rectOf('[data-kb-panel]') || rectOf('.Polaris-Modal-Dialog__Modal'),
+        input: { top: Math.round(input.top), bottom: Math.round(input.bottom) },
+      };
+    }
+  }
+  if (type && c.events.length < 25) {
+    c.events.push(`${type} in${x.innerH} vv${x.vvH}@${x.vvTop}${x.focused ? ' F' : ''}`);
+  }
+}
+function recEnd() {
+  const c = REC.cur;
+  if (!c) return;
+  recSample('close');
+  REC.results = [...REC.results.filter(r => r.test !== c.test), c];
+  REC.cur = null;
+}
+function resultsText() {
+  const m = readMetrics();
+  const lines = [
+    `Keyboard Test ${new Date().toISOString()}`,
+    `UA: ${navigator.userAgent}`,
+    `iframe ${m.inIframe ? 'yes' : 'no'} · screen ${m.screenH} · dpr ${window.devicePixelRatio} · outer ${m.outerH} · vv ${window.visualViewport ? 'yes' : 'no'}`,
+  ];
+  const r = (o) => (o ? `top ${o.top} bottom ${o.bottom}${o.h != null ? ` h ${o.h}` : ''}` : '—');
+  [...REC.results].sort((a, b) => a.test.localeCompare(b.test)).forEach(c => {
+    lines.push('');
+    lines.push(`== ${c.test}`);
+    lines.push(`open: inner ${c.start.innerH} client ${c.start.clientH} vv ${c.start.vvH}@${c.start.vvTop} scroll ${c.start.scrollY}`);
+    lines.push(`range: inner ${c.lo.innerH}-${c.hi.innerH} client ${c.lo.clientH}-${c.hi.clientH} vv ${c.lo.vvH}-${c.hi.vvH} vvTop ${c.lo.vvTop}-${c.hi.vvTop} scroll ${c.lo.scrollY}-${c.hi.scrollY}`);
+    if (c.typing) {
+      const t = c.typing;
+      lines.push(`typing: inner ${t.m.innerH} vv ${t.m.vvH}@${t.m.vvTop} scroll ${t.m.scrollY} | popup ${r(t.panel)} | input ${r(t.input)}`);
+    } else {
+      lines.push(`typing: text box never focused`);
+    }
+    lines.push(`events: ${c.events.join(' | ')}`);
+  });
+  return lines.join('\n');
+}
+
 function useMetrics() {
   const [m, setM] = useState(readMetrics);
   const [min, setMin] = useState({ innerH: Infinity, vvH: Infinity });
   const [log, setLog] = useState([]);
   const push = useCallback((type) => {
+    recSample(type);
     const x = readMetrics();
     setM(x);
     setMin(p => ({ innerH: Math.min(p.innerH, x.innerH), vvH: Math.min(p.vvH, x.vvH == null ? Infinity : x.vvH) }));
@@ -71,7 +145,7 @@ function useMetrics() {
     ];
     if (vv) handlers.push([vv, 'resize', on('vv.resize')], [vv, 'scroll', on('vv.scroll')]);
     handlers.forEach(([t, e, f]) => t.addEventListener(e, f));
-    const timer = setInterval(() => setM(readMetrics()), 300);
+    const timer = setInterval(() => { recSample(null); setM(readMetrics()); }, 300);
     return () => { handlers.forEach(([t, e, f]) => t.removeEventListener(e, f)); clearInterval(timer); };
   }, [push]);
   const reset = () => { setMin({ innerH: Infinity, vvH: Infinity }); setLog([]); };
@@ -168,7 +242,7 @@ function PopupA({ close, metrics, min }) {
   useEffect(() => { ref.current && ref.current.focus(); }, []);
   return createPortal(
     <div style={OVERLAY}>
-      <div style={{ ...PANEL, top: 'var(--kb-center-y, 50%)', transform: 'translateY(-50%)', maxHeight: 'var(--kb-avail-h, calc(100vh - 176px))' }}>
+      <div data-kb-panel="1" style={{ ...PANEL, top: 'var(--kb-center-y, 50%)', transform: 'translateY(-50%)', maxHeight: 'var(--kb-avail-h, calc(100vh - 176px))' }}>
         <PopupBody label="A · Current" onClose={close} metrics={metrics} min={min} inputRef={ref} />
       </div>
     </div>, document.body);
@@ -189,7 +263,7 @@ function PopupB({ close, metrics, min }) {
   useEffect(() => { ref.current && ref.current.focus(); }, []);
   return createPortal(
     <div style={OVERLAY}>
-      <div style={{ ...PANEL, top: box ? box.top : 8, maxHeight: box ? box.h : 'calc(100% - 16px)' }}>
+      <div data-kb-panel="1" style={{ ...PANEL, top: box ? box.top : 8, maxHeight: box ? box.h : 'calc(100% - 16px)' }}>
         <PopupBody label="B · Follow Visible Area" onClose={close} metrics={metrics} min={min} inputRef={ref} />
       </div>
     </div>, document.body);
@@ -201,7 +275,7 @@ function PopupC({ close, metrics, min }) {
   useEffect(() => { ref.current && ref.current.focus(); }, []);
   return createPortal(
     <div style={OVERLAY}>
-      <div style={{ ...PANEL, top: 8, maxHeight: 'calc(100% - 16px)' }}>
+      <div data-kb-panel="1" style={{ ...PANEL, top: 8, maxHeight: 'calc(100% - 16px)' }}>
         <PopupBody label="C · Top of Screen" onClose={close} metrics={metrics} min={min} inputRef={ref} />
       </div>
     </div>, document.body);
@@ -216,7 +290,7 @@ function PopupD({ close, metrics, min, pct }) {
   const short = typing && touchDevice();
   return createPortal(
     <div style={OVERLAY}>
-      <div style={{ ...PANEL, top: 8, maxHeight: short ? `calc(${100 - pct}% - 16px)` : 'calc(100% - 16px)' }}>
+      <div data-kb-panel="1" style={{ ...PANEL, top: 8, maxHeight: short ? `calc(${100 - pct}% - 16px)` : 'calc(100% - 16px)' }}>
         <PopupBody label={`D · Top, ${pct}% Kept Free`} onClose={close} metrics={metrics} min={min} inputRef={ref} onFocusChange={setTyping} />
       </div>
     </div>, document.body);
@@ -254,7 +328,30 @@ function OnlineKeyboardTest() {
   const { m, min, log, reset } = useMetrics();
   const [open, setOpen] = useState(null);
   const [pct, setPct] = useState(45);
-  const close = () => setOpen(null);
+  const [results, setResults] = useState('');
+  const [copyMsg, setCopyMsg] = useState('');
+  const textRef = useRef(null);
+  const start = (id) => { reset(); recStart(id === 'D' ? `D (${pct}%)` : id); setOpen(id); };
+  const close = () => { recEnd(); setOpen(null); setResults(resultsText()); };
+  const copy = async () => {
+    const text = resultsText();
+    setResults(text);
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopyMsg('Copied.');
+      return;
+    } catch (e) { /* the app's WebView may block it — try the old way */ }
+    try {
+      const ta = textRef.current;
+      ta.focus(); ta.select(); ta.setSelectionRange(0, text.length);
+      const ok = document.execCommand('copy');
+      ta.blur();
+      setCopyMsg(ok ? 'Copied.' : 'Copy was blocked — press and hold the text below, Select All, Copy.');
+    } catch (e) {
+      setCopyMsg('Copy was blocked — press and hold the text below, Select All, Copy.');
+    }
+  };
+  const clearAll = () => { REC.results = []; setResults(''); setCopyMsg(''); };
   const props = { close, metrics: m, min };
   return (
     <Page>
@@ -263,9 +360,10 @@ function OnlineKeyboardTest() {
           <BlockStack gap="200">
             <Text variant="headingSm" as="h3">Keyboard Test (Temporary)</Text>
             <Text as="p">
-              Open this page in the Shopify app on a phone. Press Reset, open one test, and type in its box.
-              Check whether the dashed “Bottom of the popup” line stays visible above the keyboard.
-              Take a screenshot with the keyboard open, close it, and do the next test. Please also screenshot the box below after each test.
+              Open this page in the Shopify app on a phone. Run the tests A to E one by one: open a test, tap its
+              text box so the keyboard opens, check whether the dashed “Bottom of the popup” line is visible, then close
+              it with ✕ and open the next one. Each test is recorded. At the end press Copy All Results and paste the
+              text in the chat — no screenshots needed.
             </Text>
           </BlockStack>
         </Card>
@@ -274,7 +372,7 @@ function OnlineKeyboardTest() {
           <BlockStack gap="300">
             <Text variant="headingSm" as="h3">Tests</Text>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 8 }}>
-              {TESTS.map(([id, label]) => <Button key={id} onClick={() => setOpen(id)}>{label}</Button>)}
+              {TESTS.map(([id, label]) => <Button key={id} onClick={() => start(id)}>{label}</Button>)}
             </div>
             <InlineStack gap="200" blockAlign="center">
               <span style={{ fontSize: 13, color: '#616161' }}>Test D assumes the keyboard covers</span>
@@ -283,6 +381,20 @@ function OnlineKeyboardTest() {
               </select>
               <span style={{ fontSize: 13, color: '#616161' }}>of the screen</span>
             </InlineStack>
+          </BlockStack>
+        </Card>
+        <Card>
+          <BlockStack gap="300">
+            <InlineStack align="space-between" blockAlign="center" gap="200">
+              <Text variant="headingSm" as="h3">Results ({REC.results.length} of 5 Tests Done)</Text>
+              <InlineStack gap="200">
+                <Button onClick={clearAll}>Clear</Button>
+                <Button variant="primary" onClick={copy}>Copy All Results</Button>
+              </InlineStack>
+            </InlineStack>
+            {copyMsg && <Text as="p" tone={copyMsg === 'Copied.' ? 'success' : 'critical'}>{copyMsg}</Text>}
+            <textarea ref={textRef} readOnly value={results} placeholder="Results show here after each test."
+              style={{ width: '100%', height: 160, boxSizing: 'border-box', fontSize: 11, fontFamily: 'ui-monospace, Menlo, monospace', border: '1px solid #c9cccf', borderRadius: 8, padding: 8 }} />
           </BlockStack>
         </Card>
       </BlockStack>
