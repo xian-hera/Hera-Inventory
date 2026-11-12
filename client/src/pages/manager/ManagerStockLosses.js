@@ -10,9 +10,10 @@ import { fetchLocationMap } from '../shared/locationMap';
 // localStorage 'managerLocation' directly. See client/src/accountMemory.js.
 import { getManagerLocation } from '../../accountMemory';
 import { StatusTime } from '../shared/statusTime';
-// Hub number keypad (2026-11-12, Hera): Qty + Type in SKU boxes, when
-// Online › Settings › Number Keypad is on (touch devices only).
-import NumberKeypad, { useNumberKeypad, KEYPAD_POPUP } from '../../components/NumberKeypad';
+// Hub number keypad (2026-11-12, Hera): Qty + Type in SKU boxes are marked
+// data-hub-keypad; the one keypad (components/NumberKeypad.js, mounted in
+// App.js) shows for them and pushes the popup (data-keypad-panel) up.
+import { useNumberKeypad } from '../../components/NumberKeypad';
 
 // ─── Built-in reasons ─────────────────────────────────────────────────────────
 const BUILT_IN_REASONS = [
@@ -75,15 +76,13 @@ function ScanPopup({ productData, soh, allReasons, onClose, onSubmit }) {
   const [qtyInput, setQtyInput]             = useState('');
   const keypad = useNumberKeypad();
   const qtyRef = useRef(null);
-  const keypadBoxRef = useRef(null);
-  // Keypad mode: once a reason is chosen, the keypad appears under Qty —
-  // bring it into view and put the cursor in Qty (not for "Other", whose
-  // reason text box needs the phone keyboard first).
+  // Keypad mode: once a reason is chosen, put the cursor in Qty so the keypad
+  // comes up (not for "Other", whose reason text box needs the phone
+  // keyboard first).
   useEffect(() => {
     if (!keypad || !selectedReason) return;
     requestAnimationFrame(() => {
       if (selectedReason.key !== 'other' && qtyRef.current) qtyRef.current.focus({ preventScroll: true });
-      if (keypadBoxRef.current) keypadBoxRef.current.scrollIntoView({ block: 'nearest' });
     });
   }, [keypad, selectedReason]);
 
@@ -123,13 +122,12 @@ function ScanPopup({ productData, soh, allReasons, onClose, onSubmit }) {
     <div style={{
       position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000,
       display: 'flex', alignItems: 'center', justifyContent: 'center',
-      ...(keypad ? { paddingBottom: '96px', boxSizing: 'border-box' } : {}), // keypad: centre above Shopify's bottom buttons
     }}>
       <div style={{
         background: 'white', borderRadius: '16px', padding: '24px',
         width: 'calc(100% - 32px)', maxWidth: '420px',
-        maxHeight: keypad ? 'calc(100vh - 112px)' : 'calc(100vh - 176px)', overflowY: 'auto', position: 'relative',
-      }}>
+        maxHeight: 'calc(100vh - 176px)', overflowY: 'auto', position: 'relative',
+      }} data-keypad-panel="flex">
         <button onClick={onClose} style={{
           position: 'absolute', top: '12px', right: '12px',
           background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer',
@@ -208,8 +206,10 @@ function ScanPopup({ productData, soh, allReasons, onClose, onSubmit }) {
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             <input
               ref={qtyRef}
+              data-hub-keypad=""
               inputMode={keypad ? 'none' : 'numeric'} value={qtyInput}
               onChange={e => setQtyInput(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && canSubmit) handleSubmit(); }}
               placeholder={placeholder} disabled={!selectedReason}
               style={{
                 flex: 1, padding: '10px 12px', fontSize: '16px',
@@ -219,7 +219,7 @@ function ScanPopup({ productData, soh, allReasons, onClose, onSubmit }) {
                 color: selectedReason ? '#202223' : '#8c9196',
               }}
             />
-            {!keypad && <button
+            <button
               disabled={!canSubmit} onClick={handleSubmit}
               style={{
                 padding: '10px 20px', borderRadius: '8px', border: 'none',
@@ -229,17 +229,8 @@ function ScanPopup({ productData, soh, allReasons, onClose, onSubmit }) {
                 fontSize: '16px', fontWeight: '600', whiteSpace: 'nowrap',
               }}>
               Submit
-            </button>}
+            </button>
           </div>
-          {/* OK = Submit (2026-11-12); shown once a reason is chosen (the box is disabled before) */}
-          {keypad && selectedReason && (
-            // display: contents → the keypad docks at the popup's bottom itself and
-            // disappears with nothing left behind when the Qty box isn't active (2026-11-12, Hera)
-            <div ref={keypadBoxRef} style={{ display: 'contents' }}>
-              <NumberKeypad inputRef={qtyRef} value={qtyInput} allowNegative={false} dock={24}
-                onChange={setQtyInput} onOk={handleSubmit} okDisabled={!canSubmit} />
-            </div>
-          )}
         </BlockStack>
       </div>
     </div>
@@ -769,7 +760,6 @@ function ManagerStockLosses() {
     position: 'fixed', top: '50%', left: '16px', right: '16px',
     transform: 'translateY(-50%)', maxHeight: 'calc(100vh - 176px)', overflowY: 'auto', background: 'white', borderRadius: '12px',
     padding: '24px', maxWidth: '480px', margin: '0 auto', zIndex: 1001,
-    ...(keypad ? { ...KEYPAD_POPUP, padding: '20px' } : {}), // no phone keyboard → use the height
   };
 
   const btnBase = (disabled, danger, primary) => ({
@@ -1007,7 +997,7 @@ function ManagerStockLosses() {
 
       {showTypeIn && (
         <div style={overlayStyle}>
-          <div style={innerStyle}>
+          <div style={innerStyle} data-keypad-panel="center">
             <button onClick={() => { setShowTypeIn(false); resetViewportZoom(); }} style={{
               position: 'absolute', top: '12px', right: '12px',
               background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer',
@@ -1017,6 +1007,7 @@ function ManagerStockLosses() {
               {skuError && <Banner tone="critical" onDismiss={() => setSkuError('')}>{skuError}</Banner>}
               <input
                 ref={skuRef}
+                data-hub-keypad=""
                 value={skuInput} inputMode={keypad ? 'none' : 'numeric'}
                 onChange={e => { setSkuInput(e.target.value); setSkuError(''); }}
                 onKeyDown={e => { if (e.key === 'Enter') handleSkuSearch(); }}
@@ -1027,13 +1018,7 @@ function ManagerStockLosses() {
                   outline: 'none', boxSizing: 'border-box',
                 }}
               />
-              {keypad && (
-                // OK = Search (2026-11-12)
-                <NumberKeypad inputRef={skuRef} value={skuInput} allowNegative={false}
-                  onChange={(v) => { setSkuInput(v); setSkuError(''); }}
-                  onOk={handleSkuSearch} okDisabled={!skuInput.trim() || skuSearching} />
-              )}
-              {!keypad && <button
+              <button
                 disabled={!skuInput.trim() || skuSearching}
                 onClick={handleSkuSearch}
                 style={{
@@ -1044,7 +1029,7 @@ function ManagerStockLosses() {
                   fontSize: '16px', fontWeight: '600',
                 }}>
                 {skuSearching ? 'Searching...' : 'Search'}
-              </button>}
+              </button>
             </BlockStack>
           </div>
         </div>

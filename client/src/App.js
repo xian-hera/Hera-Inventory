@@ -18,6 +18,8 @@ import ManagerLocationGate from './components/ManagerLocationGate';
 // PageErrorBoundary = an error in one page no longer blanks the whole Hub.
 import lazyWithReload from './lazyWithReload';
 import PageErrorBoundary from './components/PageErrorBoundary';
+// Hub's own number keypad, one for the whole app (2026-11-12, Hera — claude/NUMBER_KEYPAD.md)
+import NumberKeypadHost from './components/NumberKeypad';
 const BuyerHome = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerHome'));
 const BuyerInventoryCount = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerInventoryCount'));
 const BuyerSettings = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerSettings'));
@@ -264,6 +266,7 @@ function App() {
           </Suspense>
         </PageErrorBoundary>
       </BrowserRouter>
+      <NumberKeypadHost />
     </AppProvider>
   );
 }

@@ -6,11 +6,12 @@ import {
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { fetchLocationMap } from '../shared/locationMap';
 import FulfilCountInfo from '../shared/FulfilCountInfo';
-import { LineNote, LineNoteIcon, taskLineNoteApi } from '../shared/lineNote';
+import { LineNote, LineNoteIcon, LineNoteButton, LineNoteText, taskLineNoteApi } from '../shared/lineNote'; // eslint-disable-line no-unused-vars
 import useKeyboardInset from '../../components/useKeyboardInset';
-// Hub number keypad (2026-11-12, Hera): count + Type in SKU boxes, when
-// Online › Settings › Number Keypad is on (touch devices only).
-import NumberKeypad, { useNumberKeypad, KEYPAD_POPUP } from '../../components/NumberKeypad';
+// Hub number keypad (2026-11-12, Hera): count + Type in SKU boxes are marked
+// data-hub-keypad; the one keypad (components/NumberKeypad.js, mounted in
+// App.js) shows for them and pushes the popup (data-keypad-panel) up.
+import { useNumberKeypad } from '../../components/NumberKeypad';
 // Store location: remembered per Shopify account, loaded before this page
 // renders by ManagerLocationGate (2026-09-29) — replaces reading
 // localStorage 'managerLocation' directly. See client/src/accountMemory.js.
@@ -117,8 +118,9 @@ function ManagerTaskDetail() {
   const keypad = useNumberKeypad();
   const countRef = useRef(null);
   const skuRef = useRef(null);
-  // No phone keyboard in keypad mode → no keyboard room to keep.
-  useKeyboardInset(!keypad && (!!popupItem || showSkuInput));
+  // (The Hub keypad pushes the popup up itself; the phone keyboard — Note,
+  // or keypad off — still needs this.)
+  useKeyboardInset(!!popupItem || showSkuInput);
 
   const barcodeBuffer = useRef('');
   const barcodeTimer  = useRef(null);
@@ -822,8 +824,7 @@ function ManagerTaskDetail() {
               transform: 'translateY(-50%)', maxHeight: 'var(--kb-avail-h, calc(100vh - 176px))', overflowY: 'auto',
               background: 'white', borderRadius: '12px', padding: '24px',
               maxWidth: '400px', margin: '0 auto', zIndex: 1001,
-              ...(keypad ? KEYPAD_POPUP : {}),
-            }}>
+            }} data-keypad-panel="center">
               <button
                 onClick={() => { setShowSkuInput(false); setSkuInput(''); setSkuError(''); }}
                 style={{ position: 'absolute', top: '12px', right: '12px',
@@ -842,6 +843,7 @@ function ManagerTaskDetail() {
                     <div style={{ fontSize: '14px', color: '#202223', fontWeight: '500', marginBottom: '4px' }}>SKU</div>
                     <input
                       ref={skuRef}
+                      data-hub-keypad=""
                       inputMode={keypad ? 'none' : 'numeric'}
                       value={skuInput}
                       onChange={e => { setSkuInput(e.target.value); setSkuError(''); }}
@@ -857,7 +859,7 @@ function ManagerTaskDetail() {
                       onBlur={e => { e.target.style.borderColor = '#c9cccf'; }}
                     />
                   </div>
-                  {!keypad && <button
+                  <button
                     onClick={handleSkuSearch}
                     disabled={!skuInput.trim()}
                     style={{
@@ -869,11 +871,8 @@ function ManagerTaskDetail() {
                     }}
                   >
                     Search
-                  </button>}
+                  </button>
                 </div>
-                {/* OK = Search (2026-11-12) */}
-                {keypad && <NumberKeypad inputRef={skuRef} value={skuInput} allowNegative={false} dock={24}
-                  onChange={(v) => { setSkuInput(v); setSkuError(''); }} onOk={handleSkuSearch} okDisabled={!skuInput.trim()} />}
               </BlockStack>
             </div>
           </div>
@@ -890,8 +889,7 @@ function ManagerTaskDetail() {
               transform: 'translateY(-50%)', maxHeight: 'var(--kb-avail-h, calc(100vh - 176px))', overflowY: 'auto',
               background: 'white', borderRadius: '12px', padding: '24px',
               maxWidth: '480px', margin: '0 auto', zIndex: 1001,
-              ...(keypad ? { ...KEYPAD_POPUP, padding: '20px' } : {}),
-            }}>
+            }} data-keypad-panel="center">
               <button onClick={closePopup} style={{
                 position: 'absolute', top: '12px', right: '12px',
                 background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', zIndex: 1,
@@ -922,13 +920,21 @@ function ManagerTaskDetail() {
                   </BlockStack>
                 )}
 
+                {/* 2026-11-12 (Hera): Note left of the count box (its text box opens in
+                    its own popup); the saved note shows above the green button. */}
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <LineNoteButton
+                    note={popupItem.line_note}
+                    onSave={async (text) => { const d = await taskLineNoteApi(taskId, popupItem.id).save(text); applyLineNote(popupItem.id, d.line_note); }}
+                  />
                   <input
                     ref={countRef}
+                    data-hub-keypad="neg"
                     inputMode={keypad ? 'none' : 'numeric'}
                     placeholder="Input your count"
                     value={countInput}
                     onChange={e => { setCountInput(e.target.value); setCountWarning(''); }}
+                    onKeyDown={e => { if (e.key === 'Enter' && countInput) handleSubmitCount(); }}
                     autoComplete="off" autoFocus
                     style={{
                       flex: 1, minWidth: 0, padding: '10px 12px', fontSize: '16px',
@@ -938,7 +944,7 @@ function ManagerTaskDetail() {
                     onFocus={e => { e.target.style.borderColor = '#005bd3'; }}
                     onBlur={e => { e.target.style.borderColor = '#c9cccf'; }}
                   />
-                  {!keypad && <Button onClick={handleSubmitCount} disabled={!countInput}>Submit</Button>}
+                  <Button onClick={handleSubmitCount} disabled={!countInput}>Submit</Button>
                 </div>
 
                 {countWarning && (
@@ -955,6 +961,30 @@ function ManagerTaskDetail() {
                   </div>
                 ) : (
                   <>
+                    {/* Fulfillment-location info (2026-10): the server only sends
+                        committed/picked for the location set in Online Settings,
+                        so every other location keeps showing nothing here. It
+                        replaces the old one-line "N committed" text. */}
+                    <FulfilCountInfo soh={popupSoh} committed={popupCommitted} picked={popupPicked} />
+                    {/* Check History on its own row (2026-11-12, Hera: Note moved next
+                        to the count box). */}
+                    <button
+                      onClick={() => openHistory(popupItem.barcode)}
+                      disabled={historyLoading}
+                      style={{
+                        padding: '8px 16px', borderRadius: '8px',
+                        border: '1px solid #c9cccf', background: 'white',
+                        color: historyLoading ? '#8c9196' : '#202223',
+                        cursor: historyLoading ? 'not-allowed' : 'pointer',
+                        fontSize: '14px', fontWeight: '500',
+                      }}>
+                      {historyLoading ? '...' : 'Check History ↗'}
+                    </button>
+                    <LineNoteText
+                      note={popupItem.line_note}
+                      onDelete={async () => { await taskLineNoteApi(taskId, popupItem.id).remove(); applyLineNote(popupItem.id, null); }}
+                    />
+                    {/* Reset + green System Correct at the bottom (2026-11-12, Hera) */}
                     <div style={{ display: 'flex', gap: '10px', alignItems: 'stretch' }}>
                       {hasHistory && (
                         <button
@@ -977,39 +1007,8 @@ function ManagerTaskDetail() {
                         System {popupSoh}　Correct
                       </button>
                     </div>
-
-                    {/* Fulfillment-location info (2026-10): the server only sends
-                        committed/picked for the location set in Online Settings,
-                        so every other location keeps showing nothing here. It
-                        replaces the old one-line "N committed" text. */}
-                    <FulfilCountInfo soh={popupSoh} committed={popupCommitted} picked={popupPicked} />
-                    {/* Line-item note (2026-10-22, Hera): Note button right of
-                        Check History; text box / saved note below them. */}
-                    <LineNote
-                      note={popupItem.line_note}
-                      onSave={async (text) => { const d = await taskLineNoteApi(taskId, popupItem.id).save(text); applyLineNote(popupItem.id, d.line_note); }}
-                      onDelete={async () => { await taskLineNoteApi(taskId, popupItem.id).remove(); applyLineNote(popupItem.id, null); }}
-                      leading={(
-                    <button
-                      onClick={() => openHistory(popupItem.barcode)}
-                      disabled={historyLoading}
-                      style={{
-                        flex: 1, // still as wide as before, the Note button sits on its right
-                        padding: '8px 16px', borderRadius: '8px',
-                        border: '1px solid #c9cccf', background: 'white',
-                        color: historyLoading ? '#8c9196' : '#202223',
-                        cursor: historyLoading ? 'not-allowed' : 'pointer',
-                        fontSize: '14px', fontWeight: '500',
-                      }}>
-                      {historyLoading ? '...' : 'Check History ↗'}
-                    </button>
-                      )}
-                    />
                   </>
                 )}
-                {/* OK = Submit (2026-11-12); docked at the popup's bottom (2026-11-12, Hera) */}
-                {keypad && <NumberKeypad inputRef={countRef} value={countInput}
-                  onChange={(v) => { setCountInput(v); setCountWarning(''); }} onOk={handleSubmitCount} okDisabled={!countInput} />}
               </BlockStack>
             </div>
           </div>

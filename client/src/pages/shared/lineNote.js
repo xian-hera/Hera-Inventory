@@ -92,6 +92,104 @@ export function LineNote({ note, onSave, onDelete, leading = null }) {
   );
 }
 
+// ── Note in its own popup (2026-11-12, Hera) ────────────────────────────────
+// Used by the Store count modals since the keypad change (Weekly Inventory
+// Count, PO count, Transfer receiving count, Online transfer prep): the Note
+// button sits left of the count box; tapping it opens a separate small popup
+// (placed high, so the phone keyboard doesn't cover it) instead of growing
+// the count modal. Save overwrites the note (one note per line item, as
+// before); the saved note shows at the bottom of the count modal with a red
+// × on its left (LineNoteText). LineNote above is kept for any other use.
+//
+// <LineNoteButton note onSave(text) /> · <LineNoteText note onDelete() />
+export function LineNoteButton({ note, onSave, disabled = false }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <Button onClick={() => setOpen(true)} disabled={disabled}>Note</Button>
+      {open && <LineNotePopup note={note} onSave={onSave} onClose={() => setOpen(false)} />}
+    </>
+  );
+}
+
+function LineNotePopup({ note, onSave, onClose }) {
+  const [draft, setDraft] = useState(note || '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const boxRef = useRef(null);
+  useEffect(() => {
+    const el = boxRef.current;
+    if (el) { el.focus(); const n = el.value.length; try { el.setSelectionRange(n, n); } catch (e) { /* ignore */ } }
+  }, []);
+  const save = async () => {
+    const text = draft.trim();
+    if (!text || busy) return;
+    setBusy(true); setError('');
+    try { await onSave(text); onClose(); } catch (e) { setError(e.message || 'Could not save the note'); setBusy(false); }
+  };
+  return createPortal(
+    <div
+      onClick={() => { if (!busy) onClose(); }}
+      style={{ position: 'fixed', inset: 0, zIndex: 2500, background: 'rgba(0,0,0,0.45)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', padding: '8vh 16px 0' }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Note"
+        onClick={(e) => e.stopPropagation()}
+        style={{ width: 'min(420px, 100%)', background: '#fff', borderRadius: 12, padding: 16, boxSizing: 'border-box', boxShadow: '0 10px 30px rgba(0,0,0,0.25)', display: 'flex', flexDirection: 'column', gap: 10 }}
+      >
+        <div style={{ fontSize: 16, fontWeight: 650 }}>Note</div>
+        <textarea
+          ref={boxRef}
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          rows={3}
+          placeholder="Note for this item..."
+          style={{
+            width: '100%', boxSizing: 'border-box', padding: '10px 12px', fontSize: 16, lineHeight: '22px',
+            border: '1px solid #005bd3', borderRadius: 8, outline: 'none', resize: 'vertical', fontFamily: 'inherit',
+          }}
+        />
+        {error && <div style={{ color: '#d72c0d', fontSize: 13 }}>{error}</div>}
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <Button onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button variant="primary" onClick={save} loading={busy} disabled={!draft.trim()}>Save</Button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+export function LineNoteText({ note, onDelete }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  if (!note) return null;
+  const remove = async () => {
+    setBusy(true); setError('');
+    try { await onDelete(); } catch (e) { setError(e.message || 'Could not delete the note'); } finally { setBusy(false); }
+  };
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+        <button
+          type="button"
+          onClick={remove}
+          disabled={busy}
+          aria-label="Delete note"
+          style={{
+            border: 'none', background: 'none', padding: '0 2px', margin: 0, cursor: busy ? 'default' : 'pointer',
+            color: '#d72c0d', fontSize: 18, lineHeight: '22px', fontWeight: 700,
+          }}
+        >×</button>
+        <div style={{ fontSize: 14, lineHeight: '22px', whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: '#303030' }}>{note}</div>
+      </div>
+      {error && <div style={{ color: '#d72c0d', fontSize: 13 }}>{error}</div>}
+    </div>
+  );
+}
+
 // Blue circle (i): this line item has a note.
 export function LineNoteIcon({ note, title }) {
   if (!note) return null;

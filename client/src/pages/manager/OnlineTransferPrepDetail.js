@@ -3,10 +3,11 @@ import { createPortal } from 'react-dom';
 import { Page, Card, BlockStack, Text, Banner, Button } from '@shopify/polaris';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { StatusBadge, TagPills } from '../shared/transferStatus';
-import { LineNote, LineNoteIcon, transferLineNoteApi } from '../shared/lineNote';
-// Hub number keypad (2026-11-12, Hera): Qty box of the item modal, when
-// Online › Settings › Number Keypad is on (touch devices only).
-import NumberKeypad, { useNumberKeypad } from '../../components/NumberKeypad';
+import { LineNote, LineNoteIcon, LineNoteButton, LineNoteText, transferLineNoteApi } from '../shared/lineNote'; // eslint-disable-line no-unused-vars
+// Hub number keypad (2026-11-12, Hera): the Qty box of the item modal is
+// marked data-hub-keypad (OK = Picked); the one keypad
+// (components/NumberKeypad.js, mounted in App.js) pushes the modal up.
+import { useNumberKeypad } from '../../components/NumberKeypad';
 
 // Store › Online transfer (2026-10-23, Hera — claude/FULFILLER_ONLINE_TRANSFER_SPEC.md).
 // The from-store prepares an Online (Fulfiller) transfer here instead of the
@@ -99,7 +100,8 @@ function ItemModal({ item, transferId, onClose, onChanged, setError }) {
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        style={{ width: 'min(560px, 100%)', maxHeight: keypad ? 'calc(100vh - 4vh - 104px)' : '84vh', overflowY: 'auto', background: '#fff', borderRadius: 14, padding: 16, boxSizing: 'border-box', boxShadow: '0 10px 30px rgba(0,0,0,0.25)' }}
+        data-keypad-panel="top"
+        style={{ width: 'min(560px, 100%)', maxHeight: '84vh', overflowY: 'auto', background: '#fff', borderRadius: 14, padding: 16, boxSizing: 'border-box', boxShadow: '0 10px 30px rgba(0,0,0,0.25)' }}
       >
         <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -119,57 +121,55 @@ function ItemModal({ item, transferId, onClose, onChanged, setError }) {
         <div style={{ margin: '12px 0', width: '100%', aspectRatio: '1 / 1', background: '#f1f1f1', borderRadius: 8, overflow: 'hidden', ...(keypad ? { aspectRatio: 'auto', height: 160 } : {}) }}>
           {item.image_url && <img src={item.image_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} />}
         </div>
-        <div style={{ display: 'flex', gap: 12, alignItems: 'stretch', flexWrap: 'wrap' }}>
-          <div style={{ flex: '1 1 130px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <div style={{ display: 'flex', gap: 8 }}>
+        {/* Button area (2026-11-12, Hera): left — row 1 [Qty][Picked], row 2
+            [Reset][Note] right-aligned; right — the big green Picked (or "You
+            have picked …") as tall as both rows. Reset is always there, grey
+            until the line is picked. Note opens its own popup; the saved note
+            shows at the bottom. */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, alignItems: 'stretch' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <input
                 ref={qtyRef}
                 type={keypad ? 'text' : 'number'}
+                data-hub-keypad=""
+                data-keypad-ok="Picked"
+                data-keypad-empty-ok=""
                 inputMode={keypad ? 'none' : 'numeric'}
                 min="0"
                 value={qty}
                 onChange={(e) => setQty(e.target.value.replace(/[^0-9]/g, ''))}
+                onKeyDown={(e) => { if (e.key === 'Enter' && !busy) pick(parseInt(qty || '0', 10)); }}
                 onFocus={(e) => e.target.select()}
                 aria-label="Qty"
-                style={{ width: 64, minWidth: 0, font: 'inherit', fontSize: 16, padding: '6px 8px', border: '1px solid #c9cccf', borderRadius: 8 }}
+                style={{ flex: 1, width: 64, minWidth: 0, font: 'inherit', fontSize: 16, padding: '6px 8px', border: '1px solid #c9cccf', borderRadius: 8 }}
               />
-              {!keypad && <Button onClick={() => pick(parseInt(qty || '0', 10))} disabled={busy}>Picked</Button>}
+              <Button onClick={() => pick(parseInt(qty || '0', 10))} disabled={busy}>Picked</Button>
             </div>
-            <LineNote note={item.line_note} onSave={async (t) => { await noteApi.save(t); await onChanged(); }} onDelete={async () => { await noteApi.remove(); await onChanged(); }} />
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <Button onClick={reset} disabled={busy || !picked}>Reset</Button>
+              <LineNoteButton note={item.line_note} onSave={async (t) => { await noteApi.save(t); await onChanged(); }} />
+            </div>
           </div>
-          <div style={{ flex: '1 1 130px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {fullGreen ? (
-              <>
-                <div style={{ minHeight: 64, borderRadius: 10, background: '#e3f1df', color: '#0c5132', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 650, fontSize: 16, padding: '0 12px', textAlign: 'center' }}>
-                  You have picked {req}
-                </div>
-                <Button onClick={reset} disabled={busy}>Reset</Button>
-              </>
-            ) : (
-              <>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => pick(req)}
-                  style={{ minHeight: 64, border: 'none', borderRadius: 10, background: '#16a34a', color: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, font: 'inherit' }}
-                >
-                  <span style={{ fontSize: 22, fontWeight: 700 }}>Picked</span>
-                  <span style={{ fontSize: 16, fontWeight: 600 }}>{req}</span>
-                </button>
-                {picked && <Button onClick={reset} disabled={busy}>Reset</Button>}
-              </>
-            )}
-          </div>
+          {fullGreen ? (
+            <div style={{ minHeight: 64, borderRadius: 10, background: '#e3f1df', color: '#0c5132', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 650, fontSize: 16, padding: '0 12px', textAlign: 'center' }}>
+              You have picked {req}
+            </div>
+          ) : (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => pick(req)}
+              style={{ minHeight: 64, border: 'none', borderRadius: 10, background: '#16a34a', color: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, font: 'inherit' }}
+            >
+              <span style={{ fontSize: 22, fontWeight: 700 }}>Picked</span>
+              <span style={{ fontSize: 16, fontWeight: 600 }}>{req}</span>
+            </button>
+          )}
         </div>
-        {/* Keypad under both columns; its OK button = Picked (2026-11-12) */}
-        {keypad && (
-          // was marginTop 12; now display: contents → the keypad docks at the popup's
-          // bottom itself (its own top padding gives the gap) and leaves nothing
-          // when the Qty box isn't active (2026-11-12, Hera)
-          <div style={{ display: 'contents' }}>
-            <NumberKeypad inputRef={qtyRef} value={qty} allowNegative={false} okLabel="Picked" dock={16}
-              onChange={(v) => setQty(v.replace(/[^0-9]/g, ''))}
-              onOk={() => pick(parseInt(qty || '0', 10))} okDisabled={busy} />
+        {item.line_note && (
+          <div style={{ marginTop: 12 }}>
+            <LineNoteText note={item.line_note} onDelete={async () => { await noteApi.remove(); await onChanged(); }} />
           </div>
         )}
       </div>

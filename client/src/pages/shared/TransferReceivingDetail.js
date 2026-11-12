@@ -5,12 +5,13 @@ import {
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { StatusBadge, TagPills } from './transferStatus';
 import { useDD, transferEntries, DDList } from './ddPill';
-import { LineNote, LineNoteIcon, transferLineNoteApi } from './lineNote';
+import { LineNote, LineNoteIcon, LineNoteButton, LineNoteText, transferLineNoteApi } from './lineNote'; // eslint-disable-line no-unused-vars
 import { getManagerLocation } from '../../accountMemory';
 import MobileModalSafeArea from '../../components/MobileModalSafeArea';
-// Hub number keypad (2026-11-12, Hera): count box, when Online › Settings ›
-// Number Keypad is on (touch devices only). Store and WH receiving alike.
-import NumberKeypad, { useNumberKeypad, KEYPAD_POPUP } from '../../components/NumberKeypad';
+// Hub number keypad (2026-11-12, Hera): the count box is marked
+// data-hub-keypad; the one keypad (components/NumberKeypad.js, mounted in
+// App.js) shows for it and pushes the popup (data-keypad-panel) up.
+import { useNumberKeypad } from '../../components/NumberKeypad';
 
 // Same keydown-buffer barcode-scanner listening pattern as
 // ManagerPOReceivingDetail.js — kept as its own local copy per this
@@ -661,8 +662,7 @@ function TransferReceivingDetail({ role, backPath, showTags, canDeliver = false 
               transform: 'translateY(-50%)', maxHeight: 'calc(100vh - 176px)', overflowY: 'auto',
               background: 'white', borderRadius: '12px', padding: '24px',
               maxWidth: '480px', margin: '0 auto', zIndex: 1001,
-              ...(keypad ? { ...KEYPAD_POPUP, padding: '20px' } : {}), // no phone keyboard → use the height
-            }}>
+            }} data-keypad-panel="center">
               <button onClick={closePopup} style={{
                 position: 'absolute', top: '12px', right: '12px',
                 background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', zIndex: 1,
@@ -676,13 +676,21 @@ function TransferReceivingDetail({ role, backPath, showTags, canDeliver = false 
                   <div style={{ fontSize: '13px', color: '#6d7175' }}>{popupItem.sku}</div>
                 </div>
 
+                {/* 2026-11-12 (Hera): Note left of the count box (its text box opens in
+                    its own popup); the saved note shows at the bottom. */}
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <LineNoteButton
+                    note={popupItem.line_note}
+                    onSave={async (text) => { const d = await transferLineNoteApi(transferId, popupItem.id).save(text); applyLineNote(popupItem.id, d.line_note); }}
+                  />
                   <input
                     ref={countRef}
+                    data-hub-keypad=""
                     inputMode={keypad ? 'none' : 'numeric'}
                     placeholder="Input your count"
                     value={countInput}
                     onChange={e => { setCountInput(e.target.value); setCountError(''); }}
+                    onKeyDown={e => { if (e.key === 'Enter' && countInput && !savingCount) handleSubmitCount(); }}
                     autoComplete="off" autoFocus
                     style={{
                       flex: 1, minWidth: 0, padding: '10px 12px', fontSize: '16px',
@@ -692,7 +700,7 @@ function TransferReceivingDetail({ role, backPath, showTags, canDeliver = false 
                     onFocus={e => { e.target.style.borderColor = '#005bd3'; }}
                     onBlur={e => { e.target.style.borderColor = '#c9cccf'; }}
                   />
-                  {!keypad && <Button onClick={handleSubmitCount} loading={savingCount}>Submit</Button>}
+                  <Button onClick={handleSubmitCount} loading={savingCount}>Submit</Button>
                 </div>
 
                 {countError && (
@@ -710,16 +718,12 @@ function TransferReceivingDetail({ role, backPath, showTags, canDeliver = false 
                   Quantity {popupItem.quantity}　Correct
                 </button>
 
-                {/* Line-item note (2026-10-22, Hera) — under the green button, left. */}
-                <LineNote
+                {/* Saved line-item note (2026-10-22, Hera), at the bottom; the Note
+                    button is left of the count box since 2026-11-12. */}
+                <LineNoteText
                   note={popupItem.line_note}
-                  onSave={async (text) => { const d = await transferLineNoteApi(transferId, popupItem.id).save(text); applyLineNote(popupItem.id, d.line_note); }}
                   onDelete={async () => { await transferLineNoteApi(transferId, popupItem.id).remove(); applyLineNote(popupItem.id, null); }}
                 />
-                {/* OK = Submit (2026-11-12); docked at the popup's bottom (2026-11-12, Hera) */}
-                {keypad && <NumberKeypad inputRef={countRef} value={countInput} allowNegative={false}
-                  onChange={(v) => { setCountInput(v); setCountError(''); }}
-                  onOk={handleSubmitCount} okDisabled={!countInput || savingCount} />}
               </BlockStack>
             </div>
           </div>
