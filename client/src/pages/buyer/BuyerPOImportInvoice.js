@@ -235,6 +235,13 @@ function BuyerPOImportInvoice() {
   const [addItemQty, setAddItemQty] = useState('1');
   const [addItemCost, setAddItemCost] = useState('');
   const [addingItem, setAddingItem] = useState(false);
+  // "Add Item" on a Store Counted invoice (2026-11-12, Hera): SKU + Quantity,
+  // cost from the SKU's supplier metafield group — POST /pending/:id/items/by-sku.
+  const [addSkuOpen, setAddSkuOpen] = useState(false);
+  const [addSkuValue, setAddSkuValue] = useState('');
+  const [addSkuQty, setAddSkuQty] = useState('1');
+  const [addingSku, setAddingSku] = useState(false);
+  const [addSkuError, setAddSkuError] = useState('');
   // The line item chosen from the search-results dropdown below — replaces
   // the old free-text "SKU or code" input in the add-item modal, since a
   // search result is already a resolved exact SKU. { code, sku, name }.
@@ -882,6 +889,28 @@ function BuyerPOImportInvoice() {
     }
   };
 
+  const openAddSku = () => { setAddSkuValue(''); setAddSkuQty('1'); setAddSkuError(''); setAddSkuOpen(true); };
+  const handleAddBySku = async () => {
+    if (!invoiceId || addingSku) return;
+    setAddingSku(true);
+    setAddSkuError('');
+    try {
+      const res = await fetch(`/api/po-invoices/pending/${invoiceId}/items/by-sku`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sku: addSkuValue.trim(), quantity: addSkuQty.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not add the item');
+      refreshAfterItemsChange(data);
+      setAddSkuOpen(false);
+    } catch (e) {
+      setAddSkuError(e.message);
+    } finally {
+      setAddingSku(false);
+    }
+  };
+
   // ── Store count (buyer-side view/edit) ───────────────────────────────────
   // Shows the manager's actual counted quantity as-is — quantity 10, counted
   // 9 shows "9", not a "-1" correction delta. Editing here saves that same
@@ -1142,7 +1171,11 @@ function BuyerPOImportInvoice() {
   // then a cost mismatch highlighted row, then a store-count mismatch row
   // (lower priority than cost — a row that's both stays sorted as a cost
   // mismatch), then everything else.
+  // 2026-11-12: a row added with "Add Item" on a Store Counted invoice
+  // (added_after_count) is pinned above everything else.
   const sortedItems = [...items].sort((a, b) => {
+    const addedDiff = (b.added_after_count ? 1 : 0) - (a.added_after_count ? 1 : 0);
+    if (addedDiff !== 0) return addedDiff;
     const missingDiff = (b.is_missing ? 1 : 0) - (a.is_missing ? 1 : 0);
     if (missingDiff !== 0) return missingDiff;
     const manualDiff = (b.added_manually ? 1 : 0) - (a.added_manually ? 1 : 0);
@@ -1585,6 +1618,9 @@ function BuyerPOImportInvoice() {
                   {status === 'sent_to_store' && (
                     <Text tone="subdued" variant="bodySm">Waiting for the store to count this invoice.</Text>
                   )}
+                  {status === 'store_counted' && !invoiceCommitting && (
+                    <Button onClick={openAddSku} disabled={committing}>Add Item</Button>
+                  )}
                   {invoiceCommitting ? (
                     <BlockStack gap="100">
                       <Button disabled loading>
@@ -1733,7 +1769,9 @@ function BuyerPOImportInvoice() {
                           // Cost mismatch (yellow) always wins when a row is both —
                           // the store-count mismatch still gets its red bold value,
                           // just not the row-wide highlight color.
-                          const rowBackground = highlighted ? '#fff8e1' : (qtyMismatch ? '#fdeceb' : undefined);
+                          // 2026-11-12: a row added with "Add Item" (Store Counted) gets a
+                          // light blue, ahead of the other highlights.
+                          const rowBackground = it.added_after_count ? '#eaf4ff' : (highlighted ? '#fff8e1' : (qtyMismatch ? '#fdeceb' : undefined));
                           return (
                             <tr key={it.id} data-line-note={it.line_note || undefined} style={{ borderBottom: '1px solid #f1f1f1', background: rowBackground }}>
                               {itemsEditable && (
@@ -1943,6 +1981,24 @@ function BuyerPOImportInvoice() {
             />
             <TextField label="Quantity" type="number" value={addItemQty} onChange={setAddItemQty} autoComplete="off" />
             <TextField label="Cost (blank = use Supplier cost)" type="number" value={addItemCost} onChange={setAddItemCost} autoComplete="off" />
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
+
+      {/* Add Item modal — Store Counted invoices only (2026-11-12, Hera). */}
+      <Modal
+        open={addSkuOpen}
+        onClose={() => setAddSkuOpen(false)}
+        title="Add Item"
+        primaryAction={{ content: 'Add', onAction: handleAddBySku, loading: addingSku, disabled: !addSkuValue.trim() || !addSkuQty.trim() }}
+        secondaryActions={[{ content: 'Cancel', onAction: () => setAddSkuOpen(false) }]}
+      >
+        <Modal.Section>
+          <BlockStack gap="300">
+            <TextField label="SKU" value={addSkuValue} onChange={setAddSkuValue} autoComplete="off" autoFocus />
+            <TextField label="Quantity" type="number" min={1} value={addSkuQty} onChange={setAddSkuQty} autoComplete="off" />
+            <Text variant="bodySm" tone="subdued">{`Cost comes from this SKU's ${supplier?.name || 'supplier'} metafield. The quantity is also its Store Count.`}</Text>
+            {addSkuError && <Text variant="bodySm" tone="critical">{addSkuError}</Text>}
           </BlockStack>
         </Modal.Section>
       </Modal>

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   Page, Layout, Button, BlockStack,
-  Text, Banner, Popover, ActionList
+  Text, Banner, Popover, ActionList, RadioButton
 } from '@shopify/polaris';
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { useLocationMap } from '../shared/locationMap';
@@ -11,6 +11,7 @@ import ManagerDashboard, { useStoreDashboard } from './ManagerDashboard';
 // client/src/accountMemory.js. localStorage 'managerLocation' is still
 // written as the fallback.
 import { getManagerLocation, saveManagerLocation } from '../../accountMemory';
+import { getDeviceKeypad, setDeviceKeypad } from '../../components/NumberKeypad';
 
 // Store home (2026-10-22, Hera — claude/STORE_DASHBOARD_AND_LINE_NOTES.md):
 // title "Store" + the location as a green pill (click → pick a location from
@@ -92,6 +93,9 @@ function ManagerHome() {
   const [showWarning, setShowWarning] = useState(false);
   const [badges, setBadges]           = useState({ inventoryCount: 0, labelPrint: 0, poReceiving: 0, transfer: 0 });
   const [pickerOpen, setPickerOpen]   = useState(false);
+  // Number input on this device (2026-11-12, Hera) — remembered on the device.
+  const [useKeypad, setUseKeypad]     = useState(getDeviceKeypad);
+  const chooseKeypad = (on) => { setUseKeypad(on); setDeviceKeypad(on); };
 
   // Dashboard data (also decides the first tab, see the comment at the top).
   const activeLocation = confirmed ? location : '';
@@ -275,6 +279,25 @@ function ManagerHome() {
             <Button size="large" fullWidth onClick={() => handleNavigate('/manager/employee-cap')}>
               Employee Cap
             </Button>
+
+            {/* Number input on this device (2026-11-12, Hera): left, under the
+                buttons. Remembered on this device (components/NumberKeypad.js). */}
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2 }}>
+              <RadioButton
+                label="Use Hera Keypad for numeric input"
+                name="hub-number-input"
+                id="hub-number-input-keypad"
+                checked={useKeypad}
+                onChange={() => chooseKeypad(true)}
+              />
+              <RadioButton
+                label="Use phone keyboard always"
+                name="hub-number-input"
+                id="hub-number-input-phone"
+                checked={!useKeypad}
+                onChange={() => chooseKeypad(false)}
+              />
+            </div>
             </BlockStack>
             )}
 

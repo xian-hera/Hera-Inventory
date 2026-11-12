@@ -872,7 +872,7 @@ function ManagerTaskDetail() {
                   </button>}
                 </div>
                 {/* OK = Search (2026-11-12) */}
-                {keypad && <NumberKeypad inputRef={skuRef} value={skuInput} allowNegative={false}
+                {keypad && <NumberKeypad inputRef={skuRef} value={skuInput} allowNegative={false} dock={24}
                   onChange={(v) => { setSkuInput(v); setSkuError(''); }} onOk={handleSkuSearch} okDisabled={!skuInput.trim()} />}
               </BlockStack>
             </div>
@@ -940,9 +940,6 @@ function ManagerTaskDetail() {
                   />
                   {!keypad && <Button onClick={handleSubmitCount} disabled={!countInput}>Submit</Button>}
                 </div>
-                {/* OK = Submit (2026-11-12) */}
-                {keypad && <NumberKeypad inputRef={countRef} value={countInput}
-                  onChange={(v) => { setCountInput(v); setCountWarning(''); }} onOk={handleSubmitCount} okDisabled={!countInput} />}
 
                 {countWarning && (
                   <div style={{ background: '#fff4f4', borderRadius: '8px', padding: '10px 14px',
@@ -1010,6 +1007,9 @@ function ManagerTaskDetail() {
                     />
                   </>
                 )}
+                {/* OK = Submit (2026-11-12); docked at the popup's bottom (2026-11-12, Hera) */}
+                {keypad && <NumberKeypad inputRef={countRef} value={countInput}
+                  onChange={(v) => { setCountInput(v); setCountWarning(''); }} onOk={handleSubmitCount} okDisabled={!countInput} />}
               </BlockStack>
             </div>
           </div>

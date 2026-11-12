@@ -163,8 +163,11 @@ function ItemModal({ item, transferId, onClose, onChanged, setError }) {
         </div>
         {/* Keypad under both columns; its OK button = Picked (2026-11-12) */}
         {keypad && (
-          <div style={{ marginTop: 12 }}>
-            <NumberKeypad inputRef={qtyRef} value={qty} allowNegative={false} okLabel="Picked"
+          // was marginTop 12; now display: contents → the keypad docks at the popup's
+          // bottom itself (its own top padding gives the gap) and leaves nothing
+          // when the Qty box isn't active (2026-11-12, Hera)
+          <div style={{ display: 'contents' }}>
+            <NumberKeypad inputRef={qtyRef} value={qty} allowNegative={false} okLabel="Picked" dock={16}
               onChange={(v) => setQty(v.replace(/[^0-9]/g, ''))}
               onOk={() => pick(parseInt(qty || '0', 10))} okDisabled={busy} />
           </div>

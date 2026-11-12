@@ -936,6 +936,131 @@ router.delete('/pending/:id/items', async (req, res) => {
   }
 });
 
+// POST /api/po-invoices/pending/:id/items/by-sku — body: { sku, quantity }
+// (2026-11-12, Hera) "Add Item" on a Store Counted invoice: Purchasing adds a
+// line the store received but the invoice didn't list. The SKU is looked up
+// live in Shopify (active variant, exact barcode — Hub's SKU), and its cost
+// comes from the variant's own supplier metafield group (Settings › PO
+// metafield groups a / b / c …: supplier name + code + cost) whose name is
+// this invoice's supplier — not from the po_supplier_skus copy, so a SKU the
+// SKU updater hasn't picked up yet still works. The cost is stored like a
+// blank CSV cost cell (raw_cost NULL, supplier_cost_raw = metafield cost).
+// The store already counted this invoice, so store_count = quantity (Commit
+// uses store_count). added_after_count = TRUE pins the row to the top with a
+// light highlight on the invoice page.
+// Refused: invoice not Store Counted · SKU not found / not active · no group
+// named after this supplier on that SKU · that group's cost blank · SKU
+// already on this invoice (edit its Store Count instead).
+router.post('/pending/:id/items/by-sku', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { id } = req.params;
+    const sku = String((req.body && req.body.sku) || '').trim();
+    const qty = parseInt(req.body && req.body.quantity, 10);
+    if (!sku) return res.status(400).json({ error: 'Enter a SKU' });
+    if (isNaN(qty) || qty <= 0 || String(qty) !== String(req.body.quantity).trim()) {
+      return res.status(400).json({ error: 'Quantity must be a whole number of 1 or more' });
+    }
+
+    const invRes = await pool.query(
+      `SELECT i.*, s.name AS supplier_name FROM po_invoices i JOIN po_suppliers s ON s.id = i.supplier_id WHERE i.id = $1`,
+      [id]
+    );
+    if (invRes.rows.length === 0) return res.status(404).json({ error: 'Invoice not found' });
+    const invoice = invRes.rows[0];
+    if (invoice.status !== 'store_counted') return res.status(400).json({ error: 'Items can only be added here while the invoice is Store Counted' });
+    if (isCommitLockLive(invoice)) return res.status(400).json({ error: 'This invoice is being committed' });
+
+    const dup = await pool.query('SELECT 1 FROM po_invoice_items WHERE invoice_id = $1 AND sku = $2 LIMIT 1', [id, sku]);
+    if (dup.rows.length > 0) return res.status(400).json({ error: 'This SKU is already on this invoice — change its Store Count instead.' });
+
+    // Supplier metafield groups, same settings the SKU updater uses.
+    const { getMetafieldSettings } = require('../jobs/poSkuUpdater');
+    const { groups } = await getMetafieldSettings();
+    const productFields = [];
+    const variantFields = [];
+    const addField = (cfg, alias) => {
+      const nk = cfg && cfg.namespaceKey;
+      if (!nk || !nk.includes('.')) return;
+      const i = nk.indexOf('.');
+      const gql = `${alias}: metafield(namespace: ${JSON.stringify(nk.slice(0, i))}, key: ${JSON.stringify(nk.slice(i + 1))}) { value }`;
+      (cfg.type === 'product' ? productFields : variantFields).push(gql);
+    };
+    (groups || []).forEach((g, i) => {
+      addField(g && g.name, `grp${i}Name`);
+      addField(g && g.code, `grp${i}Code`);
+      addField(g && g.cost, `grp${i}Cost`);
+    });
+    if (productFields.length + variantFields.length === 0) {
+      return res.status(400).json({ error: 'No supplier metafield groups are set up (Purchasing settings).' });
+    }
+
+    const { getShopify, getSession, activeFilter, searchQuote } = require('../shopify');
+    const session = await getSession();
+    const shopify = getShopify();
+    const gqlClient = new shopify.clients.Graphql({ session });
+    const response = await shopifyRequest(gqlClient, `
+      query addBySku($filter: String!) {
+        productVariants(first: 10, query: $filter) {
+          edges { node {
+            barcode
+            title
+            customName: metafield(namespace: "custom", key: "name") { value }
+            ${variantFields.join('\n')}
+            product { title productType ${productFields.join('\n')} }
+          } }
+        }
+      }
+    `, { filter: activeFilter(`barcode:${searchQuote(sku)}`) });
+    const nodes = ((response && response.data && response.data.productVariants && response.data.productVariants.edges) || [])
+      .map(e => e.node).filter(n => n && n.barcode === sku);
+    if (nodes.length === 0) return res.status(400).json({ error: `SKU ${sku} was not found in Shopify (active products).` });
+    if (nodes.length > 1) return res.status(400).json({ error: `More than one active product has SKU ${sku}.` });
+    const v = nodes[0];
+    const read = (alias) => {
+      const x = (v.product && v.product[alias]) || v[alias];
+      return x && x.value !== undefined && x.value !== null ? String(x.value).trim() : '';
+    };
+
+    const supplierName = String(invoice.supplier_name || '').trim().toLowerCase();
+    const gi = (groups || []).findIndex((g, i) => read(`grp${i}Name`).toLowerCase() === supplierName && supplierName !== '');
+    if (gi < 0) return res.status(400).json({ error: `SKU ${sku} has no supplier metafield for ${invoice.supplier_name}.` });
+    const costText = read(`grp${gi}Cost`);
+    const cost = costText === '' ? NaN : parseFloat(costText);
+    if (isNaN(cost)) return res.status(400).json({ error: `SKU ${sku} has no cost for ${invoice.supplier_name} in its metafields.` });
+    const code = read(`grp${gi}Code`) || null;
+    const name = (v.customName && v.customName.value)
+      || [v.product && v.product.title, v.title && v.title !== 'Default Title' ? v.title : null].filter(Boolean).join(' - ')
+      || null;
+
+    await client.query('BEGIN');
+    const history = [{ type: 'set', value: qty, at: new Date().toISOString(), addedByPurchasing: true }];
+    const inserted = await client.query(
+      `INSERT INTO po_invoice_items
+         (invoice_id, code, sku, name, quantity, raw_cost, supplier_cost_raw, is_missing, quantity_original, raw_cost_original,
+          added_manually, added_after_count, store_count, count_history)
+       VALUES ($1,$2,$3,$4,$5,NULL,$6,FALSE,$5,NULL,TRUE,TRUE,$5,$7::jsonb) RETURNING id`,
+      [id, code, sku, name, qty, cost, JSON.stringify(history)]
+    );
+    await recalculateInvoice(client, id);
+    await client.query('COMMIT');
+
+    const invoiceRes = await client.query(
+      `SELECT i.*, s.name AS supplier_name, s.currency AS supplier_currency, s.fx_rate
+       FROM po_invoices i JOIN po_suppliers s ON s.id = i.supplier_id WHERE i.id = $1`,
+      [id]
+    );
+    const itemsRes = await client.query('SELECT * FROM po_invoice_items WHERE invoice_id = $1 ORDER BY id ASC', [id]);
+    res.json({ invoice: invoiceRes.rows[0], items: itemsRes.rows, addedItemId: inserted.rows[0].id });
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('POST /api/po-invoices/pending/:id/items/by-sku error:', e);
+    res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
+  }
+});
+
 // POST /api/po-invoices/pending/:id/items — body: { codeOrSku, quantity?, cost? }
 // "+ item": looks codeOrSku up against this invoice's supplier's saved
 // code→SKU mapping (po_supplier_skus) — an exact SKU match wins; otherwise a

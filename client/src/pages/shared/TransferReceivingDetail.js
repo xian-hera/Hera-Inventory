@@ -694,10 +694,6 @@ function TransferReceivingDetail({ role, backPath, showTags, canDeliver = false 
                   />
                   {!keypad && <Button onClick={handleSubmitCount} loading={savingCount}>Submit</Button>}
                 </div>
-                {/* OK = Submit (2026-11-12) */}
-                {keypad && <NumberKeypad inputRef={countRef} value={countInput} allowNegative={false}
-                  onChange={(v) => { setCountInput(v); setCountError(''); }}
-                  onOk={handleSubmitCount} okDisabled={!countInput || savingCount} />}
 
                 {countError && (
                   <div style={{ background: '#fff4f4', borderRadius: '8px', padding: '10px 14px',
@@ -720,6 +716,10 @@ function TransferReceivingDetail({ role, backPath, showTags, canDeliver = false 
                   onSave={async (text) => { const d = await transferLineNoteApi(transferId, popupItem.id).save(text); applyLineNote(popupItem.id, d.line_note); }}
                   onDelete={async () => { await transferLineNoteApi(transferId, popupItem.id).remove(); applyLineNote(popupItem.id, null); }}
                 />
+                {/* OK = Submit (2026-11-12); docked at the popup's bottom (2026-11-12, Hera) */}
+                {keypad && <NumberKeypad inputRef={countRef} value={countInput} allowNegative={false}
+                  onChange={(v) => { setCountInput(v); setCountError(''); }}
+                  onOk={handleSubmitCount} okDisabled={!countInput || savingCount} />}
               </BlockStack>
             </div>
           </div>

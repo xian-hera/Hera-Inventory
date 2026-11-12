@@ -233,8 +233,10 @@ function ScanPopup({ productData, soh, allReasons, onClose, onSubmit }) {
           </div>
           {/* OK = Submit (2026-11-12); shown once a reason is chosen (the box is disabled before) */}
           {keypad && selectedReason && (
-            <div ref={keypadBoxRef}>
-              <NumberKeypad inputRef={qtyRef} value={qtyInput} allowNegative={false}
+            // display: contents → the keypad docks at the popup's bottom itself and
+            // disappears with nothing left behind when the Qty box isn't active (2026-11-12, Hera)
+            <div ref={keypadBoxRef} style={{ display: 'contents' }}>
+              <NumberKeypad inputRef={qtyRef} value={qtyInput} allowNegative={false} dock={24}
                 onChange={setQtyInput} onOk={handleSubmit} okDisabled={!canSubmit} />
             </div>
           )}

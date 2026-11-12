@@ -820,6 +820,10 @@ const initDatabase = async () => {
     // manually-added rows instead of wiping them on reprocess, and lets the
     // buyer-side UI sort manually-added rows above ordinary CSV rows.
     await client.query(`ALTER TABLE po_invoice_items ADD COLUMN IF NOT EXISTS added_manually BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
+    // 2026-11-12 (Hera): a line Purchasing added with "Add Item" on a Store
+    // Counted invoice (POST /pending/:id/items/by-sku). Pinned to the top of
+    // the invoice page with a light highlight.
+    await client.query(`ALTER TABLE po_invoice_items ADD COLUMN IF NOT EXISTS added_after_count BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
 
     // Undo commit (2026-10-09): what commitInvoice() is about to change for
     // this line item, written BEFORE it touches Shopify so a retry after a

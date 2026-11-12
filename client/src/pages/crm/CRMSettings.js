@@ -248,14 +248,17 @@ function CRMSettings() {
         open={showSyncModal}
         onClose={closeSyncModal}
         title="Sync Employees from Connecteam"
-        primaryAction={{
+        // 2026-11-12 (Hera): once the sync has finished, the result is already
+        // saved — the modal then only offers Close (Confirm Sync used to stay
+        // and started a second sync when clicked).
+        primaryAction={syncResult ? undefined : {
           content: syncing ? 'Syncing…' : 'Confirm Sync',
           onAction: handleSync,
           disabled: syncInput.trim().toUpperCase() !== syncWord || syncing,
           loading: syncing,
           destructive: true,
         }}
-        secondaryActions={[{ content: 'Cancel', onAction: closeSyncModal, disabled: syncing }]}
+        secondaryActions={[{ content: syncResult ? 'Close' : 'Cancel', onAction: closeSyncModal, disabled: syncing }]}
       >
         <Modal.Section>
           <BlockStack gap="300">
@@ -263,7 +266,7 @@ function CRMSettings() {
               <Banner tone="critical" onDismiss={() => setSyncError('')}>{syncError}</Banner>
             )}
             {syncResult && (
-              <Banner tone="success">{syncResult}</Banner>
+              <Banner tone="success">{`${syncResult} Changes are saved; nothing else to do.`}</Banner>
             )}
             {!syncResult && (
               <>

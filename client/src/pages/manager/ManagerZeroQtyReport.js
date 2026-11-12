@@ -598,9 +598,6 @@ function ManagerZeroQtyReport() {
                       />
                       {!keypad && <Button onClick={handleSubmitCount} disabled={!countInput}>Submit</Button>}
                     </div>
-                    {/* OK = Submit (2026-11-12) */}
-                    {keypad && <NumberKeypad inputRef={countRef} value={countInput} onChange={setCountInput}
-                      onOk={handleSubmitCount} okDisabled={!countInput} />}
                     {popupSoh === null ? (
                       <div style={{ background: '#f6f6f7', borderRadius: '12px', padding: '16px',
                         textAlign: 'center', fontSize: '14px', color: '#d72c0d' }}>
@@ -631,6 +628,9 @@ function ManagerZeroQtyReport() {
                         </button>
                       </>
                     )}
+                    {/* OK = Submit (2026-11-12); docked at the popup's bottom (2026-11-12, Hera) */}
+                    {keypad && <NumberKeypad inputRef={countRef} value={countInput} onChange={setCountInput}
+                      onOk={handleSubmitCount} okDisabled={!countInput} />}
                   </BlockStack>
                 </>
             }

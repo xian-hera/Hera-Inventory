@@ -440,9 +440,6 @@ function ManagerRestockPlan() {
                     </div>
                     {!keypad && <Button variant="primary" onClick={handleSave} disabled={restockInput === ''}>Save</Button>}
                   </div>
-                  {/* OK = Save (2026-11-12) */}
-                  {keypad && <NumberKeypad inputRef={restockRef} value={restockInput} allowNegative={false}
-                    onChange={setRestockInput} onOk={handleSave} okDisabled={restockInput === ''} />}
                   <div style={{ background: popupSoh === null ? '#fff4f4' : '#f6f6f7',
                     borderRadius: '8px', padding: '12px 16px', textAlign: 'center' }}>
                     {popupSoh === null
@@ -462,6 +459,9 @@ function ManagerRestockPlan() {
                       fontSize: '14px', fontWeight: '500' }}>
                     {historyLoading ? '...' : 'Check History ↗'}
                   </button>
+                  {/* OK = Save (2026-11-12); docked at the popup's bottom (2026-11-12, Hera) */}
+                  {keypad && <NumberKeypad inputRef={restockRef} value={restockInput} allowNegative={false}
+                    onChange={setRestockInput} onOk={handleSave} okDisabled={restockInput === ''} />}
                 </BlockStack>
               </>
             )}
@@ -500,7 +500,7 @@ function ManagerRestockPlan() {
                 {!keypad && <Button onClick={handleSkuSearch} loading={skuSearching} disabled={!skuInput.trim()}>Search</Button>}
               </div>
               {/* OK = Search (2026-11-12) */}
-              {keypad && <NumberKeypad inputRef={skuRef} value={skuInput} allowNegative={false}
+              {keypad && <NumberKeypad inputRef={skuRef} value={skuInput} allowNegative={false} dock={24}
                 onChange={(v) => { setSkuInput(v); setSkuError(''); }}
                 onOk={handleSkuSearch} okDisabled={!skuInput.trim() || skuSearching} />}
             </BlockStack>
