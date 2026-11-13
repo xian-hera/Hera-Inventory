@@ -5,6 +5,7 @@ import {
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { StatusBadge, TagPills } from './transferStatus';
 import { useDD, transferEntries, DDList } from './ddPill';
+import { findScannedItem } from './scanMatch'; // secondary barcodes → primary (2026-11-13, Hera)
 import { LineNote, LineNoteIcon, LineNoteButton, LineNoteText, transferLineNoteApi } from './lineNote'; // eslint-disable-line no-unused-vars
 import { getManagerLocation } from '../../accountMemory';
 import MobileModalSafeArea from '../../components/MobileModalSafeArea';
@@ -152,14 +153,18 @@ function TransferReceivingDetail({ role, backPath, showTags, canDeliver = false 
         const barcode = cleanBarcode(barcodeBuffer.current.trim());
         barcodeBuffer.current = '';
         if (!barcode) return;
-        const matched = itemsRef.current.find(i => i.sku === barcode);
-        if (matched) {
-          openPopup(matched);
-        } else {
-          clearTimeout(notFoundTimer.current);
-          setNotFoundBarcode(barcode);
-          notFoundTimer.current = setTimeout(() => setNotFoundBarcode(''), 2000);
-        }
+        // SKU first; a product's other barcodes are looked up in Shopify
+        // only when that finds nothing (shared/scanMatch.js, 2026-11-13).
+        findScannedItem(() => itemsRef.current, barcode, 'sku').then((matched) => {
+          if (popupRef.current) return; // a popup opened meanwhile
+          if (matched) {
+            openPopup(matched);
+          } else {
+            clearTimeout(notFoundTimer.current);
+            setNotFoundBarcode(barcode);
+            notFoundTimer.current = setTimeout(() => setNotFoundBarcode(''), 2000);
+          }
+        });
         return;
       }
 

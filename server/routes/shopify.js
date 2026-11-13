@@ -464,6 +464,36 @@ async function fetchInventoryForBarcode(client, barcode, locationId) {
   };
 }
 
+// GET /api/shopify/resolve-barcode?barcode=XXX → { barcodes: [...] }
+// (2026-11-13, Hera) A product can carry several barcodes; Hub's SKU is always
+// its first (primary) one. Pages that match a scan against their own list by
+// SKU (PO count, Transfer receiving, Weekly Inventory Count + its history,
+// Online transfer prep) call this only when a scan matches nothing there:
+// Shopify's barcode: search matches ANY of a variant's barcodes, and this
+// returns the primary barcode (and SKU field) of each active variant found,
+// so the page can match again. Empty list = not a known barcode.
+router.get('/resolve-barcode', async (req, res) => {
+  try {
+    const code = String(req.query.barcode || '').trim();
+    if (!code) return res.status(400).json({ error: 'barcode required' });
+    const session = await getSession();
+    if (!session) return res.status(401).json({ error: 'No session' });
+    const shopify = getShopify();
+    const client = new shopify.clients.Graphql({ session });
+    const response = await shopifyRequest(client, `
+      query resolveBarcode($q: String!) {
+        productVariants(first: 5, query: $q) { edges { node { barcode sku } } }
+      }
+    `, { q: activeFilter(`barcode:${searchQuote(code)}`) });
+    const nodes = ((response && response.data && response.data.productVariants && response.data.productVariants.edges) || []).map(e => e.node);
+    const barcodes = [...new Set(nodes.flatMap(n => [n.barcode, n.sku]).filter(Boolean).map(s => String(s).trim()))];
+    res.json({ barcodes });
+  } catch (e) {
+    console.error('GET /api/shopify/resolve-barcode error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // GET /api/shopify/inventory?barcode=XXX&locationId=YYY
 router.get('/inventory', async (req, res) => {
   try {

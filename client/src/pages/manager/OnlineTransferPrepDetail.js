@@ -8,6 +8,7 @@ import { LineNote, LineNoteIcon, LineNoteButton, LineNoteText, transferLineNoteA
 // marked data-hub-keypad (OK = Picked); the one keypad
 // (components/NumberKeypad.js, mounted in App.js) pushes the modal up.
 import { useNumberKeypad } from '../../components/NumberKeypad';
+import { findScannedItem } from '../shared/scanMatch'; // secondary barcodes → primary (2026-11-13, Hera)
 
 // Store › Online transfer (2026-10-23, Hera — claude/FULFILLER_ONLINE_TRANSFER_SPEC.md).
 // The from-store prepares an Online (Fulfiller) transfer here instead of the
@@ -263,13 +264,17 @@ function OnlineTransferPrepDetail() {
         const code = cleanBarcode(buf.current.trim());
         buf.current = '';
         if (!code) return;
-        const hit = itemsRef.current.find(i => i.sku === code);
-        if (hit) setOpenId(hit.id);
-        else {
-          clearTimeout(nfTimer.current);
-          setNotFound(code);
-          nfTimer.current = setTimeout(() => setNotFound(''), 2500);
-        }
+        // SKU first; a product's other barcodes are looked up in Shopify
+        // only when that finds nothing (shared/scanMatch.js, 2026-11-13).
+        findScannedItem(() => itemsRef.current, code, 'sku').then((hit) => {
+          if (openRef.current) return; // the item modal opened meanwhile
+          if (hit) setOpenId(hit.id);
+          else {
+            clearTimeout(nfTimer.current);
+            setNotFound(code);
+            nfTimer.current = setTimeout(() => setNotFound(''), 2500);
+          }
+        });
         return;
       }
       const ch = resolveKey(e);

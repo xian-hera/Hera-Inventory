@@ -4,6 +4,7 @@ import {
 } from '@shopify/polaris';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { useDD, poEntries, poPb, DDList, PBOnlyPill, pbOnlyValue } from '../shared/ddPill';
+import { findScannedItem } from '../shared/scanMatch'; // secondary barcodes → primary (2026-11-13, Hera)
 import CountPills from '../shared/CountPills'; // count history as pills (2026-11-12)
 import { LineNote, LineNoteIcon, LineNoteButton, LineNoteText, poLineNoteApi } from '../shared/lineNote'; // eslint-disable-line no-unused-vars
 // Hub number keypad (2026-11-12, Hera): the count box is marked
@@ -167,14 +168,18 @@ function ManagerPOReceivingDetail() {
         const barcode = cleanBarcode(barcodeBuffer.current.trim());
         barcodeBuffer.current = '';
         if (!barcode) return;
-        const matched = itemsRef.current.find(i => i.sku === barcode);
-        if (matched) {
-          openPopup(matched);
-        } else {
-          clearTimeout(notFoundTimer.current);
-          setNotFoundBarcode(barcode);
-          notFoundTimer.current = setTimeout(() => setNotFoundBarcode(''), 2000);
-        }
+        // SKU first; a product's other barcodes are looked up in Shopify
+        // only when that finds nothing (shared/scanMatch.js, 2026-11-13).
+        findScannedItem(() => itemsRef.current, barcode, 'sku').then((matched) => {
+          if (popupRef.current) return; // a popup opened meanwhile
+          if (matched) {
+            openPopup(matched);
+          } else {
+            clearTimeout(notFoundTimer.current);
+            setNotFoundBarcode(barcode);
+            notFoundTimer.current = setTimeout(() => setNotFoundBarcode(''), 2000);
+          }
+        });
         return;
       }
 

@@ -4,6 +4,7 @@ import {
   Text, DataTable, Banner, Spinner,
 } from '@shopify/polaris';
 import { useNavigate, useParams } from 'react-router-dom';
+import { findScannedItem } from '../shared/scanMatch'; // secondary barcodes → primary (2026-11-13, Hera)
 
 // Read-only "History in past 15 days" detail page for a Weekly Inventory
 // Count task the manager already submitted (see ManagerCountingTasksList.js's
@@ -131,12 +132,16 @@ function ManagerTaskHistoryDetail() {
         const barcode = cleanBarcode(barcodeBuffer.current.trim());
         barcodeBuffer.current = '';
         if (barcode) {
-          const matched = (cur.detail.items || []).find(i => i.barcode === barcode);
-          if (matched) {
-            setPopupItem(matched);
-          } else {
-            setErrorPopup(`Barcode "${barcode}" not found in this task.`);
-          }
+          // SKU first; a product's other barcodes are looked up in Shopify
+          // only when that finds nothing (shared/scanMatch.js, 2026-11-13).
+          findScannedItem(() => (cur.detail.items || []), barcode, 'barcode').then((matched) => {
+            if (popupRef.current || showSkuInputRef.current) return; // a popup opened meanwhile
+            if (matched) {
+              setPopupItem(matched);
+            } else {
+              setErrorPopup(`Barcode "${barcode}" not found in this task.`);
+            }
+          });
         }
         return;
       }

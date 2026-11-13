@@ -6,7 +6,8 @@ import {
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { fetchLocationMap } from '../shared/locationMap';
 import FulfilCountInfo from '../shared/FulfilCountInfo';
-import CountPills from '../shared/CountPills'; // count history as pills (2026-11-12)
+import CountPills from '../shared/CountPills';
+import { findScannedItem } from '../shared/scanMatch'; // secondary barcodes → primary (2026-11-13, Hera) // count history as pills (2026-11-12)
 import { LineNote, LineNoteIcon, LineNoteButton, LineNoteText, taskLineNoteApi } from '../shared/lineNote'; // eslint-disable-line no-unused-vars
 import useKeyboardInset from '../../components/useKeyboardInset';
 // Hub number keypad (2026-11-12, Hera): count + Type in SKU boxes are marked
@@ -168,7 +169,11 @@ function ManagerTaskDetail() {
         const barcode = cleanBarcode(barcodeBuffer.current.trim());
         barcodeBuffer.current = '';
         if (barcode && taskRef.current) {
-          const matched = taskRef.current.items.find(i => i.barcode === barcode);
+          // SKU first; a product's other barcodes are looked up in Shopify
+          // only when that finds nothing (shared/scanMatch.js, 2026-11-13).
+          findScannedItem(() => (taskRef.current ? taskRef.current.items : []), barcode, 'barcode').then((matched) => {
+          if (!taskRef.current) return;
+          if (!taskRef.current.scan_count_mode && (popupRef.current || showSkuInputRef.current)) return; // a popup opened meanwhile
           if (taskRef.current.scan_count_mode) {
             // Scan Count mode: purely silent, by design (the manager is not
             // meant to look at the screen while scanning). A match increments
@@ -180,6 +185,7 @@ function ManagerTaskDetail() {
           } else {
             setErrorPopup(`Barcode "${barcode}" not found in this task.`);
           }
+          });
         }
         return;
       }
