@@ -51,7 +51,7 @@ const BuyerPriceChange = lazyWithReload(() => import(/* webpackChunkName: "buyer
 const BuyerPriceChangeCreate = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerPriceChangeCreate'));
 const BuyerPriceChangeSettings = lazyWithReload(() => import(/* webpackChunkName: "buyer" */ './pages/buyer/BuyerPriceChangeSettings'));
 const ManagerPriceChangeDetail = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerPriceChangeDetail'));
-const ManagerEmployeeCap = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerEmployeeCap'));
+// Store › Employee Cap (pages/manager/ManagerEmployeeCap.js) removed 2026-11-13 (Hera) — Operation only.
 const ManagerPOReceiving = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerPOReceiving'));
 const ManagerPOReceivingDetail = lazyWithReload(() => import(/* webpackChunkName: "manager" */ './pages/manager/ManagerPOReceivingDetail'));
 const CRMHome = lazyWithReload(() => import(/* webpackChunkName: "crm" */ './pages/crm/CRMHome'));
@@ -233,7 +233,6 @@ function App() {
           <Route path="/manager/label-print" element={<ManagerLocationGate><ManagerLabelPrintTasks /></ManagerLocationGate>} />
           <Route path="/manager/label-print/:taskId" element={<ManagerLocationGate><ManagerLabelPrintTaskDetail /></ManagerLocationGate>} />
           <Route path="/manager/price-change/:taskId" element={<ManagerLocationGate><ManagerPriceChangeDetail /></ManagerLocationGate>} />
-          <Route path="/manager/employee-cap" element={<ManagerLocationGate><ManagerEmployeeCap /></ManagerLocationGate>} />
           <Route path="/manager/new-arrival" element={<ManagerLocationGate><ManagerNewArrival /></ManagerLocationGate>} />
           <Route path="/manager/po-receiving" element={<ManagerLocationGate><ManagerPOReceiving /></ManagerLocationGate>} />
           <Route path="/manager/po-receiving/history/:historyId" element={<ManagerLocationGate><ManagerPOReceivingHistoryDetail /></ManagerLocationGate>} />

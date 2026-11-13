@@ -276,9 +276,8 @@ function ManagerHome() {
               Store Supply
             </Button>
 
-            <Button size="large" fullWidth onClick={() => handleNavigate('/manager/employee-cap')}>
-              Employee Cap
-            </Button>
+            {/* Employee Cap button removed 2026-11-13 (Hera): Store no longer
+                views or refreshes Employee Cap — that stays in Operation only. */}
 
             {/* Number input on this device (2026-11-12, Hera): left, under the
                 buttons. Remembered on this device (components/NumberKeypad.js). */}

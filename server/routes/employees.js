@@ -591,18 +591,15 @@ router.post('/tag-check', async (req, res) => {
   }
 });
 
-// POST /api/employees/refresh
+// POST /api/employees/refresh — body { scope: 'all' } (Operation › Employee Cap).
+// 2026-11-13 (Hera): the one-store refresh (scope = a store code, used only by
+// Store › Employee Cap) was removed with that page; any other scope is refused.
 router.post('/refresh', async (req, res) => {
   const { scope = 'all' } = req.body;
+  if (scope !== 'all') return res.status(400).json({ error: 'Only a full refresh (scope "all") is supported.' });
   try {
-    let empQuery, empParams;
-    if (scope === 'all') {
-      empQuery  = `SELECT id, shopify_customer_id FROM employees WHERE status = 'active' AND shopify_customer_id IS NOT NULL`;
-      empParams = [];
-    } else {
-      empQuery  = `SELECT id, shopify_customer_id FROM employees WHERE status = 'active' AND shopify_customer_id IS NOT NULL AND branches @> ARRAY[$1]::TEXT[]`;
-      empParams = [scope];
-    }
+    const empQuery  = `SELECT id, shopify_customer_id FROM employees WHERE status = 'active' AND shopify_customer_id IS NOT NULL`;
+    const empParams = [];
 
     const empResult = await pool.query(empQuery, empParams);
     const employees = empResult.rows;
